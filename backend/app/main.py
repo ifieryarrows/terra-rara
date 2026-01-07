@@ -385,14 +385,12 @@ async def trigger_pipeline(
                 
                 logger.info("Running AI pipeline...")
                 from app.ai_engine import run_full_pipeline
-                with SessionLocal() as session:
-                    run_full_pipeline(
-                        session=session,
-                        score_news=True,
-                        aggregate_sentiment=True,
-                        train_xgb=train_model,
-                        target_symbol="HG=F"
-                    )
+                run_full_pipeline(
+                    target_symbol="HG=F",
+                    score_sentiment=True,
+                    aggregate_sentiment=True,
+                    train_model=train_model
+                )
                 logger.info("AI pipeline complete")
                 
             finally:
