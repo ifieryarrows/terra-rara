@@ -15,6 +15,7 @@ import type {
   HistoryResponse,
   HistoryDataPoint,
   LoadingState,
+  Influencer,
 } from './types';
 
 // Custom tooltip component
@@ -385,7 +386,7 @@ function App() {
                   tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
                   tickLine={{ stroke: 'var(--chart-grid)' }}
                   axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value) => {
+                  tickFormatter={(value: string) => {
                     const date = new Date(value);
                     return `${date.getMonth() + 1}/${date.getDate()}`;
                   }}
@@ -398,7 +399,7 @@ function App() {
                   tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
                   tickLine={{ stroke: 'var(--chart-grid)' }}
                   axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value) => `$${value.toFixed(2)}`}
+                  tickFormatter={(value: number) => `$${value.toFixed(2)}`}
                   domain={['auto', 'auto']}
                 />
                 <YAxis
@@ -407,7 +408,7 @@ function App() {
                   tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
                   tickLine={{ stroke: 'var(--chart-grid)' }}
                   axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value) => value.toFixed(2)}
+                  tickFormatter={(value: number) => value.toFixed(2)}
                   domain={[-1, 1]}
                 />
                 <Tooltip content={<CustomTooltip />} />
@@ -454,9 +455,9 @@ function App() {
           <div className="influencers-section">
             <h2 className="influencers-title">Top Price Influencers</h2>
             <div className="influencers-list">
-              {analysis.top_influencers.slice(0, 5).map((inf, idx) => {
+              {analysis.top_influencers.slice(0, 5).map((inf: Influencer, idx: number) => {
                 const maxImportance = Math.max(
-                  ...analysis.top_influencers.map((i) => i.importance)
+                  ...analysis.top_influencers.map((i: Influencer) => i.importance)
                 );
                 const barWidth = (inf.importance / maxImportance) * 100;
 
