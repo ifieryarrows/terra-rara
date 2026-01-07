@@ -1,0 +1,2 @@
+"""CopperMind test suite."""
+
