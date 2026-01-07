@@ -52,18 +52,90 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
 // Feature name to human-readable description
 function getFeatureDescription(feature: string): string {
   const descriptions: Record<string, string> = {
+    // Sentiment features
     'sentiment__index': 'Market Sentiment Index',
     'sentiment__news_count': 'News Volume',
-    'DX-Y.NYB_ret1': 'US Dollar Index Return',
-    'CL=F_ret1': 'Crude Oil Return',
-    'FXI_ret1': 'China ETF Return',
-    'HG=F_ret1': 'Copper Return (lag)',
-    'HG=F_SMA_5': 'Copper 5-day SMA',
-    'HG=F_SMA_20': 'Copper 20-day SMA',
-    'HG=F_RSI_14': 'Copper RSI (14)',
-    'HG=F_vol_10': 'Copper Volatility',
+
+    // US Dollar Index (DX-Y.NYB)
+    'DX_Y_NYB_price_sma_ratio': '📈 US Dollar Strength',
+    'DX_Y_NYB_vol_10': '📊 USD Volatility (10d)',
+    'DX_Y_NYB_ret1': '💵 US Dollar Daily Return',
+    'DX_Y_NYB_lag_ret1_1': 'USD Return (1d ago)',
+    'DX_Y_NYB_lag_ret1_2': 'USD Return (2d ago)',
+    'DX_Y_NYB_lag_ret1_3': 'USD Return (3d ago)',
+    'DX_Y_NYB_lag_ret1_5': 'USD Return (5d ago)',
+    'DX_Y_NYB_SMA_5': 'USD SMA (5d)',
+    'DX_Y_NYB_SMA_10': 'USD SMA (10d)',
+    'DX_Y_NYB_SMA_20': 'USD SMA (20d)',
+    'DX_Y_NYB_EMA_5': 'USD EMA (5d)',
+    'DX_Y_NYB_EMA_10': 'USD EMA (10d)',
+    'DX_Y_NYB_EMA_20': 'USD EMA (20d)',
+    'DX_Y_NYB_RSI_14': 'USD Momentum (RSI)',
+
+    // Copper (HG=F)
+    'HG_F_price_sma_ratio': '🔶 Copper Trend Strength',
+    'HG_F_vol_10': '📊 Copper Volatility',
+    'HG_F_ret1': '🔶 Copper Daily Return',
+    'HG_F_lag_ret1_1': 'Copper Return (1d ago)',
+    'HG_F_lag_ret1_2': 'Copper Return (2d ago)',
+    'HG_F_lag_ret1_3': 'Copper Return (3d ago)',
+    'HG_F_lag_ret1_5': 'Copper Return (5d ago)',
+    'HG_F_SMA_5': '🔶 Copper Short-term Trend',
+    'HG_F_SMA_10': '🔶 Copper Medium Trend',
+    'HG_F_SMA_20': 'Copper Long-term Trend',
+    'HG_F_EMA_5': 'Copper EMA (5d)',
+    'HG_F_EMA_10': '🔶 Copper EMA (10d)',
+    'HG_F_EMA_20': 'Copper EMA (20d)',
+    'HG_F_RSI_14': 'Copper Momentum (RSI)',
+
+    // Crude Oil (CL=F)
+    'CL_F_price_sma_ratio': '🛢️ Oil Trend Strength',
+    'CL_F_vol_10': '🛢️ Oil Volatility',
+    'CL_F_ret1': '🛢️ Oil Daily Return',
+    'CL_F_lag_ret1_1': 'Oil Return (1d ago)',
+    'CL_F_lag_ret1_2': 'Oil Return (2d ago)',
+    'CL_F_lag_ret1_3': 'Oil Return (3d ago)',
+    'CL_F_lag_ret1_5': 'Oil Return (5d ago)',
+    'CL_F_SMA_5': 'Oil SMA (5d)',
+    'CL_F_SMA_10': 'Oil SMA (10d)',
+    'CL_F_SMA_20': 'Oil SMA (20d)',
+    'CL_F_EMA_5': 'Oil EMA (5d)',
+    'CL_F_EMA_10': 'Oil EMA (10d)',
+    'CL_F_EMA_20': 'Oil EMA (20d)',
+    'CL_F_RSI_14': 'Oil Momentum (RSI)',
+
+    // China ETF (FXI)
+    'FXI_price_sma_ratio': '🇨🇳 China Market Strength',
+    'FXI_vol_10': '🇨🇳 China Volatility',
+    'FXI_ret1': '🇨🇳 China Daily Return',
+    'FXI_lag_ret1_1': 'China Return (1d ago)',
+    'FXI_lag_ret1_2': 'China Return (2d ago)',
+    'FXI_lag_ret1_3': 'China Return (3d ago)',
+    'FXI_lag_ret1_5': 'China Return (5d ago)',
+    'FXI_SMA_5': 'China SMA (5d)',
+    'FXI_SMA_10': 'China SMA (10d)',
+    'FXI_SMA_20': 'China SMA (20d)',
+    'FXI_EMA_5': 'China EMA (5d)',
+    'FXI_EMA_10': 'China EMA (10d)',
+    'FXI_EMA_20': 'China EMA (20d)',
+    'FXI_RSI_14': 'China Momentum (RSI)',
   };
-  return descriptions[feature] || feature.replace(/_/g, ' ');
+
+  // Human-readable names for display
+  const displayNames: Record<string, string> = {
+    'DX_Y_NYB_price_sma_ratio': 'US Dollar Index',
+    'DX_Y_NYB_vol_10': 'USD Volatility',
+    'HG_F_SMA_5': 'Copper Trend (5d)',
+    'HG_F_EMA_10': 'Copper Trend (10d)',
+    'HG_F_SMA_10': 'Copper SMA (10d)',
+    'HG_F_EMA_20': 'Copper EMA (20d)',
+    'HG_F_lag_ret1_2': 'Copper Momentum',
+    'DX_Y_NYB_lag_ret1_3': 'USD Momentum',
+    'FXI_SMA_5': 'China Market',
+    'DX_Y_NYB_lag_ret1_2': 'USD Movement',
+  };
+
+  return displayNames[feature] || descriptions[feature] || feature.replace(/_/g, ' ');
 }
 
 function App() {
@@ -98,7 +170,7 @@ function App() {
 
   // Prepare chart data
   const chartData: HistoryDataPoint[] = history?.data || [];
-  
+
   // Get the last price and prediction point
   const lastDataPoint = chartData.length > 0 ? chartData[chartData.length - 1] : null;
 
@@ -185,9 +257,8 @@ function App() {
               <div className="header-stat">
                 <div className="header-stat-label">Predicted Return</div>
                 <div
-                  className={`header-stat-value ${
-                    isPredictionPositive ? 'positive' : 'negative'
-                  }`}
+                  className={`header-stat-value ${isPredictionPositive ? 'positive' : 'negative'
+                    }`}
                 >
                   {formatPercent(analysis.predicted_return)}
                 </div>
