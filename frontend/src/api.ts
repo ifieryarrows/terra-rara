@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisReport, HistoryResponse, HealthResponse } from './types';
+import type { AnalysisReport, HistoryResponse, HealthResponse, CommentaryResponse } from './types';
 
 // Base URL for API calls
 // In production (Vercel), use VITE_API_URL env var pointing to Hugging Face backend
@@ -76,5 +76,14 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return response.data;
 }
 
-export default api;
+/**
+ * Fetch AI-generated market commentary
+ */
+export async function fetchCommentary(symbol: string = 'HG=F'): Promise<CommentaryResponse> {
+  const response = await api.get<CommentaryResponse>('/commentary', {
+    params: { symbol },
+  });
+  return response.data;
+}
 
+export default api;

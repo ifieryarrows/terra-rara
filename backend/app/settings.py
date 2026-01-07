@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     tz: str = "Europe/Istanbul"
     scheduler_enabled: bool = True
     
+    # OpenRouter AI Commentary
+    openrouter_api_key: Optional[str] = None
+    openrouter_model: str = "meta-llama/llama-3.2-3b-instruct:free"
+    
     @property
     def symbols_list(self) -> list[str]:
         """Parse comma-separated symbols into a list."""

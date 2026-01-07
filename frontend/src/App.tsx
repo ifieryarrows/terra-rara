@@ -9,13 +9,14 @@ import {
   ResponsiveContainer,
   ReferenceDot,
 } from 'recharts';
-import { fetchAnalysis, fetchHistory } from './api';
+import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import type {
   AnalysisReport,
   HistoryResponse,
   HistoryDataPoint,
   LoadingState,
   Influencer,
+  CommentaryResponse,
 } from './types';
 
 // Custom tooltip component
@@ -159,6 +160,7 @@ function getFeatureDescription(feature: string): string {
 function App() {
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -182,9 +184,26 @@ function App() {
     }
   }, []);
 
+  // Load commentary separately (lazy, non-blocking)
+  const loadCommentary = useCallback(async () => {
+    try {
+      const commentaryData = await fetchCommentary('HG=F');
+      setCommentary(commentaryData);
+    } catch (err) {
+      console.error('Failed to load commentary:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Load commentary after main data loads
+  useEffect(() => {
+    if (loadingState === 'success') {
+      loadCommentary();
+    }
+  }, [loadingState, loadCommentary]);
 
   // Prepare chart data
   const chartData: HistoryDataPoint[] = history?.data || [];
@@ -532,6 +551,38 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* AI Commentary Section */}
+        <div className="commentary-section">
+          <div className="commentary-header">
+            <h2 className="commentary-title">🤖 AI Market Analysis</h2>
+            {commentary?.generated_at && (
+              <span className="commentary-timestamp">
+                {new Date(commentary.generated_at).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <div className="commentary-content">
+            {commentary?.commentary ? (
+              <div className="commentary-text">
+                {commentary.commentary.split('\n').map((paragraph, idx) => (
+                  <p key={idx}>{paragraph}</p>
+                ))}
+              </div>
+            ) : commentary?.error ? (
+              <div className="commentary-placeholder">
+                <span className="commentary-icon">⚙️</span>
+                <p>AI Commentary not available</p>
+                <p className="commentary-hint">{commentary.error}</p>
+              </div>
+            ) : (
+              <div className="commentary-loading">
+                <div className="commentary-spinner" />
+                <p>Generating AI analysis...</p>
+              </div>
+            )}
+          </div>
+        </div>
       </main>
 
       {/* Footer */}

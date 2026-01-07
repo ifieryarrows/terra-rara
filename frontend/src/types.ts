@@ -53,3 +53,9 @@ export interface HealthResponse {
 
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
+export interface CommentaryResponse {
+  symbol: string;
+  commentary: string | null;
+  error: string | null;
+  generated_at: string | null;
+}

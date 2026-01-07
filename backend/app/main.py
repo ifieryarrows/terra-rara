@@ -313,6 +313,75 @@ async def health_check():
 
 
 # =============================================================================
+# AI Commentary Endpoint
+# =============================================================================
+
+@app.get(
+    "/api/commentary",
+    summary="AI-generated market commentary",
+    description="Returns an AI-generated analysis of the current copper market situation using FinBERT + XGBoost results."
+)
+async def get_commentary(
+    symbol: str = Query(default="HG=F", description="Symbol to analyze")
+):
+    """
+    Generate AI commentary for the current market situation.
+    
+    Uses OpenRouter API with a free LLM to create human-readable
+    analysis from FinBERT sentiment and XGBoost predictions.
+    """
+    from app.commentary import get_cached_commentary
+    
+    settings = get_settings()
+    
+    # Check if OpenRouter is configured
+    if not settings.openrouter_api_key:
+        return {
+            "symbol": symbol,
+            "commentary": None,
+            "error": "AI commentary not configured. Set OPENROUTER_API_KEY environment variable.",
+            "generated_at": None,
+        }
+    
+    # Get the latest analysis
+    try:
+        analysis = await get_analysis(symbol)
+    except HTTPException:
+        return {
+            "symbol": symbol,
+            "commentary": None,
+            "error": "No analysis data available to comment on.",
+            "generated_at": None,
+        }
+    
+    # Get news count
+    with SessionLocal() as session:
+        week_ago = datetime.now() - timedelta(days=7)
+        news_count = session.query(func.count(NewsArticle.id)).filter(
+            NewsArticle.published >= week_ago
+        ).scalar() or 0
+    
+    # Generate commentary
+    commentary = await get_cached_commentary(
+        current_price=analysis.current_price,
+        predicted_price=analysis.predicted_price,
+        predicted_return=analysis.predicted_return,
+        sentiment_index=analysis.sentiment_index,
+        sentiment_label=analysis.sentiment_label,
+        top_influencers=[inf.dict() for inf in analysis.top_influencers],
+        news_count=news_count,
+        ttl_minutes=60,  # Cache for 1 hour
+    )
+    
+    return {
+        "symbol": symbol,
+        "commentary": commentary,
+        "error": None if commentary else "Failed to generate commentary",
+        "generated_at": datetime.now(timezone.utc).isoformat() if commentary else None,
+    }
+
+
+# =============================================================================
 # Root redirect (optional convenience)
 # =============================================================================
 
