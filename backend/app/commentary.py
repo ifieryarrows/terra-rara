@@ -52,27 +52,32 @@ async def generate_commentary(
     change_direction = "increase" if predicted_return > 0 else "decrease"
     change_emoji = "📈" if predicted_return > 0 else "📉"
     
-    prompt = f"""You are a financial analyst assistant. Analyze the following copper market data and write a short, clear commentary for investors.
+    prompt = f"""You are a commodity market analyst writing for investors. Using ONLY the data below, produce a human-readable copper market commentary that is clear, measured, and non-sensational. Do not invent extra facts, macro events, or drivers beyond what is provided.
 
-## Current Data:
-- **Current Price:** ${current_price:.4f}
-- **Tomorrow's Prediction:** ${predicted_price:.4f} ({change_emoji} {abs(predicted_return*100):.2f}% {change_direction})
-- **Market Sentiment:** {sentiment_label} (Score: {sentiment_index:.3f})
-- **News Analyzed:** {news_count} articles
-
-## Top Influencing Factors (XGBoost Model):
+DATA
+- Current Price: ${current_price:.4f}
+- Tomorrow’s Model Prediction: ${predicted_price:.4f} ({change_emoji} {abs(predicted_return*100):.2f}% {change_direction})
+- Market Sentiment: {sentiment_label} (Score: {sentiment_index:.3f}, range -1 to 1)
+- News Analyzed: {news_count} articles
+- Top Influencing Factors (XGBoost importance, top 5):
 {influencers_text}
 
-## Instructions:
-1. Write 3-4 paragraphs (150-200 words total)
-2. Use simple, clear language; avoid overly technical jargon
-3. In the first paragraph, summarize the general outlook
-4. In the second paragraph, explain the key driving factors
-5. In the final paragraph, state the short-term forecast
-6. Use the 🎯 emoji to highlight key points
-7. Add a disclaimer: "This is NOT financial advice."
+WRITING REQUIREMENTS
+- Length: 150–200 words total.
+- Structure: 3–4 paragraphs, no headings, no bullet points, no markdown.
+- Language: simple, plain English; avoid technical ML jargon (do not mention “FinBERT”, “XGBoost”, “features”, “SHAP”, “probabilities”, or “hyperparameters”).
+- Use the 🎯 emoji 2–4 times to highlight key points within sentences (not as a list).
+- Mention the predicted direction and percent move once, exactly as given (do not recalculate).
+- Explicitly reference 2–4 of the listed influencing factors by name and connect them to the outlook in a reasonable way without overclaiming.
+- Keep uncertainty: present the prediction as model-based and conditional; avoid certainty words like “will” or “guaranteed”; do not give trading instructions.
 
-Write your commentary:"""
+PARAGRAPH GUIDE
+1) Overall outlook and what the model implies for the next session.
+2) Key drivers: sentiment + news volume + the most important factors (tie them to the expected move).
+3) Risks/what could invalidate the view and what to watch next (can be combined with paragraph 4 if you write 3 paragraphs).
+4) Short-term wrap-up: concise forecast framing and one monitoring takeaway.
+
+End with this exact line on its own: This is NOT financial advice."""
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -89,7 +94,7 @@ Write your commentary:"""
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are an expert commodity market analyst. You provide concise and insightful analysis of copper prices."
+                            "content": "You are a commodity market analyst. You write measured, evidence-based commentary avoiding sensationalism."
                         },
                         {
                             "role": "user", 
