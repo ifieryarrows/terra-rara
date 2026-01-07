@@ -7,22 +7,45 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/hf-sync.yml"
-  workflow_dispatch: # Manual trigger
+  workflow_dispatch:
 
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: true
 
-      - name: Push backend to Hugging Face Space
-        uses: JacobLinCool/huggingface-sync@v1
-        with:
-          user: ifieryarrows
-          space: copper-mind
-          token: ${{ secrets.HF_TOKEN }}
-          github: backend
+      - name: Check token exists
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "❌ HF_TOKEN secret is not set!"
+            exit 1
+          fi
+          echo "✅ HF_TOKEN is set (length: ${#HF_TOKEN})"
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Upload backend to Space
+        run: |
+          cd backend
+          python -c "
+          from huggingface_hub import HfApi
+          import os
+
+          api = HfApi(token=os.environ['HF_TOKEN'])
+
+          # Upload the entire backend folder
+          api.upload_folder(
+              folder_path='.',
+              repo_id='ifieryarrows/copper-mind',
+              repo_type='space',
+              commit_message='Sync from GitHub',
+          )
+          print('✅ Upload complete!')
+          "
