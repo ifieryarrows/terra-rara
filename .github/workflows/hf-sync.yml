@@ -5,9 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'backend/**'
-      - '.github/workflows/hf-sync.yml'
-  workflow_dispatch:  # Manual trigger
+      - "backend/**"
+      - ".github/workflows/hf-sync.yml"
+  workflow_dispatch: # Manual trigger
 
 jobs:
   sync-to-hub:
@@ -20,16 +20,8 @@ jobs:
           lfs: true
 
       - name: Push backend to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          cd backend
-          git init
-          git config user.email "github-actions@github.com"
-          git config user.name "GitHub Actions"
-          git remote add space https://ifieryarrows:$HF_TOKEN@huggingface.co/spaces/ifieryarrows/copper-mind
-          git fetch space main --depth=1 || true
-          git checkout -b main
-          git add -A
-          git commit -m "Sync from GitHub: ${{ github.sha }}" || echo "No changes to commit"
-          git push space main --force
+        uses: JacobLinCool/huggingface-sync@v1
+        with:
+          github_path: backend
+          hf_space: ifieryarrows/copper-mind
+          hf_token: ${{ secrets.HF_TOKEN }}
