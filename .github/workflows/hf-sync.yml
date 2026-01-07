@@ -22,6 +22,7 @@ jobs:
       - name: Push backend to Hugging Face Space
         uses: JacobLinCool/huggingface-sync@v1
         with:
-          github_path: backend
-          hf_space: ifieryarrows/copper-mind
-          hf_token: ${{ secrets.HF_TOKEN }}
+          user: ifieryarrows
+          space: copper-mind
+          token: ${{ secrets.HF_TOKEN }}
+          github: backend
