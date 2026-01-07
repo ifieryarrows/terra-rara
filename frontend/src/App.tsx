@@ -464,9 +464,9 @@ function App() {
                   <div key={inf.feature} className="influencer-item">
                     <div className="influencer-rank">{idx + 1}</div>
                     <div className="influencer-info">
-                      <div className="influencer-name">{inf.feature}</div>
+                      <div className="influencer-name">{getFeatureDescription(inf.feature)}</div>
                       <div className="influencer-desc">
-                        {inf.description || getFeatureDescription(inf.feature)}
+                        {inf.description || inf.feature.replace(/_/g, ' ')}
                       </div>
                     </div>
                     <div className="influencer-bar-container">
