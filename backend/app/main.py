@@ -333,3 +333,83 @@ async def api_root():
         "health": "/api/health"
     }
 
+
+# =============================================================================
+# Pipeline Management Endpoints
+# =============================================================================
+
+@app.post(
+    "/api/pipeline/trigger",
+    summary="Trigger data pipeline",
+    description="Manually trigger data fetch and AI pipeline. Use with caution - this is a heavy operation.",
+    responses={
+        200: {"description": "Pipeline triggered successfully"},
+        409: {"description": "Pipeline already running"},
+    },
+)
+async def trigger_pipeline(
+    fetch_data: bool = Query(default=True, description="Fetch new data from sources"),
+    train_model: bool = Query(default=True, description="Train/retrain XGBoost model"),
+):
+    """
+    Manually trigger the pipeline.
+    
+    This will:
+    1. Fetch new news and price data (if fetch_data=True)
+    2. Run sentiment scoring
+    3. Train XGBoost model (if train_model=True)
+    """
+    from threading import Thread
+    
+    if is_pipeline_locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Pipeline is already running. Please wait for it to complete."
+        )
+    
+    def run_pipeline():
+        try:
+            from app.lock import PipelineLock
+            
+            lock = PipelineLock(timeout=0)
+            if not lock.acquire():
+                logger.error("Could not acquire pipeline lock")
+                return
+            
+            try:
+                if fetch_data:
+                    logger.info("Fetching data...")
+                    from app.data_manager import run_fetch_pipeline
+                    with SessionLocal() as session:
+                        run_fetch_pipeline(session)
+                    logger.info("Data fetch complete")
+                
+                logger.info("Running AI pipeline...")
+                from app.ai_engine import run_full_pipeline
+                with SessionLocal() as session:
+                    run_full_pipeline(
+                        session=session,
+                        score_news=True,
+                        aggregate_sentiment=True,
+                        train_xgb=train_model,
+                        target_symbol="HG=F"
+                    )
+                logger.info("AI pipeline complete")
+                
+            finally:
+                lock.release()
+                
+        except Exception as e:
+            logger.error(f"Pipeline error: {e}", exc_info=True)
+    
+    # Run in background thread
+    thread = Thread(target=run_pipeline, daemon=True)
+    thread.start()
+    
+    return {
+        "status": "triggered",
+        "message": "Pipeline started in background. Check /api/health for status.",
+        "fetch_data": fetch_data,
+        "train_model": train_model
+    }
+
