@@ -1,0 +1,198 @@
+[
+  {
+    "feature": "DX_Y_NYB_price_sma_ratio",
+    "importance": 0.08117015898495854
+  },
+  {
+    "feature": "DX_Y_NYB_vol_10",
+    "importance": 0.054404148445457434
+  },
+  {
+    "feature": "HG_F_SMA_5",
+    "importance": 0.05246593207838065
+  },
+  {
+    "feature": "HG_F_EMA_10",
+    "importance": 0.05207350149330083
+  },
+  {
+    "feature": "HG_F_SMA_10",
+    "importance": 0.04588700043104244
+  },
+  {
+    "feature": "DX_Y_NYB_lag_ret1_3",
+    "importance": 0.037062138670780155
+  },
+  {
+    "feature": "FXI_SMA_5",
+    "importance": 0.03539308830061651
+  },
+  {
+    "feature": "DX_Y_NYB_lag_ret1_2",
+    "importance": 0.03535502168853305
+  },
+  {
+    "feature": "HG_F_EMA_20",
+    "importance": 0.03495761601476788
+  },
+  {
+    "feature": "HG_F_lag_ret1_2",
+    "importance": 0.03287100568275976
+  },
+  {
+    "feature": "DX_Y_NYB_RSI_14",
+    "importance": 0.026314695820474753
+  },
+  {
+    "feature": "CL_F_SMA_20",
+    "importance": 0.024974631125047133
+  },
+  {
+    "feature": "DX_Y_NYB_lag_ret1_5",
+    "importance": 0.02347554234739304
+  },
+  {
+    "feature": "HG_F_RSI_14",
+    "importance": 0.022268238010477153
+  },
+  {
+    "feature": "DX_Y_NYB_ret1",
+    "importance": 0.02225182255667517
+  },
+  {
+    "feature": "CL_F_lag_ret1_1",
+    "importance": 0.02143278396397523
+  },
+  {
+    "feature": "FXI_EMA_5",
+    "importance": 0.02141116788858912
+  },
+  {
+    "feature": "FXI_SMA_10",
+    "importance": 0.019944552507129107
+  },
+  {
+    "feature": "FXI_lag_ret1_3",
+    "importance": 0.019919271104484545
+  },
+  {
+    "feature": "CL_F_lag_ret1_5",
+    "importance": 0.019627632007169993
+  },
+  {
+    "feature": "HG_F_vol_10",
+    "importance": 0.01958938830999565
+  },
+  {
+    "feature": "FXI_lag_ret1_5",
+    "importance": 0.019429094561079833
+  },
+  {
+    "feature": "HG_F_SMA_20",
+    "importance": 0.019130923362771408
+  },
+  {
+    "feature": "HG_F_lag_ret1_5",
+    "importance": 0.0179892791704494
+  },
+  {
+    "feature": "CL_F_lag_ret1_2",
+    "importance": 0.01788145773869892
+  },
+  {
+    "feature": "CL_F_RSI_14",
+    "importance": 0.017428370498149683
+  },
+  {
+    "feature": "DX_Y_NYB_EMA_20",
+    "importance": 0.016456256879908485
+  },
+  {
+    "feature": "FXI_price_sma_ratio",
+    "importance": 0.01580041556336921
+  },
+  {
+    "feature": "DX_Y_NYB_SMA_10",
+    "importance": 0.014418428478596278
+  },
+  {
+    "feature": "HG_F_lag_ret1_1",
+    "importance": 0.014221523222447553
+  },
+  {
+    "feature": "FXI_RSI_14",
+    "importance": 0.013158865663115363
+  },
+  {
+    "feature": "HG_F_ret1",
+    "importance": 0.012176845303469139
+  },
+  {
+    "feature": "FXI_ret1",
+    "importance": 0.011834159758093663
+  },
+  {
+    "feature": "DX_Y_NYB_lag_ret1_1",
+    "importance": 0.011789092437771122
+  },
+  {
+    "feature": "CL_F_vol_10",
+    "importance": 0.011703560338874916
+  },
+  {
+    "feature": "CL_F_ret1",
+    "importance": 0.010897069728416656
+  },
+  {
+    "feature": "DX_Y_NYB_EMA_10",
+    "importance": 0.010837714481303815
+  },
+  {
+    "feature": "FXI_EMA_20",
+    "importance": 0.010370182276242174
+  },
+  {
+    "feature": "CL_F_lag_ret1_3",
+    "importance": 0.008295374832602774
+  },
+  {
+    "feature": "FXI_lag_ret1_2",
+    "importance": 0.00808830723109709
+  },
+  {
+    "feature": "DX_Y_NYB_SMA_5",
+    "importance": 0.007479077717583383
+  },
+  {
+    "feature": "CL_F_price_sma_ratio",
+    "importance": 0.005835960707203135
+  },
+  {
+    "feature": "FXI_vol_10",
+    "importance": 0.005821065512200233
+  },
+  {
+    "feature": "FXI_lag_ret1_1",
+    "importance": 0.004868725282031527
+  },
+  {
+    "feature": "CL_F_SMA_10",
+    "importance": 0.004753110435668155
+  },
+  {
+    "feature": "CL_F_SMA_5",
+    "importance": 0.003012295288290618
+  },
+  {
+    "feature": "DX_Y_NYB_EMA_5",
+    "importance": 0.0017305786685214465
+  },
+  {
+    "feature": "HG_F_price_sma_ratio",
+    "importance": 0.0009708639989206329
+  },
+  {
+    "feature": "HG_F_lag_ret1_3",
+    "importance": 0.0007720634311152481
+  }
+]

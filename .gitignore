@@ -6,8 +6,9 @@
 .env
 *.env.local
 
-# Data directory (bind mount)
-/data/
+# Data directory (bind mount) - except models
+/data/*
+!/data/models/
 
 # Python
 __pycache__/
