@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "meta-llama/llama-3.2-3b-instruct:free"
+    openrouter_model: str = "xiaomi/mimo-v2-flash:free"
     
     @property
     def symbols_list(self) -> list[str]:
