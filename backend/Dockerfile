@@ -13,4 +13,7 @@ RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
 COPY ./app /code/app
 
+# Copy pre-trained model files (from Kaggle)
+COPY ./data/models /data/models
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
