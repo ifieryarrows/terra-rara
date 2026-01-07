@@ -52,22 +52,102 @@ except ImportError:
 print("✅ Temel kütüphaneler yüklendi")
 
 # =============================================================================
-# 🔑 API KEY - KAGGLE SECRETS
+# 🔑 API KEYS - KAGGLE SECRETS
 # =============================================================================
 # Kaggle Secrets'a ekle:
 #   Label: NEWS_API_KEY
 #   Value: (newsapi.org'dan aldığın key)
+#
+#   Label: SUPABASE_URL
+#   Value: postgresql://postgres.xxx:SIFRE@aws-1-eu-central-2.pooler.supabase.com:6543/postgres
 # =============================================================================
 
 from kaggle_secrets import UserSecretsClient
 
 secrets = UserSecretsClient()
 NEWS_API_KEY = secrets.get_secret("NEWS_API_KEY")
+SUPABASE_URL = secrets.get_secret("SUPABASE_URL")
 
 if NEWS_API_KEY:
     print("✅ NEWS_API_KEY alındı!")
 else:
     print("⚠️ NEWS_API_KEY bulunamadı, sadece RSS kullanılacak")
+
+if SUPABASE_URL:
+    print("✅ SUPABASE_URL alındı!")
+else:
+    print("⚠️ SUPABASE_URL bulunamadı, yfinance/RSS kullanılacak")
+
+# =============================================================================
+# 🔗 SUPABASE BAĞLANTISI
+# =============================================================================
+
+def load_data_from_supabase():
+    """
+    Veriyi Supabase'den çeker.
+    Geçmişte biriktirilen verileri kullanır.
+    
+    Returns:
+        Tuple[dict, pd.DataFrame]: (price_data dict, daily_sentiment df) veya (None, None)
+    """
+    if not SUPABASE_URL:
+        print("⚠️ Supabase URL girilmemiş, API moduna geçiliyor...")
+        return None, None
+
+    print("\n🔗 Supabase'e bağlanılıyor...")
+    
+    try:
+        from sqlalchemy import create_engine
+        engine = create_engine(SUPABASE_URL)
+        
+        # 1. Fiyatları Çek
+        print("  📊 Fiyatlar okunuyor (price_bars)...")
+        prices_df = pd.read_sql("SELECT * FROM price_bars ORDER BY date", engine)
+        
+        if prices_df.empty:
+            print("  ⚠️ price_bars tablosu boş!")
+            return None, None
+        
+        prices_df['date'] = pd.to_datetime(prices_df['date'])
+        
+        # Pivot: Her sembolü ayrı DataFrame yap (yfinance formatında)
+        prices_formatted = {}
+        for symbol in prices_df['symbol'].unique():
+            sub_df = prices_df[prices_df['symbol'] == symbol].copy()
+            sub_df = sub_df.set_index('date')
+            sub_df.index = sub_df.index.tz_localize(None)
+            # Sütun isimlerini yfinance formatına uydur
+            sub_df = sub_df.rename(columns={
+                'open': 'Open', 'high': 'High', 'low': 'Low', 
+                'close': 'Close', 'volume': 'Volume'
+            })
+            # Sadece gerekli sütunları al
+            cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            existing_cols = [c for c in cols if c in sub_df.columns]
+            prices_formatted[symbol] = sub_df[existing_cols]
+            print(f"    {symbol}: {len(sub_df)} bar")
+
+        # 2. Günlük Sentimentleri Çek
+        print("  🧠 Sentimentler okunuyor (daily_sentiments)...")
+        sentiment_df = pd.read_sql("SELECT * FROM daily_sentiments ORDER BY date", engine)
+        
+        if sentiment_df.empty:
+            print("  ⚠️ daily_sentiments tablosu boş!")
+            sentiment_df = None
+        else:
+            sentiment_df['date'] = pd.to_datetime(sentiment_df['date'])
+            sentiment_df = sentiment_df.set_index('date')
+            sentiment_df.index = sentiment_df.index.tz_localize(None)
+            print(f"    {len(sentiment_df)} gün sentiment verisi")
+        
+        print(f"\n✅ Supabase'den veri çekildi!")
+        return prices_formatted, sentiment_df
+
+    except Exception as e:
+        print(f"❌ Supabase hatası: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 # =============================================================================
 
@@ -234,7 +314,7 @@ def fetch_all_news() -> pd.DataFrame:
 # =============================================================================
 
 def fetch_prices(symbols: list, lookback_days: int = 365) -> dict:
-    """Fetch OHLCV data for multiple symbols."""
+    """Fetch OHLCV data for multiple symbols from yfinance."""
     end_date = datetime.now()
     start_date = end_date - timedelta(days=lookback_days)
     
@@ -259,9 +339,36 @@ def fetch_prices(symbols: list, lookback_days: int = 365) -> dict:
     
     return data
 
-print("\n🔄 Fetching price data...")
-price_data = fetch_prices(SYMBOLS, LOOKBACK_DAYS)
-print(f"\n✅ Loaded {len(price_data)} symbols")
+# =============================================================================
+# VERİ KAYNAĞI SEÇİMİ: SUPABASE VEYA API
+# =============================================================================
+
+print("\n" + "="*60)
+print("� VERİ KAYNAĞI KONTROL EDİLİYOR...")
+print("="*60)
+
+# Önce Supabase'den dene
+supabase_prices, supabase_sentiment = load_data_from_supabase()
+
+if supabase_prices and len(supabase_prices) > 0:
+    print("\n✅ SUPABASE'DEN VERİ ALINDI!")
+    price_data = supabase_prices
+    FROM_SUPABASE = True
+    
+    # Supabase'den gelen sentiment'i sakla
+    if supabase_sentiment is not None and len(supabase_sentiment) > 0:
+        daily_sentiment_from_db = supabase_sentiment
+        print(f"   ✅ {len(daily_sentiment_from_db)} gün sentiment verisi alındı")
+    else:
+        daily_sentiment_from_db = None
+        print("   ⚠️ Sentiment verisi bulunamadı, yeniden hesaplanacak")
+else:
+    print("\n⚠️ Supabase'den veri alınamadı, yfinance kullanılıyor...")
+    price_data = fetch_prices(SYMBOLS, LOOKBACK_DAYS)
+    daily_sentiment_from_db = None
+    FROM_SUPABASE = False
+
+print(f"\n📊 Loaded {len(price_data)} symbols")
 
 for symbol, df in price_data.items():
     print(f"   {symbol}: {df.index.min().date()} to {df.index.max().date()} ({len(df)} bars)")
@@ -376,7 +483,22 @@ def generate_simulated_sentiment(price_df: pd.DataFrame, noise_level: float = 0.
 # SENTIMENT HESAPLAMA
 print("\n🧠 SENTIMENT ANALİZİ...")
 
-if news_df is not None and len(news_df) > 0:
+# Önce Supabase'den gelen sentiment'i kontrol et
+if daily_sentiment_from_db is not None and len(daily_sentiment_from_db) > 0:
+    # SUPABASE'DEN SENTIMENT VAR!
+    print(f"  ✅ SUPABASE'DEN SENTIMENT: {len(daily_sentiment_from_db)} gün")
+    daily_sentiment = daily_sentiment_from_db
+    
+    # news_count sütununu kontrol et
+    if 'news_count' not in daily_sentiment.columns:
+        daily_sentiment['news_count'] = 10  # Default değer
+    
+    print(f"   Ortalama skor: {daily_sentiment['sentiment_index'].mean():.4f}")
+    print(f"   Aralık: [{daily_sentiment['sentiment_index'].min():.3f}, {daily_sentiment['sentiment_index'].max():.3f}]")
+    
+    USE_REAL_SENTIMENT = True
+    
+elif news_df is not None and len(news_df) > 0:
     # GERÇEK HABERLER VAR - FinBERT kullan!
     print(f"  📰 {len(news_df)} gerçek haber bulundu, FinBERT ile skorlanıyor...")
     
@@ -397,7 +519,7 @@ if news_df is not None and len(news_df) > 0:
     
     USE_REAL_SENTIMENT = True
 else:
-    # Haber yok - simüle veri kullan
+    # Hiç veri yok - simüle veri kullan
     print("  ⚠️ Gerçek haber bulunamadı, simüle sentiment kullanılıyor...")
     target_prices = price_data[TARGET_SYMBOL]
     daily_sentiment = generate_simulated_sentiment(target_prices)
