@@ -11,6 +11,7 @@ psycopg2-binary>=2.9.9
 # Data fetching
 yfinance>=0.2.33
 requests>=2.31.0
+httpx>=0.25.0
 feedparser>=6.0.10
 
 # NLP & ML
