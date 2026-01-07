@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "backend/**"
+      - "data/models/**"
       - ".github/workflows/hf-sync.yml"
   workflow_dispatch:
 
@@ -31,6 +32,18 @@ jobs:
       - name: Install huggingface_hub
         run: pip install huggingface_hub
 
+      - name: Prepare files for upload
+        run: |
+          # Copy model files to backend data directory
+          mkdir -p backend/data/models
+          if [ -d "data/models" ]; then
+            cp -r data/models/* backend/data/models/ 2>/dev/null || true
+            echo "✅ Model files copied"
+            ls -la backend/data/models/
+          else
+            echo "⚠️ No model files found in data/models/"
+          fi
+
       - name: Upload backend to Space
         run: |
           cd backend
@@ -40,7 +53,7 @@ jobs:
 
           api = HfApi(token=os.environ['HF_TOKEN'])
 
-          # Upload the entire backend folder
+          # Upload the entire backend folder (including data/models)
           api.upload_folder(
               folder_path='.',
               repo_id='ifieryarrows/copper-mind',
