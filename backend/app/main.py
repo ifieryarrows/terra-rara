@@ -379,9 +379,8 @@ async def trigger_pipeline(
             try:
                 if fetch_data:
                     logger.info("Fetching data...")
-                    from app.data_manager import run_fetch_pipeline
-                    with SessionLocal() as session:
-                        run_fetch_pipeline(session)
+                    from app.data_manager import fetch_all
+                    fetch_all(news=True, prices=True)
                     logger.info("Data fetch complete")
                 
                 logger.info("Running AI pipeline...")
