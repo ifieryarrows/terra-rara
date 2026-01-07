@@ -23,9 +23,11 @@ interface TooltipProps {
   active?: boolean;
   payload?: Array<{ value: number; dataKey: string }>;
   label?: string;
+  analysis?: AnalysisReport | null;
+  isLastPoint?: boolean;
 }
 
-function CustomTooltip({ active, payload, label }: TooltipProps) {
+function CustomTooltip({ active, payload, label, analysis, isLastPoint }: TooltipProps) {
   if (!active || !payload || !payload.length) return null;
 
   const priceVal = payload.find((p) => p.dataKey === 'price')?.value;
@@ -45,6 +47,21 @@ function CustomTooltip({ active, payload, label }: TooltipProps) {
           <span className="tooltip-label">Sentiment</span>
           <span className="tooltip-value sentiment">{sentimentVal.toFixed(3)}</span>
         </div>
+      )}
+      {isLastPoint && analysis && (
+        <>
+          <div className="tooltip-divider" />
+          <div className="tooltip-row">
+            <span className="tooltip-label">🎯 Tomorrow</span>
+            <span className="tooltip-value prediction">${analysis.predicted_price.toFixed(4)}</span>
+          </div>
+          <div className="tooltip-row">
+            <span className="tooltip-label">Change</span>
+            <span className={`tooltip-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
+              {(analysis.predicted_return * 100).toFixed(2)}%
+            </span>
+          </div>
+        </>
       )}
     </div>
   );
@@ -275,18 +292,26 @@ function App() {
           {/* Predicted Price Card */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Predicted Price</span>
+              <span className="card-title">Tomorrow's Prediction</span>
               <div className="card-icon" style={{ background: 'var(--success-bg)', color: 'var(--success)' }}>
-                📈
+                🎯
               </div>
             </div>
             <div className="card-value">
               ${analysis ? formatPrice(analysis.predicted_price) : '—'}
             </div>
             <div className="card-subtitle">
-              {analysis
-                ? `Range: $${formatPrice(analysis.confidence_lower)} - $${formatPrice(analysis.confidence_upper)}`
-                : 'Loading...'}
+              {analysis && (
+                <>
+                  <span className={isPredictionPositive ? 'positive' : 'negative'}>
+                    {formatPercent(analysis.predicted_return)} from current
+                  </span>
+                  <br />
+                  <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                    Range: ${formatPrice(analysis.confidence_lower)} - ${formatPrice(analysis.confidence_upper)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -448,6 +473,28 @@ function App() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Prediction Summary under chart */}
+          {analysis && (
+            <div className="prediction-summary">
+              <div className="prediction-item">
+                <span className="prediction-label">🎯 Tomorrow's Prediction</span>
+                <span className="prediction-value">${formatPrice(analysis.predicted_price)}</span>
+              </div>
+              <div className="prediction-item">
+                <span className="prediction-label">Expected Change</span>
+                <span className={`prediction-value ${isPredictionPositive ? 'positive' : 'negative'}`}>
+                  {formatPercent(analysis.predicted_return)}
+                </span>
+              </div>
+              <div className="prediction-item">
+                <span className="prediction-label">Confidence Range</span>
+                <span className="prediction-value">
+                  ${formatPrice(analysis.confidence_lower)} - ${formatPrice(analysis.confidence_upper)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Influencers Section */}
