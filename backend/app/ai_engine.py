@@ -234,13 +234,14 @@ def aggregate_daily_sentiment(
     for date, group in df.groupby("date"):
         weights = calc_weights(group)
         
+        # Convert numpy types to native Python types for database compatibility
         daily_data.append({
             "date": date,
-            "sentiment_index": (group["score"] * weights).sum(),
-            "news_count": len(group),
-            "avg_positive": group["prob_positive"].mean(),
-            "avg_neutral": group["prob_neutral"].mean(),
-            "avg_negative": group["prob_negative"].mean(),
+            "sentiment_index": float((group["score"] * weights).sum()),
+            "news_count": int(len(group)),
+            "avg_positive": float(group["prob_positive"].mean()),
+            "avg_neutral": float(group["prob_neutral"].mean()),
+            "avg_negative": float(group["prob_negative"].mean()),
         })
     
     # Upsert daily sentiments
