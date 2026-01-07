@@ -49,30 +49,30 @@ async def generate_commentary(
         for inf in top_influencers[:5]
     ])
     
-    change_direction = "artış" if predicted_return > 0 else "düşüş"
+    change_direction = "increase" if predicted_return > 0 else "decrease"
     change_emoji = "📈" if predicted_return > 0 else "📉"
     
-    prompt = f"""Sen bir finans analisti asistanısın. Aşağıdaki bakır (copper) piyasası verilerini analiz et ve yatırımcılar için kısa, anlaşılır bir Türkçe yorum yaz.
+    prompt = f"""You are a financial analyst assistant. Analyze the following copper market data and write a short, clear commentary for investors.
 
-## Güncel Veriler:
-- **Güncel Fiyat:** ${current_price:.4f}
-- **Yarınki Tahmin:** ${predicted_price:.4f} ({change_emoji} %{abs(predicted_return*100):.2f} {change_direction})
-- **Piyasa Duyarlılığı:** {sentiment_label} (Skor: {sentiment_index:.3f})
-- **Analiz Edilen Haber Sayısı:** {news_count}
+## Current Data:
+- **Current Price:** ${current_price:.4f}
+- **Tomorrow's Prediction:** ${predicted_price:.4f} ({change_emoji} {abs(predicted_return*100):.2f}% {change_direction})
+- **Market Sentiment:** {sentiment_label} (Score: {sentiment_index:.3f})
+- **News Analyzed:** {news_count} articles
 
-## En Etkili Faktörler (XGBoost Model):
+## Top Influencing Factors (XGBoost Model):
 {influencers_text}
 
-## Talimatlar:
-1. 3-4 paragraf yaz (toplam 150-200 kelime)
-2. Teknik terimler kullanma, sade ve anlaşılır ol
-3. İlk paragrafta genel durumu özetle
-4. İkinci paragrafta önemli faktörleri açıkla
-5. Son paragrafta kısa vadeli görünümü belirt
-6. 🎯 emoji ile önemli noktaları vurgula
-7. Bu finansal tavsiye DEĞİLDİR uyarısını ekle
+## Instructions:
+1. Write 3-4 paragraphs (150-200 words total)
+2. Use simple, clear language; avoid overly technical jargon
+3. In the first paragraph, summarize the general outlook
+4. In the second paragraph, explain the key driving factors
+5. In the final paragraph, state the short-term forecast
+6. Use the 🎯 emoji to highlight key points
+7. Add a disclaimer: "This is NOT financial advice."
 
-Yorumunu yaz:"""
+Write your commentary:"""
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -89,7 +89,7 @@ Yorumunu yaz:"""
                     "messages": [
                         {
                             "role": "system",
-                            "content": "Sen uzman bir emtia piyasası analistsin. Bakır fiyatları hakkında kısa ve öz Türkçe yorumlar yapıyorsun."
+                            "content": "You are an expert commodity market analyst. You provide concise and insightful analysis of copper prices."
                         },
                         {
                             "role": "user", 
