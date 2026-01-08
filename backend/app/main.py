@@ -319,84 +319,36 @@ async def health_check():
 @app.get(
     "/api/commentary",
     summary="AI-generated market commentary",
-    description="Returns an AI-generated analysis of the current copper market situation using FinBERT + XGBoost results."
+    description="Returns the AI-generated analysis stored after pipeline completion."
 )
 async def get_commentary(
-    symbol: str = Query(default="HG=F", description="Symbol to analyze")
+    symbol: str = Query(default="HG=F", description="Symbol to get commentary for")
 ):
     """
-    Generate AI commentary for the current market situation.
+    Get AI commentary for the specified symbol.
     
-    Uses OpenRouter API with a free LLM to create human-readable
-    analysis from FinBERT sentiment and XGBoost predictions.
+    Commentary is generated once after each pipeline run and stored in the database.
+    This endpoint simply returns the stored commentary without making new API calls.
     """
-    from app.commentary import get_cached_commentary
+    from app.commentary import get_commentary_from_db
     
-    settings = get_settings()
-    
-    # Check if OpenRouter is configured
-    if not settings.openrouter_api_key:
-        return {
-            "symbol": symbol,
-            "commentary": None,
-            "error": "AI commentary not configured. Set OPENROUTER_API_KEY environment variable.",
-            "generated_at": None,
-        }
-    
-    # Get the latest analysis
-    try:
-        analysis = await get_analysis(symbol)
-    except HTTPException:
-        return {
-            "symbol": symbol,
-            "commentary": None,
-            "error": "No analysis data available to comment on.",
-            "generated_at": None,
-        }
-    
-    # Get news count
     with SessionLocal() as session:
-        week_ago = datetime.now() - timedelta(days=7)
-        news_count = session.query(func.count(NewsArticle.id)).filter(
-            NewsArticle.published_at >= week_ago
-        ).scalar() or 0
+        result = get_commentary_from_db(session, symbol)
     
-    # Generate commentary
-    # analysis could be dict or Pydantic model depending on source
-    if hasattr(analysis, 'current_price'):
-        # Pydantic model
-        current_price = analysis.current_price
-        predicted_price = analysis.predicted_price
-        predicted_return = analysis.predicted_return
-        sentiment_index = analysis.sentiment_index
-        sentiment_label = analysis.sentiment_label
-        top_influencers = [inf.dict() for inf in analysis.top_influencers]
+    if result:
+        return {
+            "symbol": symbol,
+            "commentary": result["commentary"],
+            "error": None,
+            "generated_at": result["generated_at"],
+        }
     else:
-        # Dict (from snapshot)
-        current_price = analysis.get('current_price', 0)
-        predicted_price = analysis.get('predicted_price', 0)
-        predicted_return = analysis.get('predicted_return', 0)
-        sentiment_index = analysis.get('sentiment_index', 0)
-        sentiment_label = analysis.get('sentiment_label', 'Neutral')
-        top_influencers = analysis.get('top_influencers', [])
-    
-    commentary = await get_cached_commentary(
-        current_price=current_price,
-        predicted_price=predicted_price,
-        predicted_return=predicted_return,
-        sentiment_index=sentiment_index,
-        sentiment_label=sentiment_label,
-        top_influencers=top_influencers,
-        news_count=news_count,
-        ttl_minutes=60,  # Cache for 1 hour
-    )
-    
-    return {
-        "symbol": symbol,
-        "commentary": commentary,
-        "error": None if commentary else "Failed to generate commentary",
-        "generated_at": datetime.now(timezone.utc).isoformat() if commentary else None,
-    }
+        return {
+            "symbol": symbol,
+            "commentary": None,
+            "error": "No commentary available. Commentary is generated after pipeline runs.",
+            "generated_at": None,
+        }
 
 
 # =============================================================================

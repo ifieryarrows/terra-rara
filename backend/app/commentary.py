@@ -124,15 +124,79 @@ End with this exact line on its own: This is NOT financial advice."""
         return None
 
 
-# Cache for commentary (simple in-memory)
-_commentary_cache: dict = {
-    "commentary": None,
-    "generated_at": None,
-    "expires_at": None,
-}
+def save_commentary_to_db(
+    session,
+    symbol: str,
+    commentary: str,
+    current_price: float,
+    predicted_price: float,
+    predicted_return: float,
+    sentiment_label: str,
+) -> None:
+    """
+    Save generated commentary to database (upsert).
+    Called after pipeline completion.
+    """
+    from .models import AICommentary
+    
+    settings = get_settings()
+    
+    # Try to find existing record
+    existing = session.query(AICommentary).filter(AICommentary.symbol == symbol).first()
+    
+    if existing:
+        # Update existing
+        existing.commentary = commentary
+        existing.current_price = current_price
+        existing.predicted_price = predicted_price
+        existing.predicted_return = predicted_return
+        existing.sentiment_label = sentiment_label
+        existing.generated_at = datetime.utcnow()
+        existing.model_name = settings.openrouter_model
+        logger.info(f"Updated AI commentary for {symbol}")
+    else:
+        # Create new
+        new_commentary = AICommentary(
+            symbol=symbol,
+            commentary=commentary,
+            current_price=current_price,
+            predicted_price=predicted_price,
+            predicted_return=predicted_return,
+            sentiment_label=sentiment_label,
+            model_name=settings.openrouter_model,
+        )
+        session.add(new_commentary)
+        logger.info(f"Created new AI commentary for {symbol}")
+    
+    session.commit()
 
 
-async def get_cached_commentary(
+def get_commentary_from_db(session, symbol: str) -> Optional[dict]:
+    """
+    Get stored commentary from database.
+    Returns dict with commentary and metadata, or None if not found.
+    """
+    from .models import AICommentary
+    
+    record = session.query(AICommentary).filter(AICommentary.symbol == symbol).first()
+    
+    if record:
+        return {
+            "commentary": record.commentary,
+            "generated_at": record.generated_at.isoformat() if record.generated_at else None,
+            "current_price": record.current_price,
+            "predicted_price": record.predicted_price,
+            "predicted_return": record.predicted_return,
+            "sentiment_label": record.sentiment_label,
+            "model_name": record.model_name,
+        }
+    
+    return None
+
+
+async def generate_and_save_commentary(
+    session,
+    symbol: str,
     current_price: float,
     predicted_price: float,
     predicted_return: float,
@@ -140,25 +204,11 @@ async def get_cached_commentary(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int = 0,
-    ttl_minutes: int = 60,
 ) -> Optional[str]:
     """
-    Get cached commentary or generate new one if expired.
+    Generate commentary and save to database.
+    Called after pipeline completion.
     """
-    global _commentary_cache
-    
-    now = datetime.now()
-    
-    # Check if cache is valid
-    if (
-        _commentary_cache["commentary"] 
-        and _commentary_cache["expires_at"] 
-        and now < _commentary_cache["expires_at"]
-    ):
-        logger.debug("Returning cached AI commentary")
-        return _commentary_cache["commentary"]
-    
-    # Generate new commentary
     commentary = await generate_commentary(
         current_price=current_price,
         predicted_price=predicted_price,
@@ -170,11 +220,15 @@ async def get_cached_commentary(
     )
     
     if commentary:
-        from datetime import timedelta
-        _commentary_cache = {
-            "commentary": commentary,
-            "generated_at": now,
-            "expires_at": now + timedelta(minutes=ttl_minutes),
-        }
+        save_commentary_to_db(
+            session=session,
+            symbol=symbol,
+            commentary=commentary,
+            current_price=current_price,
+            predicted_price=predicted_price,
+            predicted_return=predicted_return,
+            sentiment_label=sentiment_label,
+        )
     
     return commentary
+

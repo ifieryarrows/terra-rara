@@ -67,12 +67,53 @@ def run_daily_pipeline():
                    f"{ai_results.get('aggregated_days', 0)} days aggregated")
         
         # Step 3: Generate fresh snapshot
-        logger.info("Step 3/3: Generating analysis snapshot...")
+        logger.info("Step 3/4: Generating analysis snapshot...")
         with SessionLocal() as session:
             report = generate_analysis_report(session, settings.target_symbol)
             if report:
                 save_analysis_snapshot(session, report, settings.target_symbol)
                 logger.info(f"Snapshot generated: predicted return {report.get('predicted_return', 'N/A')}")
+                
+                # Step 4: Generate AI Commentary
+                logger.info("Step 4/4: Generating AI commentary...")
+                try:
+                    import asyncio
+                    from app.commentary import generate_and_save_commentary
+                    from sqlalchemy import func
+                    from app.models import NewsArticle
+                    from datetime import timedelta
+                    
+                    # Get news count for last 7 days
+                    week_ago = datetime.now() - timedelta(days=7)
+                    news_count = session.query(func.count(NewsArticle.id)).filter(
+                        NewsArticle.published_at >= week_ago
+                    ).scalar() or 0
+                    
+                    # Run async function in sync context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        commentary = loop.run_until_complete(
+                            generate_and_save_commentary(
+                                session=session,
+                                symbol=settings.target_symbol,
+                                current_price=report.get('current_price', 0),
+                                predicted_price=report.get('predicted_price', 0),
+                                predicted_return=report.get('predicted_return', 0),
+                                sentiment_index=report.get('sentiment_index', 0),
+                                sentiment_label=report.get('sentiment_label', 'Neutral'),
+                                top_influencers=report.get('top_influencers', []),
+                                news_count=news_count,
+                            )
+                        )
+                        if commentary:
+                            logger.info("AI commentary generated and saved")
+                        else:
+                            logger.warning("AI commentary generation skipped (API key not configured or failed)")
+                    finally:
+                        loop.close()
+                except Exception as ce:
+                    logger.error(f"AI commentary generation failed: {ce}")
             else:
                 logger.warning("Could not generate analysis snapshot")
         

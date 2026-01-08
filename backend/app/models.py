@@ -197,3 +197,32 @@ class AnalysisSnapshot(Base):
     def __repr__(self):
         return f"<AnalysisSnapshot(symbol={self.symbol}, as_of={self.as_of_date})>"
 
+
+class AICommentary(Base):
+    """
+    Cached AI commentary generated after pipeline runs.
+    One row per symbol, updated after each pipeline execution.
+    """
+    __tablename__ = "ai_commentaries"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    symbol = Column(String(20), nullable=False, unique=True, index=True)
+    
+    # The generated commentary text
+    commentary = Column(Text, nullable=False)
+    
+    # Input data used to generate (for debugging)
+    current_price = Column(Float, nullable=True)
+    predicted_price = Column(Float, nullable=True)
+    predicted_return = Column(Float, nullable=True)
+    sentiment_label = Column(String(20), nullable=True)
+    
+    # When generated
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    
+    # Model used
+    model_name = Column(String(100), nullable=True)
+    
+    def __repr__(self):
+        return f"<AICommentary(symbol={self.symbol}, generated_at={self.generated_at})>"
