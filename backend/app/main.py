@@ -362,13 +362,31 @@ async def get_commentary(
         ).scalar() or 0
     
     # Generate commentary
+    # analysis could be dict or Pydantic model depending on source
+    if hasattr(analysis, 'current_price'):
+        # Pydantic model
+        current_price = analysis.current_price
+        predicted_price = analysis.predicted_price
+        predicted_return = analysis.predicted_return
+        sentiment_index = analysis.sentiment_index
+        sentiment_label = analysis.sentiment_label
+        top_influencers = [inf.dict() for inf in analysis.top_influencers]
+    else:
+        # Dict (from snapshot)
+        current_price = analysis.get('current_price', 0)
+        predicted_price = analysis.get('predicted_price', 0)
+        predicted_return = analysis.get('predicted_return', 0)
+        sentiment_index = analysis.get('sentiment_index', 0)
+        sentiment_label = analysis.get('sentiment_label', 'Neutral')
+        top_influencers = analysis.get('top_influencers', [])
+    
     commentary = await get_cached_commentary(
-        current_price=analysis.current_price,
-        predicted_price=analysis.predicted_price,
-        predicted_return=analysis.predicted_return,
-        sentiment_index=analysis.sentiment_index,
-        sentiment_label=analysis.sentiment_label,
-        top_influencers=[inf.dict() for inf in analysis.top_influencers],
+        current_price=current_price,
+        predicted_price=predicted_price,
+        predicted_return=predicted_return,
+        sentiment_index=sentiment_index,
+        sentiment_label=sentiment_label,
+        top_influencers=top_influencers,
         news_count=news_count,
         ttl_minutes=60,  # Cache for 1 hour
     )
