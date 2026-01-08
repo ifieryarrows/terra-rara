@@ -409,6 +409,8 @@ async def trigger_pipeline(
     def run_pipeline():
         try:
             from app.lock import PipelineLock
+            from app.inference import generate_analysis_report, save_analysis_snapshot
+            from app.db import SessionLocal
             
             lock = PipelineLock(timeout=0)
             if not lock.acquire():
@@ -416,13 +418,15 @@ async def trigger_pipeline(
                 return
             
             try:
+                settings = get_settings()
+                
                 if fetch_data:
-                    logger.info("Fetching data...")
+                    logger.info("Step 1: Fetching data...")
                     from app.data_manager import fetch_all
                     fetch_all(news=True, prices=True)
                     logger.info("Data fetch complete")
                 
-                logger.info("Running AI pipeline...")
+                logger.info("Step 2: Running AI pipeline...")
                 from app.ai_engine import run_full_pipeline
                 run_full_pipeline(
                     target_symbol="HG=F",
@@ -431,6 +435,57 @@ async def trigger_pipeline(
                     train_model=train_model
                 )
                 logger.info("AI pipeline complete")
+                
+                # Step 3: Generate snapshot
+                logger.info("Step 3: Generating analysis snapshot...")
+                with SessionLocal() as session:
+                    report = generate_analysis_report(session, settings.target_symbol)
+                    if report:
+                        save_analysis_snapshot(session, report, settings.target_symbol)
+                        logger.info(f"Snapshot generated")
+                        
+                        # Step 4: Generate AI Commentary
+                        logger.info("Step 4: Generating AI commentary...")
+                        try:
+                            import asyncio
+                            from app.commentary import generate_and_save_commentary
+                            from sqlalchemy import func
+                            from app.models import NewsArticle
+                            from datetime import timedelta
+                            
+                            # Get news count for last 7 days
+                            week_ago = datetime.now() - timedelta(days=7)
+                            news_count = session.query(func.count(NewsArticle.id)).filter(
+                                NewsArticle.published_at >= week_ago
+                            ).scalar() or 0
+                            
+                            # Run async function in sync context
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                commentary = loop.run_until_complete(
+                                    generate_and_save_commentary(
+                                        session=session,
+                                        symbol=settings.target_symbol,
+                                        current_price=report.get('current_price', 0),
+                                        predicted_price=report.get('predicted_price', 0),
+                                        predicted_return=report.get('predicted_return', 0),
+                                        sentiment_index=report.get('sentiment_index', 0),
+                                        sentiment_label=report.get('sentiment_label', 'Neutral'),
+                                        top_influencers=report.get('top_influencers', []),
+                                        news_count=news_count,
+                                    )
+                                )
+                                if commentary:
+                                    logger.info("AI commentary generated and saved")
+                                else:
+                                    logger.warning("AI commentary skipped (API key not configured or failed)")
+                            finally:
+                                loop.close()
+                        except Exception as ce:
+                            logger.error(f"AI commentary generation failed: {ce}")
+                    else:
+                        logger.warning("Could not generate analysis snapshot")
                 
             finally:
                 lock.release()
