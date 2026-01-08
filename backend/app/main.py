@@ -358,7 +358,7 @@ async def get_commentary(
     with SessionLocal() as session:
         week_ago = datetime.now() - timedelta(days=7)
         news_count = session.query(func.count(NewsArticle.id)).filter(
-            NewsArticle.published >= week_ago
+            NewsArticle.published_at >= week_ago
         ).scalar() or 0
     
     # Generate commentary
