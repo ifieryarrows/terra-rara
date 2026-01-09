@@ -321,23 +321,39 @@ function App() {
               ${analysis ? formatPrice(analysis.predicted_price) : '—'}
             </div>
             <div className="card-subtitle">
-              {analysis && (
-                <>
-                  <span className={isPredictionPositive ? 'positive' : 'negative'}>
-                    {formatPercent(analysis.predicted_return)} expected
-                  </span>
-                  <br />
-                  <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-                    <span className="negative" style={{ opacity: 0.9 }}>
-                      🐻 {formatPercent((analysis.confidence_lower - analysis.current_price) / analysis.current_price)}
+              {analysis && (() => {
+                // Base predictions from model
+                const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
+                const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
+
+                // Sentiment index: -1 (very bearish) to +1 (very bullish)
+                // Normalize to 0-1 range: (index + 1) / 2
+                const sentimentNorm = (analysis.sentiment_index + 1) / 2; // 0 to 1
+
+                // Weighted predictions:
+                // - If bullish (sentimentNorm > 0.5), emphasize upside
+                // - If bearish (sentimentNorm < 0.5), emphasize downside
+                const adjustedBullish = baseBullish * sentimentNorm;
+                const adjustedBearish = baseBearish * (1 - sentimentNorm);
+
+                return (
+                  <>
+                    <span className={isPredictionPositive ? 'positive' : 'negative'}>
+                      {formatPercent(analysis.predicted_return)} expected
                     </span>
-                    <span style={{ opacity: 0.6 }}>to</span>
-                    <span className="positive" style={{ opacity: 0.9 }}>
-                      🐂 {formatPercent((analysis.confidence_upper - analysis.current_price) / analysis.current_price)}
-                    </span>
-                  </div>
-                </>
-              )}
+                    <br />
+                    <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                      <span className="negative" style={{ opacity: 0.9 }}>
+                        🐻 {formatPercent(adjustedBearish)}
+                      </span>
+                      <span style={{ opacity: 0.6 }}>to</span>
+                      <span className="positive" style={{ opacity: 0.9 }}>
+                        🐂 {formatPercent(adjustedBullish)}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
 
