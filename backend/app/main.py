@@ -314,49 +314,52 @@ async def health_check():
 
 @app.get(
     "/api/market-prices",
-    summary="Get market prices for all symbols",
-    description="Returns current price and daily change for all tracked symbols."
+    summary="Get live market prices for all symbols",
+    description="Returns live price and daily change for all tracked symbols (15-min delayed)."
 )
 async def get_market_prices():
     """
-    Get current prices and daily changes for all tracked symbols.
+    Get live prices and daily changes for all tracked symbols.
     
+    Uses yfinance for real-time data (15-minute delayed).
     Used by the Market Intelligence Map component.
     """
+    import yfinance as yf
+    
     settings = get_settings()
     symbols = settings.symbols_list
     
     result = {}
     
     try:
-        with SessionLocal() as session:
-            for symbol in symbols:
-                # Get last 2 price bars for calculating daily change
-                price_bars = (
-                    session.query(PriceBar)
-                    .filter(PriceBar.symbol == symbol)
-                    .order_by(PriceBar.date.desc())
-                    .limit(2)
-                    .all()
-                )
+        # Fetch all tickers at once for efficiency
+        tickers = yf.Tickers(' '.join(symbols))
+        
+        for symbol in symbols:
+            try:
+                ticker = tickers.tickers.get(symbol)
+                if not ticker:
+                    result[symbol] = {"price": None, "change": None}
+                    continue
+                    
+                info = ticker.info
                 
-                if len(price_bars) >= 1:
-                    current_price = price_bars[0].close
-                    prev_price = price_bars[1].close if len(price_bars) >= 2 else current_price
-                    
-                    change_pct = ((current_price - prev_price) / prev_price) * 100 if prev_price else 0
-                    
+                # Get current price and change
+                current_price = info.get('regularMarketPrice') or info.get('currentPrice')
+                change_pct = info.get('regularMarketChangePercent')
+                
+                if current_price is not None:
                     result[symbol] = {
-                        "price": current_price,
-                        "change": round(change_pct, 2),
-                        "date": price_bars[0].date.isoformat()
+                        "price": round(current_price, 4),
+                        "change": round(change_pct, 2) if change_pct else 0,
                     }
                 else:
-                    result[symbol] = {
-                        "price": None,
-                        "change": None,
-                        "date": None
-                    }
+                    result[symbol] = {"price": None, "change": None}
+                    
+            except Exception as e:
+                logger.debug(f"Error fetching {symbol}: {e}")
+                result[symbol] = {"price": None, "change": None}
+                
     except Exception as e:
         logger.error(f"Error fetching market prices: {e}")
         return {"error": str(e), "symbols": {}}
