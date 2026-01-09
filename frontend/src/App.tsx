@@ -350,9 +350,24 @@ function App() {
             </div>
             <div className="card-subtitle">
               {analysis && (
-                <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
-                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)} expected
-                </span>
+                <>
+                  <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
+                    {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)} expected
+                  </span>
+                  <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.5rem' }}>
+                    {(() => {
+                      const dataDate = new Date(analysis.generated_at);
+                      const predDate = new Date(dataDate);
+                      // Add 1 day, skip weekends
+                      predDate.setDate(predDate.getDate() + 1);
+                      while (predDate.getDay() === 0 || predDate.getDay() === 6) {
+                        predDate.setDate(predDate.getDate() + 1);
+                      }
+                      const formatShort = (d: Date) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                      return `Data: ${formatShort(dataDate)} → Predicting: ${formatShort(predDate)}`;
+                    })()}
+                  </div>
+                </>
               )}
             </div>
           </div>
