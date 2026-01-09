@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # ETFs: COPX (global miners), COPJ (junior miners)
     # Titans: BHP, FCX, SCCO, RIO
     # Regional: TECK, IVN.TO
-    # Juniors: LUN.TO, FIL.TO
+    # Juniors: LUN.TO (FIL.TO removed - delisted)
     # China: 2899.HK (Zijin)
-    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,FIL.TO,IVN.TO,2899.HK"
+    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
     lookback_days: int = 365
     
     # Fuzzy deduplication
