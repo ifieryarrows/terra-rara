@@ -235,7 +235,43 @@ def ingest_news(session: Session) -> dict:
     Returns:
         Dict with stats: imported, duplicates, language_filtered, fuzzy_filtered
     """
+    import random
+    
     settings = get_settings()
+    
+    # Strategic queries based on S&P Global 2026 copper market report
+    # Each pipeline run focuses on different strategic topics for diversity
+    STRATEGIC_QUERIES = [
+        # Supply Crisis / Deficit Focus
+        "copper supply deficit 2026",
+        "copper shortage AI data center",
+        "copper inventory LME warehouse",
+        
+        # Key Players (Majors & Producers)
+        "Freeport-McMoRan copper outlook",
+        "BHP copper production news",
+        "Rio Tinto copper investment",
+        "Southern Copper SCCO forecast",
+        
+        # China & Emerging Markets
+        "Zijin Mining copper investment",
+        "China copper demand stimulus",
+        "copper demand EV battery",
+        
+        # M&A & Strategic Moves
+        "copper mining acquisition merger",
+        "Ivanhoe Mines copper grade",
+        "Lundin Mining copper deal",
+        
+        # Price & Macro Analysis
+        "copper price forecast Goldman Sachs",
+        "copper futures CME analysis",
+        "grade decline copper mining", 
+    ]
+    
+    # Select a random strategic query for this run (ensures diversity over time)
+    strategic_query = random.choice(STRATEGIC_QUERIES)
+    logger.info(f"🕵️ Strategic News Agent: Investigating '{strategic_query}'")
     
     stats = {
         "imported": 0,
@@ -243,6 +279,7 @@ def ingest_news(session: Session) -> dict:
         "language_filtered": 0,
         "fuzzy_filtered": 0,
         "source": "unknown",
+        "query_used": strategic_query,
     }
     
     # Collect articles from sources
@@ -252,7 +289,7 @@ def ingest_news(session: Session) -> dict:
     if settings.newsapi_key:
         articles = fetch_newsapi_articles(
             api_key=settings.newsapi_key,
-            query=settings.news_query,
+            query=strategic_query,
             language=settings.news_language,
             lookback_days=settings.lookback_days,
         )
@@ -260,10 +297,10 @@ def ingest_news(session: Session) -> dict:
             all_articles.extend(articles)
             stats["source"] = "newsapi"
     
-    # RSS fallback/supplement
+    # RSS fallback/supplement - also use strategic query
     if not all_articles or not settings.newsapi_key:
         rss_articles = fetch_google_news(
-            query=settings.news_query,
+            query=strategic_query,
             language=settings.news_language,
         )
         all_articles.extend(rss_articles)
