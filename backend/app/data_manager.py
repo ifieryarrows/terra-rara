@@ -280,6 +280,7 @@ def ingest_news(session: Session) -> dict:
     
     # Collect articles from ALL strategic queries
     all_articles = []
+    seen_urls = set()  # Track URLs to avoid duplicates across queries
     
     for i, strategic_query in enumerate(STRATEGIC_QUERIES, 1):
         logger.info(f"  [{i}/{len(STRATEGIC_QUERIES)}] Searching: '{strategic_query}'")
@@ -305,9 +306,17 @@ def ingest_news(session: Session) -> dict:
             )
             query_articles.extend(rss_articles)
         
-        if query_articles:
-            logger.info(f"    → Found {len(query_articles)} articles")
-            all_articles.extend(query_articles)
+        # Deduplicate within this batch (by URL)
+        new_articles = 0
+        for article in query_articles:
+            url = article.get('url', '')
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                all_articles.append(article)
+                new_articles += 1
+        
+        if new_articles > 0:
+            logger.info(f"    → Found {new_articles} new articles ({len(query_articles) - new_articles} duplicates skipped)")
     
     stats["source"] = "newsapi+rss" if settings.newsapi_key else "rss"
     
@@ -315,7 +324,7 @@ def ingest_news(session: Session) -> dict:
         logger.warning("No articles fetched from any source")
         return stats
     
-    logger.info(f"Total articles fetched from all queries: {len(all_articles)}")
+    logger.info(f"Total unique articles fetched: {len(all_articles)}")
     
     # Language filter
     all_articles, lang_filtered = filter_by_language(
