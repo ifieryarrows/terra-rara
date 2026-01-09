@@ -339,17 +339,18 @@ def train_xgboost_model(
     # Store feature names
     feature_names = X.columns.tolist()
     
-    # XGBoost parameters
+    # XGBoost parameters - tuned for overfitting prevention
+    # With 250 samples / 198 features, we need strong regularization
     params = {
         "objective": "reg:squarederror",
         "eval_metric": "rmse",
-        "max_depth": 6,
-        "learning_rate": 0.1,
+        "max_depth": 4,              # Shallower trees = less memorization
+        "learning_rate": 0.05,       # Slower learning = better generalization
         "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "min_child_weight": 3,
-        "reg_alpha": 0.1,
-        "reg_lambda": 1.0,
+        "colsample_bytree": 0.6,     # Use fewer features per tree
+        "min_child_weight": 5,       # Require more samples per leaf
+        "reg_alpha": 0.5,            # L1 regularization (sparsity)
+        "reg_lambda": 2.0,           # L2 regularization (smoothness)
         "seed": 42,
     }
     
@@ -368,7 +369,7 @@ def train_xgboost_model(
         num_boost_round=500,
         evals=evals,
         early_stopping_rounds=early_stopping_rounds,
-        verbose_eval=50
+        verbose_eval=10  # More frequent logging
     )
     
     # Evaluate
