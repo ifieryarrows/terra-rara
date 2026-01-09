@@ -330,28 +330,19 @@ function App() {
                 // Normalize to 0-1 range: (index + 1) / 2
                 const sentimentNorm = (analysis.sentiment_index + 1) / 2; // 0 to 1
 
-                // Weighted predictions:
-                // - If bullish (sentimentNorm > 0.5), emphasize upside
-                // - If bearish (sentimentNorm < 0.5), emphasize downside
-                const adjustedBullish = baseBullish * sentimentNorm;
-                const adjustedBearish = baseBearish * (1 - sentimentNorm);
+                // Sentiment-adjusted expected return
+                // Bullish: weight towards upper, Bearish: weight towards lower
+                const adjustedExpected = sentimentNorm > 0.5
+                  ? baseBullish * sentimentNorm  // Bullish: use upper * sentiment
+                  : baseBearish * (1 - sentimentNorm);  // Bearish: use lower * (1-sentiment)
+
+                const isBullish = sentimentNorm > 0.5;
+                const icon = isBullish ? '🐂' : '🐻';
 
                 return (
-                  <>
-                    <span className={isPredictionPositive ? 'positive' : 'negative'}>
-                      {formatPercent(analysis.predicted_return)} expected
-                    </span>
-                    <br />
-                    <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-                      <span className="negative" style={{ opacity: 0.9 }}>
-                        🐻 {formatPercent(adjustedBearish)}
-                      </span>
-                      <span style={{ opacity: 0.6 }}>to</span>
-                      <span className="positive" style={{ opacity: 0.9 }}>
-                        🐂 {formatPercent(adjustedBullish)}
-                      </span>
-                    </div>
-                  </>
+                  <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
+                    {icon} {formatPercent(adjustedExpected)} expected
+                  </span>
                 );
               })()}
             </div>
