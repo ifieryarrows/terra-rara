@@ -37,12 +37,34 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_price(session: Session, symbol: str) -> Optional[float]:
-    """Get the most recent closing price for a symbol."""
+    """
+    Get the current price for a symbol.
+    
+    Tries yfinance live data first (15-min delayed), then falls back to DB.
+    """
+    import yfinance as yf
+    
+    # Try live yfinance data first
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        live_price = info.get('regularMarketPrice') or info.get('currentPrice')
+        if live_price is not None:
+            logger.info(f"Using live price for {symbol}: ${live_price:.4f}")
+            return float(live_price)
+    except Exception as e:
+        logger.debug(f"Could not get live price for {symbol}: {e}")
+    
+    # Fallback to database
     latest = session.query(PriceBar).filter(
         PriceBar.symbol == symbol
     ).order_by(PriceBar.date.desc()).first()
     
-    return latest.close if latest else None
+    if latest:
+        logger.info(f"Using DB price for {symbol}: ${latest.close:.4f}")
+        return latest.close
+    
+    return None
 
 
 def get_current_sentiment(session: Session) -> Optional[float]:
