@@ -203,3 +203,75 @@
         gap: 8px;
     }
 }
+
+/* Flash Animations - Price Change Detection */
+@keyframes flash-up {
+    0% {
+        background: rgba(16, 185, 129, 0.2);
+        border-color: rgba(16, 185, 129, 0.4);
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+    }
+
+    50% {
+        background: rgba(16, 185, 129, 0.5);
+        border-color: rgba(16, 185, 129, 0.8);
+        box-shadow: 0 0 30px rgba(16, 185, 129, 0.8);
+    }
+
+    100% {
+        background: rgba(16, 185, 129, 0.2);
+        border-color: rgba(16, 185, 129, 0.4);
+        box-shadow: none;
+    }
+}
+
+@keyframes flash-down {
+    0% {
+        background: rgba(239, 68, 68, 0.2);
+        border-color: rgba(239, 68, 68, 0.4);
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+    }
+
+    50% {
+        background: rgba(239, 68, 68, 0.5);
+        border-color: rgba(239, 68, 68, 0.8);
+        box-shadow: 0 0 30px rgba(239, 68, 68, 0.8);
+    }
+
+    100% {
+        background: rgba(239, 68, 68, 0.2);
+        border-color: rgba(239, 68, 68, 0.4);
+        box-shadow: none;
+    }
+}
+
+.market-card.flash-up {
+    animation: flash-up 1s ease-out;
+}
+
+.market-card.flash-down {
+    animation: flash-down 1s ease-out;
+}
+
+/* Loading indicator */
+.loading-indicator {
+    color: rgba(255, 255, 255, 0.4);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 0.4;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+/* Last update time */
+.last-update {
+    color: rgba(255, 255, 255, 0.4);
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { fetchMarketPrices, type MarketPricesResponse } from '../api';
 import './MarketMap.css';
 
@@ -8,6 +8,7 @@ interface MarketSymbol {
     category: 'core' | 'etf' | 'titan' | 'regional' | 'junior';
     change?: number;
     price?: number;
+    flash?: 'up' | 'down' | null;  // For flash animation
 }
 
 // Symbol definitions with categories
@@ -45,6 +46,9 @@ const CATEGORY_LABELS: Record<string, { emoji: string; label: string }> = {
     junior: { emoji: '🔴', label: 'Juniors' },
 };
 
+// Refresh interval in milliseconds (30 seconds)
+const REFRESH_INTERVAL = 30000;
+
 function getChangeClass(change?: number): string {
     if (change === undefined || change === null) return '';
     if (change > 2) return 'strong-up';
@@ -63,38 +67,62 @@ function formatChange(change?: number): string {
 export function MarketMap() {
     const [symbols, setSymbols] = useState<MarketSymbol[]>(MARKET_SYMBOLS);
     const [loading, setLoading] = useState(true);
-    const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+    const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const prevPricesRef = useRef<Record<string, number>>({});
 
-    useEffect(() => {
-        async function loadPrices() {
-            try {
-                setLoading(true);
-                const data: MarketPricesResponse = await fetchMarketPrices();
+    const loadPrices = async (isInitial = false) => {
+        try {
+            if (isInitial) setLoading(true);
 
-                // Merge prices into symbols
-                const updated = MARKET_SYMBOLS.map(sym => ({
+            const data: MarketPricesResponse = await fetchMarketPrices();
+
+            // Merge prices into symbols and detect changes
+            const updated = MARKET_SYMBOLS.map(sym => {
+                const newPrice = data.symbols[sym.symbol]?.price ?? null;
+                const prevPrice = prevPricesRef.current[sym.symbol];
+
+                // Detect flash direction
+                let flash: 'up' | 'down' | null = null;
+                if (prevPrice !== undefined && newPrice !== null && prevPrice !== newPrice) {
+                    flash = newPrice > prevPrice ? 'up' : 'down';
+                }
+
+                // Update prev prices ref
+                if (newPrice !== null) {
+                    prevPricesRef.current[sym.symbol] = newPrice;
+                }
+
+                return {
                     ...sym,
                     change: data.symbols[sym.symbol]?.change ?? undefined,
-                    price: data.symbols[sym.symbol]?.price ?? undefined,
-                }));
+                    price: newPrice ?? undefined,
+                    flash,
+                };
+            });
 
-                setSymbols(updated);
+            setSymbols(updated);
+            setLastUpdate(new Date());
 
-                // Get latest date from data
-                const dates = Object.values(data.symbols)
-                    .filter(s => s.date)
-                    .map(s => s.date as string);
-                if (dates.length > 0) {
-                    setLastUpdate(dates[0].split('T')[0]);
-                }
-            } catch (error) {
-                console.error('Failed to load market prices:', error);
-            } finally {
-                setLoading(false);
-            }
+            // Clear flash after animation
+            setTimeout(() => {
+                setSymbols(prev => prev.map(s => ({ ...s, flash: null })));
+            }, 1000);
+
+        } catch (error) {
+            console.error('Failed to load market prices:', error);
+        } finally {
+            if (isInitial) setLoading(false);
         }
+    };
 
-        loadPrices();
+    useEffect(() => {
+        // Initial load
+        loadPrices(true);
+
+        // Set up polling interval
+        const interval = setInterval(() => loadPrices(false), REFRESH_INTERVAL);
+
+        return () => clearInterval(interval);
     }, []);
 
     const categories = ['core', 'etf', 'titan', 'regional', 'junior'];
@@ -103,8 +131,12 @@ export function MarketMap() {
         <div className="market-map">
             <h2 className="market-map-title">🗺️ Market Intelligence Map</h2>
             <p className="market-map-subtitle">
-                Copper ecosystem at a glance
-                {lastUpdate && <span className="last-update"> • Last update: {lastUpdate}</span>}
+                Copper ecosystem • Live data (15-min delayed)
+                {lastUpdate && (
+                    <span className="last-update">
+                        {' '}• Updated: {lastUpdate.toLocaleTimeString()}
+                    </span>
+                )}
                 {loading && <span className="loading-indicator"> • Loading...</span>}
             </p>
 
@@ -127,7 +159,7 @@ export function MarketMap() {
                                         href={`https://finance.yahoo.com/quote/${sym.symbol}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className={`market-card ${getChangeClass(sym.change)}`}
+                                        className={`market-card ${getChangeClass(sym.change)} ${sym.flash ? `flash-${sym.flash}` : ''}`}
                                     >
                                         <div className="card-symbol">{sym.symbol}</div>
                                         <div className="card-name">{sym.name}</div>
