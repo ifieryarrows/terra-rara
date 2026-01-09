@@ -421,6 +421,45 @@ def ingest_news(session: Session) -> dict:
 # Price Ingestion
 # =============================================================================
 
+def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int = 3, retry_delay: int = 30):
+    """
+    Fetch price data for a symbol with retry on rate limit.
+    
+    Args:
+        symbol: Ticker symbol
+        start_date: Start date
+        end_date: End date
+        max_retries: Maximum retry attempts
+        retry_delay: Seconds to wait between retries
+    
+    Returns:
+        DataFrame or None if all retries failed
+    """
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(
+                start=start_date.strftime("%Y-%m-%d"),
+                end=end_date.strftime("%Y-%m-%d"),
+                interval="1d"
+            )
+            return df
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "too many requests" in error_msg:
+                if attempt < max_retries - 1:
+                    logger.warning(f"{symbol}: Rate limited, waiting {retry_delay}s before retry {attempt + 2}/{max_retries}")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"{symbol}: Rate limit exceeded after {max_retries} retries")
+                    raise
+            else:
+                raise
+    return None
+
+
 def ingest_prices(session: Session) -> dict:
     """
     Ingest price data for all configured symbols.
@@ -428,6 +467,8 @@ def ingest_prices(session: Session) -> dict:
     Returns:
         Dict with stats per symbol
     """
+    import time
+    
     settings = get_settings()
     symbols = settings.symbols_list
     
@@ -437,18 +478,14 @@ def ingest_prices(session: Session) -> dict:
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=settings.lookback_days)
     
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols):
         logger.info(f"Fetching prices for {symbol}...")
         
         try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(
-                start=start_date.strftime("%Y-%m-%d"),
-                end=end_date.strftime("%Y-%m-%d"),
-                interval="1d"
-            )
+            # Fetch with retry mechanism
+            df = fetch_symbol_with_retry(symbol, start_date, end_date)
             
-            if df.empty:
+            if df is None or df.empty:
                 logger.warning(f"No data returned for {symbol}")
                 stats[symbol] = {"imported": 0, "duplicates": 0, "error": "no_data"}
                 continue
@@ -505,6 +542,10 @@ def ingest_prices(session: Session) -> dict:
             
             stats[symbol] = {"imported": imported, "duplicates": duplicates}
             logger.info(f"{symbol}: {imported} bars imported, {duplicates} updated")
+            
+            # Add delay between symbols to avoid rate limiting
+            if i < len(symbols) - 1:
+                time.sleep(2)  # 2 second delay between symbols
             
         except Exception as e:
             logger.error(f"Failed to fetch {symbol}: {e}")

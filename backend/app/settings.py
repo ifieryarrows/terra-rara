@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     # Titans: BHP, FCX, SCCO, RIO
     # Regional: TECK, IVN.TO
     # Juniors: LUN.TO (FIL.TO removed - delisted)
-    # China: 2899.HK (Zijin)
-    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
+    # China: 2899.HK (Zijin), FXI (China Large-Cap ETF)
+    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,FXI,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
     lookback_days: int = 365
     
     # Fuzzy deduplication
