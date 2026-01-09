@@ -29,8 +29,14 @@ class Settings(BaseSettings):
     news_query: str = "copper OR copper price OR copper futures OR copper mining"
     news_language: str = "en"
     
-    # Price data (yfinance)
-    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,FXI"
+    # Price data (yfinance) - Expanded for 2026 market intelligence
+    # Core: HG=F (copper), DX-Y.NYB (dollar), CL=F (oil)
+    # ETFs: COPX (global miners), COPJ (junior miners)
+    # Titans: BHP, FCX, SCCO, RIO
+    # Regional: TECK, IVN.TO
+    # Juniors: LUN.TO, FIL.TO
+    # China: 2899.HK (Zijin)
+    yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,FIL.TO,IVN.TO,2899.HK"
     lookback_days: int = 365
     
     # Fuzzy deduplication
