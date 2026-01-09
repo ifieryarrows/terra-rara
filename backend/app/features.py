@@ -329,9 +329,13 @@ def build_feature_matrix(
     X = X[valid_mask]
     y = y[valid_mask]
     
-    # Drop any remaining NaN features
-    X = X.dropna()
-    y = y.loc[X.index]
+    # Fill remaining NaN features with 0 (instead of dropping rows)
+    # This is important for new symbols that may have missing data
+    nan_count_before = X.isna().sum().sum()
+    X = X.fillna(0)
+    
+    if nan_count_before > 0:
+        logger.info(f"Filled {nan_count_before} NaN values in features with 0")
     
     logger.info(f"Feature matrix: {X.shape[0]} samples, {X.shape[1]} features")
     
