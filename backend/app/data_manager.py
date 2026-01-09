@@ -235,8 +235,6 @@ def ingest_news(session: Session) -> dict:
     Returns:
         Dict with stats: imported, duplicates, language_filtered, fuzzy_filtered
     """
-    import random
-    
     settings = get_settings()
     
     # Strategic queries based on S&P Global 2026 copper market report
@@ -269,9 +267,7 @@ def ingest_news(session: Session) -> dict:
         "grade decline copper mining", 
     ]
     
-    # Select a random strategic query for this run (ensures diversity over time)
-    strategic_query = random.choice(STRATEGIC_QUERIES)
-    logger.info(f"🕵️ Strategic News Agent: Investigating '{strategic_query}'")
+    logger.info(f"🕵️ Strategic News Agent: Investigating {len(STRATEGIC_QUERIES)} topics...")
     
     stats = {
         "imported": 0,
@@ -279,38 +275,47 @@ def ingest_news(session: Session) -> dict:
         "language_filtered": 0,
         "fuzzy_filtered": 0,
         "source": "unknown",
-        "query_used": strategic_query,
+        "queries_used": len(STRATEGIC_QUERIES),
     }
     
-    # Collect articles from sources
+    # Collect articles from ALL strategic queries
     all_articles = []
     
-    # Try NewsAPI first if key is available
-    if settings.newsapi_key:
-        articles = fetch_newsapi_articles(
-            api_key=settings.newsapi_key,
-            query=strategic_query,
-            language=settings.news_language,
-            lookback_days=settings.lookback_days,
-        )
-        if articles:
-            all_articles.extend(articles)
-            stats["source"] = "newsapi"
+    for i, strategic_query in enumerate(STRATEGIC_QUERIES, 1):
+        logger.info(f"  [{i}/{len(STRATEGIC_QUERIES)}] Searching: '{strategic_query}'")
+        
+        query_articles = []
+        
+        # Try NewsAPI first if key is available
+        if settings.newsapi_key:
+            articles = fetch_newsapi_articles(
+                api_key=settings.newsapi_key,
+                query=strategic_query,
+                language=settings.news_language,
+                lookback_days=settings.lookback_days,
+            )
+            if articles:
+                query_articles.extend(articles)
+        
+        # RSS fallback/supplement
+        if not query_articles or not settings.newsapi_key:
+            rss_articles = fetch_google_news(
+                query=strategic_query,
+                language=settings.news_language,
+            )
+            query_articles.extend(rss_articles)
+        
+        if query_articles:
+            logger.info(f"    → Found {len(query_articles)} articles")
+            all_articles.extend(query_articles)
     
-    # RSS fallback/supplement - also use strategic query
-    if not all_articles or not settings.newsapi_key:
-        rss_articles = fetch_google_news(
-            query=strategic_query,
-            language=settings.news_language,
-        )
-        all_articles.extend(rss_articles)
-        stats["source"] = "rss" if not settings.newsapi_key else "newsapi+rss"
+    stats["source"] = "newsapi+rss" if settings.newsapi_key else "rss"
     
     if not all_articles:
         logger.warning("No articles fetched from any source")
         return stats
     
-    logger.info(f"Total articles fetched: {len(all_articles)}")
+    logger.info(f"Total articles fetched from all queries: {len(all_articles)}")
     
     # Language filter
     all_articles, lang_filtered = filter_by_language(
