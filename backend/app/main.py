@@ -511,6 +511,15 @@ async def trigger_pipeline(
                 # Step 3: Generate snapshot
                 logger.info("Step 3: Generating analysis snapshot...")
                 with SessionLocal() as session:
+                    # Clear old snapshots for this symbol to ensure fresh data
+                    from app.models import AnalysisSnapshot
+                    deleted = session.query(AnalysisSnapshot).filter(
+                        AnalysisSnapshot.symbol == settings.target_symbol
+                    ).delete()
+                    if deleted:
+                        session.commit()
+                        logger.info(f"Cleared {deleted} old snapshot(s) for {settings.target_symbol}")
+                    
                     report = generate_analysis_report(session, settings.target_symbol)
                     if report:
                         save_analysis_snapshot(session, report, settings.target_symbol)
