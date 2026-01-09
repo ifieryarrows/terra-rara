@@ -86,4 +86,24 @@ export async function fetchCommentary(symbol: string = 'HG=F'): Promise<Commenta
   return response.data;
 }
 
+/**
+ * Market prices response type
+ */
+export interface MarketPricesResponse {
+  symbols: Record<string, {
+    price: number | null;
+    change: number | null;
+    date: string | null;
+  }>;
+}
+
+/**
+ * Fetch market prices for all tracked symbols
+ */
+export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
+  const response = await api.get<MarketPricesResponse>('/market-prices');
+  return response.data;
+}
+
 export default api;
+

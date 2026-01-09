@@ -312,6 +312,58 @@ async def health_check():
     )
 
 
+@app.get(
+    "/api/market-prices",
+    summary="Get market prices for all symbols",
+    description="Returns current price and daily change for all tracked symbols."
+)
+async def get_market_prices():
+    """
+    Get current prices and daily changes for all tracked symbols.
+    
+    Used by the Market Intelligence Map component.
+    """
+    settings = get_settings()
+    symbols = settings.symbols_list
+    
+    result = {}
+    
+    try:
+        with SessionLocal() as session:
+            for symbol in symbols:
+                # Get last 2 price bars for calculating daily change
+                price_bars = (
+                    session.query(PriceBar)
+                    .filter(PriceBar.symbol == symbol)
+                    .order_by(PriceBar.date.desc())
+                    .limit(2)
+                    .all()
+                )
+                
+                if len(price_bars) >= 1:
+                    current_price = price_bars[0].close
+                    prev_price = price_bars[1].close if len(price_bars) >= 2 else current_price
+                    
+                    change_pct = ((current_price - prev_price) / prev_price) * 100 if prev_price else 0
+                    
+                    result[symbol] = {
+                        "price": current_price,
+                        "change": round(change_pct, 2),
+                        "date": price_bars[0].date.isoformat()
+                    }
+                else:
+                    result[symbol] = {
+                        "price": None,
+                        "change": None,
+                        "date": None
+                    }
+    except Exception as e:
+        logger.error(f"Error fetching market prices: {e}")
+        return {"error": str(e), "symbols": {}}
+    
+    return {"symbols": result}
+
+
 # =============================================================================
 # AI Commentary Endpoint
 # =============================================================================

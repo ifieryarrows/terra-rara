@@ -1,10 +1,12 @@
+import { useEffect, useState } from 'react';
+import { fetchMarketPrices, type MarketPricesResponse } from '../api';
 import './MarketMap.css';
 
 interface MarketSymbol {
     symbol: string;
     name: string;
     category: 'core' | 'etf' | 'titan' | 'regional' | 'junior';
-    change?: number; // Percent change
+    change?: number;
     price?: number;
 }
 
@@ -16,6 +18,7 @@ const MARKET_SYMBOLS: MarketSymbol[] = [
     { symbol: 'CL=F', name: 'Crude Oil', category: 'core' },
 
     // ETFs
+    { symbol: 'FXI', name: 'China Large-Cap', category: 'etf' },
     { symbol: 'COPX', name: 'Global Copper Miners', category: 'etf' },
     { symbol: 'COPJ', name: 'Junior Copper Miners', category: 'etf' },
 
@@ -30,9 +33,8 @@ const MARKET_SYMBOLS: MarketSymbol[] = [
     { symbol: 'IVN.TO', name: 'Ivanhoe Mines', category: 'regional' },
     { symbol: '2899.HK', name: 'Zijin Mining', category: 'regional' },
 
-    // Juniors/M&A Targets
+    // Juniors
     { symbol: 'LUN.TO', name: 'Lundin Mining', category: 'junior' },
-    { symbol: 'FIL.TO', name: 'Filo Corp', category: 'junior' },
 ];
 
 const CATEGORY_LABELS: Record<string, { emoji: string; label: string }> = {
@@ -59,15 +61,52 @@ function formatChange(change?: number): string {
 }
 
 export function MarketMap() {
-    const symbols = MARKET_SYMBOLS;
+    const [symbols, setSymbols] = useState<MarketSymbol[]>(MARKET_SYMBOLS);
+    const [loading, setLoading] = useState(true);
+    const [lastUpdate, setLastUpdate] = useState<string | null>(null);
 
-    // Categories for grouping
+    useEffect(() => {
+        async function loadPrices() {
+            try {
+                setLoading(true);
+                const data: MarketPricesResponse = await fetchMarketPrices();
+
+                // Merge prices into symbols
+                const updated = MARKET_SYMBOLS.map(sym => ({
+                    ...sym,
+                    change: data.symbols[sym.symbol]?.change ?? undefined,
+                    price: data.symbols[sym.symbol]?.price ?? undefined,
+                }));
+
+                setSymbols(updated);
+
+                // Get latest date from data
+                const dates = Object.values(data.symbols)
+                    .filter(s => s.date)
+                    .map(s => s.date as string);
+                if (dates.length > 0) {
+                    setLastUpdate(dates[0].split('T')[0]);
+                }
+            } catch (error) {
+                console.error('Failed to load market prices:', error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        loadPrices();
+    }, []);
+
     const categories = ['core', 'etf', 'titan', 'regional', 'junior'];
 
     return (
         <div className="market-map">
             <h2 className="market-map-title">🗺️ Market Intelligence Map</h2>
-            <p className="market-map-subtitle">Copper ecosystem at a glance • Updated with pipeline</p>
+            <p className="market-map-subtitle">
+                Copper ecosystem at a glance
+                {lastUpdate && <span className="last-update"> • Last update: {lastUpdate}</span>}
+                {loading && <span className="loading-indicator"> • Loading...</span>}
+            </p>
 
             <div className="market-map-grid">
                 {categories.map(category => {
