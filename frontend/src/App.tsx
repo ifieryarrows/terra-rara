@@ -324,12 +324,18 @@ function App() {
               {analysis && (
                 <>
                   <span className={isPredictionPositive ? 'positive' : 'negative'}>
-                    {formatPercent(analysis.predicted_return)} from current
+                    {formatPercent(analysis.predicted_return)} expected
                   </span>
                   <br />
-                  <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>
-                    Range: ${formatPrice(analysis.confidence_lower)} - ${formatPrice(analysis.confidence_upper)}
-                  </span>
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                    <span className="negative" style={{ opacity: 0.9 }}>
+                      🐻 {formatPercent((analysis.confidence_lower - analysis.current_price) / analysis.current_price)}
+                    </span>
+                    <span style={{ opacity: 0.6 }}>to</span>
+                    <span className="positive" style={{ opacity: 0.9 }}>
+                      🐂 {formatPercent((analysis.confidence_upper - analysis.current_price) / analysis.current_price)}
+                    </span>
+                  </div>
                 </>
               )}
             </div>
