@@ -50,21 +50,32 @@ function CustomTooltip({ active, payload, label, analysis, isLastPoint }: Toolti
           <span className="tooltip-value sentiment">{sentimentVal.toFixed(3)}</span>
         </div>
       )}
-      {isLastPoint && analysis && (
-        <>
-          <div className="tooltip-divider" />
-          <div className="tooltip-row">
-            <span className="tooltip-label">🎯 Tomorrow</span>
-            <span className="tooltip-value prediction">${analysis.predicted_price.toFixed(4)}</span>
-          </div>
-          <div className="tooltip-row">
-            <span className="tooltip-label">Change</span>
-            <span className={`tooltip-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
-              {(analysis.predicted_return * 100).toFixed(2)}%
-            </span>
-          </div>
-        </>
-      )}
+      {isLastPoint && analysis && (() => {
+        // Calculate sentiment-adjusted return inside tooltip
+        const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
+        const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
+        const sentimentNorm = (analysis.sentiment_index + 1) / 2;
+        const adjustedExpected = sentimentNorm > 0.5
+          ? baseBullish * sentimentNorm
+          : baseBearish * (1 - sentimentNorm);
+        const isBull = sentimentNorm > 0.5;
+
+        return (
+          <>
+            <div className="tooltip-divider" />
+            <div className="tooltip-row">
+              <span className="tooltip-label">🎯 Tomorrow</span>
+              <span className="tooltip-value prediction">${analysis.predicted_price.toFixed(4)}</span>
+            </div>
+            <div className="tooltip-row">
+              <span className="tooltip-label">Change</span>
+              <span className={`tooltip-value ${isBull ? 'positive' : 'negative'}`}>
+                {isBull ? '🐂' : '🐻'} {(adjustedExpected * 100).toFixed(2)}%
+              </span>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -273,7 +284,24 @@ function App() {
 
   // Main dashboard render
   const sentimentClass = analysis?.sentiment_label?.toLowerCase() || 'neutral';
-  const isPredictionPositive = (analysis?.predicted_return || 0) >= 0;
+
+  // Calculate sentiment-adjusted expected return
+  const getSentimentAdjustedReturn = () => {
+    if (!analysis) return { adjustedReturn: 0, isBullish: false };
+
+    const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
+    const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
+    const sentimentNorm = (analysis.sentiment_index + 1) / 2; // 0 to 1
+
+    const adjustedReturn = sentimentNorm > 0.5
+      ? baseBullish * sentimentNorm
+      : baseBearish * (1 - sentimentNorm);
+
+    return { adjustedReturn, isBullish: sentimentNorm > 0.5 };
+  };
+
+  const { adjustedReturn, isBullish } = getSentimentAdjustedReturn();
+  const isPredictionPositive = isBullish;
 
   return (
     <div className="app">
@@ -293,12 +321,12 @@ function App() {
                 </div>
               </div>
               <div className="header-stat">
-                <div className="header-stat-label">Predicted Return</div>
+                <div className="header-stat-label">Expected Change</div>
                 <div
                   className={`header-stat-value ${isPredictionPositive ? 'positive' : 'negative'
                     }`}
                 >
-                  {formatPercent(analysis.predicted_return)}
+                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)}
                 </div>
               </div>
             </div>
@@ -321,30 +349,11 @@ function App() {
               ${analysis ? formatPrice(analysis.predicted_price) : '—'}
             </div>
             <div className="card-subtitle">
-              {analysis && (() => {
-                // Base predictions from model
-                const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
-                const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
-
-                // Sentiment index: -1 (very bearish) to +1 (very bullish)
-                // Normalize to 0-1 range: (index + 1) / 2
-                const sentimentNorm = (analysis.sentiment_index + 1) / 2; // 0 to 1
-
-                // Sentiment-adjusted expected return
-                // Bullish: weight towards upper, Bearish: weight towards lower
-                const adjustedExpected = sentimentNorm > 0.5
-                  ? baseBullish * sentimentNorm  // Bullish: use upper * sentiment
-                  : baseBearish * (1 - sentimentNorm);  // Bearish: use lower * (1-sentiment)
-
-                const isBullish = sentimentNorm > 0.5;
-                const icon = isBullish ? '🐂' : '🐻';
-
-                return (
-                  <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
-                    {icon} {formatPercent(adjustedExpected)} expected
-                  </span>
-                );
-              })()}
+              {analysis && (
+                <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
+                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)} expected
+                </span>
+              )}
             </div>
           </div>
 
@@ -517,7 +526,7 @@ function App() {
               <div className="prediction-item">
                 <span className="prediction-label">Expected Change</span>
                 <span className={`prediction-value ${isPredictionPositive ? 'positive' : 'negative'}`}>
-                  {formatPercent(analysis.predicted_return)}
+                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)}
                 </span>
               </div>
               <div className="prediction-item">
