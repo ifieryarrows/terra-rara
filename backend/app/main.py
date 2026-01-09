@@ -133,6 +133,23 @@ async def get_analysis(
         
         if cached:
             logger.debug(f"Returning cached snapshot for {symbol}")
+            # Update current_price with live data before returning
+            import yfinance as yf
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                live_price = info.get('regularMarketPrice') or info.get('currentPrice')
+                if live_price is not None:
+                    cached['current_price'] = round(float(live_price), 4)
+                    # Recalculate predicted_return based on live price
+                    if cached.get('predicted_price'):
+                        cached['predicted_return'] = round(
+                            (cached['predicted_price'] - cached['current_price']) / cached['current_price'],
+                            6
+                        )
+                    logger.info(f"Updated cached snapshot with live price: ${live_price:.4f}")
+            except Exception as e:
+                logger.debug(f"Could not update live price in cached snapshot: {e}")
             return cached
         
         # Check if pipeline is locked
