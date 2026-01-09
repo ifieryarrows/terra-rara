@@ -10,6 +10,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
+import { MarketMap } from './components/MarketMap';
 import type {
   AnalysisReport,
   HistoryResponse,
@@ -583,6 +584,9 @@ function App() {
             )}
           </div>
         </div>
+
+        {/* Market Intelligence Map */}
+        <MarketMap />
       </main>
 
       {/* Footer */}
