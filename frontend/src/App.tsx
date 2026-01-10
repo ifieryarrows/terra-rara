@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
 import clsx from 'clsx'; // Utility for conditional classes
 
-import { fetchAnalysis, fetchHistory, fetchCommentary, fetchLivePrice } from './api';
+import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import { MarketMap } from './components/MarketMap';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
@@ -92,21 +92,51 @@ function App() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Live price from Twelve Data (real-time, separate from yfinance)
-  const loadLivePrice = useCallback(async () => {
-    try {
-      const data = await fetchLivePrice();
-      if (data.price) setLivePrice(data.price);
-    } catch (err) {
-      console.error('Live price error:', err);
-    }
-  }, []);
-
+  // WebSocket for real-time price streaming from Twelve Data
   useEffect(() => {
-    loadLivePrice();
-    const interval = setInterval(loadLivePrice, 30000); // Every 30 seconds
-    return () => clearInterval(interval);
-  }, [loadLivePrice]);
+    const API_BASE = import.meta.env.VITE_API_URL || '';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = API_BASE ? new URL(API_BASE).host : window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/ws/live-price`;
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected for live price');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.price) {
+            setLivePrice(parseFloat(data.price));
+          }
+        } catch (err) {
+          console.error('WS parse error:', err);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed, reconnecting in 5s...');
+        reconnectTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (ws) ws.close();
+    };
+  }, []);
 
   useEffect(() => {
     if (loadingState === 'success') loadCommentary();

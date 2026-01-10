@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
@@ -509,6 +509,81 @@ async def get_live_price():
     except Exception as e:
         logger.error(f"Twelve Data API error: {e}")
         return {"price": None, "error": str(e)}
+
+
+# =============================================================================
+# WebSocket Live Price Streaming (Twelve Data)
+# =============================================================================
+
+@app.websocket("/ws/live-price")
+async def websocket_live_price(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time copper price streaming.
+    
+    Connects to Twelve Data WebSocket and relays price events to the client.
+    """
+    import websockets
+    import asyncio
+    import json
+    
+    await websocket.accept()
+    settings = get_settings()
+    
+    if not settings.twelvedata_api_key:
+        await websocket.send_json({"error": "API key not configured"})
+        await websocket.close()
+        return
+    
+    td_ws_url = f"wss://ws.twelvedata.com/v1/quotes?apikey={settings.twelvedata_api_key}"
+    
+    try:
+        async with websockets.connect(td_ws_url) as td_ws:
+            # Subscribe to XCU/USD (Copper spot)
+            subscribe_msg = json.dumps({
+                "action": "subscribe",
+                "params": {"symbols": "XCU/USD"}
+            })
+            await td_ws.send(subscribe_msg)
+            logger.info("Subscribed to XCU/USD via Twelve Data WebSocket")
+            
+            # Heartbeat task to keep connection alive
+            async def send_heartbeat():
+                while True:
+                    await asyncio.sleep(10)
+                    try:
+                        await td_ws.send(json.dumps({"action": "heartbeat"}))
+                    except Exception:
+                        break
+            
+            heartbeat_task = asyncio.create_task(send_heartbeat())
+            
+            try:
+                # Relay messages from Twelve Data to client
+                async for message in td_ws:
+                    data = json.loads(message)
+                    
+                    if data.get("event") == "price":
+                        await websocket.send_json({
+                            "symbol": data.get("symbol"),
+                            "price": data.get("price"),
+                            "timestamp": data.get("timestamp"),
+                        })
+                    elif data.get("event") == "subscribe-status":
+                        logger.info(f"Subscription status: {data.get('status')}")
+                        if data.get("fails"):
+                            logger.warning(f"Subscription failures: {data.get('fails')}")
+                    
+            except WebSocketDisconnect:
+                logger.info("Client disconnected from live-price WebSocket")
+            finally:
+                heartbeat_task.cancel()
+                
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({"error": str(e)})
+        except Exception:
+            pass
 
 
 # =============================================================================
