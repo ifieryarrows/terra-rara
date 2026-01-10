@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+
 import { fetchMarketPrices, type MarketPricesResponse } from '../api';
 import './MarketMap.css';
 
@@ -50,7 +50,7 @@ export function MarketMap() {
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
     const prevPricesRef = useRef<Record<string, number>>({});
 
-    const loadPrices = async (isInitial = false) => {
+    const loadPrices = async () => {
         try {
             const data: MarketPricesResponse = await fetchMarketPrices();
             const updated = MARKET_SYMBOLS.map(sym => {
@@ -84,8 +84,8 @@ export function MarketMap() {
     };
 
     useEffect(() => {
-        loadPrices(true);
-        const interval = setInterval(() => loadPrices(false), REFRESH_INTERVAL);
+        loadPrices();
+        const interval = setInterval(() => loadPrices(), REFRESH_INTERVAL);
         return () => clearInterval(interval);
     }, []);
 

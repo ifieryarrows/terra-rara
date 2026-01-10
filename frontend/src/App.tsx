@@ -3,16 +3,13 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
 } from 'recharts';
 import { motion } from 'framer-motion';
-import {
-  TrendingUp, TrendingDown, Activity, Globe, Zap, Clock,
-  BarChart3, AlertTriangle, RefreshCw, Cpu
-} from 'lucide-react';
+import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu } from 'lucide-react';
 
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import { MarketMap } from './components/MarketMap';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
-  LoadingState, Influencer, CommentaryResponse
+  LoadingState, CommentaryResponse
 } from './types';
 import './App.css';
 
@@ -146,7 +143,7 @@ function App() {
             <div className="ticker-item">
               <div className="ticker-label">SENTIMENT</div>
               <div className={`ticker-value ${sentimentColor}`}>
-                <NumberTicker value={analysis?.sentiment_index || 0} format={v => v.toFixed(3)} />
+                <NumberTicker value={analysis?.sentiment_index || 0} format={(v: number) => v.toFixed(3)} />
               </div>
             </div>
             <div className="ticker-item">
@@ -257,10 +254,10 @@ function App() {
                   <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
                     <span className="ai-badge">MIMO-V2</span>
                     <span className="text-titanium" style={{ fontSize: '0.7rem' }}>
-                      {new Date(commentary.generated_at).toLocaleTimeString()}
+                      {commentary.generated_at ? new Date(commentary.generated_at).toLocaleTimeString() : '--'}
                     </span>
                   </div>
-                  {commentary.commentary.split('\n').map((p, i) => (
+                  {(commentary.commentary || '').split('\n').map((p, i) => (
                     <p key={i} style={{ marginBottom: '0.8em' }}>{p}</p>
                   ))}
                 </div>
