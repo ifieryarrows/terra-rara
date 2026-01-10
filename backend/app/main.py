@@ -132,39 +132,50 @@ async def get_analysis(
         )
         
         if cached:
-            logger.debug(f"Returning cached snapshot for {symbol}")
+            logger.debug(f"Cached snapshot exists, but running live prediction for accuracy")
             import yfinance as yf
+            import xgboost as xgb
             
-            # Update current_price with live data
             try:
+                # Get live price from yfinance
                 ticker = yf.Ticker(symbol)
                 info = ticker.info
                 live_price = info.get('regularMarketPrice') or info.get('currentPrice')
+                
                 if live_price is not None:
-                    old_price = cached.get('current_price', live_price)
-                    original_return = cached.get('predicted_return', 0)
-                    
-                    # Update current_price to live
                     cached['current_price'] = round(float(live_price), 4)
                     
-                    # Recalculate predicted_price based on ORIGINAL model return + NEW live price
-                    # predicted_price = live_price * (1 + original_return)
-                    cached['predicted_price'] = round(
-                        float(live_price) * (1 + original_return),
-                        4
-                    )
+                    # Run LIVE model prediction
+                    from app.ai_engine import load_model, load_model_metadata
+                    from app.inference import build_features_for_prediction
                     
-                    # Recalculate confidence bounds proportionally
-                    if old_price and old_price > 0:
-                        price_ratio = float(live_price) / old_price
-                        if cached.get('confidence_lower'):
-                            cached['confidence_lower'] = round(cached['confidence_lower'] * price_ratio, 4)
-                        if cached.get('confidence_upper'):
-                            cached['confidence_upper'] = round(cached['confidence_upper'] * price_ratio, 4)
+                    model = load_model(symbol)
+                    metadata = load_model_metadata(symbol)
+                    features = metadata.get("features", [])
                     
-                    logger.info(f"Updated snapshot: current=${live_price:.4f}, predicted=${cached['predicted_price']:.4f} ({original_return*100:.2f}%)")
+                    if model and features:
+                        # Build features and predict
+                        X = build_features_for_prediction(session, symbol, features)
+                        if X is not None and not X.empty:
+                            dmatrix = xgb.DMatrix(X, feature_names=features)
+                            predicted_return = float(model.predict(dmatrix)[0])
+                            
+                            # Update with live prediction
+                            cached['predicted_return'] = round(predicted_return, 6)
+                            cached['predicted_price'] = round(
+                                float(live_price) * (1 + predicted_return),
+                                4
+                            )
+                            
+                            # Update confidence bounds
+                            std_mult = 1.0  # 1 standard deviation
+                            cached['confidence_lower'] = round(float(live_price) * (1 - std_mult * abs(predicted_return)), 4)
+                            cached['confidence_upper'] = round(float(live_price) * (1 + std_mult * abs(predicted_return) * 2), 4)
+                            
+                            logger.info(f"LIVE prediction: current=${live_price:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
+                    
             except Exception as e:
-                logger.debug(f"Could not update live price in cached snapshot: {e}")
+                logger.error(f"Live prediction failed, using cached: {e}")
             
             # Update top_influencers from current model metadata
             try:
