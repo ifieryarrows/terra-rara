@@ -145,6 +145,13 @@ async def get_analysis(
                 if live_price is not None:
                     cached['current_price'] = round(float(live_price), 4)
                     
+                    # Get latest DB close price for prediction base
+                    # Model predicts based on historical closes, not intraday prices
+                    latest_bar = session.query(PriceBar).filter(
+                        PriceBar.symbol == symbol
+                    ).order_by(PriceBar.date.desc()).first()
+                    prediction_base = latest_bar.close if latest_bar else float(live_price)
+                    
                     # Run LIVE model prediction
                     from app.ai_engine import load_model, load_model_metadata
                     from app.inference import build_features_for_prediction
@@ -161,18 +168,19 @@ async def get_analysis(
                             predicted_return = float(model.predict(dmatrix)[0])
                             
                             # Update with live prediction
+                            # Use DB close as prediction base (model trained on closes)
                             cached['predicted_return'] = round(predicted_return, 6)
                             cached['predicted_price'] = round(
-                                float(live_price) * (1 + predicted_return),
+                                float(prediction_base) * (1 + predicted_return),
                                 4
                             )
                             
-                            # Update confidence bounds
+                            # Update confidence bounds (based on prediction base)
                             std_mult = 1.0  # 1 standard deviation
-                            cached['confidence_lower'] = round(float(live_price) * (1 - std_mult * abs(predicted_return)), 4)
-                            cached['confidence_upper'] = round(float(live_price) * (1 + std_mult * abs(predicted_return) * 2), 4)
+                            cached['confidence_lower'] = round(float(prediction_base) * (1 - std_mult * abs(predicted_return)), 4)
+                            cached['confidence_upper'] = round(float(prediction_base) * (1 + std_mult * abs(predicted_return) * 2), 4)
                             
-                            logger.info(f"LIVE prediction: current=${live_price:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
+                            logger.info(f"LIVE prediction: close=${prediction_base:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
                     
             except Exception as e:
                 logger.error(f"Live prediction failed, using cached: {e}")
@@ -206,11 +214,9 @@ async def get_analysis(
                         })
                     
                     cached['top_influencers'] = top_influencers
-                    logger.info(f"Updated cached snapshot with fresh influencers from model (top: {top_influencers[0]['feature'] if top_influencers else 'none'})")
-                else:
-                    logger.warning(f"No importance data found in model metadata for {symbol}")
+                    logger.info(f"Updated cached snapshot with fresh influencers from model")
             except Exception as e:
-                logger.warning(f"Could not update influencers in cached snapshot: {e}")
+                logger.debug(f"Could not update influencers in cached snapshot: {e}")
             
             return cached
         
@@ -560,15 +566,24 @@ async def trigger_pipeline(
                     fetch_all(news=True, prices=True)
                     logger.info("Data fetch complete")
                 
-                logger.info("Step 2: Running AI pipeline...")
+                logger.info(f"Step 2: Running AI pipeline (train_model={train_model})...")
                 from app.ai_engine import run_full_pipeline
-                run_full_pipeline(
+                ai_result = run_full_pipeline(
                     target_symbol="HG=F",
                     score_sentiment=True,
                     aggregate_sentiment=True,
                     train_model=train_model
                 )
-                logger.info("AI pipeline complete")
+                logger.info(f"AI pipeline complete: scored={ai_result.get('scored_articles', 0)}, aggregated={ai_result.get('aggregated_days', 0)}")
+                
+                # Log model training result specifically
+                if train_model:
+                    model_result = ai_result.get('model_result')
+                    if model_result:
+                        logger.info(f"Model training SUCCESS: {model_result.get('model_path')}")
+                        logger.info(f"Top influencers updated: {[i['feature'] for i in model_result.get('top_influencers', [])[:3]]}")
+                    else:
+                        logger.warning("Model training returned None - check for errors above")
                 
                 # Step 3: Generate snapshot
                 logger.info("Step 3: Generating analysis snapshot...")

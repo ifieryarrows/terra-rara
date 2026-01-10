@@ -259,11 +259,18 @@ def generate_analysis_report(
         logger.error("No feature list found for model")
         return None
     
-    # Get current price
+    # Get current price (for display - may be live yfinance or DB fallback)
     current_price = get_current_price(session, target_symbol)
     if current_price is None:
         logger.error(f"No price data for {target_symbol}")
         return None
+    
+    # Get latest DB close price for prediction base
+    # Model predicts based on historical closes, not intraday prices
+    latest_bar = session.query(PriceBar).filter(
+        PriceBar.symbol == target_symbol
+    ).order_by(PriceBar.date.desc()).first()
+    prediction_base = latest_bar.close if latest_bar else current_price
     
     # Get current sentiment
     current_sentiment = get_current_sentiment(session)
@@ -280,8 +287,8 @@ def generate_analysis_report(
     dmatrix = xgb.DMatrix(X, feature_names=features)
     predicted_return = float(model.predict(dmatrix)[0])
     
-    # Calculate predicted price
-    predicted_price = current_price * (1 + predicted_return)
+    # Calculate predicted price using DB close as base (model trains on closes)
+    predicted_price = prediction_base * (1 + predicted_return)
     
     # Calculate confidence band
     conf_lower, conf_upper = calculate_confidence_band(
