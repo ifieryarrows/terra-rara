@@ -206,9 +206,11 @@ async def get_analysis(
                         })
                     
                     cached['top_influencers'] = top_influencers
-                    logger.info(f"Updated cached snapshot with fresh influencers from model")
+                    logger.info(f"Updated cached snapshot with fresh influencers from model (top: {top_influencers[0]['feature'] if top_influencers else 'none'})")
+                else:
+                    logger.warning(f"No importance data found in model metadata for {symbol}")
             except Exception as e:
-                logger.debug(f"Could not update influencers in cached snapshot: {e}")
+                logger.warning(f"Could not update influencers in cached snapshot: {e}")
             
             return cached
         
