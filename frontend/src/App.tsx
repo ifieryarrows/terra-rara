@@ -94,10 +94,23 @@ function App() {
 
   // WebSocket for real-time price streaming from Twelve Data
   useEffect(() => {
+    // Build WebSocket URL from API base
+    // VITE_API_URL example: https://ifieryarrows-terra-rara.hf.space/api
     const API_BASE = import.meta.env.VITE_API_URL || '';
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = API_BASE ? new URL(API_BASE).host : window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/ws/live-price`;
+    let wsUrl: string;
+
+    if (API_BASE) {
+      // Production: convert HTTPS API URL to WSS WebSocket URL
+      // Remove /api suffix and change protocol
+      const baseUrl = API_BASE.replace(/\/api\/?$/, '');
+      wsUrl = baseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:') + '/ws/live-price';
+    } else {
+      // Local dev: use current host
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${wsProtocol}//${window.location.host}/ws/live-price`;
+    }
+
+    console.log('WebSocket URL:', wsUrl);
 
     let ws: WebSocket | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout>;
