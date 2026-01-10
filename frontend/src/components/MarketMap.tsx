@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-
 import { fetchMarketPrices, type MarketPricesResponse } from '../api';
-import './MarketMap.css';
+import clsx from 'clsx';
 
 interface MarketSymbol {
     symbol: string;
@@ -92,24 +91,32 @@ export function MarketMap() {
     const categories = ['core', 'etf', 'titan', 'regional', 'junior'];
 
     return (
-        <div className="market-map-container">
-            <div className="map-header">
-                <div className="map-status">
-                    STATUS: {lastUpdate ? 'LIVE' : 'CONNECTING...'}
-                    {lastUpdate && <span className="text-titanium"> // LAST UPDATE: {lastUpdate.toLocaleTimeString()}</span>}
+        <div className="p-2">
+            <div className="flex justify-between items-end border-b border-white/5 pb-2 mb-6">
+                <div className="flex items-center gap-2">
+                    <div className={clsx("w-2 h-2 rounded-full", lastUpdate ? "bg-emerald-500 animate-pulse" : "bg-gray-500")} />
+                    <span className="text-xs font-mono text-gray-400 tracking-wider">
+                        {lastUpdate ? 'MARKET FEED ACTIVE' : 'CONNECTING...'}
+                    </span>
                 </div>
+                {lastUpdate && (
+                    <span className="text-[10px] font-mono text-gray-600">
+                        UPDATED: {lastUpdate.toLocaleTimeString()}
+                    </span>
+                )}
             </div>
 
-            <div className="market-grid">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                 {categories.map(category => {
                     const categorySymbols = symbols.filter(s => s.category === category);
                     return (
-                        <div key={category} className="map-column">
-                            <div className="column-header">{CATEGORY_LABELS[category]}</div>
-                            <div className="column-cards">
+                        <div key={category} className="flex flex-col gap-3">
+                            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest text-center py-2 border-b border-white/5 border-dashed">
+                                {CATEGORY_LABELS[category]}
+                            </div>
+                            <div className="flex flex-col gap-2">
                                 {categorySymbols.map(sym => {
                                     const isUp = (sym.change || 0) >= 0;
-                                    const flashClass = sym.flash ? `flash-${sym.flash}` : '';
 
                                     return (
                                         <a
@@ -117,17 +124,31 @@ export function MarketMap() {
                                             href={`https://finance.yahoo.com/quote/${sym.symbol}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className={`ticker-card ${flashClass}`}
-                                            style={{ borderColor: isUp ? 'var(--bull-teal)' : 'var(--bear-rust)' }}
+                                            className={clsx(
+                                                "group relative block p-3 rounded-xl border transition-all duration-300",
+                                                "bg-white/5 hover:bg-white/10",
+                                                isUp ? "border-emerald-500/20 hover:border-emerald-500/40" : "border-rose-500/20 hover:border-rose-500/40",
+                                                sym.flash === 'up' && "animate-[flash-emerald_1s_ease-out]",
+                                                sym.flash === 'down' && "animate-[flash-rose_1s_ease-out]"
+                                            )}
                                         >
-                                            <div className="ticker-top">
-                                                <span className="sym-code">{sym.symbol}</span>
-                                                <span className={`sym-change ${isUp ? 'text-bull' : 'text-bear'}`}>
+                                            <div className="flex justify-between items-start mb-1">
+                                                <span className="text-xs font-bold text-gray-300 font-mono group-hover:text-white transition-colors">
+                                                    {sym.symbol}
+                                                </span>
+                                                <span className={clsx(
+                                                    "text-xs font-mono font-medium",
+                                                    isUp ? "text-emerald-400" : "text-rose-400"
+                                                )}>
                                                     {formatChange(sym.change)}
                                                 </span>
                                             </div>
-                                            <div className="ticker-name">{sym.name}</div>
-                                            <div className="ticker-price">${sym.price?.toFixed(2) || '--'}</div>
+                                            <div className="text-[10px] text-gray-500 uppercase tracking-wide truncate mb-2">
+                                                {sym.name}
+                                            </div>
+                                            <div className="text-right font-mono text-sm text-gray-200">
+                                                ${sym.price?.toFixed(2) || '--'}
+                                            </div>
                                         </a>
                                     );
                                 })}

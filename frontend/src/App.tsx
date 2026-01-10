@@ -3,7 +3,8 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
 } from 'recharts';
 import { motion } from 'framer-motion';
-import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu } from 'lucide-react';
+import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
+import clsx from 'clsx'; // Utility for conditional classes
 
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import { MarketMap } from './components/MarketMap';
@@ -13,24 +14,26 @@ import type {
 } from './types';
 import './App.css';
 
-// --- HUD Components ---
+// --- Components ---
 
-const HudCard = ({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
+const GlassCard = ({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
   <motion.div
-    className={`ind-card ${className}`}
+    className={clsx(
+      "glass-panel p-6 shadow-lg hover:shadow-xl transition-shadow duration-500",
+      className
+    )}
     style={{ gridColumn: `span ${colSpan}` }}
-    initial={{ opacity: 0, scale: 0.95 }}
-    animate={{ opacity: 1, scale: 1 }}
-    transition={{ duration: 0.4 }}
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.5, ease: "easeOut" }}
   >
-    <div className="card-header">
-      <div className="card-title">
-        {Icon && <Icon size={14} />}
-        {title}
+    <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center gap-2 text-gray-400">
+        {Icon && <Icon size={18} className="text-copper-400" />}
+        <span className="text-xs font-bold tracking-widest uppercase">{title}</span>
       </div>
-      <div className="corner-bracket" />
     </div>
-    <div className="card-content">
+    <div className="relative">
       {children}
     </div>
   </motion.div>
@@ -40,9 +43,10 @@ const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className =
   return (
     <motion.span
       key={value}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={className}
+      initial={{ opacity: 0, filter: 'blur(4px)' }}
+      animate={{ opacity: 1, filter: 'blur(0px)' }}
+      transition={{ duration: 0.3 }}
+      className={clsx("font-mono", className)}
     >
       {format(value)}
     </motion.span>
@@ -83,7 +87,7 @@ function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 60000); // Live refresh every minute
+    const interval = setInterval(loadData, 60000);
     return () => clearInterval(interval);
   }, [loadData]);
 
@@ -94,186 +98,216 @@ function App() {
   const chartData: HistoryDataPoint[] = useMemo(() => history?.data || [], [history]);
   const lastPoint = chartData[chartData.length - 1];
 
-  // Colors
-  const colors = {
-    price: '#B87333',
-    bull: '#43B3AE',
-    bear: '#C04000',
-    grid: 'rgba(67, 179, 174, 0.08)',
-    text: '#A1A1AA'
+  const theme = {
+    bull: '#34D399', // Emerald 400
+    bear: '#FB7185', // Rose 400
+    copper: '#F59E0B', // Amber 500
+    grid: 'rgba(255,255,255,0.05)',
+    text: '#9CA3AF'
   };
 
   if (loadingState === 'loading' || loadingState === 'idle') {
     return (
-      <div className="app-container">
-        <div className="loading-container" style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <div className="scan-line" />
-          <div style={{ color: colors.bull, fontFamily: 'var(--font-mono)' }}>INITIALIZING SYSTEM...</div>
+      <div className="min-h-screen bg-midnight flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
+          <span className="text-copper-500 font-mono text-sm tracking-widest animate-pulse">SYNCHRONIZING...</span>
         </div>
       </div>
     );
   }
 
-  // Derived stats
   const isBullish = analysis && analysis.predicted_return >= 0;
-  const sentimentColor = isBullish ? 'text-bull' : 'text-bear';
-  const predictionColor = isBullish ? colors.bull : colors.bear;
 
   return (
-    <div className="app-main">
-      <div className="scan-line" />
+    <div className="min-h-screen bg-midnight text-gray-100 p-8 font-sans selection:bg-copper-500/30">
 
-      <div className="app-container">
-        {/* HEADER */}
-        <header className="hud-header">
-          <div className="brand-section">
-            <motion.h1 initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }}>
-              TERRA RARA
+      {/* Background Gradient Mesh */}
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-copper-500/10 via-midnight to-midnight pointer-events-none" />
+
+      <div className="max-w-7xl mx-auto relative z-10 grid gap-8">
+
+        {/* Header */}
+        <header className="flex justify-between items-end pb-8 border-b border-white/5">
+          <div className="space-y-1">
+            <motion.h1
+              initial={{ x: -20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              className="text-4xl font-bold bg-gradient-to-r from-gray-100 to-gray-400 bg-clip-text text-transparent"
+            >
+              Terra Rara
             </motion.h1>
-            <span>INTELLIGENCE PLATFORM v2.1</span>
+            <p className="text-gray-500 text-sm tracking-widest font-mono uppercase">Copper Intelligence Platform</p>
           </div>
 
-          <div className="market-ticker">
-            <div className="ticker-item">
-              <div className="ticker-label">HG=F PRICE</div>
-              <div className="ticker-value text-copper">
+          <div className="flex bg-white/5 backdrop-blur-md rounded-2xl p-1.5 border border-white/5 gap-1">
+            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">HG=F Price</span>
+              <div className="text-copper-400 font-mono text-lg font-light">
                 $<NumberTicker value={analysis?.current_price || 0} />
               </div>
             </div>
-            <div className="ticker-item">
-              <div className="ticker-label">SENTIMENT</div>
-              <div className={`ticker-value ${sentimentColor}`}>
+            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sentiment</span>
+              <div className={clsx("font-mono text-lg font-light", isBullish ? "text-emerald-400" : "text-rose-400")}>
                 <NumberTicker value={analysis?.sentiment_index || 0} format={(v: number) => v.toFixed(3)} />
-              </div>
-            </div>
-            <div className="ticker-item">
-              <div className="ticker-label">STATUS</div>
-              <div className="ticker-value text-bull" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div className="dot" style={{ background: colors.bull }} /> LIVE
               </div>
             </div>
           </div>
         </header>
 
-        {/* BENTO GRID */}
-        <div className="bento-grid">
+        {/* Dashboard Grid */}
+        <div className="grid grid-cols-12 gap-6">
 
-          {/* PREDICTION CARD */}
-          <HudCard title="MODEL PREDICTION (T+1)" icon={Zap} colSpan={3} className={`prediction-card ${isBullish ? 'bg-bull-glow' : ''}`}>
-            <div className="trend-indicator" style={{ color: predictionColor, display: 'flex', alignItems: 'center' }}>
-              <span className="trend-arrow">{isBullish ? '▲' : '▼'}</span>
-              <div className="big-stat">
-                <NumberTicker value={Math.abs((analysis?.predicted_return || 0) * 100)} />%
+          {/* Prediction Card */}
+          <GlassCard title="Model Forecast (T+1)" icon={Zap} colSpan={4} className={clsx("relative overflow-hidden", isBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+            <div className="absolute top-0 right-0 p-6 opacity-10">
+              {isBullish ? <TrendingUp size={120} /> : <TrendingDown size={120} />}
+            </div>
+
+            <div className="relative z-10 flex flex-col h-full justify-between py-2">
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className={clsx("text-5xl font-light font-mono tracking-tighter", isBullish ? "text-emerald-400" : "text-rose-400")}>
+                    {isBullish ? '+' : ''}<NumberTicker value={(analysis?.predicted_return || 0) * 100} />%
+                  </span>
+                </div>
+                <div className="mt-4 space-y-2">
+                  <div className="flex justify-between text-sm py-2 border-b border-white/5">
+                    <span className="text-gray-500">Target Close</span>
+                    <span className="font-mono text-gray-200">${analysis?.predicted_price.toFixed(4)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm py-2 border-b border-white/5">
+                    <span className="text-gray-500">Confidence</span>
+                    <span className="font-mono text-gray-200">{(analysis?.data_quality.coverage_pct || 0)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-white/5">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <div className={clsx("w-2 h-2 rounded-full", isBullish ? "bg-emerald-400 animate-pulse" : "bg-rose-400 animate-pulse")} />
+                  AI CONVICTION: {isBullish ? 'BULLISH' : 'BEARISH'}
+                </div>
               </div>
             </div>
-            <div className="stat-label">
-              ESTIMATED CLOSE: <span className="text-platinum" style={{ fontFamily: 'var(--font-mono)' }}>${analysis?.predicted_price.toFixed(4)}</span>
-            </div>
-            <div className="stat-label" style={{ marginTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.5rem' }}>
-              CONFIDENCE: <span style={{ color: colors.text }}>{(analysis?.data_quality.coverage_pct || 0)}%</span>
-            </div>
-          </HudCard>
+          </GlassCard>
 
-          {/* CHART MODULE */}
-          <HudCard title="MARKET TRAJECTORY" icon={Activity} colSpan={9} className="chart-card">
-            <div style={{ width: '100%', height: '100%' }}>
+          {/* Chart Card */}
+          <GlassCard title="Market Flow" icon={Activity} colSpan={8} className="min-h-[400px]">
+            <div className="h-[350px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.price} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={colors.price} stopOpacity={0} />
+                    <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={theme.copper} stopOpacity={0} />
                     </linearGradient>
-                    <mask id="gridMask">
-                      <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                      <rect x="0" y="0" width="100%" height="100%" fill="url(#gridPattern)" />
-                    </mask>
                   </defs>
 
-                  <CartesianGrid stroke={colors.grid} vertical={false} strokeDasharray="2 2" />
+                  <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
                   <XAxis
                     dataKey="date"
-                    tick={{ fill: colors.text, fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                    tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
                     tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                     axisLine={false}
                     tickLine={false}
+                    interval="preserveStartEnd"
                   />
                   <YAxis
                     orientation="right"
                     domain={['auto', 'auto']}
-                    tick={{ fill: colors.text, fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                    tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
                     axisLine={false}
                     tickLine={false}
                     tickFormatter={(val) => `$${val.toFixed(2)}`}
+                    width={60}
                   />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#12181f', borderColor: '#333' }}
-                    itemStyle={{ fontFamily: 'var(--font-mono)' }}
+                    contentStyle={{
+                      backgroundColor: 'rgba(11, 17, 32, 0.8)',
+                      backdropFilter: 'blur(8px)',
+                      borderColor: 'rgba(255,255,255,0.1)',
+                      borderRadius: '12px',
+                      color: '#F3F4F6'
+                    }}
+                    itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }}
+                    labelStyle={{ fontFamily: 'Plus Jakarta Sans', color: '#9CA3AF', marginBottom: '8px' }}
                   />
                   <Area
                     type="monotone"
                     dataKey="price"
-                    stroke={colors.price}
-                    fill="url(#priceFill)"
+                    stroke={theme.copper}
+                    fill="url(#priceGradient)"
                     strokeWidth={2}
-                    animationDuration={2000}
                   />
                   {analysis && lastPoint && (
-                    <ReferenceDot x={lastPoint.date} y={analysis.predicted_price} r={6} fill={isBullish ? colors.bull : colors.bear} stroke="#fff" />
+                    <ReferenceDot
+                      x={lastPoint.date}
+                      y={analysis.predicted_price}
+                      r={4}
+                      fill={isBullish ? theme.bull : theme.bear}
+                      stroke="#fff"
+                      strokeWidth={2}
+                    />
                   )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          </HudCard>
+          </GlassCard>
 
-          {/* INFLUENCERS */}
-          <HudCard title="FEATURE IMPORTANCE" icon={BarChart3} colSpan={6} className="influencers-card">
-            <div className="influencers-list">
+          {/* Influencers Card */}
+          <GlassCard title="Market Drivers" icon={BarChart3} colSpan={6}>
+            <div className="space-y-4">
               {analysis?.top_influencers.slice(0, 5).map((inf, i) => (
-                <div key={inf.feature} className="bar-row">
-                  <div className="bar-label">{inf.feature.replace(/_/g, ' ')}</div>
-                  <div className="bar-track">
+                <div key={inf.feature} className="group">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs text-gray-400 group-hover:text-copper-400 transition-colors uppercase tracking-wide">
+                      {inf.feature.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-xs font-mono text-gray-500">{(inf.importance * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
                     <motion.div
-                      className="bar-fill"
+                      className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
                       initial={{ width: 0 }}
                       animate={{ width: `${(inf.importance / analysis.top_influencers[0].importance) * 100}%` }}
-                      transition={{ delay: 0.5 + (i * 0.1), duration: 0.8 }}
+                      transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
                     />
                   </div>
-                  <div className="bar-value">{(inf.importance * 100).toFixed(1)}%</div>
                 </div>
               ))}
             </div>
-          </HudCard>
+          </GlassCard>
 
-          {/* AI COMMENTARY */}
-          <HudCard title="SYSTEM ANALYSIS" icon={Cpu} colSpan={6} className="commentary-card">
-            <div className="commentary-scroll" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+          {/* AI Commentary Card */}
+          <GlassCard title="Neural Analysis" icon={Cpu} colSpan={6} className="text-sm leading-relaxed text-gray-300">
+            <div className="h-[240px] overflow-y-auto pr-2 custom-scrollbar">
               {commentary ? (
-                <div>
-                  <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-                    <span className="ai-badge">MIMO-V2</span>
-                    <span className="text-titanium" style={{ fontSize: '0.7rem' }}>
-                      {commentary.generated_at ? new Date(commentary.generated_at).toLocaleTimeString() : '--'}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
+                    <span className="text-xs text-gray-600 font-mono">
+                      {commentary.generated_at ? new Date(commentary.generated_at).toLocaleTimeString() : ''}
                     </span>
                   </div>
                   {(commentary.commentary || '').split('\n').map((p, i) => (
-                    <p key={i} style={{ marginBottom: '0.8em' }}>{p}</p>
+                    <p key={i} className="font-light">{p}</p>
                   ))}
                 </div>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', color: colors.text }}>
-                  <RefreshCw className="spin" size={16} /> ANALYZING MARKET DATA...
+                <div className="flex items-center justify-center h-full text-gray-500 gap-2">
+                  <RefreshCw className="animate-spin" size={16} /> Processing signals...
                 </div>
               )}
             </div>
-          </HudCard>
+          </GlassCard>
 
-          {/* MARKET MAP */}
-          <div style={{ gridColumn: 'span 12' }}>
-            <HudCard title="GLOBAL INTELLIGENCE MAP" icon={Globe} colSpan={12}>
+          {/* Market Map */}
+          <div className="col-span-12">
+            <GlassCard title="Global Intelligence Map" icon={Globe} colSpan={12}>
               <MarketMap />
-            </HudCard>
+            </GlassCard>
           </div>
 
         </div>
