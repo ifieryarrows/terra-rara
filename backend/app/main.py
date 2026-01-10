@@ -133,8 +133,9 @@ async def get_analysis(
         
         if cached:
             logger.debug(f"Returning cached snapshot for {symbol}")
-            # Update current_price with live data before returning
             import yfinance as yf
+            
+            # Update current_price with live data
             try:
                 ticker = yf.Ticker(symbol)
                 info = ticker.info
@@ -150,6 +151,40 @@ async def get_analysis(
                     logger.info(f"Updated cached snapshot with live price: ${live_price:.4f}")
             except Exception as e:
                 logger.debug(f"Could not update live price in cached snapshot: {e}")
+            
+            # Update top_influencers from current model metadata
+            try:
+                from app.ai_engine import load_model_metadata
+                from app.features import get_feature_descriptions
+                
+                metadata = load_model_metadata(symbol)
+                importance = metadata.get("importance", [])
+                
+                if importance:
+                    descriptions = get_feature_descriptions()
+                    top_influencers = []
+                    
+                    for item in importance[:10]:
+                        feat = item["feature"]
+                        desc = None
+                        for key, value in descriptions.items():
+                            if key in feat:
+                                desc = value
+                                break
+                        if desc is None:
+                            desc = feat.replace("_", " ").replace("  ", " ").title()
+                        
+                        top_influencers.append({
+                            "feature": feat,
+                            "importance": item["importance"],
+                            "description": desc,
+                        })
+                    
+                    cached['top_influencers'] = top_influencers
+                    logger.info(f"Updated cached snapshot with fresh influencers from model")
+            except Exception as e:
+                logger.debug(f"Could not update influencers in cached snapshot: {e}")
+            
             return cached
         
         # Check if pipeline is locked
