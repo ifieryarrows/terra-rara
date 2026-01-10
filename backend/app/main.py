@@ -141,14 +141,28 @@ async def get_analysis(
                 info = ticker.info
                 live_price = info.get('regularMarketPrice') or info.get('currentPrice')
                 if live_price is not None:
+                    old_price = cached.get('current_price', live_price)
+                    original_return = cached.get('predicted_return', 0)
+                    
+                    # Update current_price to live
                     cached['current_price'] = round(float(live_price), 4)
-                    # Recalculate predicted_return based on live price
-                    if cached.get('predicted_price'):
-                        cached['predicted_return'] = round(
-                            (cached['predicted_price'] - cached['current_price']) / cached['current_price'],
-                            6
-                        )
-                    logger.info(f"Updated cached snapshot with live price: ${live_price:.4f}")
+                    
+                    # Recalculate predicted_price based on ORIGINAL model return + NEW live price
+                    # predicted_price = live_price * (1 + original_return)
+                    cached['predicted_price'] = round(
+                        float(live_price) * (1 + original_return),
+                        4
+                    )
+                    
+                    # Recalculate confidence bounds proportionally
+                    if old_price and old_price > 0:
+                        price_ratio = float(live_price) / old_price
+                        if cached.get('confidence_lower'):
+                            cached['confidence_lower'] = round(cached['confidence_lower'] * price_ratio, 4)
+                        if cached.get('confidence_upper'):
+                            cached['confidence_upper'] = round(cached['confidence_upper'] * price_ratio, 4)
+                    
+                    logger.info(f"Updated snapshot: current=${live_price:.4f}, predicted=${cached['predicted_price']:.4f} ({original_return*100:.2f}%)")
             except Exception as e:
                 logger.debug(f"Could not update live price in cached snapshot: {e}")
             
