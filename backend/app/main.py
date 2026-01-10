@@ -534,7 +534,7 @@ async def websocket_live_price(websocket: WebSocket):
         await websocket.close()
         return
     
-    td_ws_url = f"wss://ws.twelvedata.com/v1/quotes?apikey={settings.twelvedata_api_key}"
+    td_ws_url = f"wss://ws.twelvedata.com/v1/price?apikey={settings.twelvedata_api_key}"
     
     try:
         async with websockets.connect(td_ws_url) as td_ws:

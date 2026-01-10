@@ -94,18 +94,13 @@ function App() {
 
   // WebSocket for real-time price streaming from Twelve Data
   useEffect(() => {
-    // Build WebSocket URL from API base
-    // VITE_API_URL example: https://ifieryarrows-terra-rara.hf.space/api
     const API_BASE = import.meta.env.VITE_API_URL || '';
     let wsUrl: string;
 
     if (API_BASE) {
-      // Production: convert HTTPS API URL to WSS WebSocket URL
-      // Remove /api suffix and change protocol
       const baseUrl = API_BASE.replace(/\/api\/?$/, '');
       wsUrl = baseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:') + '/ws/live-price';
     } else {
-      // Local dev: use current host
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       wsUrl = `${wsProtocol}//${window.location.host}/ws/live-price`;
     }
@@ -118,24 +113,18 @@ function App() {
     const connect = () => {
       ws = new WebSocket(wsUrl);
 
-      ws.onopen = () => {
-        console.log('WebSocket connected for live price');
-      };
+      ws.onopen = () => console.log('WebSocket connected');
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.price) {
-            setLivePrice(parseFloat(data.price));
-          }
+          if (data.price) setLivePrice(parseFloat(data.price));
         } catch (err) {
           console.error('WS parse error:', err);
         }
       };
 
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-      };
+      ws.onerror = (err) => console.error('WebSocket error:', err);
 
       ws.onclose = () => {
         console.log('WebSocket closed, reconnecting in 5s...');
