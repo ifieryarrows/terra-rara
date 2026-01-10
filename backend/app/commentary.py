@@ -50,13 +50,12 @@ async def generate_commentary(
     ])
     
     change_direction = "increase" if predicted_return > 0 else "decrease"
-    change_emoji = "📈" if predicted_return > 0 else "📉"
     
     prompt = f"""You are a commodity market analyst writing for investors. Using ONLY the data below, produce a human-readable copper market commentary that is clear, measured, and non-sensational. Do not invent extra facts, macro events, or drivers beyond what is provided.
 
 DATA
 - Current Price: ${current_price:.4f}
-- Tomorrow’s Model Prediction: ${predicted_price:.4f} ({change_emoji} {abs(predicted_return*100):.2f}% {change_direction})
+- Tomorrow’s Model Outlook: {change_direction} of {abs(predicted_return*100):.2f}%
 - Market Sentiment: {sentiment_label} (Score: {sentiment_index:.3f}, range -1 to 1)
 - News Analyzed: {news_count} articles
 - Top Influencing Factors (XGBoost importance, top 5):
@@ -64,18 +63,17 @@ DATA
 
 WRITING REQUIREMENTS
 - Length: 150–200 words total.
-- Structure: 3–4 paragraphs, no headings, no bullet points, no markdown.
-- Language: simple, plain English; avoid technical ML jargon (do not mention “FinBERT”, “XGBoost”, “features”, “SHAP”, “probabilities”, or “hyperparameters”).
-- Use the 🎯 emoji 2–4 times to highlight key points within sentences (not as a list).
-- Mention the predicted direction and percent move once, exactly as given (do not recalculate).
-- Explicitly reference 2–4 of the listed influencing factors by name and connect them to the outlook in a reasonable way without overclaiming.
+- Structure: 3 paragraphs, no headings, no bullet points, no markdown.
+- Language: Professional, plain English; avoid technical ML jargon.
+- **Do NOT use emojis.**
+- **Do NOT mention specific future price targets (e.g., "$4.25"). Only discuss percentage moves and direction.**
+- Explicitly reference 2–4 of the listed influencing factors by name and connect them to the outlook without overclaiming.
 - Keep uncertainty: present the prediction as model-based and conditional; avoid certainty words like “will” or “guaranteed”; do not give trading instructions.
 
 PARAGRAPH GUIDE
 1) Overall outlook and what the model implies for the next session.
 2) Key drivers: sentiment + news volume + the most important factors (tie them to the expected move).
-3) Risks/what could invalidate the view and what to watch next (can be combined with paragraph 4 if you write 3 paragraphs).
-4) Short-term wrap-up: concise forecast framing and one monitoring takeaway.
+3) Risks and short-term wrap-up: concise forecast framing and one monitoring takeaway.
 
 End with this exact line on its own: This is NOT financial advice."""
 

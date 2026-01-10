@@ -149,7 +149,7 @@ function App() {
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
               <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sentiment</span>
-              <div className={clsx("font-mono text-lg font-light", isBullish ? "text-emerald-400" : "text-rose-400")}>
+              <div className={clsx("font-mono text-lg font-light", (analysis?.sentiment_index || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
                 <NumberTicker value={analysis?.sentiment_index || 0} format={(v: number) => v.toFixed(3)} />
               </div>
             </div>
@@ -173,10 +173,7 @@ function App() {
                   </span>
                 </div>
                 <div className="mt-4 space-y-2">
-                  <div className="flex justify-between text-sm py-2 border-b border-white/5">
-                    <span className="text-gray-500">Target Close</span>
-                    <span className="font-mono text-gray-200">${analysis?.predicted_price.toFixed(4)}</span>
-                  </div>
+
                   <div className="flex justify-between text-sm py-2 border-b border-white/5">
                     <span className="text-gray-500">Confidence</span>
                     <span className="font-mono text-gray-200">{(analysis?.data_quality.coverage_pct || 0)}%</span>
