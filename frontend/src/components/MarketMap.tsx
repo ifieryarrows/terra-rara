@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { fetchMarketPrices, type MarketPricesResponse } from '../api';
 import './MarketMap.css';
 
@@ -8,55 +9,35 @@ interface MarketSymbol {
     category: 'core' | 'etf' | 'titan' | 'regional' | 'junior';
     change?: number;
     price?: number;
-    flash?: 'up' | 'down' | null;  // For flash animation
+    flash?: 'up' | 'down' | null;
 }
 
-// Symbol definitions with categories
 const MARKET_SYMBOLS: MarketSymbol[] = [
-    // Core Indicators
-    { symbol: 'HG=F', name: 'Copper Futures', category: 'core' },
-    { symbol: 'DX-Y.NYB', name: 'US Dollar Index', category: 'core' },
-    { symbol: 'CL=F', name: 'Crude Oil', category: 'core' },
-
-    // ETFs
-    { symbol: 'FXI', name: 'China Large-Cap', category: 'etf' },
-    { symbol: 'COPX', name: 'Global Copper Miners', category: 'etf' },
-    { symbol: 'COPJ', name: 'Junior Copper Miners', category: 'etf' },
-
-    // Titans (Majors)
-    { symbol: 'BHP', name: 'BHP Group', category: 'titan' },
-    { symbol: 'FCX', name: 'Freeport-McMoRan', category: 'titan' },
-    { symbol: 'SCCO', name: 'Southern Copper', category: 'titan' },
-    { symbol: 'RIO', name: 'Rio Tinto', category: 'titan' },
-
-    // Regional/Strategic
-    { symbol: 'TECK', name: 'Teck Resources', category: 'regional' },
-    { symbol: 'IVN.TO', name: 'Ivanhoe Mines', category: 'regional' },
-    { symbol: '2899.HK', name: 'Zijin Mining', category: 'regional' },
-
-    // Juniors
-    { symbol: 'LUN.TO', name: 'Lundin Mining', category: 'junior' },
+    { symbol: 'HG=F', name: 'COPPER FUTURES', category: 'core' },
+    { symbol: 'DX-Y.NYB', name: 'USD INDEX', category: 'core' },
+    { symbol: 'CL=F', name: 'CRUDE OIL', category: 'core' },
+    { symbol: 'FXI', name: 'CHINA LARGE-CAP', category: 'etf' },
+    { symbol: 'COPX', name: 'GLOBAL MINERS', category: 'etf' },
+    { symbol: 'COPJ', name: 'JUNIOR MINERS', category: 'etf' },
+    { symbol: 'BHP', name: 'BHP GROUP', category: 'titan' },
+    { symbol: 'FCX', name: 'FREEPORT-MCMO', category: 'titan' },
+    { symbol: 'SCCO', name: 'SOUTHERN COPPER', category: 'titan' },
+    { symbol: 'RIO', name: 'RIO TINTO', category: 'titan' },
+    { symbol: 'TECK', name: 'TECK RESOURCES', category: 'regional' },
+    { symbol: 'IVN.TO', name: 'IVANHOE MINES', category: 'regional' },
+    { symbol: '2899.HK', name: 'ZIJIN MINING', category: 'regional' },
+    { symbol: 'LUN.TO', name: 'LUNDIN MINING', category: 'junior' },
 ];
 
-const CATEGORY_LABELS: Record<string, { emoji: string; label: string }> = {
-    core: { emoji: '🔵', label: 'Core Indicators' },
-    etf: { emoji: '🟢', label: 'ETFs' },
-    titan: { emoji: '🟡', label: 'Titans' },
-    regional: { emoji: '🟠', label: 'Regional' },
-    junior: { emoji: '🔴', label: 'Juniors' },
+const CATEGORY_LABELS: Record<string, string> = {
+    core: 'CORE INDICATORS',
+    etf: 'SECTOR ETFs',
+    titan: 'INDUSTRY TITANS',
+    regional: 'REGIONAL PLAYERS',
+    junior: 'JUNIOR MINERS',
 };
 
-// Refresh interval in milliseconds (30 seconds)
 const REFRESH_INTERVAL = 30000;
-
-function getChangeClass(change?: number): string {
-    if (change === undefined || change === null) return '';
-    if (change > 2) return 'strong-up';
-    if (change > 0) return 'up';
-    if (change < -2) return 'strong-down';
-    if (change < 0) return 'down';
-    return 'neutral';
-}
 
 function formatChange(change?: number): string {
     if (change === undefined || change === null) return '--';
@@ -66,31 +47,22 @@ function formatChange(change?: number): string {
 
 export function MarketMap() {
     const [symbols, setSymbols] = useState<MarketSymbol[]>(MARKET_SYMBOLS);
-    const [loading, setLoading] = useState(true);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
     const prevPricesRef = useRef<Record<string, number>>({});
 
     const loadPrices = async (isInitial = false) => {
         try {
-            if (isInitial) setLoading(true);
-
             const data: MarketPricesResponse = await fetchMarketPrices();
-
-            // Merge prices into symbols and detect changes
             const updated = MARKET_SYMBOLS.map(sym => {
                 const newPrice = data.symbols[sym.symbol]?.price ?? null;
                 const prevPrice = prevPricesRef.current[sym.symbol];
 
-                // Detect flash direction
                 let flash: 'up' | 'down' | null = null;
                 if (prevPrice !== undefined && newPrice !== null && prevPrice !== newPrice) {
                     flash = newPrice > prevPrice ? 'up' : 'down';
                 }
 
-                // Update prev prices ref
-                if (newPrice !== null) {
-                    prevPricesRef.current[sym.symbol] = newPrice;
-                }
+                if (newPrice !== null) prevPricesRef.current[sym.symbol] = newPrice;
 
                 return {
                     ...sym,
@@ -103,86 +75,67 @@ export function MarketMap() {
             setSymbols(updated);
             setLastUpdate(new Date());
 
-            // Clear flash after animation
             setTimeout(() => {
                 setSymbols(prev => prev.map(s => ({ ...s, flash: null })));
             }, 1000);
-
         } catch (error) {
             console.error('Failed to load market prices:', error);
-        } finally {
-            if (isInitial) setLoading(false);
         }
     };
 
     useEffect(() => {
-        // Initial load
         loadPrices(true);
-
-        // Set up polling interval
         const interval = setInterval(() => loadPrices(false), REFRESH_INTERVAL);
-
         return () => clearInterval(interval);
     }, []);
 
     const categories = ['core', 'etf', 'titan', 'regional', 'junior'];
 
     return (
-        <div className="market-map">
-            <h2 className="market-map-title">🗺️ Market Intelligence Map</h2>
-            <p className="market-map-subtitle">
-                Copper ecosystem • Live data (15-min delayed)
-                {lastUpdate && (
-                    <span className="last-update">
-                        {' '}• Updated: {lastUpdate.toLocaleTimeString()}
-                    </span>
-                )}
-                {loading && <span className="loading-indicator"> • Loading...</span>}
-            </p>
+        <div className="market-map-container">
+            <div className="map-header">
+                <div className="map-status">
+                    STATUS: {lastUpdate ? 'LIVE' : 'CONNECTING...'}
+                    {lastUpdate && <span className="text-titanium"> // LAST UPDATE: {lastUpdate.toLocaleTimeString()}</span>}
+                </div>
+            </div>
 
-            <div className="market-map-grid">
+            <div className="market-grid">
                 {categories.map(category => {
                     const categorySymbols = symbols.filter(s => s.category === category);
-                    const categoryInfo = CATEGORY_LABELS[category];
-
                     return (
-                        <div key={category} className="market-category">
-                            <div className="category-header">
-                                <span className="category-emoji">{categoryInfo.emoji}</span>
-                                <span className="category-label">{categoryInfo.label}</span>
-                            </div>
+                        <div key={category} className="map-column">
+                            <div className="column-header">{CATEGORY_LABELS[category]}</div>
+                            <div className="column-cards">
+                                {categorySymbols.map(sym => {
+                                    const isUp = (sym.change || 0) >= 0;
+                                    const flashClass = sym.flash ? `flash-${sym.flash}` : '';
 
-                            <div className="category-cards">
-                                {categorySymbols.map(sym => (
-                                    <a
-                                        key={sym.symbol}
-                                        href={`https://finance.yahoo.com/quote/${sym.symbol}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className={`market-card ${getChangeClass(sym.change)} ${sym.flash ? `flash-${sym.flash}` : ''}`}
-                                    >
-                                        <div className="card-symbol">{sym.symbol}</div>
-                                        <div className="card-name">{sym.name}</div>
-                                        <div className={`card-change ${getChangeClass(sym.change)}`}>
-                                            {formatChange(sym.change)}
-                                        </div>
-                                    </a>
-                                ))}
+                                    return (
+                                        <a
+                                            key={sym.symbol}
+                                            href={`https://finance.yahoo.com/quote/${sym.symbol}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={`ticker-card ${flashClass}`}
+                                            style={{ borderColor: isUp ? 'var(--bull-teal)' : 'var(--bear-rust)' }}
+                                        >
+                                            <div className="ticker-top">
+                                                <span className="sym-code">{sym.symbol}</span>
+                                                <span className={`sym-change ${isUp ? 'text-bull' : 'text-bear'}`}>
+                                                    {formatChange(sym.change)}
+                                                </span>
+                                            </div>
+                                            <div className="ticker-name">{sym.name}</div>
+                                            <div className="ticker-price">${sym.price?.toFixed(2) || '--'}</div>
+                                        </a>
+                                    );
+                                })}
                             </div>
                         </div>
                     );
                 })}
             </div>
-
-            <div className="market-map-legend">
-                <span className="legend-item strong-up">Strong ↑</span>
-                <span className="legend-item up">Up ↑</span>
-                <span className="legend-item neutral">Flat</span>
-                <span className="legend-item down">Down ↓</span>
-                <span className="legend-item strong-down">Strong ↓</span>
-            </div>
         </div>
     );
 }
-
-export default MarketMap;

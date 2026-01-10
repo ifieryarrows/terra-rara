@@ -1,611 +1,288 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceDot,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
 } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  TrendingUp, TrendingDown, Activity, Globe, Zap, Clock,
+  BarChart3, AlertTriangle, RefreshCw, Cpu
+} from 'lucide-react';
+
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import { MarketMap } from './components/MarketMap';
 import type {
-  AnalysisReport,
-  HistoryResponse,
-  HistoryDataPoint,
-  LoadingState,
-  Influencer,
-  CommentaryResponse,
+  AnalysisReport, HistoryResponse, HistoryDataPoint,
+  LoadingState, Influencer, CommentaryResponse
 } from './types';
+import './App.css';
 
-// Custom tooltip component
-interface TooltipProps {
-  active?: boolean;
-  payload?: Array<{ value: number; dataKey: string }>;
-  label?: string;
-  analysis?: AnalysisReport | null;
-  isLastPoint?: boolean;
-}
+// --- HUD Components ---
 
-function CustomTooltip({ active, payload, label, analysis, isLastPoint }: TooltipProps) {
-  if (!active || !payload || !payload.length) return null;
-
-  const priceVal = payload.find((p) => p.dataKey === 'price')?.value;
-  const sentimentVal = payload.find((p) => p.dataKey === 'sentiment_index')?.value;
-
-  return (
-    <div className="custom-tooltip">
-      <div className="tooltip-date">{label}</div>
-      {priceVal !== undefined && (
-        <div className="tooltip-row">
-          <span className="tooltip-label">Price</span>
-          <span className="tooltip-value price">${priceVal.toFixed(4)}</span>
-        </div>
-      )}
-      {sentimentVal !== undefined && sentimentVal !== null && (
-        <div className="tooltip-row">
-          <span className="tooltip-label">Sentiment</span>
-          <span className="tooltip-value sentiment">{sentimentVal.toFixed(3)}</span>
-        </div>
-      )}
-      {isLastPoint && analysis && (
-        <>
-          <div className="tooltip-divider" />
-          <div className="tooltip-row">
-            <span className="tooltip-label">🎯 Tomorrow</span>
-            <span className={`tooltip-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
-              {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {(analysis.predicted_return * 100).toFixed(2)}%
-            </span>
-          </div>
-        </>
-      )}
+const HudCard = ({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
+  <motion.div
+    className={`ind-card ${className}`}
+    style={{ gridColumn: `span ${colSpan}` }}
+    initial={{ opacity: 0, scale: 0.95 }}
+    animate={{ opacity: 1, scale: 1 }}
+    transition={{ duration: 0.4 }}
+  >
+    <div className="card-header">
+      <div className="card-title">
+        {Icon && <Icon size={14} />}
+        {title}
+      </div>
+      <div className="corner-bracket" />
     </div>
+    <div className="card-content">
+      {children}
+    </div>
+  </motion.div>
+);
+
+const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className = '' }: any) => {
+  return (
+    <motion.span
+      key={value}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={className}
+    >
+      {format(value)}
+    </motion.span>
   );
-}
+};
 
-// Feature name to human-readable description
-function getFeatureDescription(feature: string): string {
-  const descriptions: Record<string, string> = {
-    // Sentiment features
-    'sentiment__index': 'Market Sentiment Index',
-    'sentiment__news_count': 'News Volume',
-
-    // US Dollar Index (DX-Y.NYB)
-    'DX_Y_NYB_price_sma_ratio': '📈 US Dollar Strength',
-    'DX_Y_NYB_vol_10': '📊 USD Volatility (10d)',
-    'DX_Y_NYB_ret1': '💵 US Dollar Daily Return',
-    'DX_Y_NYB_lag_ret1_1': 'USD Return (1d ago)',
-    'DX_Y_NYB_lag_ret1_2': 'USD Return (2d ago)',
-    'DX_Y_NYB_lag_ret1_3': 'USD Return (3d ago)',
-    'DX_Y_NYB_lag_ret1_5': 'USD Return (5d ago)',
-    'DX_Y_NYB_SMA_5': 'USD SMA (5d)',
-    'DX_Y_NYB_SMA_10': 'USD SMA (10d)',
-    'DX_Y_NYB_SMA_20': 'USD SMA (20d)',
-    'DX_Y_NYB_EMA_5': 'USD EMA (5d)',
-    'DX_Y_NYB_EMA_10': 'USD EMA (10d)',
-    'DX_Y_NYB_EMA_20': 'USD EMA (20d)',
-    'DX_Y_NYB_RSI_14': 'USD Momentum (RSI)',
-
-    // Copper (HG=F)
-    'HG_F_price_sma_ratio': '🔶 Copper Trend Strength',
-    'HG_F_vol_10': '📊 Copper Volatility',
-    'HG_F_ret1': '🔶 Copper Daily Return',
-    'HG_F_lag_ret1_1': 'Copper Return (1d ago)',
-    'HG_F_lag_ret1_2': 'Copper Return (2d ago)',
-    'HG_F_lag_ret1_3': 'Copper Return (3d ago)',
-    'HG_F_lag_ret1_5': 'Copper Return (5d ago)',
-    'HG_F_SMA_5': '🔶 Copper Short-term Trend',
-    'HG_F_SMA_10': '🔶 Copper Medium Trend',
-    'HG_F_SMA_20': 'Copper Long-term Trend',
-    'HG_F_EMA_5': 'Copper EMA (5d)',
-    'HG_F_EMA_10': '🔶 Copper EMA (10d)',
-    'HG_F_EMA_20': 'Copper EMA (20d)',
-    'HG_F_RSI_14': 'Copper Momentum (RSI)',
-
-    // Crude Oil (CL=F)
-    'CL_F_price_sma_ratio': '🛢️ Oil Trend Strength',
-    'CL_F_vol_10': '🛢️ Oil Volatility',
-    'CL_F_ret1': '🛢️ Oil Daily Return',
-    'CL_F_lag_ret1_1': 'Oil Return (1d ago)',
-    'CL_F_lag_ret1_2': 'Oil Return (2d ago)',
-    'CL_F_lag_ret1_3': 'Oil Return (3d ago)',
-    'CL_F_lag_ret1_5': 'Oil Return (5d ago)',
-    'CL_F_SMA_5': 'Oil SMA (5d)',
-    'CL_F_SMA_10': 'Oil SMA (10d)',
-    'CL_F_SMA_20': 'Oil SMA (20d)',
-    'CL_F_EMA_5': 'Oil EMA (5d)',
-    'CL_F_EMA_10': 'Oil EMA (10d)',
-    'CL_F_EMA_20': 'Oil EMA (20d)',
-    'CL_F_RSI_14': 'Oil Momentum (RSI)',
-
-    // China ETF (FXI)
-    'FXI_price_sma_ratio': '🇨🇳 China Market Strength',
-    'FXI_vol_10': '🇨🇳 China Volatility',
-    'FXI_ret1': '🇨🇳 China Daily Return',
-    'FXI_lag_ret1_1': 'China Return (1d ago)',
-    'FXI_lag_ret1_2': 'China Return (2d ago)',
-    'FXI_lag_ret1_3': 'China Return (3d ago)',
-    'FXI_lag_ret1_5': 'China Return (5d ago)',
-    'FXI_SMA_5': 'China SMA (5d)',
-    'FXI_SMA_10': 'China SMA (10d)',
-    'FXI_SMA_20': 'China SMA (20d)',
-    'FXI_EMA_5': 'China EMA (5d)',
-    'FXI_EMA_10': 'China EMA (10d)',
-    'FXI_EMA_20': 'China EMA (20d)',
-    'FXI_RSI_14': 'China Momentum (RSI)',
-  };
-
-  // Human-readable names for display
-  const displayNames: Record<string, string> = {
-    'DX_Y_NYB_price_sma_ratio': 'US Dollar Index',
-    'DX_Y_NYB_vol_10': 'USD Volatility',
-    'HG_F_SMA_5': 'Copper Trend (5d)',
-    'HG_F_EMA_10': 'Copper Trend (10d)',
-    'HG_F_SMA_10': 'Copper SMA (10d)',
-    'HG_F_EMA_20': 'Copper EMA (20d)',
-    'HG_F_lag_ret1_2': 'Copper Momentum',
-    'DX_Y_NYB_lag_ret1_3': 'USD Momentum',
-    'FXI_SMA_5': 'China Market',
-    'DX_Y_NYB_lag_ret1_2': 'USD Movement',
-  };
-
-  return displayNames[feature] || descriptions[feature] || feature.replace(/_/g, ' ');
-}
+// --- Main App ---
 
 function App() {
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
-  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoadingState('loading');
-    setError(null);
-
     try {
       const [analysisData, historyData] = await Promise.all([
         fetchAnalysis('HG=F'),
         fetchHistory('HG=F', 180),
       ]);
-
       setAnalysis(analysisData);
       setHistory(historyData);
       setLoadingState('success');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load data';
-      setError(message);
+    } catch {
       setLoadingState('error');
     }
   }, []);
 
-  // Load commentary separately (lazy, non-blocking)
   const loadCommentary = useCallback(async () => {
     try {
-      const commentaryData = await fetchCommentary('HG=F');
-      setCommentary(commentaryData);
+      const data = await fetchCommentary('HG=F');
+      setCommentary(data);
     } catch (err) {
-      console.error('Failed to load commentary:', err);
+      console.error(err);
     }
   }, []);
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 60000); // Live refresh every minute
+    return () => clearInterval(interval);
   }, [loadData]);
 
-  // Load commentary after main data loads
   useEffect(() => {
-    if (loadingState === 'success') {
-      loadCommentary();
-    }
+    if (loadingState === 'success') loadCommentary();
   }, [loadingState, loadCommentary]);
 
-  // Prepare chart data
-  const chartData: HistoryDataPoint[] = history?.data || [];
+  const chartData: HistoryDataPoint[] = useMemo(() => history?.data || [], [history]);
+  const lastPoint = chartData[chartData.length - 1];
 
-  // Get the last price and prediction point
-  const lastDataPoint = chartData.length > 0 ? chartData[chartData.length - 1] : null;
-
-  // Format large numbers
-  const formatPrice = (price: number) => {
-    return price >= 100 ? price.toFixed(2) : price.toFixed(4);
+  // Colors
+  const colors = {
+    price: '#B87333',
+    bull: '#43B3AE',
+    bear: '#C04000',
+    grid: 'rgba(67, 179, 174, 0.08)',
+    text: '#A1A1AA'
   };
 
-  const formatPercent = (value: number) => {
-    const pct = value * 100;
-    const sign = pct >= 0 ? '+' : '';
-    return `${sign}${pct.toFixed(2)}%`;
-  };
-
-  // Render loading state
-  if (loadingState === 'loading') {
+  if (loadingState === 'loading' || loadingState === 'idle') {
     return (
-      <div className="app">
-        <header className="header">
-          <div className="header-content">
-            <div className="logo">
-              <div className="logo-icon">Cu</div>
-              <span className="logo-text">CopperMind</span>
-            </div>
-          </div>
-        </header>
-        <main className="main">
-          <div className="loading-container">
-            <div className="loading-spinner" />
-            <p className="loading-text">Loading market intelligence...</p>
-          </div>
-        </main>
+      <div className="app-container">
+        <div className="loading-container" style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="scan-line" />
+          <div style={{ color: colors.bull, fontFamily: 'var(--font-mono)' }}>INITIALIZING SYSTEM...</div>
+        </div>
       </div>
     );
   }
 
-  // Render error state
-  if (loadingState === 'error') {
-    return (
-      <div className="app">
-        <header className="header">
-          <div className="header-content">
-            <div className="logo">
-              <div className="logo-icon">Cu</div>
-              <span className="logo-text">CopperMind</span>
-            </div>
-          </div>
-        </header>
-        <main className="main">
-          <div className="error-container">
-            <div className="error-icon">⚠️</div>
-            <h2 className="error-title">Unable to Load Data</h2>
-            <p className="error-message">{error}</p>
-            <button className="error-retry" onClick={loadData}>
-              Try Again
-            </button>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  // Main dashboard render
-  const sentimentClass = analysis?.sentiment_label?.toLowerCase() || 'neutral';
+  // Derived stats
+  const isBullish = analysis && analysis.predicted_return >= 0;
+  const sentimentColor = isBullish ? 'text-bull' : 'text-bear';
+  const predictionColor = isBullish ? colors.bull : colors.bear;
 
   return (
-    <div className="app">
-      {/* Header */}
-      <header className="header">
-        <div className="header-content">
-          <div className="logo">
-            <div className="logo-icon">Cu</div>
-            <span className="logo-text">CopperMind</span>
-          </div>
-          {analysis && (
-            <div className="header-stats">
-              <div className="header-stat">
-                <div className="header-stat-label">Current Price</div>
-                <div className="header-stat-value">
-                  ${formatPrice(analysis.current_price)}
-                </div>
-              </div>
-              <div className="header-stat">
-                <div className="header-stat-label">Tomorrow's Prediction</div>
-                <div
-                  className={`header-stat-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}
-                >
-                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </header>
+    <div className="app-main">
+      <div className="scan-line" />
 
-      <main className="main">
-        {/* Cards Grid */}
-        <div className="cards-grid">
-          {/* Tomorrow's Prediction Card */}
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">Tomorrow's Prediction</span>
-              <div className="card-icon" style={{ background: 'var(--success-bg)', color: 'var(--success)' }}>
-                🎯
-              </div>
-            </div>
-            <div className="card-value">
-              {analysis ? (
-                <span className={analysis.predicted_return >= 0 ? 'positive' : 'negative'}>
-                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
-                </span>
-              ) : '—'}
-            </div>
-            <div className="card-subtitle">
-              {analysis && (
-                <>
-                  <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.7)' }}>
-                    Model prediction for next trading day
-                  </span>
-                  <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.5rem' }}>
-                    {(() => {
-                      const dataDate = new Date(analysis.generated_at);
-                      const predDate = new Date(dataDate);
-                      // Add 1 day, skip weekends
-                      predDate.setDate(predDate.getDate() + 1);
-                      while (predDate.getDay() === 0 || predDate.getDay() === 6) {
-                        predDate.setDate(predDate.getDate() + 1);
-                      }
-                      const formatShort = (d: Date) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                      return `Data: ${formatShort(dataDate)} → Predicting: ${formatShort(predDate)}`;
-                    })()}
-                  </div>
-                </>
-              )}
-            </div>
+      <div className="app-container">
+        {/* HEADER */}
+        <header className="hud-header">
+          <div className="brand-section">
+            <motion.h1 initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }}>
+              TERRA RARA
+            </motion.h1>
+            <span>INTELLIGENCE PLATFORM v2.1</span>
           </div>
 
-          {/* Sentiment Card */}
-          <div className={`card ${sentimentClass}`}>
-            <div className="card-header">
-              <span className="card-title">Market Sentiment</span>
-              <div className="card-icon">
-                {sentimentClass === 'bullish' ? '🐂' : sentimentClass === 'bearish' ? '🐻' : '➖'}
+          <div className="market-ticker">
+            <div className="ticker-item">
+              <div className="ticker-label">HG=F PRICE</div>
+              <div className="ticker-value text-copper">
+                $<NumberTicker value={analysis?.current_price || 0} />
               </div>
             </div>
-            <div className="card-value">
-              {analysis?.sentiment_label || 'Neutral'}
+            <div className="ticker-item">
+              <div className="ticker-label">SENTIMENT</div>
+              <div className={`ticker-value ${sentimentColor}`}>
+                <NumberTicker value={analysis?.sentiment_index || 0} format={v => v.toFixed(3)} />
+              </div>
             </div>
-            <div className="card-subtitle">
-              Index: {analysis ? analysis.sentiment_index.toFixed(3) : '—'}
+            <div className="ticker-item">
+              <div className="ticker-label">STATUS</div>
+              <div className="ticker-value text-bull" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="dot" style={{ background: colors.bull }} /> LIVE
+              </div>
             </div>
           </div>
+        </header>
 
-          {/* Data Quality Card */}
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">Data Quality</span>
-              <div className="card-icon" style={{ background: 'var(--warning-bg)', color: 'var(--warning)' }}>
-                📊
-              </div>
-            </div>
-            <div className="card-value">
-              {analysis?.data_quality.coverage_pct || 0}%
-            </div>
-            <div className="card-subtitle">
-              {analysis?.data_quality.news_count_7d || 0} news articles (7d)
-            </div>
-          </div>
+        {/* BENTO GRID */}
+        <div className="bento-grid">
 
-          {/* Generated At Card */}
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">Last Updated</span>
-              <div className="card-icon" style={{ background: 'var(--neutral-bg)', color: 'var(--neutral)' }}>
-                🕐
+          {/* PREDICTION CARD */}
+          <HudCard title="MODEL PREDICTION (T+1)" icon={Zap} colSpan={3} className={`prediction-card ${isBullish ? 'bg-bull-glow' : ''}`}>
+            <div className="trend-indicator" style={{ color: predictionColor, display: 'flex', alignItems: 'center' }}>
+              <span className="trend-arrow">{isBullish ? '▲' : '▼'}</span>
+              <div className="big-stat">
+                <NumberTicker value={Math.abs((analysis?.predicted_return || 0) * 100)} />%
               </div>
             </div>
-            <div className="card-value" style={{ fontSize: '1.25rem' }}>
-              {analysis
-                ? new Date(analysis.generated_at).toLocaleTimeString()
-                : '—'}
+            <div className="stat-label">
+              ESTIMATED CLOSE: <span className="text-platinum" style={{ fontFamily: 'var(--font-mono)' }}>${analysis?.predicted_price.toFixed(4)}</span>
             </div>
-            <div className="card-subtitle">
-              {analysis
-                ? new Date(analysis.generated_at).toLocaleDateString()
-                : 'Loading...'}
+            <div className="stat-label" style={{ marginTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.5rem' }}>
+              CONFIDENCE: <span style={{ color: colors.text }}>{(analysis?.data_quality.coverage_pct || 0)}%</span>
             </div>
-          </div>
-        </div>
+          </HudCard>
 
-        {/* Chart Section */}
-        <div className="chart-section">
-          <div className="chart-header">
-            <h2 className="chart-title">Price & Sentiment History</h2>
-            <div className="chart-legend">
-              <div className="legend-item">
-                <span className="legend-dot price" />
-                <span>Price</span>
-              </div>
-              <div className="legend-item">
-                <span className="legend-dot sentiment" />
-                <span>Sentiment</span>
-              </div>
-              {analysis && (
-                <div className="legend-item">
-                  <span className="legend-dot prediction" />
-                  <span>Prediction</span>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="chart-container">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={chartData}
-                margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="sentimentGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-                  tickLine={{ stroke: 'var(--chart-grid)' }}
-                  axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value: string) => {
-                    const date = new Date(value);
-                    return `${date.getMonth() + 1}/${date.getDate()}`;
-                  }}
-                  interval="preserveStartEnd"
-                  minTickGap={50}
-                />
-                <YAxis
-                  yAxisId="price"
-                  orientation="left"
-                  tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-                  tickLine={{ stroke: 'var(--chart-grid)' }}
-                  axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value: number) => `$${value.toFixed(2)}`}
-                  domain={['auto', 'auto']}
-                />
-                <YAxis
-                  yAxisId="sentiment"
-                  orientation="right"
-                  tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-                  tickLine={{ stroke: 'var(--chart-grid)' }}
-                  axisLine={{ stroke: 'var(--chart-grid)' }}
-                  tickFormatter={(value: number) => value.toFixed(2)}
-                  domain={[-1, 1]}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Area
-                  yAxisId="price"
-                  type="monotone"
-                  dataKey="price"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  fill="url(#priceGradient)"
-                  dot={false}
-                  activeDot={{ r: 4, fill: '#f59e0b' }}
-                />
-                <Area
-                  yAxisId="sentiment"
-                  type="monotone"
-                  dataKey="sentiment_index"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  fill="url(#sentimentGradient)"
-                  dot={false}
-                  activeDot={{ r: 4, fill: '#3b82f6' }}
-                  connectNulls
-                />
-                {/* Prediction point */}
-                {analysis && lastDataPoint && (
-                  <ReferenceDot
-                    yAxisId="price"
-                    x={lastDataPoint.date}
-                    y={analysis.predicted_price}
-                    r={8}
-                    fill="#22c55e"
-                    stroke="#fff"
-                    strokeWidth={2}
+          {/* CHART MODULE */}
+          <HudCard title="MARKET TRAJECTORY" icon={Activity} colSpan={9} className="chart-card">
+            <div style={{ width: '100%', height: '100%' }}>
+              <ResponsiveContainer>
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.price} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={colors.price} stopOpacity={0} />
+                    </linearGradient>
+                    <mask id="gridMask">
+                      <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                      <rect x="0" y="0" width="100%" height="100%" fill="url(#gridPattern)" />
+                    </mask>
+                  </defs>
+
+                  <CartesianGrid stroke={colors.grid} vertical={false} strokeDasharray="2 2" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: colors.text, fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                    axisLine={false}
+                    tickLine={false}
                   />
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Prediction Summary under chart */}
-          {analysis && (
-            <div className="prediction-summary">
-              <div className="prediction-item">
-                <span className="prediction-label">🎯 Tomorrow's Prediction</span>
-                <span className={`prediction-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
-                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
-                </span>
-              </div>
-              <div className="prediction-item">
-                <span className="prediction-label">Current Price</span>
-                <span className="prediction-value">${formatPrice(analysis.current_price)}</span>
-              </div>
-              <div className="prediction-item">
-                <span className="prediction-label">Market Sentiment</span>
-                <span className="prediction-value">{analysis.sentiment_label}</span>
-              </div>
+                  <YAxis
+                    orientation="right"
+                    domain={['auto', 'auto']}
+                    tick={{ fill: colors.text, fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(val) => `$${val.toFixed(2)}`}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#12181f', borderColor: '#333' }}
+                    itemStyle={{ fontFamily: 'var(--font-mono)' }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="price"
+                    stroke={colors.price}
+                    fill="url(#priceFill)"
+                    strokeWidth={2}
+                    animationDuration={2000}
+                  />
+                  {analysis && lastPoint && (
+                    <ReferenceDot x={lastPoint.date} y={analysis.predicted_price} r={6} fill={isBullish ? colors.bull : colors.bear} stroke="#fff" />
+                  )}
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
-          )}
-        </div>
+          </HudCard>
 
-        {/* Influencers Section */}
-        {analysis && analysis.top_influencers.length > 0 && (
-          <div className="influencers-section">
-            <h2 className="influencers-title">Top Price Influencers</h2>
+          {/* INFLUENCERS */}
+          <HudCard title="FEATURE IMPORTANCE" icon={BarChart3} colSpan={6} className="influencers-card">
             <div className="influencers-list">
-              {analysis.top_influencers.slice(0, 5).map((inf: Influencer, idx: number) => {
-                const maxImportance = Math.max(
-                  ...analysis.top_influencers.map((i: Influencer) => i.importance)
-                );
-                const barWidth = (inf.importance / maxImportance) * 100;
-
-                return (
-                  <div key={inf.feature} className="influencer-item">
-                    <div className="influencer-rank">{idx + 1}</div>
-                    <div className="influencer-info">
-                      <div className="influencer-name">{getFeatureDescription(inf.feature)}</div>
-                      <div className="influencer-desc">
-                        {inf.description || inf.feature.replace(/_/g, ' ')}
-                      </div>
-                    </div>
-                    <div className="influencer-bar-container">
-                      <div
-                        className="influencer-bar"
-                        style={{ width: `${barWidth}%` }}
-                      />
-                    </div>
-                    <div className="influencer-value">
-                      {(inf.importance * 100).toFixed(1)}%
-                    </div>
+              {analysis?.top_influencers.slice(0, 5).map((inf, i) => (
+                <div key={inf.feature} className="bar-row">
+                  <div className="bar-label">{inf.feature.replace(/_/g, ' ')}</div>
+                  <div className="bar-track">
+                    <motion.div
+                      className="bar-fill"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(inf.importance / analysis.top_influencers[0].importance) * 100}%` }}
+                      transition={{ delay: 0.5 + (i * 0.1), duration: 0.8 }}
+                    />
                   </div>
-                );
-              })}
+                  <div className="bar-value">{(inf.importance * 100).toFixed(1)}%</div>
+                </div>
+              ))}
             </div>
-          </div>
-        )}
+          </HudCard>
 
-        {/* AI Commentary Section */}
-        <div className="commentary-section">
-          <div className="commentary-header">
-            <h2 className="commentary-title">🤖 AI Market Analysis</h2>
-            {commentary?.generated_at && (
-              <span className="commentary-timestamp">
-                {new Date(commentary.generated_at).toLocaleString()}
-              </span>
-            )}
+          {/* AI COMMENTARY */}
+          <HudCard title="SYSTEM ANALYSIS" icon={Cpu} colSpan={6} className="commentary-card">
+            <div className="commentary-scroll" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+              {commentary ? (
+                <div>
+                  <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+                    <span className="ai-badge">MIMO-V2</span>
+                    <span className="text-titanium" style={{ fontSize: '0.7rem' }}>
+                      {new Date(commentary.generated_at).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  {commentary.commentary.split('\n').map((p, i) => (
+                    <p key={i} style={{ marginBottom: '0.8em' }}>{p}</p>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', color: colors.text }}>
+                  <RefreshCw className="spin" size={16} /> ANALYZING MARKET DATA...
+                </div>
+              )}
+            </div>
+          </HudCard>
+
+          {/* MARKET MAP */}
+          <div style={{ gridColumn: 'span 12' }}>
+            <HudCard title="GLOBAL INTELLIGENCE MAP" icon={Globe} colSpan={12}>
+              <MarketMap />
+            </HudCard>
           </div>
-          <div className="commentary-content">
-            {commentary?.commentary ? (
-              <div className="commentary-text">
-                {commentary.commentary.split('\n').map((paragraph, idx) => (
-                  <p key={idx}>{paragraph}</p>
-                ))}
-              </div>
-            ) : commentary?.error ? (
-              <div className="commentary-placeholder">
-                <span className="commentary-icon">⚙️</span>
-                <p>AI Commentary not available</p>
-                <p className="commentary-hint">{commentary.error}</p>
-              </div>
-            ) : (
-              <div className="commentary-loading">
-                <div className="commentary-spinner" />
-                <p>Generating AI analysis...</p>
-              </div>
-            )}
-          </div>
+
         </div>
-
-        {/* Market Intelligence Map */}
-        <MarketMap />
-      </main>
-
-      {/* Footer */}
-      <footer className="footer">
-        <p className="footer-text">
-          CopperMind v1.0.0 • Built with FinBERT + XGBoost •{' '}
-          <a href="/api/docs" target="_blank" rel="noopener noreferrer">
-            API Docs
-          </a>
-        </p>
-      </footer>
+      </div>
     </div>
   );
 }
 
 export default App;
-
