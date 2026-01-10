@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+
+/* Layer definitions are handled by Tailwind v4 automatically based on usage,
+   but custom classes can still be defined in layers if needed. */
 
 @layer base {
   body {
@@ -15,5 +17,18 @@
 
   .glass-card {
     @apply bg-white/5 backdrop-blur-sm border border-white/5 rounded-xl hover:bg-white/10 transition-colors duration-300;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: theme('colors.gray.700');
+    border-radius: 3px;
   }
 }
