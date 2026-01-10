@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     openrouter_api_key: Optional[str] = None
     openrouter_model: str = "xiaomi/mimo-v2-flash:free"
     
+    # Twelve Data (Live Price)
+    twelvedata_api_key: Optional[str] = None
+    
     @property
     def symbols_list(self) -> list[str]:
         """Parse comma-separated symbols into a list."""

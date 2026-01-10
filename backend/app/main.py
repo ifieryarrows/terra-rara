@@ -460,6 +460,58 @@ async def get_market_prices():
 
 
 # =============================================================================
+# Live Price Endpoint (Twelve Data - Real-time)
+# =============================================================================
+
+@app.get(
+    "/api/live-price",
+    summary="Get real-time copper price from Twelve Data",
+    description="Returns live XCU/USD price for header display. Uses Twelve Data API for reliability."
+)
+async def get_live_price():
+    """
+    Get real-time copper price from Twelve Data.
+    
+    Used for the header price display. Separate from yfinance to avoid rate limits.
+    """
+    import httpx
+    
+    settings = get_settings()
+    
+    if not settings.twelvedata_api_key:
+        logger.warning("Twelve Data API key not configured")
+        return {"price": None, "error": "API key not configured"}
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.twelvedata.com/price",
+                params={
+                    "symbol": "XCU/USD",
+                    "apikey": settings.twelvedata_api_key,
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                price = data.get("price")
+                if price:
+                    return {
+                        "symbol": "XCU/USD",
+                        "price": round(float(price), 4),
+                        "error": None,
+                    }
+                else:
+                    return {"price": None, "error": data.get("message", "No price data")}
+            else:
+                return {"price": None, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Twelve Data API error: {e}")
+        return {"price": None, "error": str(e)}
+
+
+# =============================================================================
 # AI Commentary Endpoint
 # =============================================================================
 

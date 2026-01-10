@@ -107,3 +107,20 @@ export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
 
 export default api;
 
+/**
+ * Live price response type (Twelve Data)
+ */
+export interface LivePriceResponse {
+  symbol: string;
+  price: number | null;
+  error: string | null;
+}
+
+/**
+ * Fetch real-time copper price from Twelve Data
+ */
+export async function fetchLivePrice(): Promise<LivePriceResponse> {
+  const response = await api.get<LivePriceResponse>('/live-price');
+  return response.data;
+}
+

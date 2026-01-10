@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
 import clsx from 'clsx'; // Utility for conditional classes
 
-import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
+import { fetchAnalysis, fetchHistory, fetchCommentary, fetchLivePrice } from './api';
 import { MarketMap } from './components/MarketMap';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
@@ -60,6 +60,7 @@ function App() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
+  const [livePrice, setLivePrice] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
     setLoadingState('loading');
@@ -90,6 +91,22 @@ function App() {
     const interval = setInterval(loadData, 60000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Live price from Twelve Data (real-time, separate from yfinance)
+  const loadLivePrice = useCallback(async () => {
+    try {
+      const data = await fetchLivePrice();
+      if (data.price) setLivePrice(data.price);
+    } catch (err) {
+      console.error('Live price error:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLivePrice();
+    const interval = setInterval(loadLivePrice, 30000); // Every 30 seconds
+    return () => clearInterval(interval);
+  }, [loadLivePrice]);
 
   useEffect(() => {
     if (loadingState === 'success') loadCommentary();
@@ -142,9 +159,9 @@ function App() {
 
           <div className="flex bg-white/5 backdrop-blur-md rounded-2xl p-1.5 border border-white/5 gap-1">
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
-              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">HG=F Price</span>
-              <div className="text-copper-400 font-mono text-lg font-light">
-                $<NumberTicker value={analysis?.current_price || 0} />
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">XCU/USD Live</span>
+              <div className="font-mono text-lg text-copper-400 font-light">
+                $<NumberTicker value={livePrice || analysis?.current_price || 0} format={(v: number) => v.toFixed(4)} />
               </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
