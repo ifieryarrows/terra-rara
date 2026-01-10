@@ -1,191 +1,112 @@
-# 🔮 CopperMind - AI-Powered Copper Price Intelligence
+# CopperMind
 
-**Real-time copper futures prediction platform using XGBoost ML, sentiment analysis, and live market data.**
+AI-powered copper futures price prediction platform combining machine learning, sentiment analysis, and real-time market data.
 
-![Live Demo](https://img.shields.io/badge/demo-terra--rara.vercel.app-blue)
-![Backend](https://img.shields.io/badge/backend-HuggingFace%20Spaces-orange)
-![Database](https://img.shields.io/badge/database-Supabase-green)
+[![Live Demo](https://img.shields.io/badge/demo-terra--rara.vercel.app-0969da)](https://terra-rara.vercel.app)
+[![API Docs](https://img.shields.io/badge/api-docs-10b981)](https://ifieryarrows-copper-mind.hf.space/api/docs)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
----
+## Overview
 
-## 📊 Live Demo
+CopperMind predicts next-day copper futures (HG=F) closing prices using an XGBoost regression model trained on:
+- **Technical indicators** from copper and correlated assets (USD Index, Crude Oil, China ETF)
+- **News sentiment** scored by FinBERT with time-weighted aggregation
+- **Cross-asset features** including lagged returns and volatility measures
 
-- **Frontend:** [https://terra-rara.vercel.app](https://terra-rara.vercel.app)
-- **Backend API:** [https://ifieryarrows-copper-mind.hf.space/api/docs](https://ifieryarrows-copper-mind.hf.space/api/docs)
+## Live Demo
 
----
+| Service | URL |
+|---------|-----|
+| Dashboard | [terra-rara.vercel.app](https://terra-rara.vercel.app) |
+| API | [ifieryarrows-copper-mind.hf.space/api/docs](https://ifieryarrows-copper-mind.hf.space/api/docs) |
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         FRONTEND (Vercel)                        │
-│                    React + TypeScript + Vite                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │ Price Chart │  │ Predictions │  │ Market Intelligence Map │  │
-│  │  (Recharts) │  │    Card     │  │   (Live yfinance data)  │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  FRONTEND (Vercel)          React + TypeScript + Vite        │
+│  ├── Price & Sentiment Chart (Recharts)                      │
+│  ├── Tomorrow's Prediction Card                              │
+│  └── Market Intelligence Map (14 symbols, live)              │
+└──────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    BACKEND API (HuggingFace Spaces)              │
-│                         FastAPI + Python                         │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────┐  │
-│  │  /api/analysis   │  │ /api/market-prices│  │/api/commentary│  │
-│  │  Live Prediction │  │  yfinance Live   │  │  OpenRouter AI│  │
-│  └──────────────────┘  └──────────────────┘  └───────────────┘  │
-│                              │                                   │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                    ML Pipeline                            │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │   │
-│  │  │  FinBERT    │  │  XGBoost    │  │  Feature Engine │   │   │
-│  │  │  Sentiment  │  │   Model     │  │  (60+ features) │   │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  BACKEND (HuggingFace Spaces)     FastAPI + Python 3.11      │
+│  ├── /api/analysis      → Live XGBoost prediction            │
+│  ├── /api/history       → Historical price & sentiment       │
+│  ├── /api/market-prices → Real-time quotes (yfinance)        │
+│  └── /api/commentary    → AI-generated analysis (OpenRouter) │
+│                                                              │
+│  ML PIPELINE                                                 │
+│  ├── FinBERT sentiment scoring                               │
+│  ├── 60+ feature engineering                                 │
+│  └── XGBoost model training                                  │
+└──────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      DATA LAYER                                  │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   Supabase      │  │   yfinance      │  │  Google News    │  │
-│  │   PostgreSQL    │  │   Price Data    │  │  RSS Feeds      │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  DATA LAYER                                                  │
+│  ├── Supabase PostgreSQL (persistence)                       │
+│  ├── yfinance (price data)                                   │
+│  └── Google News RSS (sentiment source)                      │
+└──────────────────────────────────────────────────────────────┘
 ```
 
----
+## Tech Stack
 
-## ✨ Features
-
-### 🎯 Live Predictions
-- **Real-time model inference** on every request
-- Current price from yfinance (15-min delayed)
-- XGBoost predicts next-day close
-- Sentiment-adjusted confidence bands
-
-### 📰 News Sentiment Analysis
-- 16 strategic copper-related news queries
-- FinBERT sentiment scoring
-- Exponential decay aggregation (τ = 12h)
-- Fuzzy duplicate detection
-
-### 🗺️ Market Intelligence Map
-- 14 tracked symbols across 5 categories
-- Auto-refresh every 30 seconds
-- Flash animations on price changes
-- Live yfinance data
-
-### 🤖 AI Market Commentary
-- OpenRouter API integration
-- Daily AI-generated market analysis
-- Context-aware insights
-
----
-
-## 🔧 Tech Stack
-
-| Component | Technology |
-|-----------|------------|
+| Layer | Technologies |
+|-------|-------------|
 | Frontend | React 18, TypeScript, Vite, Recharts |
 | Backend | FastAPI, Python 3.11, Uvicorn |
-| ML Model | XGBoost (regression) |
-| Sentiment | FinBERT (transformers) |
+| ML | XGBoost, FinBERT (transformers) |
 | Database | Supabase PostgreSQL |
 | Hosting | Vercel (frontend), HuggingFace Spaces (backend) |
-| AI Commentary | OpenRouter (mimo-v2-flash) |
 
----
+## Installation
 
-## 📈 Tracked Symbols
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL database (or Supabase account)
 
-```python
-yfinance_symbols = [
-    # Core Indicators
-    "HG=F",      # Copper Futures (target)
-    "DX-Y.NYB",  # US Dollar Index
-    "CL=F",      # Crude Oil
-    
-    # ETFs
-    "FXI",       # China Large-Cap ETF
-    "COPX",      # Global Copper Miners
-    "COPJ",      # Junior Copper Miners
-    
-    # Titans
-    "BHP", "FCX", "SCCO", "RIO",
-    
-    # Regional
-    "TECK", "IVN.TO", "2899.HK",
-    
-    # Juniors
-    "LUN.TO"
-]
-```
+### Backend Setup
 
----
-
-## 🚀 API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/analysis` | GET | Live prediction with current price |
-| `/api/history` | GET | Historical price & sentiment data |
-| `/api/market-prices` | GET | Live prices for all symbols |
-| `/api/commentary` | GET | AI-generated market analysis |
-| `/api/health` | GET | System health check |
-| `/api/pipeline/trigger` | POST | Trigger data pipeline |
-
-### Pipeline Parameters
 ```bash
-# Full pipeline (fetch + train)
-POST /api/pipeline/trigger?fetch_data=true&train_model=true
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 
-# Quick update (no training)
-POST /api/pipeline/trigger?fetch_data=true&train_model=false
+# Configure environment
+cp ../env.example .env
+# Edit .env with your DATABASE_URL and API keys
 
-# Just refresh snapshot
-POST /api/pipeline/trigger?fetch_data=false&train_model=false
+# Run development server
+uvicorn app.main:app --reload --port 8000
 ```
 
----
+### Frontend Setup
 
-## 🧠 ML Model Details
-
-### XGBoost Parameters
-```python
-params = {
-    "objective": "reg:squarederror",
-    "max_depth": 4,
-    "learning_rate": 0.05,
-    "subsample": 0.8,
-    "colsample_bytree": 0.6,
-    "min_child_weight": 5,
-    "reg_alpha": 0.5,      # L1 regularization
-    "reg_lambda": 2.0,     # L2 regularization
-}
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
-### Feature Engineering
-- **60+ features** per prediction
-- Technical indicators: SMA, EMA, RSI, MACD, Bollinger Bands
-- Cross-asset correlations
-- Sentiment aggregation
-- Lagged returns (1d, 5d, 10d, 20d)
+## Configuration
 
----
-
-## 🔐 Environment Variables
+Create a `.env` file in the backend directory:
 
 ```env
-# Database
-DATABASE_URL=postgresql://...
+# Required
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
 
-# News API (optional)
-NEWSAPI_KEY=your_key
+# Optional - News API
+NEWSAPI_KEY=your_newsapi_key
 
-# AI Commentary
-OPENROUTER_API_KEY=your_key
+# Optional - AI Commentary
+OPENROUTER_API_KEY=your_openrouter_key
 OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free
 
 # Scheduler
@@ -194,107 +115,109 @@ SCHEDULE_TIME=09:00
 TZ=Europe/Istanbul
 ```
 
----
+## API Reference
 
-## 📦 Project Structure
+### GET /api/analysis
+
+Returns current prediction with live price.
+
+```json
+{
+  "symbol": "HG=F",
+  "current_price": 4.2500,
+  "predicted_price": 4.3137,
+  "predicted_return": 0.0150,
+  "sentiment_index": 0.35,
+  "sentiment_label": "Bullish",
+  "top_influencers": [...],
+  "generated_at": "2026-01-10T09:00:00Z"
+}
+```
+
+### GET /api/history
+
+Returns historical price and sentiment data for charting.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| symbol | string | HG=F | Trading symbol |
+| days | integer | 180 | Days of history (7-730) |
+
+### POST /api/pipeline/trigger
+
+Manually trigger the data pipeline.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| fetch_data | boolean | true | Fetch new news and prices |
+| train_model | boolean | true | Retrain XGBoost model |
+
+## Project Structure
 
 ```
 copper-mind/
 ├── backend/
-│   └── app/
-│       ├── main.py           # FastAPI app & endpoints
-│       ├── ai_engine.py      # XGBoost training
-│       ├── inference.py      # Live predictions
-│       ├── features.py       # Feature engineering
-│       ├── data_manager.py   # Data ingestion
-│       ├── sentiment.py      # FinBERT scoring
-│       ├── commentary.py     # AI commentary
-│       ├── models.py         # SQLAlchemy models
-│       └── settings.py       # Configuration
+│   ├── app/
+│   │   ├── main.py          # FastAPI endpoints
+│   │   ├── ai_engine.py     # XGBoost training
+│   │   ├── inference.py     # Live prediction
+│   │   ├── features.py      # Feature engineering
+│   │   ├── data_manager.py  # Data ingestion
+│   │   ├── models.py        # SQLAlchemy models
+│   │   └── settings.py      # Configuration
+│   ├── tests/
+│   └── requirements.txt
 ├── frontend/
-│   └── src/
-│       ├── App.tsx           # Main dashboard
-│       ├── api.ts            # API client
-│       ├── types.ts          # TypeScript types
-│       └── components/
-│           └── MarketMap.tsx # Live market grid
+│   ├── src/
+│   │   ├── App.tsx          # Main dashboard
+│   │   ├── api.ts           # API client
+│   │   └── components/
+│   └── package.json
 ├── data/
-│   └── models/               # Trained model files
+│   └── models/              # Trained model files
 └── README.md
 ```
 
----
+## Model Details
 
-## 🔄 Data Flow
+### Features (60+)
+- **Technical indicators**: SMA, EMA, RSI (5, 10, 14, 20 day periods)
+- **Price ratios**: Price-to-SMA, volatility measures
+- **Lagged returns**: 1, 2, 3, 5 day lags
+- **Cross-asset**: USD Index, Crude Oil, China ETF features
+- **Sentiment**: Daily aggregated news sentiment index
 
-1. **Pipeline Trigger** → Fetch news + prices
-2. **Sentiment Scoring** → FinBERT analyzes articles
-3. **Feature Generation** → 60+ technical features
-4. **Model Training** → XGBoost learns patterns
-5. **Live Prediction** → Real-time inference on request
-6. **AI Commentary** → OpenRouter generates insights
+### XGBoost Configuration
 
----
-
-## 📊 Frontend Display
-
-### Prediction Card
-```
-Tomorrow's Prediction
-━━━━━━━━━━━━━━━━━━━━
-$5.99
-
-🐂 +1.67% expected
-Data: Fri Jan 10 → Predicting: Mon Jan 13
-```
-
-### Sentiment-Adjusted Returns
-```javascript
-// Sentiment index: -1 (bearish) to +1 (bullish)
-sentimentNorm = (sentiment_index + 1) / 2;  // 0 to 1
-
-// Adjust prediction display
-if (isBullish) {
-  adjustedReturn = baseBullish * sentimentNorm;
-} else {
-  adjustedReturn = baseBearish * (1 - sentimentNorm);
+```python
+{
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.6,
+    "reg_alpha": 0.5,
+    "reg_lambda": 2.0
 }
 ```
 
----
+### Tracked Symbols
 
-## 🛠️ Local Development
+| Category | Symbols |
+|----------|---------|
+| Target | HG=F (Copper Futures) |
+| Macro | DX-Y.NYB (USD Index), CL=F (Crude Oil) |
+| ETFs | FXI (China), COPX (Miners), COPJ (Junior Miners) |
+| Miners | BHP, FCX, SCCO, RIO, TECK, LUN.TO, IVN.TO |
 
-```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+## Contributing
 
-# Frontend
-cd frontend
-npm install
-npm run dev
-```
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/improvement`)
+3. Commit changes (`git commit -m "Add feature"`)
+4. Push to branch (`git push origin feature/improvement`)
+5. Open a Pull Request
 
----
+## License
 
-## 📝 Recent Updates (Jan 2026)
-
-- ✅ Live yfinance price on every request
-- ✅ Real-time model prediction (no stale cache)
-- ✅ Market Map with 30s auto-refresh
-- ✅ Flash animations on price changes
-- ✅ Sentiment-adjusted prediction display
-- ✅ AI commentary via OpenRouter
-- ✅ XGBoost tuning for reduced overfitting
-
----
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details.
-
----
-
-**Built with ❤️ for copper market intelligence**
+MIT License - see [LICENSE](LICENSE) for details.
