@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@config "../tailwind.config.js";
 
 
 /* Layer definitions are handled by Tailwind v4 automatically based on usage,
