@@ -50,32 +50,17 @@ function CustomTooltip({ active, payload, label, analysis, isLastPoint }: Toolti
           <span className="tooltip-value sentiment">{sentimentVal.toFixed(3)}</span>
         </div>
       )}
-      {isLastPoint && analysis && (() => {
-        // Calculate sentiment-adjusted return inside tooltip
-        const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
-        const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
-        const sentimentNorm = (analysis.sentiment_index + 1) / 2;
-        const adjustedExpected = sentimentNorm > 0.5
-          ? baseBullish * sentimentNorm
-          : baseBearish * (1 - sentimentNorm);
-        const isBull = sentimentNorm > 0.5;
-
-        return (
-          <>
-            <div className="tooltip-divider" />
-            <div className="tooltip-row">
-              <span className="tooltip-label">🎯 Tomorrow</span>
-              <span className="tooltip-value prediction">${analysis.predicted_price.toFixed(4)}</span>
-            </div>
-            <div className="tooltip-row">
-              <span className="tooltip-label">Change</span>
-              <span className={`tooltip-value ${isBull ? 'positive' : 'negative'}`}>
-                {isBull ? '🐂' : '🐻'} {(adjustedExpected * 100).toFixed(2)}%
-              </span>
-            </div>
-          </>
-        );
-      })()}
+      {isLastPoint && analysis && (
+        <>
+          <div className="tooltip-divider" />
+          <div className="tooltip-row">
+            <span className="tooltip-label">🎯 Tomorrow</span>
+            <span className={`tooltip-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
+              {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {(analysis.predicted_return * 100).toFixed(2)}%
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -285,24 +270,6 @@ function App() {
   // Main dashboard render
   const sentimentClass = analysis?.sentiment_label?.toLowerCase() || 'neutral';
 
-  // Calculate sentiment-adjusted expected return
-  const getSentimentAdjustedReturn = () => {
-    if (!analysis) return { adjustedReturn: 0, isBullish: false };
-
-    const baseBullish = (analysis.confidence_upper - analysis.current_price) / analysis.current_price;
-    const baseBearish = (analysis.confidence_lower - analysis.current_price) / analysis.current_price;
-    const sentimentNorm = (analysis.sentiment_index + 1) / 2; // 0 to 1
-
-    const adjustedReturn = sentimentNorm > 0.5
-      ? baseBullish * sentimentNorm
-      : baseBearish * (1 - sentimentNorm);
-
-    return { adjustedReturn, isBullish: sentimentNorm > 0.5 };
-  };
-
-  const { adjustedReturn, isBullish } = getSentimentAdjustedReturn();
-  const isPredictionPositive = isBullish;
-
   return (
     <div className="app">
       {/* Header */}
@@ -321,12 +288,11 @@ function App() {
                 </div>
               </div>
               <div className="header-stat">
-                <div className="header-stat-label">Expected Change</div>
+                <div className="header-stat-label">Tomorrow's Prediction</div>
                 <div
-                  className={`header-stat-value ${isPredictionPositive ? 'positive' : 'negative'
-                    }`}
+                  className={`header-stat-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}
                 >
-                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)}
+                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
                 </div>
               </div>
             </div>
@@ -337,7 +303,7 @@ function App() {
       <main className="main">
         {/* Cards Grid */}
         <div className="cards-grid">
-          {/* Predicted Price Card */}
+          {/* Tomorrow's Prediction Card */}
           <div className="card">
             <div className="card-header">
               <span className="card-title">Tomorrow's Prediction</span>
@@ -346,13 +312,17 @@ function App() {
               </div>
             </div>
             <div className="card-value">
-              ${analysis ? formatPrice(analysis.predicted_price) : '—'}
+              {analysis ? (
+                <span className={analysis.predicted_return >= 0 ? 'positive' : 'negative'}>
+                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
+                </span>
+              ) : '—'}
             </div>
             <div className="card-subtitle">
               {analysis && (
                 <>
-                  <span className={isBullish ? 'positive' : 'negative'} style={{ fontSize: '1rem' }}>
-                    {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)} expected
+                  <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.7)' }}>
+                    Model prediction for next trading day
                   </span>
                   <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.5rem' }}>
                     {(() => {
@@ -536,19 +506,17 @@ function App() {
             <div className="prediction-summary">
               <div className="prediction-item">
                 <span className="prediction-label">🎯 Tomorrow's Prediction</span>
-                <span className="prediction-value">${formatPrice(analysis.predicted_price)}</span>
-              </div>
-              <div className="prediction-item">
-                <span className="prediction-label">Expected Change</span>
-                <span className={`prediction-value ${isPredictionPositive ? 'positive' : 'negative'}`}>
-                  {isBullish ? '🐂' : '🐻'} {formatPercent(adjustedReturn)}
+                <span className={`prediction-value ${analysis.predicted_return >= 0 ? 'positive' : 'negative'}`}>
+                  {analysis.predicted_return >= 0 ? '🐂' : '🐻'} {formatPercent(analysis.predicted_return)}
                 </span>
               </div>
               <div className="prediction-item">
-                <span className="prediction-label">Confidence Range</span>
-                <span className="prediction-value">
-                  ${formatPrice(analysis.confidence_lower)} - ${formatPrice(analysis.confidence_upper)}
-                </span>
+                <span className="prediction-label">Current Price</span>
+                <span className="prediction-value">${formatPrice(analysis.current_price)}</span>
+              </div>
+              <div className="prediction-item">
+                <span className="prediction-label">Market Sentiment</span>
+                <span className="prediction-value">{analysis.sentiment_label}</span>
               </div>
             </div>
           )}
