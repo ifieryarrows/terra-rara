@@ -150,7 +150,14 @@ async def get_analysis(
                     latest_bar = session.query(PriceBar).filter(
                         PriceBar.symbol == symbol
                     ).order_by(PriceBar.date.desc()).first()
-                    prediction_base = latest_bar.close if latest_bar else float(live_price)
+                    if live_price is not None:
+                        # Prioritize live price for prediction base
+                        prediction_base = float(live_price)
+                    elif latest_bar:
+                        # Fallback to DB close
+                        prediction_base = latest_bar.close
+                    else:
+                        prediction_base = 0.0
                     
                     # Run LIVE model prediction
                     from app.ai_engine import load_model, load_model_metadata
