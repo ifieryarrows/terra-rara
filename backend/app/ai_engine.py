@@ -433,7 +433,7 @@ def train_xgboost_model(
     with open(features_path, "w") as f:
         json.dump(feature_names, f, indent=2)
     
-    # Save importance
+    # Save importance (Overwrite to reflect the latest model training)
     importance_path = model_dir / f"xgb_{target_symbol.replace('=', '_')}_latest.importance.json"
     with open(importance_path, "w") as f:
         json.dump(normalized_importance, f, indent=2)
