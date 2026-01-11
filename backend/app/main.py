@@ -538,13 +538,14 @@ async def websocket_live_price(websocket: WebSocket):
     
     try:
         async with websockets.connect(td_ws_url) as td_ws:
-            # Subscribe to XCU/USD (Copper spot)
+            # Subscribe to BTC/USD first (for testing Basic plan support)
+            # If BTC works but XCU doesn't, it means commodities need Pro plan
             subscribe_msg = json.dumps({
                 "action": "subscribe",
-                "params": {"symbols": "XCU/USD"}
+                "params": {"symbols": "BTC/USD"}
             })
             await td_ws.send(subscribe_msg)
-            logger.info("Subscribed to XCU/USD via Twelve Data WebSocket")
+            logger.info("Subscribed to BTC/USD via Twelve Data WebSocket (testing)")
             
             # Heartbeat task to keep connection alive
             async def send_heartbeat():

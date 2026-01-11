@@ -13,6 +13,7 @@ yfinance>=0.2.33
 requests>=2.31.0
 httpx>=0.25.0
 websockets>=12.0
+twelvedata>=1.2.0
 feedparser>=6.0.10
 
 # NLP & ML
