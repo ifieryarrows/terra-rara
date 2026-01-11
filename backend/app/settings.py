@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     
     # Scheduler
-    schedule_time: str = "09:00"
+    schedule_time: str = "02:00"
     tz: str = "Europe/Istanbul"
     scheduler_enabled: bool = True
     
