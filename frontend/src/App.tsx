@@ -106,7 +106,7 @@ function App() {
       script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
       script.async = true;
       script.textContent = JSON.stringify({
-        symbol: "COMEX:HG1!",
+        symbol: "FX_IDC:XCUUSD",
         width: "100%",
         isTransparent: true,
         colorTheme: "dark",
