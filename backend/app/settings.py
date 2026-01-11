@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     analysis_ttl_minutes: int = 30
     log_level: str = "INFO"
     
+    # Futures vs Spot adjustment factor
+    # HG=F (futures) is ~1.5% higher than XCU/USD (spot)
+    futures_spot_adjustment: float = 0.985  # Multiply HG=F by this to get XCU/USD
+    
     # Scheduler
     schedule_time: str = "02:00"
     tz: str = "Europe/Istanbul"

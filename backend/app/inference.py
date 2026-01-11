@@ -40,22 +40,49 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
     """
     Get the current price for a symbol.
     
-    Tries yfinance live data first (15-min delayed), then falls back to DB.
+    Priority:
+    1. Twelve Data API (most reliable, no rate limit issues)
+    2. yfinance live data (15-min delayed)
+    3. Database fallback
     """
+    import httpx
     import yfinance as yf
+    from app.settings import get_settings
     
-    # Try live yfinance data first
+    settings = get_settings()
+    
+    # Try Twelve Data first (for XCU/USD copper)
+    if settings.twelvedata_api_key:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(
+                    "https://api.twelvedata.com/price",
+                    params={
+                        "symbol": "XCU/USD",
+                        "apikey": settings.twelvedata_api_key,
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    price = data.get("price")
+                    if price:
+                        logger.info(f"Using Twelve Data price for copper: ${float(price):.4f}")
+                        return float(price)
+        except Exception as e:
+            logger.debug(f"Twelve Data price fetch failed: {e}")
+    
+    # Try yfinance as fallback
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
         live_price = info.get('regularMarketPrice') or info.get('currentPrice')
         if live_price is not None:
-            logger.info(f"Using live price for {symbol}: ${live_price:.4f}")
+            logger.info(f"Using yfinance price for {symbol}: ${live_price:.4f}")
             return float(live_price)
     except Exception as e:
-        logger.debug(f"Could not get live price for {symbol}: {e}")
+        logger.debug(f"yfinance price fetch failed for {symbol}: {e}")
     
-    # Fallback to database
+    # Final fallback to database
     latest = session.query(PriceBar).filter(
         PriceBar.symbol == symbol
     ).order_by(PriceBar.date.desc()).first()

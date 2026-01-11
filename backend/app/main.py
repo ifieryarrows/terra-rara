@@ -175,19 +175,25 @@ async def get_analysis(
                             predicted_return = float(model.predict(dmatrix)[0])
                             
                             # Update with live prediction
-                            # Use DB close as prediction base (model trained on closes)
+                            # Apply futures-spot adjustment (HG=F is ~1.5% higher than XCU/USD)
+                            adjustment = settings.futures_spot_adjustment
+                            adjusted_base = float(prediction_base) * adjustment
+                            
                             cached['predicted_return'] = round(predicted_return, 6)
                             cached['predicted_price'] = round(
-                                float(prediction_base) * (1 + predicted_return),
+                                adjusted_base * (1 + predicted_return),
                                 4
                             )
                             
-                            # Update confidence bounds (based on prediction base)
-                            std_mult = 1.0  # 1 standard deviation
-                            cached['confidence_lower'] = round(float(prediction_base) * (1 - std_mult * abs(predicted_return)), 4)
-                            cached['confidence_upper'] = round(float(prediction_base) * (1 + std_mult * abs(predicted_return) * 2), 4)
+                            # Also adjust current_price for consistency
+                            cached['current_price'] = round(adjusted_base, 4)
                             
-                            logger.info(f"LIVE prediction: close=${prediction_base:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
+                            # Update confidence bounds (based on adjusted base)
+                            std_mult = 1.0  # 1 standard deviation
+                            cached['confidence_lower'] = round(adjusted_base * (1 - std_mult * abs(predicted_return)), 4)
+                            cached['confidence_upper'] = round(adjusted_base * (1 + std_mult * abs(predicted_return) * 2), 4)
+                            
+                            logger.info(f"LIVE prediction: HG=F=${prediction_base:.4f} -> XCU/USD≈${adjusted_base:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
                     
             except Exception as e:
                 logger.error(f"Live prediction failed, using cached: {e}")
