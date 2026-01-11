@@ -92,25 +92,29 @@ function App() {
   }, [loadData]);
 
   // TradingView widget provides live price - no API key needed
-  // The widget updates automatically via TradingView's servers
   useEffect(() => {
-    // TradingView copper symbol: COMEX:HG1! (Copper Futures)
-    // Widget automatically handles live updates
     const container = document.getElementById('tradingview-widget-container');
-    if (container && !container.hasChildNodes()) {
+    if (container && !container.querySelector('script')) {
+      // Create the widget wrapper
+      const widgetDiv = document.createElement('div');
+      widgetDiv.className = 'tradingview-widget-container__widget';
+      container.appendChild(widgetDiv);
+
+      // Create the config script (TradingView requires type="text/javascript")
       const script = document.createElement('script');
+      script.type = 'text/javascript';
       script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
       script.async = true;
-      script.innerHTML = JSON.stringify({
+      script.textContent = JSON.stringify({
         symbol: "COMEX:HG1!",
         width: "100%",
-        colorTheme: "dark",
         isTransparent: true,
+        colorTheme: "dark",
         locale: "en"
       });
       container.appendChild(script);
     }
-  }, []);
+  }, [loadingState]); // Re-run when loading state changes
 
   useEffect(() => {
     if (loadingState === 'success') loadCommentary();
