@@ -60,7 +60,6 @@ function App() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
-  const [livePrice, setLivePrice] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
     setLoadingState('loading');
@@ -92,52 +91,25 @@ function App() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // WebSocket for real-time price streaming from Twelve Data
+  // TradingView widget provides live price - no API key needed
+  // The widget updates automatically via TradingView's servers
   useEffect(() => {
-    const API_BASE = import.meta.env.VITE_API_URL || '';
-    let wsUrl: string;
-
-    if (API_BASE) {
-      const baseUrl = API_BASE.replace(/\/api\/?$/, '');
-      wsUrl = baseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:') + '/ws/live-price';
-    } else {
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${wsProtocol}//${window.location.host}/ws/live-price`;
+    // TradingView copper symbol: COMEX:HG1! (Copper Futures)
+    // Widget automatically handles live updates
+    const container = document.getElementById('tradingview-widget-container');
+    if (container && !container.hasChildNodes()) {
+      const script = document.createElement('script');
+      script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
+      script.async = true;
+      script.innerHTML = JSON.stringify({
+        symbol: "COMEX:HG1!",
+        width: "100%",
+        colorTheme: "dark",
+        isTransparent: true,
+        locale: "en"
+      });
+      container.appendChild(script);
     }
-
-    console.log('WebSocket URL:', wsUrl);
-
-    let ws: WebSocket | null = null;
-    let reconnectTimeout: ReturnType<typeof setTimeout>;
-
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => console.log('WebSocket connected');
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.price) setLivePrice(parseFloat(data.price));
-        } catch (err) {
-          console.error('WS parse error:', err);
-        }
-      };
-
-      ws.onerror = (err) => console.error('WebSocket error:', err);
-
-      ws.onclose = () => {
-        console.log('WebSocket closed, reconnecting in 5s...');
-        reconnectTimeout = setTimeout(connect, 5000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
-    };
   }, []);
 
   useEffect(() => {
@@ -190,11 +162,8 @@ function App() {
           </div>
 
           <div className="flex bg-white/5 backdrop-blur-md rounded-2xl p-1.5 border border-white/5 gap-1">
-            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
-              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">XCU/USD Live</span>
-              <div className="font-mono text-lg text-copper-400 font-light">
-                $<NumberTicker value={livePrice || analysis?.current_price || 0} format={(v: number) => v.toFixed(4)} />
-              </div>
+            <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden">
+              <div id="tradingview-widget-container" className="tradingview-widget-container" />
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
               <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sentiment</span>
