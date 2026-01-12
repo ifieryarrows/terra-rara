@@ -58,4 +58,5 @@ export interface CommentaryResponse {
   commentary: string | null;
   error: string | null;
   generated_at: string | null;
+  ai_stance?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
 }

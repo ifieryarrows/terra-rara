@@ -204,15 +204,42 @@ function App() {
               </div>
 
               <div className="mt-6 pt-4 border-t border-white/5">
-                <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
-                  <Cpu size={12} />
-                  NEURAL ANALYSIS
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Cpu size={12} className="text-copper-400" />
+                    <span className="text-xs text-gray-400 font-bold tracking-wider">NEURAL ANALYSIS</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
+                    {commentary?.generated_at && (
+                      <span className="text-[10px] text-gray-600 font-mono">
+                        {new Date(commentary.generated_at).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="h-[80px] overflow-y-auto text-xs text-gray-300 leading-relaxed custom-scrollbar">
+
+                {/* AI Stance Indicator */}
+                <div className="flex items-center gap-2 mb-3">
+                  <div className={clsx(
+                    "w-2 h-2 rounded-full animate-pulse",
+                    commentary?.ai_stance === 'BULLISH' ? "bg-emerald-400" :
+                      commentary?.ai_stance === 'BEARISH' ? "bg-rose-400" : "bg-amber-400"
+                  )} />
+                  <span className={clsx(
+                    "text-[10px] font-bold tracking-wider",
+                    commentary?.ai_stance === 'BULLISH' ? "text-emerald-400" :
+                      commentary?.ai_stance === 'BEARISH' ? "text-rose-400" : "text-amber-400"
+                  )}>
+                    AI CONVICTION: {commentary?.ai_stance || 'ANALYZING...'}
+                  </span>
+                </div>
+
+                <div className="h-[60px] overflow-y-auto text-xs text-gray-300 leading-relaxed custom-scrollbar">
                   {commentary ? (
                     <p className="font-light">{(commentary.commentary || '').split('\n')[0]}</p>
                   ) : (
-                    <span className="text-gray-500">Processing signals...</span>
+                    <span className="text-gray-500 animate-pulse">Processing market signals...</span>
                   )}
                 </div>
               </div>

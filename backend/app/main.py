@@ -622,6 +622,7 @@ async def get_commentary(
             "commentary": result["commentary"],
             "error": None,
             "generated_at": result["generated_at"],
+            "ai_stance": result.get("ai_stance", "NEUTRAL"),
         }
     else:
         return {
@@ -629,6 +630,7 @@ async def get_commentary(
             "commentary": None,
             "error": "No commentary available. Commentary is generated after pipeline runs.",
             "generated_at": None,
+            "ai_stance": "NEUTRAL",
         }
 
 

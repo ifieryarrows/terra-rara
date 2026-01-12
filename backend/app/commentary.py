@@ -13,6 +13,64 @@ from .settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+async def determine_ai_stance(commentary: str) -> str:
+    """
+    Have the AI analyze its own commentary to determine market stance.
+    
+    Args:
+        commentary: The generated commentary text
+        
+    Returns:
+        BULLISH, NEUTRAL, or BEARISH
+    """
+    settings = get_settings()
+    
+    if not settings.openrouter_api_key or not commentary:
+        return "NEUTRAL"
+    
+    prompt = f"""Analyze the following market commentary and determine the overall market stance.
+Respond with ONLY one word: BULLISH, NEUTRAL, or BEARISH.
+
+Commentary:
+{commentary}
+
+Your response (one word only):"""
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.openrouter_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 10,
+                    "temperature": 0.1,
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                stance = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
+                
+                # Validate response
+                if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
+                    logger.info(f"AI stance determined: {stance}")
+                    return stance
+                else:
+                    logger.warning(f"Invalid AI stance response: {stance}, defaulting to NEUTRAL")
+                    return "NEUTRAL"
+            else:
+                logger.error(f"AI stance API error: {response.status_code}")
+                return "NEUTRAL"
+                
+    except Exception as e:
+        logger.error(f"AI stance detection failed: {e}")
+        return "NEUTRAL"
+
 async def generate_commentary(
     current_price: float,
     predicted_price: float,
@@ -141,6 +199,7 @@ def save_commentary_to_db(
     predicted_price: float,
     predicted_return: float,
     sentiment_label: str,
+    ai_stance: str = "NEUTRAL",
 ) -> None:
     """
     Save generated commentary to database (upsert).
@@ -160,9 +219,10 @@ def save_commentary_to_db(
         existing.predicted_price = predicted_price
         existing.predicted_return = predicted_return
         existing.sentiment_label = sentiment_label
+        existing.ai_stance = ai_stance
         existing.generated_at = datetime.utcnow()
         existing.model_name = settings.openrouter_model
-        logger.info(f"Updated AI commentary for {symbol}")
+        logger.info(f"Updated AI commentary for {symbol} (stance: {ai_stance})")
     else:
         # Create new
         new_commentary = AICommentary(
@@ -172,10 +232,11 @@ def save_commentary_to_db(
             predicted_price=predicted_price,
             predicted_return=predicted_return,
             sentiment_label=sentiment_label,
+            ai_stance=ai_stance,
             model_name=settings.openrouter_model,
         )
         session.add(new_commentary)
-        logger.info(f"Created new AI commentary for {symbol}")
+        logger.info(f"Created new AI commentary for {symbol} (stance: {ai_stance})")
     
     session.commit()
 
@@ -197,6 +258,7 @@ def get_commentary_from_db(session, symbol: str) -> Optional[dict]:
             "predicted_price": record.predicted_price,
             "predicted_return": record.predicted_return,
             "sentiment_label": record.sentiment_label,
+            "ai_stance": record.ai_stance or "NEUTRAL",
             "model_name": record.model_name,
         }
     
@@ -229,6 +291,9 @@ async def generate_and_save_commentary(
     )
     
     if commentary:
+        # Determine AI stance from the commentary
+        ai_stance = await determine_ai_stance(commentary)
+        
         save_commentary_to_db(
             session=session,
             symbol=symbol,
@@ -237,6 +302,7 @@ async def generate_and_save_commentary(
             predicted_price=predicted_price,
             predicted_return=predicted_return,
             sentiment_label=sentiment_label,
+            ai_stance=ai_stance,
         )
     
     return commentary
