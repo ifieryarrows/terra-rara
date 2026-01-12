@@ -449,6 +449,20 @@ def train_xgboost_model(
         desc = descriptions.get(feat, feat)
         logger.info(f"  {feat}: {imp:.4f} ({desc})")
     
+    # Save metadata to database for persistence across HF Space restarts
+    try:
+        from app.db import SessionLocal
+        with SessionLocal() as session:
+            save_model_metadata_to_db(
+                session=session,
+                symbol=target_symbol,
+                importance=normalized_importance,
+                features=feature_names,
+                metrics=metrics,
+            )
+    except Exception as e:
+        logger.warning(f"Could not save model metadata to DB: {e}")
+    
     return {
         "model_path": str(model_path),
         "metrics": metrics,
@@ -474,8 +488,92 @@ def load_model(target_symbol: str = "HG=F") -> Optional[xgb.Booster]:
     return model
 
 
+def save_model_metadata_to_db(
+    session,
+    symbol: str,
+    importance: list,
+    features: list,
+    metrics: dict
+) -> None:
+    """
+    Save model metadata to database for persistence across restarts.
+    Called after train_model=True pipeline runs.
+    """
+    from .models import ModelMetadata
+    from datetime import datetime
+    
+    # Try to find existing record
+    existing = session.query(ModelMetadata).filter(ModelMetadata.symbol == symbol).first()
+    
+    if existing:
+        existing.importance_json = json.dumps(importance)
+        existing.features_json = json.dumps(features)
+        existing.metrics_json = json.dumps(metrics)
+        existing.trained_at = datetime.utcnow()
+        logger.info(f"Updated model metadata in DB for {symbol}")
+    else:
+        new_record = ModelMetadata(
+            symbol=symbol,
+            importance_json=json.dumps(importance),
+            features_json=json.dumps(features),
+            metrics_json=json.dumps(metrics),
+        )
+        session.add(new_record)
+        logger.info(f"Saved new model metadata to DB for {symbol}")
+    
+    session.commit()
+
+
+def load_model_metadata_from_db(session, symbol: str) -> dict:
+    """
+    Load model metadata from database.
+    Returns dict with importance, features, metrics or None values if not found.
+    """
+    from .models import ModelMetadata
+    
+    metadata = {
+        "metrics": None,
+        "features": None,
+        "importance": None,
+    }
+    
+    record = session.query(ModelMetadata).filter(ModelMetadata.symbol == symbol).first()
+    
+    if record:
+        try:
+            if record.importance_json:
+                metadata["importance"] = json.loads(record.importance_json)
+            if record.features_json:
+                metadata["features"] = json.loads(record.features_json)
+            if record.metrics_json:
+                metadata["metrics"] = json.loads(record.metrics_json)
+            logger.info(f"Loaded model metadata from DB for {symbol}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse model metadata from DB: {e}")
+    
+    return metadata
+
+
 def load_model_metadata(target_symbol: str = "HG=F") -> dict:
-    """Load metrics and feature info for a model."""
+    """
+    Load metrics and feature info for a model.
+    
+    Priority:
+    1. Database (survives HF Space restarts)
+    2. Local JSON files (fallback for development)
+    """
+    from app.db import SessionLocal
+    
+    # Try database first
+    try:
+        with SessionLocal() as session:
+            db_metadata = load_model_metadata_from_db(session, target_symbol)
+            if db_metadata.get("importance") and db_metadata.get("features"):
+                return db_metadata
+    except Exception as e:
+        logger.debug(f"Could not load metadata from DB: {e}")
+    
+    # Fallback to local files
     settings = get_settings()
     model_dir = Path(settings.model_dir)
     

@@ -230,3 +230,32 @@ class AICommentary(Base):
     
     def __repr__(self):
         return f"<AICommentary(symbol={self.symbol}, generated_at={self.generated_at})>"
+
+
+class ModelMetadata(Base):
+    """
+    Persisted XGBoost model metadata.
+    Stores feature importance, features list, and metrics in database
+    so they survive HF Space restarts.
+    One row per symbol, updated after each model training (train_model=True).
+    """
+    __tablename__ = "model_metadata"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    symbol = Column(String(20), nullable=False, unique=True, index=True)
+    
+    # Feature importance as JSON [{feature, importance}, ...]
+    importance_json = Column(Text, nullable=True)
+    
+    # Feature names list as JSON ["feature1", "feature2", ...]
+    features_json = Column(Text, nullable=True)
+    
+    # Training metrics as JSON {train_mae, val_mae, etc}
+    metrics_json = Column(Text, nullable=True)
+    
+    # When the model was trained
+    trained_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    
+    def __repr__(self):
+        return f"<ModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
