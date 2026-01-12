@@ -3,7 +3,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
 } from 'recharts';
 import { motion } from 'framer-motion';
-import { Activity, Globe, Zap, BarChart3, RefreshCw, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
+import { Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
 import clsx from 'clsx'; // Utility for conditional classes
 
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
@@ -204,9 +204,16 @@ function App() {
               </div>
 
               <div className="mt-6 pt-4 border-t border-white/5">
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <div className={clsx("w-2 h-2 rounded-full", isBullish ? "bg-emerald-400 animate-pulse" : "bg-rose-400 animate-pulse")} />
-                  AI CONVICTION: {isBullish ? 'BULLISH' : 'BEARISH'}
+                <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
+                  <Cpu size={12} />
+                  NEURAL ANALYSIS
+                </div>
+                <div className="h-[80px] overflow-y-auto text-xs text-gray-300 leading-relaxed custom-scrollbar">
+                  {commentary ? (
+                    <p className="font-light">{(commentary.commentary || '').split('\n')[0]}</p>
+                  ) : (
+                    <span className="text-gray-500">Processing signals...</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -296,29 +303,6 @@ function App() {
                   </div>
                 </div>
               ))}
-            </div>
-          </GlassCard>
-
-          {/* AI Commentary Card */}
-          <GlassCard title="Neural Analysis" icon={Cpu} colSpan={6} className="text-sm leading-relaxed text-gray-300">
-            <div className="h-[240px] overflow-y-auto pr-2 custom-scrollbar">
-              {commentary ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
-                    <span className="text-xs text-gray-600 font-mono">
-                      {commentary.generated_at ? new Date(commentary.generated_at).toLocaleTimeString() : ''}
-                    </span>
-                  </div>
-                  {(commentary.commentary || '').split('\n').map((p, i) => (
-                    <p key={i} className="font-light">{p}</p>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full text-gray-500 gap-2">
-                  <RefreshCw className="animate-spin" size={16} /> Processing signals...
-                </div>
-              )}
             </div>
           </GlassCard>
 
