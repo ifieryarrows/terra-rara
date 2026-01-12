@@ -115,10 +115,42 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
+def _run_migrations(engine):
+    """
+    Run necessary database migrations for schema changes.
+    These are safe to run multiple times (idempotent).
+    """
+    settings = get_settings()
+    is_sqlite = settings.database_url.startswith("sqlite")
+    
+    with engine.connect() as conn:
+        # Migration: Add ai_stance column to ai_commentaries if it doesn't exist
+        try:
+            if is_sqlite:
+                # SQLite doesn't support IF NOT EXISTS for columns, check manually
+                result = conn.execute(text("PRAGMA table_info(ai_commentaries)"))
+                columns = [row[1] for row in result.fetchall()]
+                if 'ai_stance' not in columns:
+                    conn.execute(text("ALTER TABLE ai_commentaries ADD COLUMN ai_stance VARCHAR(20) DEFAULT 'NEUTRAL'"))
+                    conn.commit()
+                    logger.info("Migration: Added ai_stance column to ai_commentaries")
+            else:
+                # PostgreSQL supports IF NOT EXISTS via DO block
+                conn.execute(text("""
+                    ALTER TABLE ai_commentaries 
+                    ADD COLUMN IF NOT EXISTS ai_stance VARCHAR(20) DEFAULT 'NEUTRAL'
+                """))
+                conn.commit()
+                logger.info("Migration: Ensured ai_stance column exists in ai_commentaries")
+        except Exception as e:
+            logger.debug(f"Migration check for ai_stance: {e}")
+
+
 def init_db():
     """
     Initialize the database - create all tables.
     Safe to call multiple times (uses CREATE IF NOT EXISTS).
+    Also runs any necessary migrations for schema changes.
     """
     # Import models to register them with Base
     from app import models  # noqa: F401
@@ -126,6 +158,9 @@ def init_db():
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
+    
+    # Run migrations for existing tables
+    _run_migrations(engine)
 
 
 def get_db_type() -> str:
