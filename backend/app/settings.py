@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Juniors: LUN.TO (FIL.TO removed - delisted)
     # China: 2899.HK (Zijin), FXI (China Large-Cap ETF)
     yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,FXI,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
-    lookback_days: int = 365
+    lookback_days: int = 730  # 2 years for better pattern learning
     
     # Fuzzy deduplication
     fuzzy_dedup_threshold: int = 85
