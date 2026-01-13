@@ -49,9 +49,6 @@ Your response (one word only):"""
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 10,
                     "temperature": 0.1,
-                    "reasoning": {
-                        "effort": "xhigh",
-                    },
                 }
             )
             
@@ -173,9 +170,6 @@ Output requirements:
                     ],
                     "max_tokens": 700,
                     "temperature": 0.6,
-                    "reasoning": {
-                        "effort": "xhigh",
-                    },
                 }
             )
             
