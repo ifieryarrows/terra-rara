@@ -1,5 +1,9 @@
 """
-AI Engine: FinBERT sentiment scoring + XGBoost training.
+AI Engine: LLM sentiment scoring (with FinBERT fallback) + XGBoost training.
+
+Sentiment Analysis:
+    Primary: Gemini LLM with copper-specific context (1M token batch)
+    Fallback: FinBERT for generic financial sentiment
 
 Usage:
     python -m app.ai_engine --run-all --target-symbol HG=F
@@ -8,12 +12,16 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+import httpx
 
 import numpy as np
 import pandas as pd
@@ -117,17 +125,207 @@ def score_text_with_finbert(
         }
 
 
+# =============================================================================
+# LLM Sentiment Scoring (Primary - Gemini)
+# =============================================================================
+
+# Copper-specific system prompt for LLM sentiment analysis
+LLM_SENTIMENT_SYSTEM_PROMPT = """You are a copper commodity market sentiment analyst specializing in HG=F (COMEX Copper Futures).
+
+Analyze news headlines for their DIRECT impact on copper prices. Be specific to copper - don't just analyze general market sentiment.
+
+BULLISH signals (+0.3 to +1.0):
+- Supply disruptions (Chile/Peru mine strikes, closures, weather events)
+- China demand surge (EV production increases, construction boom, infrastructure spending)
+- Green energy investments (solar, wind, grid infrastructure - all copper-intensive)
+- USD weakness (inverse correlation with commodities)
+- Inventory drawdowns (LME/COMEX warehouse stock decreases)
+- M&A activity in copper mining sector
+
+BEARISH signals (-0.3 to -1.0):
+- Demand slowdown (China property crisis, global recession fears)
+- Supply increases (new mines coming online, inventory builds)
+- USD strength (pressures all commodities)
+- Trade war escalation (reduces global trade/demand)
+- Substitution news (aluminum replacing copper in applications)
+
+NEUTRAL (-0.3 to +0.3):
+- General market news without copper-specific impact
+- Mixed or unclear signals
+- News about other metals without copper correlation
+
+IMPORTANT: Return ONLY valid JSON array. No markdown, no explanation outside JSON."""
+
+
+async def score_batch_with_llm(
+    articles: list[dict],
+) -> list[dict]:
+    """
+    Score a batch of articles using LLM (Gemini via OpenRouter).
+    
+    Args:
+        articles: List of dicts with 'id', 'title', 'description'
+        
+    Returns:
+        List of dicts with 'id', 'score', 'reasoning', 'prob_positive', 'prob_neutral', 'prob_negative'
+        
+    Raises:
+        Exception on API error or JSON parse failure
+    """
+    settings = get_settings()
+    
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OpenRouter API key not configured")
+    
+    # Build articles text for prompt
+    articles_text = "\n".join([
+        f"{i+1}. [ID:{a['id']}] {a['title']}" + (f" - {a['description'][:200]}" if a.get('description') else "")
+        for i, a in enumerate(articles)
+    ])
+    
+    user_prompt = f"""Score these {len(articles)} news articles for copper market sentiment.
+
+Articles:
+{articles_text}
+
+Return ONLY a valid JSON array with this exact structure (no markdown code blocks):
+[
+  {{"id": <article_id>, "score": <float from -1.0 to 1.0>, "reasoning": "<brief explanation>"}},
+  ...
+]
+
+Rules:
+- score: -1.0 (very bearish) to +1.0 (very bullish), 0 = neutral
+- reasoning: 1 sentence max explaining the copper market impact
+- Include ALL {len(articles)} articles in your response"""
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://copper-mind.vercel.app",
+                "X-Title": "CopperMind Sentiment Analysis",
+            },
+            json={
+                "model": settings.llm_sentiment_model,
+                "messages": [
+                    {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "max_tokens": 2000,
+                "temperature": 0.3,  # Lower temperature for consistent scoring
+            }
+        )
+        
+        if response.status_code != 200:
+            raise RuntimeError(f"OpenRouter API error: {response.status_code} - {response.text}")
+        
+        data = response.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        if not content:
+            raise RuntimeError("Empty response from LLM")
+        
+        # Clean up response - remove markdown code blocks if present
+        content = content.strip()
+        if content.startswith("```"):
+            # Remove ```json and ``` markers
+            lines = content.split("\n")
+            content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        
+        # Parse JSON
+        try:
+            results = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM JSON parse error: {e}\nContent: {content[:500]}")
+            raise
+        
+        # Validate and enrich results
+        enriched = []
+        for item in results:
+            score = float(item.get("score", 0))
+            # Clamp score to [-1, 1]
+            score = max(-1.0, min(1.0, score))
+            
+            # Derive probabilities from score
+            # score = prob_positive - prob_negative
+            # Assume prob_neutral is inverse of confidence
+            confidence = abs(score)
+            if score > 0:
+                prob_positive = 0.33 + (confidence * 0.67)
+                prob_negative = 0.33 - (confidence * 0.33)
+                prob_neutral = 1.0 - prob_positive - prob_negative
+            elif score < 0:
+                prob_negative = 0.33 + (confidence * 0.67)
+                prob_positive = 0.33 - (confidence * 0.33)
+                prob_neutral = 1.0 - prob_positive - prob_negative
+            else:
+                prob_positive = 0.33
+                prob_neutral = 0.34
+                prob_negative = 0.33
+            
+            enriched.append({
+                "id": item.get("id"),
+                "score": score,
+                "reasoning": item.get("reasoning", ""),
+                "prob_positive": round(prob_positive, 4),
+                "prob_neutral": round(prob_neutral, 4),
+                "prob_negative": round(prob_negative, 4),
+            })
+        
+        return enriched
+
+
+def score_batch_with_finbert(articles: list) -> list[dict]:
+    """
+    Score articles with FinBERT (fallback when LLM fails).
+    
+    Args:
+        articles: List of NewsArticle ORM objects
+        
+    Returns:
+        List of dicts with scoring results
+    """
+    pipe = get_finbert_pipeline()
+    results = []
+    
+    for article in articles:
+        text = f"{article.title} {article.description or ''}"
+        scores = score_text_with_finbert(pipe, text)
+        
+        results.append({
+            "id": article.id,
+            "score": scores["score"],
+            "reasoning": None,  # FinBERT doesn't provide reasoning
+            "prob_positive": scores["prob_positive"],
+            "prob_neutral": scores["prob_neutral"],
+            "prob_negative": scores["prob_negative"],
+            "model_name": "ProsusAI/finbert",
+        })
+    
+    return results
+
+
 def score_unscored_articles(
     session: Session,
-    batch_size: int = 32
+    chunk_size: int = 20
 ) -> int:
     """
     Score all articles that don't have sentiment scores yet.
-    Idempotent: only scores articles without existing NewsSentiment records.
+    
+    Strategy:
+    - Primary: LLM (Gemini) with copper-specific context
+    - Fallback: FinBERT per chunk if LLM fails
+    - Chunk size: 20 articles for error isolation
+    - Rate limiting: 2 second delay between chunks
     
     Returns:
         Number of articles scored
     """
+    settings = get_settings()
+    
     # Find unscored articles
     unscored = session.query(NewsArticle).outerjoin(
         NewsSentiment,
@@ -140,37 +338,85 @@ def score_unscored_articles(
     
     logger.info(f"Found {len(unscored)} unscored articles")
     
-    # Load model
-    pipe = get_finbert_pipeline()
-    
     scored_count = 0
+    total_chunks = (len(unscored) + chunk_size - 1) // chunk_size
     
-    # Process in batches
-    for i in range(0, len(unscored), batch_size):
-        batch = unscored[i:i + batch_size]
+    # Process in chunks
+    for chunk_idx in range(0, len(unscored), chunk_size):
+        chunk = unscored[chunk_idx:chunk_idx + chunk_size]
+        chunk_num = chunk_idx // chunk_size + 1
         
-        for article in batch:
-            # Use title + description for scoring
-            text = f"{article.title} {article.description or ''}"
-            
-            scores = score_text_with_finbert(pipe, text)
+        logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} articles)")
+        
+        # Prepare articles for LLM
+        articles_data = [
+            {"id": a.id, "title": a.title, "description": a.description}
+            for a in chunk
+        ]
+        
+        results = None
+        used_model = settings.llm_sentiment_model
+        
+        # Try LLM first
+        if settings.openrouter_api_key:
+            try:
+                # Run async function in sync context
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    results = loop.run_until_complete(score_batch_with_llm(articles_data))
+                    logger.info(f"LLM scored chunk {chunk_num} successfully")
+                finally:
+                    loop.close()
+            except Exception as e:
+                logger.warning(f"LLM scoring failed for chunk {chunk_num}, falling back to FinBERT: {e}")
+                results = None
+        
+        # Fallback to FinBERT if LLM failed or not configured
+        if results is None:
+            logger.info(f"Using FinBERT fallback for chunk {chunk_num}")
+            results = score_batch_with_finbert(chunk)
+            used_model = "ProsusAI/finbert"
+        
+        # Create a lookup for results
+        results_by_id = {r["id"]: r for r in results}
+        
+        # Save to database
+        for article in chunk:
+            result = results_by_id.get(article.id)
+            if not result:
+                # If article not in results (shouldn't happen), use neutral
+                logger.warning(f"No result for article {article.id}, using neutral")
+                result = {
+                    "score": 0.0,
+                    "reasoning": "Missing from LLM response",
+                    "prob_positive": 0.33,
+                    "prob_neutral": 0.34,
+                    "prob_negative": 0.33,
+                }
             
             sentiment = NewsSentiment(
                 news_article_id=article.id,
-                prob_positive=scores["prob_positive"],
-                prob_neutral=scores["prob_neutral"],
-                prob_negative=scores["prob_negative"],
-                score=scores["score"],
-                model_name="ProsusAI/finbert",
+                prob_positive=result["prob_positive"],
+                prob_neutral=result["prob_neutral"],
+                prob_negative=result["prob_negative"],
+                score=result["score"],
+                reasoning=result.get("reasoning"),
+                model_name=result.get("model_name", used_model),
                 scored_at=datetime.now(timezone.utc)
             )
             
             session.add(sentiment)
             scored_count += 1
         
-        # Commit batch
+        # Commit after each chunk
         session.commit()
-        logger.info(f"Scored batch {i // batch_size + 1}: {len(batch)} articles")
+        logger.info(f"Committed chunk {chunk_num}: {len(chunk)} articles")
+        
+        # Rate limiting: 2 second delay between chunks (except last)
+        if chunk_idx + chunk_size < len(unscored):
+            logger.debug("Rate limit delay: 2 seconds")
+            time.sleep(2)
     
     logger.info(f"Total articles scored: {scored_count}")
     return scored_count
@@ -647,7 +893,7 @@ def run_full_pipeline(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run AI pipeline: FinBERT scoring and XGBoost training"
+        description="Run AI pipeline: LLM sentiment scoring (with FinBERT fallback) and XGBoost training"
     )
     parser.add_argument(
         "--run-all",
@@ -657,7 +903,7 @@ def main():
     parser.add_argument(
         "--score-only",
         action="store_true",
-        help="Only run FinBERT scoring"
+        help="Only run sentiment scoring (LLM primary, FinBERT fallback)"
     )
     parser.add_argument(
         "--aggregate-only",

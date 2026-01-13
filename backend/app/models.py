@@ -101,7 +101,9 @@ class PriceBar(Base):
 
 class NewsSentiment(Base):
     """
-    FinBERT sentiment scores for each news article.
+    Sentiment scores for each news article.
+    Primary: LLM (Gemini) with copper-specific context
+    Fallback: FinBERT for generic financial sentiment
     One-to-one relationship with NewsArticle.
     """
     __tablename__ = "news_sentiments"
@@ -116,17 +118,19 @@ class NewsSentiment(Base):
         index=True
     )
     
-    # FinBERT probabilities
+    # Sentiment probabilities (LLM derives these from score)
     prob_positive = Column(Float, nullable=False)
     prob_neutral = Column(Float, nullable=False)
     prob_negative = Column(Float, nullable=False)
     
-    # Derived score: prob_positive - prob_negative
-    # Range: [-1, 1], positive means bullish
+    # Sentiment score: -1 (bearish) to +1 (bullish)
     score = Column(Float, nullable=False, index=True)
     
-    # Model info
-    model_name = Column(String(100), default="ProsusAI/finbert")
+    # LLM reasoning for the score (debug + future UI display)
+    reasoning = Column(Text, nullable=True)
+    
+    # Model info (LLM model or "ProsusAI/finbert" for fallback)
+    model_name = Column(String(100), default="google/gemini-2.0-flash-exp:free")
     
     # When scored
     scored_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
