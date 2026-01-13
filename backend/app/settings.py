@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     twelvedata_api_key: Optional[str] = None
     
     # LLM Sentiment Analysis (replaces FinBERT)
-    llm_sentiment_model: str = "google/gemini-2.0-flash-exp:free"
+    llm_sentiment_model: str = "xiaomi/mimo-v2-flash:free"
     
     @property
     def symbols_list(self) -> list[str]:
