@@ -235,7 +235,7 @@ function App() {
                   </span>
                 </div>
 
-                <div className="h-[60px] overflow-y-auto text-xs text-gray-300 leading-relaxed custom-scrollbar">
+                <div className="h-[100px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
                   {commentary ? (
                     <p className="font-light">{(commentary.commentary || '').split('\n')[0]}</p>
                   ) : (
