@@ -1,19 +1,44 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
 } from 'recharts';
 import { motion } from 'framer-motion';
 import { Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
-import clsx from 'clsx'; // Utility for conditional classes
+import clsx from 'clsx';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
-import { MarketMap } from './components/MarketMap';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
-  LoadingState, CommentaryResponse
+  CommentaryResponse
 } from './types';
 import './App.css';
+
+// Lazy load heavy components
+const MarketMap = lazy(() => import('./components/MarketMap').then(m => ({ default: m.MarketMap })));
+
+// --- Skeleton Components for perceived performance ---
+const SkeletonPulse = ({ className = '' }: { className?: string }) => (
+  <div className={clsx("animate-pulse bg-white/5 rounded", className)} />
+);
+
+const ChartSkeleton = () => (
+  <div className="h-[350px] w-full flex items-center justify-center">
+    <div className="flex flex-col items-center gap-3">
+      <div className="w-8 h-8 border-2 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
+      <span className="text-gray-500 text-xs font-mono">Loading chart...</span>
+    </div>
+  </div>
+);
+
+const MapSkeleton = () => (
+  <div className="h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl">
+    <div className="flex flex-col items-center gap-3">
+      <Globe size={32} className="text-copper-500/50 animate-pulse" />
+      <span className="text-gray-500 text-xs font-mono">Loading intelligence map...</span>
+    </div>
+  </div>
+);
 
 // --- Components ---
 
@@ -60,10 +85,11 @@ function App() {
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
-  const [loadingState, setLoadingState] = useState<LoadingState>('idle');
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const tradingViewLoaded = useRef(false);
 
-  const loadData = useCallback(async () => {
-    setLoadingState('loading');
+  // Silent refresh - no loading state flash after initial load
+  const loadData = useCallback(async (silent = false) => {
     try {
       const [analysisData, historyData] = await Promise.all([
         fetchAnalysis('HG=F'),
@@ -71,9 +97,10 @@ function App() {
       ]);
       setAnalysis(analysisData);
       setHistory(historyData);
-      setLoadingState('success');
-    } catch {
-      setLoadingState('error');
+      if (!silent) setIsInitialLoad(false);
+    } catch (err) {
+      console.error('Data load failed:', err);
+      if (!silent) setIsInitialLoad(false);
     }
   }, []);
 
@@ -86,58 +113,71 @@ function App() {
     }
   }, []);
 
+  // Initial load
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 60000);
+    loadData(false);
+  }, [loadData]);
+
+  // Silent refresh every 60s - no UI flash
+  useEffect(() => {
+    const interval = setInterval(() => loadData(true), 60000);
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // TradingView widget provides live price - no API key needed
+  // Lazy load TradingView widget after initial render
   useEffect(() => {
-    const container = document.getElementById('tradingview-widget-container');
-    if (container && !container.querySelector('script')) {
-      // Create the widget wrapper
-      const widgetDiv = document.createElement('div');
-      widgetDiv.className = 'tradingview-widget-container__widget';
-      container.appendChild(widgetDiv);
+    if (isInitialLoad || tradingViewLoaded.current) return;
 
-      // Create the config script (TradingView requires type="text/javascript")
-      const script = document.createElement('script');
-      script.type = 'text/javascript';
-      script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
-      script.async = true;
-      script.textContent = JSON.stringify({
-        symbol: "EIGHTCAP:XCUUSD",
-        width: "100%",
-        isTransparent: true,
-        colorTheme: "dark",
-        locale: "en"
-      });
-      container.appendChild(script);
-    }
-  }, [loadingState]); // Re-run when loading state changes
+    const timer = setTimeout(() => {
+      const container = document.getElementById('tradingview-widget-container');
+      if (container && !container.querySelector('script')) {
+        tradingViewLoaded.current = true;
 
+        const widgetDiv = document.createElement('div');
+        widgetDiv.className = 'tradingview-widget-container__widget';
+        container.appendChild(widgetDiv);
+
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
+        script.async = true;
+        script.textContent = JSON.stringify({
+          symbol: "EIGHTCAP:XCUUSD",
+          width: "100%",
+          isTransparent: true,
+          colorTheme: "dark",
+          locale: "en"
+        });
+        container.appendChild(script);
+      }
+    }, 100); // Small delay to prioritize main content
+
+    return () => clearTimeout(timer);
+  }, [isInitialLoad]);
+
+  // Load commentary after analysis
   useEffect(() => {
-    if (loadingState === 'success') loadCommentary();
-  }, [loadingState, loadCommentary]);
+    if (analysis) loadCommentary();
+  }, [analysis, loadCommentary]);
 
   const chartData: HistoryDataPoint[] = useMemo(() => history?.data || [], [history]);
   const lastPoint = chartData[chartData.length - 1];
 
   const theme = {
-    bull: '#34D399', // Emerald 400
-    bear: '#FB7185', // Rose 400
-    copper: '#F59E0B', // Amber 500
+    bull: '#34D399',
+    bear: '#FB7185',
+    copper: '#F59E0B',
     grid: 'rgba(255,255,255,0.05)',
     text: '#9CA3AF'
   };
 
-  if (loadingState === 'loading' || loadingState === 'idle') {
+  // Only show full loading on initial load
+  if (isInitialLoad && !analysis) {
     return (
       <div className="min-h-screen bg-midnight flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
-          <span className="text-copper-500 font-mono text-sm tracking-widest animate-pulse">SYNCHRONIZING...</span>
+          <span className="text-copper-500 font-mono text-sm tracking-widest">INITIALIZING...</span>
         </div>
       </div>
     );
@@ -168,7 +208,15 @@ function App() {
 
           <div className="flex bg-white/5 backdrop-blur-md rounded-2xl p-1.5 border border-white/5 gap-1">
             <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden">
-              <div id="tradingview-widget-container" className="tradingview-widget-container" />
+              <div id="tradingview-widget-container" className="tradingview-widget-container">
+                {/* Skeleton while TradingView loads */}
+                {!tradingViewLoaded.current && (
+                  <div className="flex items-center gap-2 py-2">
+                    <SkeletonPulse className="w-16 h-4" />
+                    <SkeletonPulse className="w-12 h-6" />
+                  </div>
+                )}
+              </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
               <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sentiment</span>
@@ -196,7 +244,6 @@ function App() {
                   </span>
                 </div>
                 <div className="mt-4 space-y-2">
-
                   <div className="flex justify-between text-sm py-2 border-b border-white/5">
                     <span className="text-gray-500">Confidence</span>
                     <span className="font-mono text-gray-200">{(analysis?.data_quality.coverage_pct || 0)}%</span>
@@ -249,65 +296,69 @@ function App() {
 
           {/* Chart Card */}
           <GlassCard title="Market Flow" icon={Activity} colSpan={8} className="min-h-[400px]">
-            <div className="h-[350px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
-                      <stop offset="95%" stopColor={theme.copper} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
+            {chartData.length > 0 ? (
+              <div className="h-[350px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
+                        <stop offset="95%" stopColor={theme.copper} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
 
-                  <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
-                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
-                    axisLine={false}
-                    tickLine={false}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    orientation="right"
-                    domain={['auto', 'auto']}
-                    tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(val) => `$${val.toFixed(2)}`}
-                    width={60}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'rgba(11, 17, 32, 0.8)',
-                      backdropFilter: 'blur(8px)',
-                      borderColor: 'rgba(255,255,255,0.1)',
-                      borderRadius: '12px',
-                      color: '#F3F4F6'
-                    }}
-                    itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }}
-                    labelStyle={{ fontFamily: 'Plus Jakarta Sans', color: '#9CA3AF', marginBottom: '8px' }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="price"
-                    stroke={theme.copper}
-                    fill="url(#priceGradient)"
-                    strokeWidth={2}
-                  />
-                  {analysis && lastPoint && (
-                    <ReferenceDot
-                      x={lastPoint.date}
-                      y={analysis.predicted_price}
-                      r={4}
-                      fill={isBullish ? theme.bull : theme.bear}
-                      stroke="#fff"
+                    <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
+                      tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                      axisLine={false}
+                      tickLine={false}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      orientation="right"
+                      domain={['auto', 'auto']}
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(val) => `$${val.toFixed(2)}`}
+                      width={60}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'rgba(11, 17, 32, 0.8)',
+                        backdropFilter: 'blur(8px)',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderRadius: '12px',
+                        color: '#F3F4F6'
+                      }}
+                      itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }}
+                      labelStyle={{ fontFamily: 'Plus Jakarta Sans', color: '#9CA3AF', marginBottom: '8px' }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="price"
+                      stroke={theme.copper}
+                      fill="url(#priceGradient)"
                       strokeWidth={2}
                     />
-                  )}
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+                    {analysis && lastPoint && (
+                      <ReferenceDot
+                        x={lastPoint.date}
+                        y={analysis.predicted_price}
+                        r={4}
+                        fill={isBullish ? theme.bull : theme.bear}
+                        stroke="#fff"
+                        strokeWidth={2}
+                      />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <ChartSkeleton />
+            )}
           </GlassCard>
 
           {/* Influencers Card */}
@@ -334,10 +385,12 @@ function App() {
             </div>
           </GlassCard>
 
-          {/* Market Map */}
+          {/* Market Map - Lazy loaded */}
           <div className="col-span-12">
             <GlassCard title="Global Intelligence Map" icon={Globe} colSpan={12}>
-              <MarketMap />
+              <Suspense fallback={<MapSkeleton />}>
+                <MarketMap />
+              </Suspense>
             </GlassCard>
           </div>
 
