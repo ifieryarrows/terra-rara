@@ -5,6 +5,7 @@ import {
 import { motion } from 'framer-motion';
 import { Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
 import clsx from 'clsx'; // Utility for conditional classes
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
 import { MarketMap } from './components/MarketMap';
@@ -342,6 +343,7 @@ function App() {
 
         </div>
       </div>
+      <SpeedInsights />
     </div>
   );
 }
