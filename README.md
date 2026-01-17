@@ -242,8 +242,9 @@ curl https://ifieryarrows-copper-mind.hf.space/api/commentary
 # Get historical data
 curl https://ifieryarrows-copper-mind.hf.space/api/history
 
-# Trigger pipeline manually
-curl -X POST https://ifieryarrows-copper-mind.hf.space/api/pipeline/trigger
+# Trigger pipeline manually (requires authentication)
+curl -X POST "https://ifieryarrows-copper-mind.hf.space/api/pipeline/trigger?fetch_data=true&train_model=true" \
+  -H "Authorization: Bearer YOUR_PIPELINE_TRIGGER_SECRET"
 ```
 
 ## API Reference
