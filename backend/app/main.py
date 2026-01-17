@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
@@ -660,18 +660,66 @@ async def api_root():
 # Pipeline Management Endpoints
 # =============================================================================
 
+
+def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
+    """
+    Verify the pipeline trigger secret from Authorization header.
+    
+    Expected format: Authorization: Bearer <PIPELINE_TRIGGER_SECRET>
+    """
+    settings = get_settings()
+    
+    # If no secret is configured, reject all requests (fail secure)
+    if not settings.pipeline_trigger_secret:
+        logger.warning("Pipeline trigger attempted but PIPELINE_TRIGGER_SECRET not configured")
+        raise HTTPException(
+            status_code=401,
+            detail="Pipeline trigger authentication not configured. Set PIPELINE_TRIGGER_SECRET."
+        )
+    
+    # Check Authorization header
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header. Expected: Bearer <token>"
+        )
+    
+    # Parse Bearer token
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization format. Expected: Bearer <token>"
+        )
+    
+    token = parts[1]
+    
+    # Constant-time comparison to prevent timing attacks
+    import secrets
+    if not secrets.compare_digest(token, settings.pipeline_trigger_secret):
+        logger.warning("Pipeline trigger attempted with invalid token")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid pipeline trigger token"
+        )
+    
+    logger.info("Pipeline trigger authorized successfully")
+
+
 @app.post(
     "/api/pipeline/trigger",
-    summary="Trigger data pipeline",
-    description="Manually trigger data fetch and AI pipeline. Use with caution - this is a heavy operation.",
+    summary="Trigger data pipeline (requires authentication)",
+    description="Manually trigger data fetch and AI pipeline. Requires Authorization: Bearer <PIPELINE_TRIGGER_SECRET> header.",
     responses={
         200: {"description": "Pipeline triggered successfully"},
+        401: {"description": "Unauthorized - missing or invalid token"},
         409: {"description": "Pipeline already running"},
     },
 )
 async def trigger_pipeline(
     fetch_data: bool = Query(default=True, description="Fetch new data from sources"),
     train_model: bool = Query(default=True, description="Train/retrain XGBoost model"),
+    _auth: None = Depends(verify_pipeline_secret),
 ):
     """
     Manually trigger the pipeline.

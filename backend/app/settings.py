@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # LLM Sentiment Analysis (replaces FinBERT)
     llm_sentiment_model: str = "xiaomi/mimo-v2-flash:free"
     
+    # Pipeline trigger authentication
+    pipeline_trigger_secret: Optional[str] = None
+    
     @property
     def symbols_list(self) -> list[str]:
         """Parse comma-separated symbols into a list."""

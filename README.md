@@ -330,8 +330,6 @@ Manually triggers the ML pipeline. This is a privileged endpoint that consumes s
 | `fetch_data` | boolean | `true` | Fetch new news and prices |
 | `train_model` | boolean | `true` | Retrain XGBoost model |
 
-**Warning**: The current implementation does not enforce authentication. The endpoint must be protected before public deployment. See the [Security](#security) section for details.
-
 ## Development
 
 ### Running Tests
@@ -421,17 +419,13 @@ This endpoint triggers the full ML pipeline, which fetches news, calls the LLM A
 - **Quota and cost burn**: Each pipeline run consumes OpenRouter and TwelveData API quota. Uncontrolled access can exhaust free-tier limits or incur costs.
 - **Resource exhaustion**: Model training and batch LLM calls are CPU and memory intensive.
 
-**Current status**: The endpoint does not currently implement authentication. Before exposing this API publicly, you must implement protection.
+**Authentication**: This endpoint requires a valid `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>` header. Requests without a valid token receive 401 Unauthorized.
 
-### Required Protection
+### Configuration
 
 1. **Set `PIPELINE_TRIGGER_SECRET`** in your `.env` file. Use a random string of 32 or more characters. Store this as a secret in your deployment platform.
 
-2. **Implement header validation** in the backend. Requests to POST /api/pipeline/trigger must include:
-   - `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>`
-   - The backend must return 401 Unauthorized if the header is missing or the token does not match.
-
-3. **Rotate the secret immediately** if it is ever exposed in logs, commits, or third-party systems.
+2. **Rotate the secret immediately** if it is ever exposed in logs, commits, or third-party systems.
 
 ### Abuse Prevention (Recommended Controls)
 
