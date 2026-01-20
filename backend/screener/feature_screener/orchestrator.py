@@ -188,6 +188,16 @@ class FeatureScreener:
         
         return passed
     
+    def _has_valid_oos(self, eval_result: CandidateEvaluation) -> bool:
+        """Check if candidate has valid OOS data."""
+        if eval_result.oos_metrics is None:
+            return False
+        if eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_obs:
+            return False
+        if eval_result.oos_metrics.pearson is None:
+            return False
+        return True
+    
     def score_and_rank(self) -> list[CandidateEvaluation]:
         """
         Score and rank candidates.
@@ -195,8 +205,11 @@ class FeatureScreener:
         Returns:
             Sorted list of evaluations (best first)
         """
-        # Filter to those that passed retention
-        passed = [e for e in self.evaluations if e.passed_is_retention]
+        # Filter to those that passed IS retention AND have valid OOS
+        passed = [
+            e for e in self.evaluations 
+            if e.passed_is_retention and self._has_valid_oos(e)
+        ]
         
         # Score each candidate
         for eval_result in passed:
@@ -261,12 +274,27 @@ class FeatureScreener:
         excluded = []
         
         for eval_result in self.evaluations:
-            if eval_result.passed_is_retention:
-                # Convert to contract
-                candidate = self._eval_to_candidate(eval_result)
+            has_valid_oos = self._has_valid_oos(eval_result)
+            
+            if eval_result.passed_is_retention and has_valid_oos:
+                # Passed both IS and OOS - include as candidate
+                candidate = self._eval_to_candidate(eval_result, include_in_model=True)
                 candidates.append(candidate)
+            elif eval_result.passed_is_retention and not has_valid_oos:
+                # Passed IS but no valid OOS data
+                if eval_result.oos_metrics is None:
+                    reason = "oos_missing_data"
+                elif eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_obs:
+                    reason = "oos_insufficient_observations"
+                else:
+                    reason = "oos_correlation_null"
+                excluded.append(ExcludedCandidate(
+                    ticker=eval_result.ticker,
+                    reason=reason,
+                    is_pearson=eval_result.is_metrics.pearson
+                ))
             else:
-                # Add to excluded
+                # Did not pass IS retention
                 excluded.append(ExcludedCandidate(
                     ticker=eval_result.ticker,
                     reason=eval_result.error or "is_corr_below_threshold",
@@ -353,7 +381,11 @@ class FeatureScreener:
         
         return self.output
     
-    def _eval_to_candidate(self, eval_result: CandidateEvaluation) -> ScreenerCandidate:
+    def _eval_to_candidate(
+        self, 
+        eval_result: CandidateEvaluation,
+        include_in_model: bool = False
+    ) -> ScreenerCandidate:
         """Convert CandidateEvaluation to ScreenerCandidate contract."""
         
         # Build IS metrics
@@ -389,11 +421,11 @@ class FeatureScreener:
                 last_date=eval_result.oos_metrics.last_date
             )
         
-        # Build decision
+        # Build decision - include_in_model now passed as argument
         decision = CandidateDecision(
             rank=getattr(eval_result, 'rank', None),
             score_composite=getattr(eval_result, 'composite_score', None),
-            include_in_model=eval_result.passed_is_retention,
+            include_in_model=include_in_model,
             notes=[]
         )
         
