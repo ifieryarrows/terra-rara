@@ -12,13 +12,13 @@ target: "HG=F"
 # =============================================================================
 # Multiple sources can be combined. Order determines precedence for duplicates.
 seed_sources:
-  # Smoke test (small, fast validation)
+  # Broad universe (full screening)
   - type: seed_csv
-    path: config/seeds/smoke_test.csv
+    path: config/seeds/broad_universe.csv
 
-  # Uncomment for broad universe screening:
+  # Smoke test (small, fast validation) - uncomment to use instead:
   # - type: seed_csv
-  #   path: config/seeds/broad_universe.csv
+  #   path: config/seeds/smoke_test.csv
 
   # Built-in macro peer set (always available)
   - type: macro_peers

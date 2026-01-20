@@ -560,8 +560,14 @@ def main(
     try:
         output = run_screener(universe_path, config_path, output_dir)
         
-        # Summary
-        passed = len([c for c in output.candidates if c.decision.include_in_model])
+        # Summary counts
+        passed_final = len(output.candidates)
+        excluded_total = len(output.excluded)
+        
+        # Count excluded reasons
+        reason_counts = {}
+        for e in output.excluded:
+            reason_counts[e.reason] = reason_counts.get(e.reason, 0) + 1
         
         print(f"\n{'='*60}")
         print(f"Screening Complete")
@@ -569,8 +575,16 @@ def main(
         print(f"Run ID:       {output.meta.run_id}")
         print(f"Universe:     {output.meta.universe_version}")
         print(f"Target:       {output.target.ticker}")
-        print(f"Candidates:   {len(output.candidates)} passed / {len(output.excluded)} excluded")
-        print(f"Fingerprint:  {output.fingerprint[:30]}...")
+        print(f"Candidates:   {passed_final} passed / {excluded_total} excluded")
+        print(f"Fingerprint:  {output.content_fingerprint[:30]}...")
+        print(f"{'='*60}")
+        
+        # Exclusion breakdown
+        if reason_counts:
+            print(f"\nExcluded Reasons:")
+            print(f"{'-'*40}")
+            for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+                print(f"  {reason}: {count}")
         print(f"{'='*60}")
         
         # Top 10
