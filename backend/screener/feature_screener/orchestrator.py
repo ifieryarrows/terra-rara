@@ -304,6 +304,9 @@ class FeatureScreener:
         # Build metadata
         config_hash = compute_config_hash(self.config)
         
+        # Get universe fingerprint (prefer content_fingerprint if available)
+        universe_fp = getattr(self.universe, 'content_fingerprint', None) or self.universe.fingerprint
+        
         meta = ScreenerMeta(
             generated_at=self.context.generated_at,
             run_id=self.context.run_id,
@@ -311,10 +314,22 @@ class FeatureScreener:
             config_hash=config_hash,
             lib_versions=self.context.lib_versions,
             universe_version=self.universe.meta.run_id,
-            universe_fingerprint=self.universe.fingerprint
+            universe_fingerprint=universe_fp
         )
         
-        # Build output dict for fingerprinting
+        # Build content dict for DETERMINISTIC fingerprint (excludes meta)
+        from screener.core.canonical import build_screener_content_dict
+        
+        content_dict = build_screener_content_dict(
+            target=target_info.model_dump(),
+            analysis_parameters=analysis_params.model_dump(),
+            universe_content_fingerprint=universe_fp,
+            candidates=[c.model_dump(by_alias=True) for c in candidates],
+            excluded=[e.model_dump() for e in excluded]
+        )
+        content_fingerprint = compute_fingerprint(content_dict)
+        
+        # Build output dict for FULL fingerprint (includes meta)
         output_dict = {
             "meta": meta.model_dump(),
             "target": target_info.model_dump(),
@@ -322,8 +337,7 @@ class FeatureScreener:
             "candidates": [c.model_dump(by_alias=True) for c in candidates],
             "excluded": [e.model_dump() for e in excluded]
         }
-        
-        fingerprint = compute_fingerprint(output_dict)
+        output_fingerprint = compute_fingerprint(output_dict)
         
         self.output = ScreenerOutput(
             meta=meta,
@@ -332,7 +346,9 @@ class FeatureScreener:
             candidates=candidates,
             excluded=excluded,
             artifacts=[],
-            fingerprint=fingerprint
+            content_fingerprint=content_fingerprint,
+            output_fingerprint=output_fingerprint,
+            fingerprint=content_fingerprint  # Deprecated, for backward compat
         )
         
         return self.output
