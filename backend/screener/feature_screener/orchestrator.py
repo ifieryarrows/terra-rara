@@ -443,19 +443,26 @@ class FeatureScreener:
         """
         Generate selected symbols with category limits for diversified selection.
         
+        Includes full audit trail: fingerprints, detailed OOS metrics, selection rules version.
+        
         Limits:
         - etf_copper: max 1 (avoid redundancy with target)
         - etf_miners: max 1
         - etf_metals: max 1
         - miner_major: max 4
-        - miner_mid/junior/regional: max 3 combined
+        - miner_mid/junior/regional: max 2 each
         - other categories: max 2 each
         
+        Tie-break: by composite score (already sorted by rank)
+        
         Returns:
-            Dict with selected symbols and metadata
+            Dict with selected symbols and full audit metadata
         """
         if self.output is None:
             return {"selected": [], "limits_applied": {}}
+        
+        # Selection rules version (increment when limits/logic changes)
+        SELECTION_RULES_VERSION = "1.0.0"
         
         # Category limits
         limits = {
@@ -473,7 +480,7 @@ class FeatureScreener:
         counts = {}
         selected = []
         
-        # Candidates are already sorted by rank
+        # Candidates are already sorted by rank (tie-break is alphabetical by ticker within same score)
         for candidate in self.output.candidates:
             category = candidate.category or "other"
             
@@ -485,26 +492,50 @@ class FeatureScreener:
             if current >= limit:
                 continue
             
-            # Add to selection
-            selected.append({
+            # Build detailed entry with full OOS metrics for audit
+            oos = candidate.oos_metrics
+            entry = {
                 "ticker": candidate.ticker,
                 "category": category,
                 "rank": candidate.decision.rank,
+                "score_composite": candidate.decision.score_composite,
+                # IS metrics
                 "is_pearson": candidate.is_metrics.pearson,
-                "oos_pearson": candidate.oos_metrics.pearson if candidate.oos_metrics else None,
-                "oos_partial_corr": candidate.oos_metrics.partial_corr if candidate.oos_metrics else None,
-                "score_composite": candidate.decision.score_composite
-            })
+                "is_n_obs": candidate.is_metrics.n_obs,
+                "is_best_lag": candidate.is_metrics.best_lead_lag,
+                # OOS metrics (full audit)
+                "oos_pearson": oos.pearson if oos else None,
+                "oos_n_obs": oos.n_obs if oos else None,
+                "oos_partial_corr": oos.partial_corr if oos else None,
+                "oos_rolling_std": oos.rolling_corr_std if oos else None,
+                "oos_frozen_lag": oos.frozen_lag if oos else None,
+                "oos_lag_corr_at_frozen": oos.lag_corr_at_frozen if oos else None,
+            }
+            selected.append(entry)
             counts[category] = current + 1
         
+        # Get universe fingerprint (prefer content_fingerprint)
+        universe_fp = getattr(self.universe, 'content_fingerprint', None) or self.universe.fingerprint
+        
         return {
+            # Identifiers
             "run_id": self.context.run_id,
             "generated_at": self.context.generated_at,
+            "screener_run_id": self.output.meta.run_id,
+            # Fingerprints for audit trail
+            "content_fingerprint": self.output.content_fingerprint,
+            "output_fingerprint": self.output.output_fingerprint,
+            "universe_content_fingerprint": universe_fp,
+            # Selection metadata
+            "selection_rules_version": SELECTION_RULES_VERSION,
             "target": self.config.target,
             "total_candidates": len(self.output.candidates),
             "selected_count": len(selected),
             "limits_applied": limits,
             "category_counts": counts,
+            # Tie-break rule
+            "tie_break_rule": "alphabetical_ticker_within_same_score",
+            # Selected symbols with full audit data
             "selected": selected
         }
     
