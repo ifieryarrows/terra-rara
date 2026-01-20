@@ -1,0 +1,209 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://terra-rara.local/schemas/universe.schema.json",
+    "title": "UniverseOutput",
+    "description": "Output contract for Universe Builder with dual fingerprint system",
+    "type": "object",
+    "required": [
+        "meta",
+        "sources",
+        "filter_parameters",
+        "universe",
+        "summary",
+        "content_fingerprint",
+        "output_fingerprint"
+    ],
+    "properties": {
+        "meta": {
+            "type": "object",
+            "required": [
+                "generated_at",
+                "run_id",
+                "config_hash",
+                "lib_versions"
+            ],
+            "properties": {
+                "generated_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "ISO 8601 timestamp of generation"
+                },
+                "run_id": {
+                    "type": "string",
+                    "pattern": "^univ-[0-9]{8}-[a-z0-9]+$",
+                    "description": "Unique run identifier"
+                },
+                "git_commit": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Git commit hash (short)"
+                },
+                "config_hash": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]+$",
+                    "description": "SHA256 hash of configuration"
+                },
+                "lib_versions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Library versions used"
+                },
+                "data_provider_notes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Notes about data provider limitations"
+                }
+            }
+        },
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "type"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "seed_csv",
+                            "seed_json",
+                            "etf_holdings",
+                            "macro_peers"
+                        ]
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "sha256": {
+                        "type": "string"
+                    },
+                    "embedded": {
+                        "type": "boolean"
+                    }
+                }
+            }
+        },
+        "filter_parameters": {
+            "type": "object",
+            "required": [
+                "min_history_days",
+                "min_coverage_pct",
+                "frequency"
+            ],
+            "properties": {
+                "min_history_days": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "min_coverage_pct": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                },
+                "frequency": {
+                    "type": "string"
+                }
+            }
+        },
+        "universe": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "ticker",
+                    "canonical_ticker",
+                    "status"
+                ],
+                "properties": {
+                    "ticker": {
+                        "type": "string"
+                    },
+                    "canonical_ticker": {
+                        "type": "string"
+                    },
+                    "category": {
+                        "type": "string"
+                    },
+                    "first_date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "last_date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "total_weeks": {
+                        "type": "integer"
+                    },
+                    "coverage_pct": {
+                        "type": "number"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "included",
+                            "excluded"
+                        ]
+                    },
+                    "exclusion_reason": {
+                        "type": "string"
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Provenance: list of sources where ticker appeared"
+                    },
+                    "source_tag": {
+                        "type": "string",
+                        "deprecated": true,
+                        "description": "DEPRECATED: use sources array instead"
+                    }
+                }
+            }
+        },
+        "summary": {
+            "type": "object",
+            "required": [
+                "total_candidates",
+                "included",
+                "excluded"
+            ],
+            "properties": {
+                "total_candidates": {
+                    "type": "integer"
+                },
+                "included": {
+                    "type": "integer"
+                },
+                "excluded": {
+                    "type": "integer"
+                }
+            }
+        },
+        "content_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]+$",
+            "description": "Deterministic fingerprint of content only (excludes meta). Same inputs = same hash."
+        },
+        "output_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]+$",
+            "description": "Fingerprint of full output envelope (includes meta). Changes each run."
+        },
+        "fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]+$",
+            "deprecated": true,
+            "description": "DEPRECATED: use content_fingerprint instead"
+        }
+    }
+}

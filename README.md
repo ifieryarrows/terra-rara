@@ -117,6 +117,13 @@ terra-rara/
 │   │   ├── models.py         # SQLAlchemy ORM models
 │   │   ├── db.py             # Database connection
 │   │   └── settings.py       # Pydantic settings
+│   ├── screener/             # Universe Builder + Feature Screener
+│   │   ├── core/             # Config, fingerprint, cache
+│   │   ├── contracts/        # Pydantic output models
+│   │   ├── universe_builder/ # Seed loading, probing, categorization
+│   │   └── feature_screener/ # Correlation analysis
+│   ├── config/
+│   │   └── seeds/            # Ticker seed files (CSV)
 │   ├── tests/                # pytest tests
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -138,6 +145,46 @@ terra-rara/
 ├── env.example
 └── README.md
 ```
+
+## Screener Module
+
+The screener module identifies symbols with stable correlations to COMEX Copper (HG=F) for feature engineering. It provides audit-first, reproducible analysis with full data lineage.
+
+### CLI Usage
+
+```bash
+cd backend
+
+# Build universe from seed sources
+python -m screener universe_builder --config config/screener_config.yaml
+
+# Run correlation screening
+python -m screener feature_screener --universe artifacts/universes/latest/universe.json
+```
+
+### Dual Fingerprint System
+
+The screener uses two fingerprints to ensure both reproducibility and auditability:
+
+- **`content_fingerprint`**: Deterministic hash of analysis content only. Same inputs + same config = same hash. Excludes timestamps and run IDs.
+
+- **`output_fingerprint`**: Hash of full output envelope including metadata. Changes with each run.
+
+This separation allows:
+1. **Offline replay verification**: Run twice from same cached data → identical `content_fingerprint`
+2. **Audit trail**: Each run has unique `output_fingerprint` with timestamps
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| Weekly via 1d + resample | Downloads daily data, resamples to W-FRI for consistency |
+| Pairwise dropna | Correlation uses per-pair intersection, not global dropna |
+| Frozen lead-lag | Best lag discovered in IS, frozen for OOS evaluation |
+| Partial correlation | Residual correlation with ^GSPC/UUP controls |
+| Multi-source provenance | Each ticker tracks all sources it appeared in |
+| Collision-proof cache | FetchParams fingerprint prevents cache key collisions |
+
 
 ## Getting Started
 

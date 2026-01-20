@@ -1,0 +1,368 @@
+ticker,category,source_tag
+# ============================================
+# BROAD UNIVERSE SEED - ~500+ Tickers
+# Purpose: Wide correlation screening
+# ============================================
+
+# ============= COPPER & BASE METALS =============
+
+# Major Copper Miners
+FCX,miner_major,copper_core
+BHP,miner_major,copper_core
+SCCO,miner_major,copper_core
+RIO,miner_major,copper_core
+TECK,miner_major,copper_core
+GLEN.L,miner_major,copper_intl
+ANTO.L,miner_major,copper_intl
+1088.HK,miner_major,copper_asia
+
+# Mid-Cap Copper
+LUN.TO,miner_mid,copper_regional
+IVN.TO,miner_mid,copper_regional
+2899.HK,miner_mid,copper_regional
+FM.TO,miner_mid,copper_regional
+CS.TO,miner_mid,copper_regional
+ERO,miner_mid,copper_regional
+HBM.TO,miner_mid,copper_regional
+NEXA,miner_mid,copper_regional
+
+# Junior Copper/Exploration
+ARIS,miner_junior,copper_junior
+COP.AX,miner_junior,copper_junior
+EDV.TO,miner_junior,copper_junior
+FIL.TO,miner_junior,copper_junior
+LAC,miner_junior,copper_junior
+NOVR,miner_junior,copper_junior
+
+# Diversified Miners
+VALE,miner_diversified,diversified
+NEM,miner_diversified,diversified
+GOLD,miner_diversified,diversified
+AEM,miner_diversified,diversified
+WPM,miner_diversified,diversified
+
+# ============= ETFS =============
+
+# Copper-Focused
+COPX,etf_copper,etf_core
+COPJ,etf_copper,etf_core
+CPER,etf_copper,etf_core
+JJC,etf_copper,etf_core
+
+# Broad Metals/Miners
+XME,etf_metals,etf_broad
+PICK,etf_miners,etf_broad
+GDX,etf_gold,etf_broad
+GDXJ,etf_gold,etf_broad
+SLV,etf_silver,etf_broad
+PPLT,etf_platinum,etf_broad
+PALL,etf_palladium,etf_broad
+
+# Commodity Broad
+DBC,etf_commodity,etf_broad
+GSG,etf_commodity,etf_broad
+PDBC,etf_commodity,etf_broad
+USCI,etf_commodity,etf_broad
+
+# Industrial/Materials
+XLB,etf_sector,etf_sector
+XLI,etf_sector,etf_sector
+FMAT,etf_sector,etf_sector
+
+# ============= MACRO/CURRENCY =============
+
+# Dollar
+DX-Y.NYB,macro_currency,macro_core
+UUP,macro_currency,macro_core
+USDU,macro_currency,macro_core
+
+# Commodity Currencies
+FXA,macro_currency,commodity_fx
+FXC,macro_currency,commodity_fx
+EWZ,macro_currency,commodity_fx
+EWW,macro_currency,commodity_fx
+
+# EM Currencies/Proxies
+CEW,macro_em,macro_em
+EMLC,macro_em,macro_em
+
+# ============= CHINA =============
+
+# China Equity
+FXI,macro_china,china_core
+MCHI,macro_china,china_core
+KWEB,macro_china,china_core
+ASHR,macro_china,china_core
+CQQQ,macro_china,china_tech
+GXC,macro_china,china_broad
+
+# China ADRs (Industrial)
+BABA,adr_china,china_adr
+JD,adr_china,china_adr
+PDD,adr_china,china_adr
+BIDU,adr_china,china_adr
+
+# ============= COMMODITIES =============
+
+# Energy
+CL=F,commodity_energy,commodity_core
+BZ=F,commodity_energy,commodity_core
+NG=F,commodity_energy,commodity_core
+RB=F,commodity_energy,commodity_energy
+HO=F,commodity_energy,commodity_energy
+
+# Precious Metals
+GC=F,commodity_precious,commodity_core
+SI=F,commodity_precious,commodity_core
+PL=F,commodity_precious,commodity_precious
+PA=F,commodity_precious,commodity_precious
+
+# Base Metals
+ALI=F,commodity_base,commodity_base
+ZN=F,commodity_base,commodity_base
+NI=F,commodity_base,commodity_base
+PB=F,commodity_base,commodity_base
+
+# Agricultural (Demand Proxy)
+ZC=F,commodity_agri,commodity_agri
+ZS=F,commodity_agri,commodity_agri
+ZW=F,commodity_agri,commodity_agri
+
+# ============= INDICES =============
+
+# US Equity
+^GSPC,index_equity,index_core
+^DJI,index_equity,index_core
+^IXIC,index_equity,index_core
+^RUT,index_equity,index_small
+
+# Global
+^STOXX50E,index_global,index_global
+^FTSE,index_global,index_global
+^N225,index_global,index_global
+^HSI,index_global,index_asia
+
+# Volatility
+^VIX,index_vol,index_vol
+
+# ============= RATES =============
+
+# US Treasuries
+IEF,rates_proxy,rates_core
+TLT,rates_proxy,rates_core
+SHY,rates_proxy,rates_short
+GOVT,rates_proxy,rates_broad
+
+# TIPS
+TIP,rates_inflation,rates_inflation
+STIP,rates_inflation,rates_inflation
+
+# ============= INDUSTRIALS =============
+
+# Equipment
+CAT,industrial_equipment,industrial_core
+DE,industrial_equipment,industrial_core
+CMI,industrial_equipment,industrial_core
+TEX,industrial_equipment,industrial_core
+PCAR,industrial_equipment,industrial_core
+OSK,industrial_equipment,industrial_core
+AGCO,industrial_equipment,industrial_agri
+
+# Conglomerates
+GE,industrial_conglom,industrial_core
+HON,industrial_conglom,industrial_core
+MMM,industrial_conglom,industrial_core
+EMR,industrial_conglom,industrial_core
+ITW,industrial_conglom,industrial_core
+
+# Electrical/Power
+ETN,industrial_electrical,industrial_elec
+ROK,industrial_electrical,industrial_elec
+AME,industrial_electrical,industrial_elec
+
+# Construction
+VMC,industrial_construction,construction
+MLM,industrial_construction,construction
+SUM,industrial_construction,construction
+
+# ============= STEEL & MATERIALS =============
+
+# Steel
+X,materials_steel,steel_core
+NUE,materials_steel,steel_core
+CLF,materials_steel,steel_core
+STLD,materials_steel,steel_core
+RS,materials_steel,steel_core
+CMC,materials_steel,steel_core
+
+# Aluminum
+AA,materials_aluminum,aluminum
+ARNC,materials_aluminum,aluminum
+CENX,materials_aluminum,aluminum
+
+# Specialty Materials
+ATI,materials_specialty,specialty
+HAYN,materials_specialty,specialty
+CRS,materials_specialty,specialty
+
+# Chemicals (Industrial)
+DOW,materials_chemical,chemical
+LYB,materials_chemical,chemical
+CE,materials_chemical,chemical
+EMN,materials_chemical,chemical
+
+# ============= ENERGY =============
+
+# Majors
+XOM,energy_major,energy_core
+CVX,energy_major,energy_core
+COP,energy_major,energy_core
+EOG,energy_major,energy_core
+SLB,energy_services,energy_core
+HAL,energy_services,energy_core
+
+# ============= REAL ESTATE/INFRASTRUCTURE =============
+
+# REITs (Industrial)
+PLD,reit_industrial,reit
+DRE,reit_industrial,reit
+STAG,reit_industrial,reit
+
+# Infrastructure
+BIP,infra,infrastructure
+ENB,infra,infrastructure
+TRP,infra,infrastructure
+
+# ============= UTILITIES (POWER DEMAND) =============
+
+XLU,utility_etf,utility
+NEE,utility_power,utility
+DUK,utility_power,utility
+SO,utility_power,utility
+
+# ============= AUTO/EV (COPPER DEMAND) =============
+
+# Traditional Auto
+F,auto_traditional,auto
+GM,auto_traditional,auto
+STLA,auto_traditional,auto
+
+# EV
+TSLA,auto_ev,ev_core
+RIVN,auto_ev,ev_core
+LCID,auto_ev,ev_core
+NIO,auto_ev,ev_china
+LI,auto_ev,ev_china
+XPEV,auto_ev,ev_china
+
+# EV Battery/Charging
+QS,ev_battery,ev_battery
+CHPT,ev_charging,ev_charging
+BLNK,ev_charging,ev_charging
+
+# ============= TECH/SEMIS (COPPER DEMAND) =============
+
+# Semis
+NVDA,tech_semi,semi_core
+AMD,tech_semi,semi_core
+INTC,tech_semi,semi_core
+AVGO,tech_semi,semi_core
+TXN,tech_semi,semi_core
+QCOM,tech_semi,semi_core
+
+# Semi Equipment
+AMAT,tech_semi_equip,semi_equip
+LRCX,tech_semi_equip,semi_equip
+KLAC,tech_semi_equip,semi_equip
+
+# ============= HOMEBUILDERS (COPPER WIRING) =============
+
+XHB,homebuilder_etf,homebuilder
+LEN,homebuilder,homebuilder
+DHI,homebuilder,homebuilder
+PHM,homebuilder,homebuilder
+NVR,homebuilder,homebuilder
+TOL,homebuilder,homebuilder
+
+# ============= CONTRARIAN/ALTERNATIVE =============
+
+# Crypto (Risk Proxy)
+BITO,crypto_proxy,alternative
+GBTC,crypto_proxy,alternative
+
+# Gold Miners (Inverse Proxy)
+GLD,gold_etf,alternative
+IAU,gold_etf,alternative
+PHYS,gold_etf,alternative
+
+# ============= TRANSPORT (DEMAND PROXY) =============
+
+# Trucking
+JBHT,transport_trucking,transport
+ODFL,transport_trucking,transport
+XPO,transport_trucking,transport
+
+# Rail
+UNP,transport_rail,transport
+CSX,transport_rail,transport
+NSC,transport_rail,transport
+
+# Air Cargo
+FDX,transport_cargo,transport
+UPS,transport_cargo,transport
+
+# Shipping
+ZIM,transport_shipping,shipping
+MATX,transport_shipping,shipping
+DAC,transport_shipping,shipping
+
+# ============= FINANCIAL (RISK/CREDIT) =============
+
+# Banks
+XLF,financial_etf,financial
+JPM,financial_bank,financial
+BAC,financial_bank,financial
+C,financial_bank,financial
+WFC,financial_bank,financial
+
+# High Yield (Risk Proxy)
+HYG,credit_hy,credit
+JNK,credit_hy,credit
+BKLN,credit_loans,credit
+
+# ============= EMERGING MARKETS =============
+
+# Broad EM
+EEM,em_broad,em_core
+VWO,em_broad,em_core
+IEMG,em_broad,em_core
+
+# Commodity-Linked EM
+EWZ,em_brazil,em_commodity
+EWW,em_mexico,em_commodity
+EWC,em_canada,em_commodity
+EZA,em_southafrica,em_commodity
+EWA,em_australia,em_commodity
+
+# ============= EUROPE =============
+
+# Broad Europe
+VGK,europe_broad,europe
+EZU,europe_eurozone,europe
+EWG,europe_germany,europe
+EWU,europe_uk,europe
+
+# ============= MISC POTENTIAL PROXIES =============
+
+# Lithium (Battery Metal Peer)
+ALB,lithium,battery_metals
+SQM,lithium,battery_metals
+LTHM,lithium,battery_metals
+
+# Rare Earths
+MP,rare_earth,battery_metals
+REMX,rare_earth,battery_metals
+
+# Uranium (Energy Transition)
+CCJ,uranium,nuclear
+URA,uranium,nuclear

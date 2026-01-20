@@ -1,0 +1,70 @@
+ticker,category,source_tag
+# ============================================
+# SMOKE TEST SEED - 45 Tickers
+# Purpose: Quick pipeline validation
+# ============================================
+
+# Target (always included for reference)
+HG=F,target,core
+
+# Major Copper Miners (Already in Terra Rara)
+FCX,miner_major,core
+BHP,miner_major,core
+SCCO,miner_major,core
+RIO,miner_major,core
+TECK,miner_major,core
+
+# Junior/Regional Miners
+LUN.TO,miner_regional,core
+IVN.TO,miner_regional,core
+2899.HK,miner_regional,core
+FM.TO,miner_junior,expansion
+CS.TO,miner_junior,expansion
+ERO,miner_junior,expansion
+
+# Copper/Metal ETFs
+COPX,etf_copper,core
+COPJ,etf_copper,core
+CPER,etf_copper,expansion
+JJC,etf_copper,expansion
+XME,etf_metals,expansion
+PICK,etf_miners,expansion
+
+# Macro/Currency
+DX-Y.NYB,macro_currency,core
+UUP,macro_currency,core
+FXA,macro_currency,expansion
+FXC,macro_currency,expansion
+
+# China Proxies
+FXI,macro_china,core
+MCHI,macro_china,expansion
+KWEB,macro_china,expansion
+ASHR,macro_china,expansion
+
+# Industrial/Commodities
+CL=F,commodity_energy,core
+GC=F,commodity_precious,expansion
+SI=F,commodity_precious,expansion
+ALI=F,commodity_base,expansion
+
+# Equity Indices (Controls)
+^GSPC,index_equity,control
+^DJI,index_equity,expansion
+^IXIC,index_equity,expansion
+
+# Industrial Bellwethers
+CAT,industrial,expansion
+DE,industrial,expansion
+CMI,industrial,expansion
+TEX,industrial,expansion
+
+# Steel/Materials
+X,materials_steel,expansion
+NUE,materials_steel,expansion
+CLF,materials_steel,expansion
+AA,materials_aluminum,expansion
+
+# Rates Proxy
+IEF,rates_proxy,expansion
+TLT,rates_proxy,expansion

@@ -1,0 +1,101 @@
+# =============================================================================
+# SCREENER CONFIGURATION
+# =============================================================================
+# This file configures the Universe Builder + Feature Screener module.
+# Copy and modify as needed for different screening runs.
+
+# Target symbol for correlation analysis
+target: "HG=F"
+
+# =============================================================================
+# SEED SOURCES
+# =============================================================================
+# Multiple sources can be combined. Order determines precedence for duplicates.
+seed_sources:
+  # Smoke test (small, fast validation)
+  - type: seed_csv
+    path: config/seeds/smoke_test.csv
+
+  # Uncomment for broad universe screening:
+  # - type: seed_csv
+  #   path: config/seeds/broad_universe.csv
+
+  # Built-in macro peer set (always available)
+  - type: macro_peers
+    embedded: true
+
+# =============================================================================
+# UNIVERSE FILTERS
+# =============================================================================
+filter:
+  # Minimum trading history required (days)
+  min_history_days: 730 # ~2 years
+
+  # Minimum data coverage percentage (non-NaN weeks / total weeks)
+  min_coverage_pct: 80.0
+
+  # Frequency for resampling (W-FRI = weekly, Friday-labeled)
+  frequency: "W-FRI"
+
+# =============================================================================
+# ANALYSIS PARAMETERS
+# =============================================================================
+analysis:
+  # In-Sample period (parameter discovery)
+  is_start: "2018-01-01"
+  is_end: "2023-12-31"
+
+  # Out-of-Sample period (validation)
+  oos_start: "2024-01-01"
+  oos_end: null # null = run date (dynamically set)
+
+  # Rolling correlation window (weeks)
+  rolling_window_weeks: 26
+
+  # Lead-lag discovery range (periods = weeks)
+  lead_lag_max_periods: 4
+
+  # Epsilon for sign flip detection (ignore near-zero correlations)
+  sign_flip_epsilon: 0.05
+
+  # Minimum IS correlation to proceed to OOS evaluation
+  # NOTE: 0.5 is very strict; 0.3 is more practical for weekly data
+  min_is_corr_threshold: 0.3
+
+  # Minimum observations for valid correlation
+  min_obs: 104 # ~2 years of weekly data
+
+  # Control variables for partial correlation
+  controls:
+    - "^GSPC"
+    - "UUP"
+
+  # Enable partial correlation calculation (requires statsmodels)
+  enable_partial_corr: true
+
+# =============================================================================
+# FETCHER SETTINGS
+# =============================================================================
+fetcher:
+  # Rate limiting (yfinance: ~2000 requests/hour recommended)
+  calls_per_hour: 1800
+
+  # Retry settings for rate limit errors
+  max_retries: 3
+  base_retry_delay_seconds: 30
+
+  # Enable file-based caching
+  cache_enabled: true
+
+  # Price field to use (Close or Adj Close)
+  price_field: "Close"
+
+# =============================================================================
+# ARTIFACT STORAGE
+# =============================================================================
+artifact_base_dir: "artifacts"
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+log_level: "INFO"
