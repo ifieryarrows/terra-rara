@@ -439,6 +439,75 @@ class FeatureScreener:
             decision=decision
         )
     
+    def _generate_selected_symbols(self) -> dict:
+        """
+        Generate selected symbols with category limits for diversified selection.
+        
+        Limits:
+        - etf_copper: max 1 (avoid redundancy with target)
+        - etf_miners: max 1
+        - etf_metals: max 1
+        - miner_major: max 4
+        - miner_mid/junior/regional: max 3 combined
+        - other categories: max 2 each
+        
+        Returns:
+            Dict with selected symbols and metadata
+        """
+        if self.output is None:
+            return {"selected": [], "limits_applied": {}}
+        
+        # Category limits
+        limits = {
+            "etf_copper": 1,
+            "etf_miners": 1,
+            "etf_metals": 1,
+            "miner_major": 4,
+            "miner_mid": 2,
+            "miner_junior": 2,
+            "miner_regional": 2,
+            "default": 2
+        }
+        
+        # Track counts per category
+        counts = {}
+        selected = []
+        
+        # Candidates are already sorted by rank
+        for candidate in self.output.candidates:
+            category = candidate.category or "other"
+            
+            # Get limit for this category
+            limit = limits.get(category, limits["default"])
+            
+            # Check if limit reached
+            current = counts.get(category, 0)
+            if current >= limit:
+                continue
+            
+            # Add to selection
+            selected.append({
+                "ticker": candidate.ticker,
+                "category": category,
+                "rank": candidate.decision.rank,
+                "is_pearson": candidate.is_metrics.pearson,
+                "oos_pearson": candidate.oos_metrics.pearson if candidate.oos_metrics else None,
+                "oos_partial_corr": candidate.oos_metrics.partial_corr if candidate.oos_metrics else None,
+                "score_composite": candidate.decision.score_composite
+            })
+            counts[category] = current + 1
+        
+        return {
+            "run_id": self.context.run_id,
+            "generated_at": self.context.generated_at,
+            "target": self.config.target,
+            "total_candidates": len(self.output.candidates),
+            "selected_count": len(selected),
+            "limits_applied": limits,
+            "category_counts": counts,
+            "selected": selected
+        }
+    
     def save(self, output_dir: str | Path) -> Path:
         """
         Save output to directory.
@@ -478,6 +547,13 @@ class FeatureScreener:
         manifest_path = run_dir / "run_manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
+        
+        # Generate selected_symbols.json with category limits
+        selected = self._generate_selected_symbols()
+        selected_path = run_dir / "selected_symbols.json"
+        with open(selected_path, "w", encoding="utf-8") as f:
+            json.dump(selected, f, indent=2)
+        logger.info(f"Generated selected_symbols.json with {len(selected['selected'])} symbols")
         
         # Create 'latest' link
         latest_dir = Path(output_dir) / "latest"
