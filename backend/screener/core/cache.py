@@ -153,12 +153,16 @@ class PriceCache:
         cache_key = params.cache_key()
         path = self._make_path(cache_key)
         
-        if not path.exists():
+        # Debug log for cache lookup
+        exists = path.exists()
+        logger.info(f"Cache lookup: {params.symbol} -> {path.name} (exists={exists})")
+        
+        if not exists:
             return None
         
         try:
             df = pd.read_parquet(path)
-            logger.debug(f"Cache hit: {params.symbol} ({len(df)} rows)")
+            logger.info(f"Cache hit: {params.symbol} ({len(df)} rows)")
             return df
         except Exception as e:
             logger.warning(f"Cache read failed for {params.symbol}: {e}")
