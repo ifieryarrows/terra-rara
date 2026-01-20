@@ -1,80 +1,88 @@
 name: Screener Pipeline
 
 on:
-    schedule:
-        # Weekly: Monday 03:00 UTC (06:00 Istanbul)
-        - cron: "0 3 * * 1"
-    workflow_dispatch:
-        inputs:
-            run_universe:
-                description: "Run Universe Builder"
-                required: false
-                default: true
-                type: boolean
-            run_screener:
-                description: "Run Feature Screener"
-                required: false
-                default: true
-                type: boolean
+  schedule:
+    # Weekly: Monday 03:00 UTC (06:00 Istanbul)
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      run_universe:
+        description: "Run Universe Builder"
+        required: false
+        default: true
+        type: boolean
+      run_screener:
+        description: "Run Feature Screener"
+        required: false
+        default: true
+        type: boolean
 
 env:
-    PYTHONPATH: backend
+  PYTHONPATH: backend
 
 jobs:
-    screener-pipeline:
-        runs-on: ubuntu-latest
+  screener-pipeline:
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-            - name: Set up Python
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.11"
-                  cache: "pip"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
-            - name: Install dependencies
-              working-directory: backend
-              run: |
-                  python -m pip install --upgrade pip
-                  pip install -r requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-            - name: Create artifacts directory
-              run: mkdir -p backend/artifacts/universes backend/artifacts/runs
+      - name: Cache price data
+        uses: actions/cache@v4
+        with:
+          path: backend/artifacts/raw/prices
+          key: prices-${{ hashFiles('backend/config/screener_config.yaml') }}-week-${{ github.run_id }}
+          restore-keys: |
+            prices-${{ hashFiles('backend/config/screener_config.yaml') }}-week-
 
-            - name: Run Universe Builder
-              if: ${{ github.event.inputs.run_universe != 'false' }}
-              working-directory: backend
-              run: |
-                  python -m screener universe_builder \
-                    --config config/screener_config.yaml \
-                    --output artifacts/universes
-              continue-on-error: false
+      - name: Create artifacts directory
+        run: mkdir -p backend/artifacts/universes backend/artifacts/runs backend/artifacts/raw/prices
 
-            - name: Run Feature Screener
-              if: ${{ github.event.inputs.run_screener != 'false' }}
-              working-directory: backend
-              run: |
-                  python -m screener feature_screener \
-                    --universe artifacts/universes/latest/universe.json \
-                    --config config/screener_config.yaml \
-                    --output artifacts/runs
-              continue-on-error: false
+      - name: Run Universe Builder
+        if: ${{ github.event.inputs.run_universe != 'false' }}
+        working-directory: backend
+        run: |
+          python -m screener universe_builder \
+            --config config/screener_config.yaml \
+            --output artifacts/universes
+        continue-on-error: false
 
-            - name: List generated artifacts
-              run: |
-                  echo "=== Universe Artifacts ==="
-                  ls -la backend/artifacts/universes/ || true
-                  echo "=== Run Artifacts ==="
-                  ls -la backend/artifacts/runs/ || true
+      - name: Run Feature Screener
+        if: ${{ github.event.inputs.run_screener != 'false' }}
+        working-directory: backend
+        run: |
+          python -m screener feature_screener \
+            --universe artifacts/universes/latest/universe.json \
+            --config config/screener_config.yaml \
+            --output artifacts/runs
+        continue-on-error: false
 
-            - name: Upload screener artifacts
-              uses: actions/upload-artifact@v4
-              with:
-                  name: screener-results-${{ github.run_id }}
-                  path: |
-                      backend/artifacts/universes/
-                      backend/artifacts/runs/
-                  retention-days: 90
-                  if-no-files-found: warn
+      - name: List generated artifacts
+        run: |
+          echo "=== Universe Artifacts ==="
+          ls -la backend/artifacts/universes/ || true
+          echo "=== Run Artifacts ==="
+          ls -la backend/artifacts/runs/ || true
+
+      - name: Upload screener artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-results-${{ github.run_id }}
+          path: |
+            backend/artifacts/universes/
+            backend/artifacts/runs/
+          retention-days: 90
+          if-no-files-found: warn
