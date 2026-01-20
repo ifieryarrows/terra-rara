@@ -11,6 +11,18 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers",
+        "online: marks tests that require internet access (yfinance, external APIs)"
+    )
+    config.addinivalue_line(
+        "markers", 
+        "slow: marks tests that are slow to execute"
+    )
+
+
 @pytest.fixture
 def sample_articles():
     """Sample news articles for testing."""

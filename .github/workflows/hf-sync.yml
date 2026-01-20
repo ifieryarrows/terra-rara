@@ -1,18 +1,18 @@
 name: Sync to Hugging Face Space
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "backend/**"
-      - "data/models/**"
-      - ".github/workflows/hf-sync.yml"
+  # Only run after Tests workflow completes successfully
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
+    # Only run if Tests workflow succeeded
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
@@ -53,12 +53,20 @@ jobs:
 
           api = HfApi(token=os.environ['HF_TOKEN'])
 
-          # Upload the entire backend folder (including data/models)
+          # Upload backend folder with ignore patterns for cleaner deployment
           api.upload_folder(
               folder_path='.',
               repo_id='ifieryarrows/copper-mind',
               repo_type='space',
-              commit_message='Sync from GitHub',
+              commit_message='Sync from GitHub (tests passed)',
+              ignore_patterns=[
+                  'tests/*',
+                  '__pycache__/*',
+                  '*.pyc',
+                  '.pytest_cache/*',
+                  'artifacts/*',
+                  '*.egg-info/*'
+              ]
           )
           print('✅ Upload complete!')
           "
