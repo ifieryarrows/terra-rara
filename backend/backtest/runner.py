@@ -200,6 +200,9 @@ class BacktestRunner:
         pivot = prices.pivot(index='date', columns='symbol', values='close')
         pivot = pivot.sort_index()
         
+        # Normalize index to date only (remove time component for matching)
+        pivot.index = pd.to_datetime(pivot.index).normalize()
+        
         # Forward fill missing values for symbols with sparse data
         pivot = pivot.ffill()
         
