@@ -186,7 +186,8 @@ class BacktestRunner:
             raise ValueError("No price data fetched")
         
         result = pd.concat(all_data, ignore_index=True)
-        result['date'] = pd.to_datetime(result['date']).dt.tz_localize(None)
+        # Handle tz-aware dates from yfinance
+        result['date'] = pd.to_datetime(result['date'], utc=True).dt.tz_localize(None)
         return result
     
     def prepare_features(self, prices: pd.DataFrame, target_symbol: str = "HG=F") -> pd.DataFrame:
