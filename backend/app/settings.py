@@ -3,9 +3,15 @@ Configuration management using pydantic-settings.
 All settings are loaded from environment variables.
 """
 
+import hashlib
+import json
+import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -29,13 +35,10 @@ class Settings(BaseSettings):
     news_query: str = "copper OR copper price OR copper futures OR copper mining"
     news_language: str = "en"
     
-    # Price data (yfinance) - Expanded for 2026 market intelligence
-    # Core: HG=F (copper), DX-Y.NYB (dollar), CL=F (oil)
-    # ETFs: COPX (global miners), COPJ (junior miners)
-    # Titans: BHP, FCX, SCCO, RIO
-    # Regional: TECK, IVN.TO
-    # Juniors: LUN.TO (FIL.TO removed - delisted)
-    # China: 2899.HK (Zijin), FXI (China Large-Cap ETF)
+    # Symbol set configuration
+    symbol_set: str = "active"  # active | champion | challenger
+    
+    # Price data (yfinance) - Dashboard symbols (backward compatible)
     yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,FXI,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
     lookback_days: int = 730  # 2 years for better pattern learning
     
@@ -52,8 +55,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     
     # Futures vs Spot adjustment factor
-    # HG=F (futures) is ~1.5% higher than XCU/USD (spot)
-    futures_spot_adjustment: float = 0.985  # Multiply HG=F by this to get XCU/USD
+    futures_spot_adjustment: float = 0.985
     
     # Scheduler
     schedule_time: str = "02:00"
@@ -67,15 +69,77 @@ class Settings(BaseSettings):
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
     
-    # LLM Sentiment Analysis (replaces FinBERT)
+    # LLM Sentiment Analysis
     llm_sentiment_model: str = "xiaomi/mimo-v2-flash:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
     
+    def _load_symbol_set_file(self, set_name: str) -> Optional[dict]:
+        """Load symbol set from JSON file. Returns None on error."""
+        try:
+            # Path relative to backend root
+            backend_root = Path(__file__).resolve().parent.parent
+            symbol_file = backend_root / "config" / "symbol_sets" / f"{set_name}.json"
+            
+            if not symbol_file.exists():
+                logger.warning(f"Symbol set file not found: {symbol_file}")
+                return None
+            
+            with open(symbol_file) as f:
+                data = json.load(f)
+            
+            symbols = data.get("symbols", [])
+            if not symbols:
+                logger.warning(f"Symbol set {set_name} has empty symbols list")
+                return None
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error loading symbol set {set_name}: {e}")
+            return None
+    
+    def _compute_symbols_hash(self, symbols: list[str]) -> str:
+        """Compute deterministic hash of symbol list."""
+        canonical = json.dumps(sorted(symbols), sort_keys=True)
+        return f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+    
+    @property
+    def training_symbols(self) -> list[str]:
+        """
+        Symbols for ML training - loaded from symbol set file.
+        Falls back to dashboard symbols on error.
+        """
+        data = self._load_symbol_set_file(self.symbol_set)
+        if data:
+            symbols = data.get("symbols", [])
+            logger.info(f"Loaded training symbols from file: {self.symbol_set}.json ({len(symbols)}) hash={self._compute_symbols_hash(symbols)}")
+            return symbols
+        
+        # Fallback to env variable
+        logger.warning(f"Falling back to YFINANCE_SYMBOLS for training")
+        return self.symbols_list
+    
+    @property
+    def training_symbols_source(self) -> str:
+        """Source of training symbols for audit."""
+        data = self._load_symbol_set_file(self.symbol_set)
+        if data:
+            return f"file:{self.symbol_set}.json"
+        return "env:YFINANCE_SYMBOLS"
+    
+    @property
+    def training_symbols_hash(self) -> str:
+        """Hash of training symbols for audit."""
+        return self._compute_symbols_hash(self.training_symbols)
+    
     @property
     def symbols_list(self) -> list[str]:
-        """Parse comma-separated symbols into a list."""
+        """
+        Dashboard symbols - backward compatible with frontend.
+        Always uses env variable (14 symbols).
+        """
         return [s.strip() for s in self.yfinance_symbols.split(",") if s.strip()]
     
     @property
@@ -89,4 +153,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
 

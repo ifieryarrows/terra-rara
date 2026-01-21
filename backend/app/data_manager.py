@@ -470,7 +470,12 @@ def ingest_prices(session: Session) -> dict:
     import time
     
     settings = get_settings()
-    symbols = settings.symbols_list
+    # Fetch union of dashboard and training symbols (training may have different symbols)
+    dashboard_symbols = set(settings.symbols_list)
+    training_symbols = set(settings.training_symbols)
+    symbols = list(dashboard_symbols | training_symbols)
+    
+    logger.info(f"Ingesting prices for {len(symbols)} symbols (dashboard={len(dashboard_symbols)}, training={len(training_symbols)})")
     
     stats = {}
     

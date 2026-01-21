@@ -259,7 +259,7 @@ def build_feature_matrix(
     Target: Next-day return (more stationary than price)
     """
     settings = get_settings()
-    symbols = settings.symbols_list
+    symbols = settings.training_symbols  # Use active.json symbols for training
     
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=lookback_days)
