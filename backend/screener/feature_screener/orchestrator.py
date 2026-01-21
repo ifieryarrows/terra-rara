@@ -467,7 +467,10 @@ class FeatureScreener:
             return {"selected": [], "limits_applied": {}}
         
         # Selection rules version (increment when limits/logic changes)
-        SELECTION_RULES_VERSION = "2.0.0"  # v2: added OOS quality gate
+        SELECTION_RULES_VERSION = "3.0.0"  # v3: whitelist + global cap
+        
+        # Global cap - hard limit on total selected
+        MAX_SELECTED_TOTAL = 20
         
         # OOS Quality Gates (applied BEFORE category limits)
         oos_quality_gates = {
@@ -476,16 +479,31 @@ class FeatureScreener:
             "max_oos_rolling_std": 0.25   # stability requirement
         }
         
-        # Category limits (applied AFTER quality gate)
+        # Category limits - WHITELIST approach (default=0)
+        # Only copper-relevant categories are explicitly allowed
         category_limits = {
+            # Core copper proxies
             "etf_copper": 1,
             "etf_miners": 1,
             "etf_metals": 1,
+            # Mining sector
             "miner_major": 4,
             "miner_mid": 2,
             "miner_junior": 2,
-            "miner_regional": 2,
-            "default": 2
+            "miner_regional": 1,
+            "miner_diversified": 1,
+            # Macro drivers
+            "macro_currency": 1,
+            "macro_china": 1,
+            "macro_em": 1,
+            # Commodities
+            "commodity_base": 1,
+            "commodity_energy": 1,
+            "commodity_precious": 1,
+            # Risk/volatility proxy
+            "index_vol": 1,
+            # Default: 0 (whitelist only)
+            "default": 0
         }
         
         # Step 1: Apply OOS quality gate
@@ -494,7 +512,10 @@ class FeatureScreener:
             "oos_n_obs_too_low": 0,
             "oos_abs_pearson_too_low": 0,
             "oos_rolling_std_too_high": 0,
-            "oos_metrics_missing": 0
+            "oos_metrics_missing": 0,
+            "category_not_whitelisted": 0,
+            "category_limit_reached": 0,
+            "global_cap_reached": 0
         }
         
         for candidate in self.output.candidates:
@@ -522,18 +543,27 @@ class FeatureScreener:
             
             quality_passed.append(candidate)
         
-        # Step 2: Apply category limits to quality-passed candidates
+        # Step 2: Apply category limits (whitelist) + global cap
         counts = {}
         selected = []
-        excluded_by_category_limit = 0
         
         for candidate in quality_passed:
+            # Check global cap first
+            if len(selected) >= MAX_SELECTED_TOTAL:
+                excluded_reasons["global_cap_reached"] += 1
+                continue
+            
             category = candidate.category or "other"
             limit = category_limits.get(category, category_limits["default"])
-            current = counts.get(category, 0)
             
+            # Whitelist check: default=0 means non-whitelisted categories are excluded
+            if limit == 0:
+                excluded_reasons["category_not_whitelisted"] += 1
+                continue
+            
+            current = counts.get(category, 0)
             if current >= limit:
-                excluded_by_category_limit += 1
+                excluded_reasons["category_limit_reached"] += 1
                 continue
             
             # Build detailed entry with full OOS metrics for audit
@@ -577,14 +607,13 @@ class FeatureScreener:
             # Candidate counts
             "total_candidates": len(self.output.candidates),
             "passed_oos_quality_gate": len(quality_passed),
-            "excluded_by_oos_quality": len(self.output.candidates) - len(quality_passed),
-            "excluded_by_category_limit": excluded_by_category_limit,
             "selected_count": len(selected),
             # Gate/limit configs
+            "max_selected_total": MAX_SELECTED_TOTAL,
             "oos_quality_gates": oos_quality_gates,
             "category_limits": category_limits,
             "category_counts": counts,
-            # Detailed exclusion reasons
+            # Detailed exclusion reasons (all in one place)
             "excluded_reasons_summary": excluded_reasons,
             # Tie-break rule
             "tie_break_rule": "alphabetical_ticker_within_same_score",
