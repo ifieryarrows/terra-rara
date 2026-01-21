@@ -260,7 +260,7 @@ class BacktestRunner:
         train_data = features.loc[train_mask].copy()
         
         if len(train_data) < 100:
-            logger.warning(f"Insufficient training data: {len(train_data)} rows")
+            logger.warning(f"Insufficient training data: {len(train_data)} rows (train_start={train_start.date()}, train_end={train_end.date()}, features range: {features.index.min().date()} to {features.index.max().date()})")
             return []
         
         # Prepare X, y
@@ -310,10 +310,14 @@ class BacktestRunner:
         all_symbols = list(set(symbols + [target]))
         prices = self.fetch_prices(all_symbols, self.config.oos_start, self.config.oos_end)
         
+        logger.info(f"Fetched prices: {len(prices)} rows, date range: {prices['date'].min()} to {prices['date'].max()}")
+        
         # Prepare features
         features = self.prepare_features(prices, target)
         
-        # Get trading days and retrain dates
+        logger.info(f"Features prepared: {len(features)} rows, date range: {features.index.min()} to {features.index.max()}")
+        
+        # Get trading days and retrain dates for OOS period
         trading_days = get_trading_days(self.config.oos_start, self.config.oos_end)
         retrain_dates = get_retrain_dates(trading_days)
         
@@ -326,11 +330,14 @@ class BacktestRunner:
         for i, retrain_date in enumerate(retrain_dates[:-1]):
             next_retrain = retrain_dates[i + 1] if i + 1 < len(retrain_dates) else pd.Timestamp(self.config.oos_end)
             
+            # Train end is the day BEFORE retrain (no lookahead)
+            train_end = retrain_date - pd.Timedelta(days=1)
+            
             # Predict for days between retrains
             predict_dates = [d for d in trading_days if retrain_date <= d < next_retrain]
             
             if predict_dates:
-                preds = self.train_and_predict(features, retrain_date, predict_dates)
+                preds = self.train_and_predict(features, train_end, predict_dates)
                 all_predictions.extend(preds)
         
         if not all_predictions:
