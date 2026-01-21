@@ -1,0 +1,45 @@
+{
+    "name": "active",
+    "description": "Production symbol set - promoted from challenger after backtest validation",
+    "version": "2.0.0",
+    "created_at": "2026-01-21T23:22:00Z",
+    "symbols": [
+        "DX-Y.NYB",
+        "CL=F",
+        "COPX",
+        "PICK",
+        "SCCO",
+        "FCX",
+        "RIO",
+        "HBM.TO",
+        "BHP",
+        "LUN.TO",
+        "XME",
+        "FXA",
+        "VALE",
+        "GXC",
+        "CEW",
+        "PL=F",
+        "ALI=F"
+    ],
+    "audit": {
+        "source_backtest_run_id": "backtest-20260121-201454",
+        "source_screener_run_id": "scr-20260121-01acc8",
+        "selection_rules_version": "3.2.0",
+        "content_hash": "sha256:bffddb7a187cd4ac",
+        "promoted_at": "2026-01-21T23:22:00Z",
+        "promoted_reason": "Challenger MAE 8.73% better than champion",
+        "backtest_metrics": {
+            "mae": 0.072414,
+            "rmse": 0.097161,
+            "improvement_mae_pct": 8.73
+        },
+        "previous_active_version": "1.0.0",
+        "previous_champion_hash": "sha256:0436b4977d68b342"
+    },
+    "mandatory_symbols": [
+        "DX-Y.NYB",
+        "CL=F"
+    ],
+    "notes": "17 symbols: 2 mandatory (USD, Oil) + 15 screener-selected"
+}
