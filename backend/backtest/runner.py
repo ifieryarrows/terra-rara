@@ -71,12 +71,22 @@ class SymbolSet:
 @dataclass
 class BacktestMetrics:
     """Metrics from a backtest run."""
+    # Price metrics
     mae: float
     rmse: float
-    directional_accuracy: float
     n_predictions: int
     mean_actual: float
     mean_predicted: float
+    # Direction metrics
+    directional_accuracy: float
+    precision_up: float = 0.0
+    recall_up: float = 0.0
+    mcc: float = 0.0  # Matthews Correlation Coefficient
+    confusion_matrix: dict = None
+    # Baselines
+    baseline_always_up: float = 0.0
+    baseline_always_down: float = 0.0
+    baseline_repeat: float = 0.0
 
 
 @dataclass
@@ -364,15 +374,42 @@ class BacktestRunner:
         pred_df = pd.DataFrame(all_predictions)
         pred_df = pred_df.dropna(subset=['y_actual', 'y_pred'])
         
-        # Compute metrics
+        # Compute price metrics
         mae = np.abs(pred_df['y_actual'] - pred_df['y_pred']).mean()
         rmse = np.sqrt(((pred_df['y_actual'] - pred_df['y_pred']) ** 2).mean())
         
-        # Directional accuracy
-        pred_df['dir_correct'] = (
-            np.sign(pred_df['pred_return']) == np.sign(pred_df['actual_return'])
-        )
+        # Compute DIRECTION metrics properly
+        # Convert returns to binary direction: 1 = up, 0 = down/flat
+        pred_df['actual_dir'] = (pred_df['actual_return'] > 0).astype(int)
+        pred_df['pred_dir'] = (pred_df['pred_return'] > 0).astype(int)
+        
+        # Directional accuracy (hit rate)
+        pred_df['dir_correct'] = pred_df['pred_dir'] == pred_df['actual_dir']
         dir_acc = pred_df['dir_correct'].mean()
+        
+        # Confusion matrix components
+        tp = ((pred_df['pred_dir'] == 1) & (pred_df['actual_dir'] == 1)).sum()
+        tn = ((pred_df['pred_dir'] == 0) & (pred_df['actual_dir'] == 0)).sum()
+        fp = ((pred_df['pred_dir'] == 1) & (pred_df['actual_dir'] == 0)).sum()
+        fn = ((pred_df['pred_dir'] == 0) & (pred_df['actual_dir'] == 1)).sum()
+        
+        # Precision, Recall for UP predictions
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        
+        # Matthews Correlation Coefficient (MCC) - best single metric
+        mcc_num = (tp * tn) - (fp * fn)
+        mcc_den = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+        mcc = mcc_num / mcc_den if mcc_den > 0 else 0
+        
+        # Baselines
+        baseline_always_up = pred_df['actual_dir'].mean()  # If always predict UP
+        baseline_always_down = 1 - baseline_always_up  # If always predict DOWN
+        
+        # Last direction repeat baseline
+        pred_df['prev_dir'] = pred_df['actual_dir'].shift(1)
+        pred_df['repeat_correct'] = pred_df['actual_dir'] == pred_df['prev_dir']
+        baseline_repeat = pred_df['repeat_correct'].dropna().mean()
         
         metrics = BacktestMetrics(
             mae=round(mae, 6),
@@ -380,7 +417,15 @@ class BacktestRunner:
             directional_accuracy=round(dir_acc, 4),
             n_predictions=len(pred_df),
             mean_actual=round(pred_df['y_actual'].mean(), 4),
-            mean_predicted=round(pred_df['y_pred'].mean(), 4)
+            mean_predicted=round(pred_df['y_pred'].mean(), 4),
+            # Extended direction metrics
+            precision_up=round(precision, 4),
+            recall_up=round(recall, 4),
+            mcc=round(mcc, 4),
+            confusion_matrix={"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)},
+            baseline_always_up=round(baseline_always_up, 4),
+            baseline_always_down=round(baseline_always_down, 4),
+            baseline_repeat=round(baseline_repeat, 4)
         )
         
         return metrics, pred_df
