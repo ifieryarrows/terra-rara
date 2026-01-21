@@ -1,0 +1,23 @@
+{
+    "name": "champion",
+    "description": "Current production symbol set (14 symbols)",
+    "version": "1.0.0",
+    "created_at": "2026-01-21T21:00:00Z",
+    "symbols": [
+        "CPER",
+        "COPX",
+        "PICK",
+        "FCX",
+        "SCCO",
+        "BHP",
+        "RIO",
+        "TECK",
+        "HBM.TO",
+        "DX-Y.NYB",
+        "CL=F",
+        "FXI",
+        "GC=F",
+        "^VIX"
+    ],
+    "notes": "Original 14-symbol set used in production"
+}

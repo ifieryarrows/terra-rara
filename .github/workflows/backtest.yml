@@ -1,0 +1,61 @@
+name: Champion/Challenger Backtest
+
+on:
+    workflow_dispatch:
+        inputs:
+            champion_path:
+                description: "Path to champion symbol set JSON"
+                required: true
+                default: "backend/config/symbol_sets/champion.json"
+            challenger_path:
+                description: "Path to challenger selected_symbols.json"
+                required: true
+                default: "backend/artifacts/runs/latest/selected_symbols.json"
+            oos_start:
+                description: "OOS start date (YYYY-MM-DD)"
+                required: false
+                default: "2024-01-01"
+            oos_end:
+                description: "OOS end date (YYYY-MM-DD)"
+                required: false
+                default: "2025-01-17"
+
+jobs:
+    backtest:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install dependencies
+              run: |
+                  pip install --upgrade pip
+                  pip install -r backend/requirements.txt
+                  pip install yfinance xgboost
+
+            - name: Run backtest
+              run: |
+                  python -m backend.backtest.runner \
+                    --champion "${{ github.event.inputs.champion_path }}" \
+                    --challenger "${{ github.event.inputs.challenger_path }}" \
+                    --oos-start "${{ github.event.inputs.oos_start }}" \
+                    --oos-end "${{ github.event.inputs.oos_end }}" \
+                    --output-dir backend/artifacts/backtests
+
+            - name: Upload backtest artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: backtest-results
+                  path: backend/artifacts/backtests/
+                  retention-days: 90
+
+            - name: Display results
+              run: |
+                  echo "=== BACKTEST RESULTS ==="
+                  cat backend/artifacts/backtests/*_report.json | python -m json.tool
