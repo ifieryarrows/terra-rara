@@ -250,10 +250,11 @@ def build_features_for_prediction(
     # Get latest row
     latest = all_features.iloc[[-1]].copy()
     
-    # Ensure we have all required features
-    for feat in feature_names:
-        if feat not in latest.columns:
-            latest[feat] = 0.0
+    # Ensure we have all required features (avoid fragmented DataFrame)
+    missing_feats = {feat: 0.0 for feat in feature_names if feat not in latest.columns}
+    if missing_feats:
+        missing_df = pd.DataFrame(missing_feats, index=latest.index)
+        latest = pd.concat([latest, missing_df], axis=1)
     
     # Select only the features the model expects
     latest = latest[feature_names]
