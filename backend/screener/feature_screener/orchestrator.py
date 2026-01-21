@@ -441,16 +441,21 @@ class FeatureScreener:
     
     def _generate_selected_symbols(self) -> dict:
         """
-        Generate selected symbols with category limits for diversified selection.
+        Generate selected symbols with OOS quality gate + category limits.
         
-        Includes full audit trail: fingerprints, detailed OOS metrics, selection rules version.
+        Pipeline order (critical):
+        1. Apply OOS quality gate (global filter)
+        2. Apply category limits (diversification)
+        3. Export with full audit trail
         
-        Limits:
-        - etf_copper: max 1 (avoid redundancy with target)
-        - etf_miners: max 1
-        - etf_metals: max 1
-        - miner_major: max 4
-        - miner_mid/junior/regional: max 2 each
+        OOS Quality Gates (MVP):
+        - min_oos_n_obs: 52 (weekly ~1 year)
+        - min_oos_abs_pearson: 0.30 (abs allows negative correlations like VIX)
+        - max_oos_rolling_std: 0.25 (stability requirement)
+        
+        Category Limits:
+        - etf_copper: max 1, etf_miners: max 1, etf_metals: max 1
+        - miner_major: max 4, miner_mid/junior/regional: max 2 each
         - other categories: max 2 each
         
         Tie-break: by composite score (already sorted by rank)
@@ -462,10 +467,17 @@ class FeatureScreener:
             return {"selected": [], "limits_applied": {}}
         
         # Selection rules version (increment when limits/logic changes)
-        SELECTION_RULES_VERSION = "1.0.0"
+        SELECTION_RULES_VERSION = "2.0.0"  # v2: added OOS quality gate
         
-        # Category limits
-        limits = {
+        # OOS Quality Gates (applied BEFORE category limits)
+        oos_quality_gates = {
+            "min_oos_n_obs": 52,          # ~1 year of weekly data
+            "min_oos_abs_pearson": 0.30,  # abs() to include negative correlations
+            "max_oos_rolling_std": 0.25   # stability requirement
+        }
+        
+        # Category limits (applied AFTER quality gate)
+        category_limits = {
             "etf_copper": 1,
             "etf_miners": 1,
             "etf_metals": 1,
@@ -476,20 +488,52 @@ class FeatureScreener:
             "default": 2
         }
         
-        # Track counts per category
+        # Step 1: Apply OOS quality gate
+        quality_passed = []
+        excluded_reasons = {
+            "oos_n_obs_too_low": 0,
+            "oos_abs_pearson_too_low": 0,
+            "oos_rolling_std_too_high": 0,
+            "oos_metrics_missing": 0
+        }
+        
+        for candidate in self.output.candidates:
+            oos = candidate.oos_metrics
+            
+            # Check for missing OOS metrics
+            if oos is None:
+                excluded_reasons["oos_metrics_missing"] += 1
+                continue
+            
+            # Gate 1: Min OOS observations
+            if oos.n_obs is None or oos.n_obs < oos_quality_gates["min_oos_n_obs"]:
+                excluded_reasons["oos_n_obs_too_low"] += 1
+                continue
+            
+            # Gate 2: Min absolute OOS pearson
+            if oos.pearson is None or abs(oos.pearson) < oos_quality_gates["min_oos_abs_pearson"]:
+                excluded_reasons["oos_abs_pearson_too_low"] += 1
+                continue
+            
+            # Gate 3: Max OOS rolling std (stability)
+            if oos.rolling_corr_std is not None and oos.rolling_corr_std > oos_quality_gates["max_oos_rolling_std"]:
+                excluded_reasons["oos_rolling_std_too_high"] += 1
+                continue
+            
+            quality_passed.append(candidate)
+        
+        # Step 2: Apply category limits to quality-passed candidates
         counts = {}
         selected = []
+        excluded_by_category_limit = 0
         
-        # Candidates are already sorted by rank (tie-break is alphabetical by ticker within same score)
-        for candidate in self.output.candidates:
+        for candidate in quality_passed:
             category = candidate.category or "other"
-            
-            # Get limit for this category
-            limit = limits.get(category, limits["default"])
-            
-            # Check if limit reached
+            limit = category_limits.get(category, category_limits["default"])
             current = counts.get(category, 0)
+            
             if current >= limit:
+                excluded_by_category_limit += 1
                 continue
             
             # Build detailed entry with full OOS metrics for audit
@@ -505,6 +549,7 @@ class FeatureScreener:
                 "is_best_lag": candidate.is_metrics.best_lead_lag,
                 # OOS metrics (full audit)
                 "oos_pearson": oos.pearson if oos else None,
+                "oos_pearson_sign": "positive" if (oos and oos.pearson and oos.pearson >= 0) else "negative",
                 "oos_n_obs": oos.n_obs if oos else None,
                 "oos_partial_corr": oos.partial_corr if oos else None,
                 "oos_rolling_std": oos.rolling_corr_std if oos else None,
@@ -529,10 +574,18 @@ class FeatureScreener:
             # Selection metadata
             "selection_rules_version": SELECTION_RULES_VERSION,
             "target": self.config.target,
+            # Candidate counts
             "total_candidates": len(self.output.candidates),
+            "passed_oos_quality_gate": len(quality_passed),
+            "excluded_by_oos_quality": len(self.output.candidates) - len(quality_passed),
+            "excluded_by_category_limit": excluded_by_category_limit,
             "selected_count": len(selected),
-            "limits_applied": limits,
+            # Gate/limit configs
+            "oos_quality_gates": oos_quality_gates,
+            "category_limits": category_limits,
             "category_counts": counts,
+            # Detailed exclusion reasons
+            "excluded_reasons_summary": excluded_reasons,
             # Tie-break rule
             "tie_break_rule": "alphabetical_ticker_within_same_score",
             # Selected symbols with full audit data
