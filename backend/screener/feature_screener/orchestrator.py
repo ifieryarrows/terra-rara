@@ -467,7 +467,7 @@ class FeatureScreener:
             return {"selected": [], "limits_applied": {}}
         
         # Selection rules version (increment when limits/logic changes)
-        SELECTION_RULES_VERSION = "3.1.0"  # v3.1: + target redundancy filter
+        SELECTION_RULES_VERSION = "3.2.0"  # v3.2: + mandatory core drivers
         
         # Global cap - hard limit on total selected
         MAX_SELECTED_TOTAL = 20
@@ -552,12 +552,52 @@ class FeatureScreener:
             
             quality_passed.append(candidate)
         
-        # Step 2: Apply category limits (whitelist) + global cap
-        counts = {}
+        # Step 2: Add MANDATORY core drivers first (always included)
+        # These are known to be predictive regardless of correlation screening
+        MANDATORY_SYMBOLS = ["DX-Y.NYB", "CL=F"]  # USD, Oil
+        
+        mandatory_added = []
         selected = []
         
+        # Find mandatory symbols in candidates (any candidate, not just quality_passed)
+        all_candidates_by_ticker = {c.ticker: c for c in self.output.candidates}
+        
+        for ticker in MANDATORY_SYMBOLS:
+            if ticker in all_candidates_by_ticker:
+                candidate = all_candidates_by_ticker[ticker]
+                oos = candidate.oos_metrics
+                category = candidate.category or "other"
+                entry = {
+                    "ticker": candidate.ticker,
+                    "category": category,
+                    "selection_source": "mandatory",  # Audit: how this was selected
+                    "rank": candidate.decision.rank if candidate.decision else None,
+                    "score_composite": candidate.decision.score_composite if candidate.decision else None,
+                    # IS metrics
+                    "is_pearson": candidate.is_metrics.pearson if candidate.is_metrics else None,
+                    "is_n_obs": candidate.is_metrics.n_obs if candidate.is_metrics else None,
+                    "is_best_lag": candidate.is_metrics.best_lead_lag if candidate.is_metrics else None,
+                    # OOS metrics
+                    "oos_pearson": oos.pearson if oos else None,
+                    "oos_pearson_sign": "positive" if (oos and oos.pearson and oos.pearson >= 0) else "negative",
+                    "oos_n_obs": oos.n_obs if oos else None,
+                    "oos_partial_corr": oos.partial_corr if oos else None,
+                    "oos_rolling_std": oos.rolling_corr_std if oos else None,
+                    "oos_frozen_lag": oos.frozen_lag if oos else None,
+                    "oos_lag_corr_at_frozen": oos.lag_corr_at_frozen if oos else None,
+                }
+                selected.append(entry)
+                mandatory_added.append(ticker)
+        
+        # Step 3: Apply category limits (whitelist) + global cap for screener-selected
+        counts = {}
+        
         for candidate in quality_passed:
-            # Check global cap first
+            # Skip if already added as mandatory
+            if candidate.ticker in mandatory_added:
+                continue
+            
+            # Check global cap (accounting for mandatory already added)
             if len(selected) >= MAX_SELECTED_TOTAL:
                 excluded_reasons["global_cap_reached"] += 1
                 continue
@@ -580,6 +620,7 @@ class FeatureScreener:
             entry = {
                 "ticker": candidate.ticker,
                 "category": category,
+                "selection_source": "screener",  # Audit: selected by screener
                 "rank": candidate.decision.rank,
                 "score_composite": candidate.decision.score_composite,
                 # IS metrics
@@ -616,8 +657,12 @@ class FeatureScreener:
             # Candidate counts
             "total_candidates": len(self.output.candidates),
             "passed_oos_quality_gate": len(quality_passed),
+            "mandatory_count": len(mandatory_added),
+            "screener_selected_count": len(selected) - len(mandatory_added),
             "selected_count": len(selected),
             # Gate/limit configs
+            "mandatory_symbols": MANDATORY_SYMBOLS,
+            "mandatory_added": mandatory_added,
             "max_selected_total": MAX_SELECTED_TOTAL,
             "oos_quality_gates": oos_quality_gates,
             "category_limits": category_limits,
