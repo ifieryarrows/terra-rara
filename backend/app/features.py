@@ -236,8 +236,8 @@ def align_to_target_calendar(
         # Reindex to target calendar
         reindexed = df.reindex(target_index)
         
-        # Limited forward-fill
-        reindexed = reindexed.ffill(limit=max_ffill)
+        # Limited forward-fill (infer_objects fixes future downcasting warning)
+        reindexed = reindexed.ffill(limit=max_ffill).infer_objects(copy=False)
         
         aligned[symbol] = reindexed
     

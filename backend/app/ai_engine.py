@@ -687,7 +687,7 @@ def train_xgboost_model(
     latest_path = model_dir / f"xgb_{target_symbol.replace('=', '_')}_latest.json"
     model.save_model(str(latest_path))
     
-    # Save metrics
+    # Save metrics (including training symbols audit)
     metrics = {
         "target_symbol": target_symbol,
         "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -699,6 +699,11 @@ def train_xgboost_model(
         "val_rmse": val_rmse,
         "best_iteration": model.best_iteration,
         "feature_count": len(feature_names),
+        # Audit: which symbols were used for training
+        "symbol_set_name": settings.symbol_set,
+        "training_symbols": settings.training_symbols,
+        "training_symbols_hash": settings.training_symbols_hash,
+        "training_symbols_source": settings.training_symbols_source,
     }
     
     metrics_path = model_dir / f"xgb_{target_symbol.replace('=', '_')}_latest.metrics.json"
