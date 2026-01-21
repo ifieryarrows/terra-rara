@@ -200,6 +200,9 @@ class BacktestRunner:
         pivot = prices.pivot(index='date', columns='symbol', values='close')
         pivot = pivot.sort_index()
         
+        # Forward fill missing values for symbols with sparse data
+        pivot = pivot.ffill()
+        
         # Compute returns
         returns = pivot.pct_change()
         
@@ -218,6 +221,11 @@ class BacktestRunner:
             if symbol == target_symbol:
                 continue
             
+            # Skip if symbol has too many missing values
+            if pivot[symbol].isna().sum() > len(pivot) * 0.5:
+                logger.warning(f"Skipping {symbol}: too many missing values")
+                continue
+            
             # Price ratio to target
             features[f'{symbol}_ratio'] = pivot[symbol] / pivot[target_symbol]
             
@@ -234,7 +242,13 @@ class BacktestRunner:
         features['target_vol_20d'] = returns[target_symbol].rolling(20).std()
         features['target_mom_10d'] = pivot[target_symbol].pct_change(10)
         
-        return features.dropna()
+        # Only drop rows where TARGET values are missing (not all features)
+        features = features.dropna(subset=['y_target', 'y_current'])
+        
+        # Fill remaining NaN in features with 0 (for model training)
+        features = features.fillna(0)
+        
+        return features
     
     def train_and_predict(
         self,
