@@ -97,9 +97,12 @@ class BacktestResult:
     config: BacktestConfig
     champion: dict  # SymbolSet + BacktestMetrics
     challenger: dict  # SymbolSet + BacktestMetrics
+    # Delta: (challenger - champion) / champion * 100, negative = challenger better
     delta_mae_pct: float
     delta_rmse_pct: float
     delta_dir_acc_pct: float
+    # Improvement: positive = challenger better (more intuitive)
+    improvement_mae_pct: float
     decision: str  # PROMOTE | REJECT | MANUAL_REVIEW
     decision_reason: str
 
@@ -449,18 +452,24 @@ class BacktestRunner:
         # Combine predictions
         all_preds = pd.concat([champion_preds, challenger_preds], ignore_index=True)
         
-        # Compute deltas
-        delta_mae = ((champion_metrics.mae - challenger_metrics.mae) / champion_metrics.mae) * 100
-        delta_rmse = ((champion_metrics.rmse - challenger_metrics.rmse) / champion_metrics.rmse) * 100
+        # Compute deltas: (challenger - champion) / champion * 100
+        # Negative = challenger better (for error metrics like MAE/RMSE)
+        # Positive = challenger worse
+        delta_mae = ((challenger_metrics.mae - champion_metrics.mae) / champion_metrics.mae) * 100
+        delta_rmse = ((challenger_metrics.rmse - champion_metrics.rmse) / champion_metrics.rmse) * 100
         delta_dir = ((challenger_metrics.directional_accuracy - champion_metrics.directional_accuracy) / champion_metrics.directional_accuracy) * 100
         
-        # Decision
-        if delta_mae >= self.config.promote_threshold_pct:
+        # Also compute improvement_pct for clarity (positive = better)
+        improvement_mae_pct = -delta_mae
+        
+        # Decision based on MAE improvement
+        # promote_threshold_pct = 5 means "promote if MAE improved by 5%+"
+        if improvement_mae_pct >= self.config.promote_threshold_pct:
             decision = "PROMOTE"
-            reason = f"Challenger MAE {delta_mae:.1f}% better than champion"
-        elif delta_mae <= self.config.reject_threshold_pct:
+            reason = f"Challenger MAE {improvement_mae_pct:.1f}% better than champion"
+        elif improvement_mae_pct <= -self.config.promote_threshold_pct:
             decision = "REJECT"
-            reason = f"Challenger MAE {-delta_mae:.1f}% worse than champion"
+            reason = f"Challenger MAE {-improvement_mae_pct:.1f}% worse than champion"
         else:
             decision = "MANUAL_REVIEW"
             reason = f"MAE delta {delta_mae:.1f}% within threshold band"
@@ -480,6 +489,7 @@ class BacktestRunner:
             delta_mae_pct=round(delta_mae, 2),
             delta_rmse_pct=round(delta_rmse, 2),
             delta_dir_acc_pct=round(delta_dir, 2),
+            improvement_mae_pct=round(improvement_mae_pct, 2),
             decision=decision,
             decision_reason=reason
         )
