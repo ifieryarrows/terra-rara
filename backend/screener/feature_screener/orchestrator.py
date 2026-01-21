@@ -467,7 +467,7 @@ class FeatureScreener:
             return {"selected": [], "limits_applied": {}}
         
         # Selection rules version (increment when limits/logic changes)
-        SELECTION_RULES_VERSION = "3.0.0"  # v3: whitelist + global cap
+        SELECTION_RULES_VERSION = "3.1.0"  # v3.1: + target redundancy filter
         
         # Global cap - hard limit on total selected
         MAX_SELECTED_TOTAL = 20
@@ -476,7 +476,8 @@ class FeatureScreener:
         oos_quality_gates = {
             "min_oos_n_obs": 52,          # ~1 year of weekly data
             "min_oos_abs_pearson": 0.30,  # abs() to include negative correlations
-            "max_oos_rolling_std": 0.25   # stability requirement
+            "max_oos_rolling_std": 0.25,  # stability requirement
+            "max_target_corr": 0.95       # exclude target copies (only at lag=0)
         }
         
         # Category limits - WHITELIST approach (default=0)
@@ -512,6 +513,7 @@ class FeatureScreener:
             "oos_n_obs_too_low": 0,
             "oos_abs_pearson_too_low": 0,
             "oos_rolling_std_too_high": 0,
+            "oos_target_redundant": 0,    # high corr + lag=0 = target copy
             "oos_metrics_missing": 0,
             "category_not_whitelisted": 0,
             "category_limit_reached": 0,
@@ -539,6 +541,13 @@ class FeatureScreener:
             # Gate 3: Max OOS rolling std (stability)
             if oos.rolling_corr_std is not None and oos.rolling_corr_std > oos_quality_gates["max_oos_rolling_std"]:
                 excluded_reasons["oos_rolling_std_too_high"] += 1
+                continue
+            
+            # Gate 4: Target redundancy filter (only for contemporaneous, lag=0)
+            # High correlation AT LAG=0 means "target copy", not "leading signal"
+            frozen_lag = oos.frozen_lag if oos.frozen_lag is not None else candidate.is_metrics.best_lead_lag
+            if frozen_lag == 0 and abs(oos.pearson) > oos_quality_gates["max_target_corr"]:
+                excluded_reasons["oos_target_redundant"] += 1
                 continue
             
             quality_passed.append(candidate)
