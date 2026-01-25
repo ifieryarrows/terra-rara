@@ -201,9 +201,11 @@ def build_features_for_prediction(
     """
     Build feature vector for live prediction.
     Uses the most recent available data.
+    MUST use training_symbols to match the model's training data.
     """
     settings = get_settings()
-    symbols = settings.symbols_list
+    # Use training_symbols (not symbols_list) to match model training
+    symbols = settings.training_symbols
     
     # Load recent data (need enough for feature calculation)
     end_date = datetime.now(timezone.utc)
@@ -251,16 +253,18 @@ def build_features_for_prediction(
     # Get latest row
     latest = all_features.iloc[[-1]].copy()
     
-    # Ensure we have all required features (avoid fragmented DataFrame)
-    missing_feats = {feat: 0.0 for feat in feature_names if feat not in latest.columns}
-    if missing_feats:
-        missing_df = pd.DataFrame(missing_feats, index=latest.index)
-        latest = pd.concat([latest, missing_df], axis=1)
+    # Robust feature alignment:
+    # - Reindex to exactly match model's expected features
+    # - Missing features get 0.0 (same as missing data handling in training)
+    # - Extra features are dropped
+    # This prevents ValueError when symbol set changes between training and inference
+    latest = latest.reindex(columns=feature_names, fill_value=0.0)
     
-    # Select only the features the model expects
-    latest = latest[feature_names]
+    # Ensure float dtype for XGBoost
+    latest = latest.astype(float)
     
     return latest
+
 
 
 def generate_analysis_report(
