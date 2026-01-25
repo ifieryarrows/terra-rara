@@ -155,3 +155,32 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def mask_api_key(text: str, settings: Settings = None) -> str:
+    """
+    Mask API keys in text to prevent leaking in logs.
+    Replaces known API key patterns with masked versions.
+    """
+    import re
+    
+    if settings is None:
+        settings = get_settings()
+    
+    result = text
+    
+    # Mask known API keys
+    keys_to_mask = [
+        settings.twelvedata_api_key,
+        settings.openrouter_api_key,
+        settings.newsapi_key,
+        settings.pipeline_trigger_secret,
+    ]
+    
+    for key in keys_to_mask:
+        if key and len(key) > 8:
+            masked = f"{key[:4]}...{key[-4:]}"
+            result = result.replace(key, masked)
+    
+    # Also mask any apikey= query params
+    result = re.sub(r'apikey=[a-zA-Z0-9_-]+', 'apikey=***MASKED***', result)
+    
+    return result

@@ -69,7 +69,8 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
                         logger.info(f"Using Twelve Data price for copper: ${float(price):.4f}")
                         return float(price)
         except Exception as e:
-            logger.debug(f"Twelve Data price fetch failed: {e}")
+            from app.settings import mask_api_key
+            logger.debug(f"Twelve Data price fetch failed: {mask_api_key(str(e))}")
     
     # Try yfinance as fallback
     try:

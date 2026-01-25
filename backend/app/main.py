@@ -513,8 +513,9 @@ async def get_live_price():
                 return {"price": None, "error": f"API error: {response.status_code}"}
                 
     except Exception as e:
-        logger.error(f"Twelve Data API error: {e}")
-        return {"price": None, "error": str(e)}
+        from app.settings import mask_api_key
+        logger.error(f"Twelve Data API error: {mask_api_key(str(e))}")
+        return {"price": None, "error": "API error"}
 
 
 # =============================================================================
@@ -586,9 +587,12 @@ async def websocket_live_price(websocket: WebSocket):
                 heartbeat_task.cancel()
                 
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        # Mask potential API keys in error messages
+        from app.settings import mask_api_key
+        safe_error = mask_api_key(str(e))
+        logger.error(f"WebSocket error: {safe_error}")
         try:
-            await websocket.send_json({"error": str(e)})
+            await websocket.send_json({"error": "Connection error"})  # Don't expose details
         except Exception:
             pass
 
