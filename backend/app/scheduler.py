@@ -31,8 +31,33 @@ def run_daily_pipeline():
     4. Generate fresh analysis snapshot
     
     Uses pipeline lock to prevent concurrent runs.
+    Records metrics to PipelineRunMetrics table for monitoring.
     """
+    import json
+    import uuid
+    from datetime import timezone as tz
+    
     logger.info("Starting daily pipeline run...")
+    
+    # Generate run ID and start time
+    run_id = f"run-{datetime.now(tz.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    run_started_at = datetime.now(tz.utc)
+    
+    # Initialize metrics
+    metrics = {
+        "run_id": run_id,
+        "run_started_at": run_started_at,
+        "status": "running",
+        "symbols_requested": 0,
+        "symbols_fetched_ok": 0,
+        "symbols_failed": 0,
+        "failed_symbols_list": [],
+        "news_imported": 0,
+        "news_duplicates": 0,
+        "price_bars_updated": 0,
+        "snapshot_generated": False,
+        "commentary_generated": False,
+    }
     
     lock = PipelineLock(timeout=0)
     
@@ -46,14 +71,41 @@ def run_daily_pipeline():
         from app.ai_engine import run_full_pipeline
         from app.inference import generate_analysis_report, save_analysis_snapshot
         from app.db import SessionLocal
+        from app.models import PipelineRunMetrics
         
         settings = get_settings()
+        
+        # Record symbol set info
+        metrics["symbol_set_name"] = settings.symbol_set
+        metrics["symbols_requested"] = len(settings.training_symbols)
         
         # Step 1: Fetch data
         logger.info("Step 1/3: Fetching data...")
         fetch_results = fetch_all(news=True, prices=True)
-        logger.info(f"Data fetch complete: {fetch_results.get('news', {}).get('imported', 0)} news, "
-                   f"{sum(s.get('imported', 0) for s in fetch_results.get('prices', {}).values())} price bars")
+        
+        # Track news stats
+        news_stats = fetch_results.get('news', {})
+        metrics["news_imported"] = news_stats.get('imported', 0)
+        metrics["news_duplicates"] = news_stats.get('duplicates', 0)
+        
+        # Track price stats
+        price_stats = fetch_results.get('prices', {})
+        total_bars = 0
+        failed_symbols = []
+        for symbol, stats in price_stats.items():
+            if stats.get('error'):
+                failed_symbols.append(symbol)
+            else:
+                total_bars += stats.get('imported', 0)
+        
+        metrics["price_bars_updated"] = total_bars
+        metrics["symbols_fetched_ok"] = len(price_stats) - len(failed_symbols)
+        metrics["symbols_failed"] = len(failed_symbols)
+        metrics["failed_symbols_list"] = failed_symbols
+        
+        logger.info(f"Data fetch complete: {metrics['news_imported']} news, {total_bars} price bars")
+        if failed_symbols:
+            logger.warning(f"Failed symbols: {failed_symbols}")
         
         # Step 2: Run AI pipeline (score + aggregate only, no retraining by default)
         logger.info("Step 2/3: Running AI pipeline (sentiment scoring)...")
@@ -72,6 +124,7 @@ def run_daily_pipeline():
             report = generate_analysis_report(session, settings.target_symbol)
             if report:
                 save_analysis_snapshot(session, report, settings.target_symbol)
+                metrics["snapshot_generated"] = True
                 logger.info(f"Snapshot generated: predicted return {report.get('predicted_return', 'N/A')}")
                 
                 # Step 4: Generate AI Commentary
@@ -107,6 +160,7 @@ def run_daily_pipeline():
                             )
                         )
                         if commentary:
+                            metrics["commentary_generated"] = True
                             logger.info("AI commentary generated and saved")
                         else:
                             logger.warning("AI commentary generation skipped (API key not configured or failed)")
@@ -117,13 +171,49 @@ def run_daily_pipeline():
             else:
                 logger.warning("Could not generate analysis snapshot")
         
+        metrics["status"] = "success"
         logger.info("Daily pipeline complete!")
         
     except Exception as e:
+        metrics["status"] = "failed"
+        metrics["error_message"] = str(e)[:500]
         logger.error(f"Daily pipeline failed: {e}", exc_info=True)
     
     finally:
         lock.release()
+        
+        # Save metrics to database
+        try:
+            from app.db import SessionLocal
+            from app.models import PipelineRunMetrics
+            
+            run_completed_at = datetime.now(tz.utc)
+            duration = (run_completed_at - run_started_at).total_seconds()
+            
+            with SessionLocal() as session:
+                metrics_record = PipelineRunMetrics(
+                    run_id=metrics["run_id"],
+                    run_started_at=metrics["run_started_at"],
+                    run_completed_at=run_completed_at,
+                    duration_seconds=duration,
+                    symbol_set_name=metrics.get("symbol_set_name"),
+                    symbols_requested=metrics.get("symbols_requested"),
+                    symbols_fetched_ok=metrics.get("symbols_fetched_ok"),
+                    symbols_failed=metrics.get("symbols_failed"),
+                    failed_symbols_list=json.dumps(metrics.get("failed_symbols_list", [])),
+                    news_imported=metrics.get("news_imported"),
+                    news_duplicates=metrics.get("news_duplicates"),
+                    price_bars_updated=metrics.get("price_bars_updated"),
+                    snapshot_generated=metrics.get("snapshot_generated", False),
+                    commentary_generated=metrics.get("commentary_generated", False),
+                    status=metrics.get("status", "unknown"),
+                    error_message=metrics.get("error_message"),
+                )
+                session.add(metrics_record)
+                session.commit()
+                logger.info(f"Pipeline metrics saved: {run_id} ({metrics['status']}, {duration:.1f}s)")
+        except Exception as me:
+            logger.warning(f"Could not save pipeline metrics: {me}")
 
 
 def parse_schedule_time(time_str: str) -> tuple[int, int]:

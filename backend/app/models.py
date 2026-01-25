@@ -263,3 +263,58 @@ class ModelMetadata(Base):
     
     def __repr__(self):
         return f"<ModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
+
+
+class PipelineRunMetrics(Base):
+    """
+    Metrics captured after each pipeline run for monitoring.
+    Enables tracking of:
+    - Symbol fetch success/failure rates
+    - Model training metrics over time
+    - Pipeline duration trends
+    - Data quality indicators
+    """
+    __tablename__ = "pipeline_run_metrics"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Run identification
+    run_id = Column(String(64), nullable=False, unique=True, index=True)
+    run_started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    run_completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Duration
+    duration_seconds = Column(Float, nullable=True)
+    
+    # Symbol set info
+    symbol_set_name = Column(String(50), nullable=True)  # active/champion/challenger
+    symbols_requested = Column(Integer, nullable=True)
+    symbols_fetched_ok = Column(Integer, nullable=True)
+    symbols_failed = Column(Integer, nullable=True)
+    failed_symbols_list = Column(Text, nullable=True)  # JSON array
+    
+    # Training metrics
+    train_mae = Column(Float, nullable=True)
+    val_mae = Column(Float, nullable=True)
+    train_rmse = Column(Float, nullable=True)
+    val_rmse = Column(Float, nullable=True)
+    feature_count = Column(Integer, nullable=True)
+    train_samples = Column(Integer, nullable=True)
+    val_samples = Column(Integer, nullable=True)
+    
+    # Data quality
+    news_imported = Column(Integer, nullable=True)
+    news_duplicates = Column(Integer, nullable=True)
+    price_bars_updated = Column(Integer, nullable=True)
+    missing_price_days = Column(Integer, nullable=True)
+    
+    # Snapshot info
+    snapshot_generated = Column(Boolean, default=False)
+    commentary_generated = Column(Boolean, default=False)
+    
+    # Status
+    status = Column(String(20), nullable=False, default="running")  # running/success/failed
+    error_message = Column(Text, nullable=True)
+    
+    def __repr__(self):
+        return f"<PipelineRunMetrics(run_id={self.run_id}, status={self.status})>"
