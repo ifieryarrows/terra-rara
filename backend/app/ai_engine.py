@@ -692,7 +692,11 @@ def train_xgboost_model(
     # This MUST be read by inference to correctly compute predicted_price
     metrics = {
         "target_symbol": target_symbol,
+        # Target definition audit (prevents semantic confusion)
         "target_type": "simple_return",  # Model predicts: close(t+1)/close(t) - 1
+        "target_shift_days": 1,  # Predict 1 day ahead
+        "target_definition": "simple_return(close,1).shift(-1)",  # Exact pandas formula
+        "baseline_price_source": "yfinance_close",  # Which close normalizes returns
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "train_samples": len(X_train),
         "val_samples": len(X_val),
