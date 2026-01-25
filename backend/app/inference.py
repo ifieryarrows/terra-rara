@@ -10,6 +10,9 @@ Handles:
 
 import json
 import logging
+
+# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional

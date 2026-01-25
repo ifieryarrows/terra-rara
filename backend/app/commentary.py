@@ -3,8 +3,12 @@ AI Commentary Generator using OpenRouter API.
 Generates human-readable market analysis from FinBERT + XGBoost results.
 """
 
-import httpx
 import logging
+
+# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+import httpx
 from typing import Optional
 from datetime import datetime
 

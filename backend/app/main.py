@@ -8,6 +8,10 @@ Endpoints:
 """
 
 import logging
+
+# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

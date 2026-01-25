@@ -21,6 +21,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 import httpx
 
 import numpy as np
