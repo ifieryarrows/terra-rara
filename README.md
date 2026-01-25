@@ -12,6 +12,8 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 - [Features](#features)
 - [Architecture](#architecture)
 - [Directory Structure](#directory-structure)
+- [Symbol Sets](#symbol-sets)
+- [Model Details](#model-details)
 - [Getting Started](#getting-started)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -25,7 +27,9 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 
 ## Overview
 
-Terra Rara predicts next-day COMEX copper futures (HG=F) closing prices using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (MiMo Flash via OpenRouter), and combines this with 200+ technical features computed from 14 correlated assets. A scheduled pipeline runs daily to retrain the model and generate AI-driven market commentary.
+Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (MiMo Flash via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+
+**Model target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
 **Target users**: Traders, analysts, and developers building commodity forecasting tools.
 
@@ -33,14 +37,15 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) closing prices using an
 
 ## Features
 
-- Predict next-day copper futures prices using XGBoost regression trained on 200+ features
+- Predict next-day copper futures returns using XGBoost regression trained on 250+ features
 - Score news sentiment using LLM (MiMo Flash) with FinBERT fallback when API is unavailable
-- Track 14 correlated assets including copper miners, ETFs, and macro indicators
+- Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
 - Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
-- Display real-time prices for all tracked symbols via dashboard
+- Display real-time prices for dashboard symbols via yfinance
 - Visualize historical price and sentiment data over 180 days
-- Trigger manual pipeline execution via API endpoint
+- Trigger manual pipeline execution via authenticated API endpoint
+- Monitor pipeline health via `pipeline_run_metrics` table
 
 ## Architecture
 
@@ -52,7 +57,7 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) closing prices using an
 │  ├── Price & Sentiment chart (Recharts)                                 │
 │  ├── Model Forecast Card with AI Commentary                             │
 │  ├── XGBoost feature importance display                                 │
-│  └── Market grid showing 14 symbols                                     │
+│  └── Market grid showing 14 dashboard symbols                           │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -71,36 +76,121 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) closing prices using an
 │  ML PIPELINE (Daily @ 02:00 Istanbul)                                   │
 │  ├── 16 strategic queries → Google News RSS                             │
 │  ├── LLM sentiment scoring with FinBERT fallback                        │
-│  ├── 200+ feature engineering across 14 symbols                         │
-│  ├── XGBoost training with early stopping                               │
-│  └── AI commentary generation                                           │
+│  ├── 250+ feature engineering across 17 training symbols                │
+│  ├── XGBoost training with early stopping (when train_model=True)       │
+│  ├── AI commentary generation                                           │
+│  └── Pipeline metrics saved to database                                 │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  DATA LAYER                                                             │
 │  ├── Supabase PostgreSQL                                                │
-│  │   ├── news_articles       (raw news)                                 │
-│  │   ├── news_sentiments     (LLM scores)                               │
-│  │   ├── daily_sentiments    (aggregated index)                         │
-│  │   ├── analysis_snapshots  (cached predictions)                       │
-│  │   ├── ai_commentaries     (market commentary)                        │
-│  │   └── model_metadata      (XGBoost artifacts)                        │
+│  │   ├── news_articles         (raw news)                               │
+│  │   ├── news_sentiments       (LLM scores)                             │
+│  │   ├── daily_sentiments      (aggregated index)                       │
+│  │   ├── price_bars            (OHLCV data)                             │
+│  │   ├── analysis_snapshots    (cached predictions)                     │
+│  │   ├── ai_commentaries       (market commentary)                      │
+│  │   ├── model_metadata        (XGBoost artifacts)                      │
+│  │   └── pipeline_run_metrics  (monitoring)                             │
 │  ├── yfinance (OHLCV price data)                                        │
 │  ├── TwelveData (backup live copper price)                              │
 │  └── Google News RSS (news source)                                      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Tracked Symbols (14)
+## Symbol Sets
+
+The system uses two separate symbol lists:
+
+### Training Symbols (17) - `active.json`
+
+Used for XGBoost feature engineering. Loaded from `backend/config/symbol_sets/active.json`.
 
 | Category | Symbols | Description |
 |----------|---------|-------------|
 | Target | HG=F | COMEX Copper Futures |
 | Macro | DX-Y.NYB, CL=F | USD Index, Crude Oil |
-| ETFs | FXI, COPX, COPJ | China Large-Cap, Global Miners, Junior Miners |
-| Miners | BHP, FCX, SCCO, RIO | Major copper producers |
-| Regional | TECK, IVN.TO, LUN.TO, 2899.HK | Regional mining companies |
+| Precious | GC=F, SI=F, PL=F | Gold, Silver, Platinum |
+| ETFs | FXI, COPX | China Large-Cap, Global Copper Miners |
+| Miners | BHP, FCX, SCCO, RIO, TECK | Major copper producers |
+| Regional | IVN.TO, LUN.TO, FM.TO, 2899.HK | Regional mining companies |
+
+### Dashboard Symbols (14) - Environment Variable
+
+Used for real-time price display. Configured via `YFINANCE_SYMBOLS` env var.
+
+| Category | Symbols |
+|----------|---------|
+| Target | HG=F |
+| Macro | DX-Y.NYB, CL=F |
+| ETFs | FXI, COPX, COPJ |
+| Miners | BHP, FCX, SCCO, RIO, TECK, IVN.TO, LUN.TO, 2899.HK |
+
+### Symbol Set Management
+
+```bash
+# Symbol sets are JSON files in backend/config/symbol_sets/
+ls backend/config/symbol_sets/
+# active.json      ← Currently used for training
+# champion.json    ← Best performing set (backup)
+# challenger.json  ← Experimental set for A/B testing
+
+# Switch active set via SYMBOL_SET env var
+SYMBOL_SET=champion  # Uses champion.json instead of active.json
+```
+
+Each model training run records:
+- `symbol_set_name`: Which set was used (active/champion/challenger)
+- `training_symbols`: Full list of symbols
+- `training_symbols_hash`: SHA256 hash for audit
+
+## Model Details
+
+### Target Definition
+
+The model predicts **next-day simple return**, not price:
+
+```
+target = (close[t+1] / close[t]) - 1
+```
+
+This is recorded in model metadata as:
+- `target_type`: `"simple_return"`
+- `target_shift_days`: `1`
+- `target_definition`: `"simple_return(close,1).shift(-1)"`
+- `baseline_price_source`: `"yfinance_close"`
+
+### Price Calculation
+
+```
+predicted_price = baseline_price × (1 + predicted_return)
+```
+
+Where `baseline_price` is the latest HG=F close from the database.
+
+### XGBoost Parameters
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `max_depth` | 4 | Shallow trees, prevents overfitting |
+| `learning_rate` | 0.05 | Slow learning, better generalization |
+| `subsample` | 0.8 | 80% of data per tree |
+| `colsample_bytree` | 0.6 | 60% of features per tree |
+| `reg_alpha` (L1) | 0.5 | Sparsity regularization |
+| `reg_lambda` (L2) | 2.0 | Weight decay |
+| `min_child_weight` | 5 | Minimum samples per leaf |
+
+These settings are **conservative** - the model avoids large predictions.
+
+### Feature Count
+
+Approximately 250 features are generated:
+- Technical indicators per symbol (RSI, SMA, volatility, returns)
+- Lag features (1-5 day lags)
+- Cross-asset correlations
+- Sentiment features (index, news count)
 
 ## Directory Structure
 
@@ -114,16 +204,20 @@ terra-rara/
 │   │   ├── features.py       # Technical indicator computation
 │   │   ├── data_manager.py   # News ingestion, price fetching
 │   │   ├── commentary.py     # AI commentary generation
+│   │   ├── scheduler.py      # APScheduler daily pipeline
 │   │   ├── models.py         # SQLAlchemy ORM models
 │   │   ├── db.py             # Database connection
 │   │   └── settings.py       # Pydantic settings
+│   ├── config/
+│   │   └── symbol_sets/      # Training symbol configurations
+│   │       ├── active.json   # Current training symbols
+│   │       ├── champion.json # Best performing set
+│   │       └── challenger.json
 │   ├── screener/             # Universe Builder + Feature Screener
 │   │   ├── core/             # Config, fingerprint, cache
 │   │   ├── contracts/        # Pydantic output models
 │   │   ├── universe_builder/ # Seed loading, probing, categorization
 │   │   └── feature_screener/ # Correlation analysis
-│   ├── config/
-│   │   └── seeds/            # Ticker seed files (CSV)
 │   ├── tests/                # pytest tests
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -169,10 +263,6 @@ The screener uses two fingerprints to ensure both reproducibility and auditabili
 - **`content_fingerprint`**: Deterministic hash of analysis content only. Same inputs + same config = same hash. Excludes timestamps and run IDs.
 
 - **`output_fingerprint`**: Hash of full output envelope including metadata. Changes with each run.
-
-This separation allows:
-1. **Offline replay verification**: Run twice from same cached data → identical `content_fingerprint`
-2. **Audit trail**: Each run has unique `output_fingerprint` with timestamps
 
 ### Key Features
 
@@ -247,20 +337,21 @@ docker-compose up --build
 
 Copy `env.example` to `backend/.env` and configure:
 
-| Variable | Required | Default | Description | Example |
-|----------|----------|---------|-------------|---------|
-| `DATABASE_URL` | Yes | - | PostgreSQL connection string | `postgresql://user:pass@host:5432/db` |
-| `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM | `sk-or-v1-xxxx` |
-| `PIPELINE_TRIGGER_SECRET` | Yes | - | Secret token for POST /api/pipeline/trigger (32+ random chars) | `a1b2c3...` (32+ chars) |
-| `OPENROUTER_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for AI commentary | - |
-| `LLM_SENTIMENT_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for sentiment scoring | - |
-| `TWELVEDATA_API_KEY` | No | - | Backup live price source | `xxxx` |
-| `SCHEDULER_ENABLED` | No | `true` | Enable daily pipeline | `true` or `false` |
-| `SCHEDULE_TIME` | No | `02:00` | Daily pipeline time (HH:MM) | `09:00` |
-| `TZ` | No | `Europe/Istanbul` | Scheduler timezone | `UTC` |
-| `YFINANCE_SYMBOLS` | No | (14 symbols) | Comma-separated symbols | `HG=F,BHP,FCX` |
-| `NEWS_LOOKBACK_DAYS` | No | `30` | Days of news to fetch | `30` |
-| `SENTIMENT_DECAY_HALF_LIFE` | No | `7.0` | Sentiment decay half-life (days) | `7.0` |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Yes | - | PostgreSQL connection string |
+| `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM |
+| `PIPELINE_TRIGGER_SECRET` | Yes | - | Secret token for POST /api/pipeline/trigger (32+ random chars) |
+| `SYMBOL_SET` | No | `active` | Which symbol set to use (active/champion/challenger) |
+| `OPENROUTER_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for AI commentary |
+| `LLM_SENTIMENT_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for sentiment scoring |
+| `TWELVEDATA_API_KEY` | No | - | Backup live price source |
+| `SCHEDULER_ENABLED` | No | `true` | Enable daily pipeline |
+| `SCHEDULE_TIME` | No | `02:00` | Daily pipeline time (HH:MM) |
+| `TZ` | No | `Europe/Istanbul` | Scheduler timezone |
+| `YFINANCE_SYMBOLS` | No | (14 symbols) | Dashboard symbols (comma-separated) |
+| `NEWS_LOOKBACK_DAYS` | No | `30` | Days of news to fetch |
+| `SENTIMENT_DECAY_HALF_LIFE` | No | `7.0` | Sentiment decay half-life (days) |
 
 The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Generate a random secret before deploying.
 
@@ -273,7 +364,7 @@ Access the live dashboard at [terra-rara.vercel.app](https://terra-rara.vercel.a
 1. **Forecast Card** displays the predicted next-day copper price, predicted return percentage, and AI stance
 2. **Price & Sentiment Chart** shows 180 days of historical copper prices overlaid with the daily sentiment index
 3. **Market Drivers** lists the top XGBoost feature importances
-4. **Market Grid** shows real-time prices for all 14 tracked symbols
+4. **Market Grid** shows real-time prices for all 14 dashboard symbols
 
 ### API Endpoints
 
@@ -304,18 +395,26 @@ Returns current prediction with model metrics.
 {
   "symbol": "HG=F",
   "current_price": 4.2500,
-  "predicted_price": 4.3137,
-  "predicted_return": 0.0150,
+  "baseline_price": 4.2350,
+  "baseline_price_date": "2026-01-25",
+  "predicted_return": 0.001500,
+  "predicted_return_pct": 0.15,
+  "predicted_price": 4.2414,
+  "target_type": "simple_return",
+  "price_source": "yfinance_db_close",
+  "confidence_lower": 4.1800,
+  "confidence_upper": 4.3000,
   "sentiment_index": 0.227,
   "sentiment_label": "Bullish",
   "top_influencers": [
-    {"feature": "HG=F_vol_10", "importance": 0.1808},
-    {"feature": "FXI_lag_ret1_2", "importance": 0.1019}
+    {"feature": "HG=F_vol_10", "importance": 0.1808, "description": "10-day volatility"},
+    {"feature": "FXI_lag_ret1_2", "importance": 0.1019, "description": "China ETF 2-day lagged return"}
   ],
   "data_quality": {
     "coverage_pct": 98.5,
     "missing_features": []
   },
+  "training_symbols_hash": "sha256:7b7dd017b79da296",
   "generated_at": "2026-01-17T09:00:00Z"
 }
 ```
@@ -335,7 +434,7 @@ Returns AI-generated market analysis.
 
 ### GET /api/market-prices
 
-Returns real-time quotes for all tracked symbols.
+Returns real-time quotes for all dashboard symbols.
 
 ```json
 {
@@ -359,9 +458,7 @@ Returns health status including database connectivity.
 
 Manually triggers the ML pipeline. This is a privileged endpoint that consumes significant resources (LLM API calls, database writes, model training).
 
-**Authentication requirement**: This endpoint must be protected before exposing it publicly. Requests must include a valid secret token in the header:
-
-- **Header**: `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>`
+**Authentication requirement**: This endpoint requires a valid `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>` header. Requests without a valid token receive 401 Unauthorized.
 
 **Expected responses**:
 
@@ -377,6 +474,10 @@ Manually triggers the ML pipeline. This is a privileged endpoint that consumes s
 |-----------|------|---------|-------------|
 | `fetch_data` | boolean | `true` | Fetch new news and prices |
 | `train_model` | boolean | `true` | Retrain XGBoost model |
+
+**Daily vs Manual Pipeline**:
+- Daily scheduler runs with `train_model=False` (uses existing model, refreshes sentiment only)
+- Manual trigger defaults to `train_model=True` (retrains model)
 
 ## Development
 
@@ -403,13 +504,34 @@ ruff check .
 
 The pipeline runs automatically at 02:00 Istanbul time when `SCHEDULER_ENABLED=true`:
 
-1. Fetch news from 16 strategic Google News RSS queries (~1200 articles)
-2. Score sentiment via LLM in batches of 20 articles
-3. Fetch 2 years of price data for 14 symbols via yfinance
+1. Fetch news from 16 strategic Google News RSS queries
+2. Fetch price data for 17 training symbols via yfinance
+3. Score sentiment via LLM in batches of 20 articles
 4. Aggregate daily sentiment with time-weighted decay (half-life: 7 days)
-5. Train XGBoost model with 80/20 train/validation split
+5. Generate prediction using existing model (no retraining by default)
 6. Generate AI commentary via OpenRouter
 7. Cache prediction snapshot
+8. Save pipeline metrics to `pipeline_run_metrics` table
+
+### Pipeline Monitoring
+
+Each pipeline run records metrics to the database:
+
+```sql
+SELECT run_id, run_started_at, duration_seconds, 
+       symbols_failed, status, symbol_set_name
+FROM pipeline_run_metrics 
+ORDER BY run_started_at DESC 
+LIMIT 10;
+```
+
+Tracked metrics:
+- `duration_seconds`: Total pipeline runtime
+- `symbols_requested` / `symbols_fetched_ok` / `symbols_failed`: Data fetch stats
+- `news_imported` / `news_duplicates`: News ingestion stats
+- `snapshot_generated` / `commentary_generated`: Output flags
+- `status`: success/failed
+- `error_message`: Error details if failed
 
 ## Troubleshooting
 
@@ -445,6 +567,22 @@ The pipeline runs automatically at 02:00 Istanbul time when `SCHEDULER_ENABLED=t
 
 **Fix**: Check backend logs for pipeline errors. Verify `SCHEDULER_ENABLED=true`. Manually trigger pipeline via `POST /api/pipeline/trigger` to test.
 
+### Invalid or missing target_type error
+
+**Symptom**: `/api/analysis` returns null, logs show `Invalid or missing target_type in model metadata`
+
+**Cause**: Model was trained before `target_type` field was added.
+
+**Fix**: Retrain the model via `POST /api/pipeline/trigger?train_model=true`. New models include `target_type: "simple_return"` in metadata.
+
+### Feature mismatch error during prediction
+
+**Symptom**: `ValueError: feature_names mismatch` in logs
+
+**Cause**: Inference is using different symbols than training.
+
+**Fix**: Ensure both training and inference use the same symbol set. The system automatically aligns features via `reindex(columns=expected, fill_value=0)`.
+
 ## Contributing
 
 1. Fork the repository
@@ -459,12 +597,19 @@ Issues and feature requests are welcome via GitHub Issues.
 
 ## Security
 
+### Credential Masking
+
+The system masks sensitive credentials in logs:
+- Database passwords are replaced with `***:***` in connection URLs
+- API keys in httpx request logs are suppressed
+- Error messages containing credentials are sanitized
+
 ### Privileged Endpoint: POST /api/pipeline/trigger
 
 This endpoint triggers the full ML pipeline, which fetches news, calls the LLM API for sentiment scoring, retrains the XGBoost model, and generates AI commentary. Unauthenticated access to this endpoint creates the following risks:
 
 - **Request flooding**: Repeated triggers can degrade service availability.
-- **Quota and cost burn**: Each pipeline run consumes OpenRouter and TwelveData API quota. Uncontrolled access can exhaust free-tier limits or incur costs.
+- **Quota and cost burn**: Each pipeline run consumes OpenRouter API quota. Uncontrolled access can exhaust free-tier limits or incur costs.
 - **Resource exhaustion**: Model training and batch LLM calls are CPU and memory intensive.
 
 **Authentication**: This endpoint requires a valid `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>` header. Requests without a valid token receive 401 Unauthorized.
