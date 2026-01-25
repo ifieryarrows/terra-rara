@@ -72,7 +72,10 @@ def get_engine():
             
             logger.info("SQLite configured with WAL mode and performance pragmas")
         
-        logger.info(f"Database engine created: {database_url.split('?')[0]}")
+        # Log sanitized URL (hide password)
+        import re
+        safe_url = re.sub(r'://[^:]+:[^@]+@', '://***:***@', database_url.split('?')[0])
+        logger.info(f"Database engine created: {safe_url}")
     
     return _engine
 
