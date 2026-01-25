@@ -688,8 +688,11 @@ def train_xgboost_model(
     model.save_model(str(latest_path))
     
     # Save metrics (including training symbols audit)
+    # TARGET_TYPE: "simple_return" means model predicts next-day return, not price
+    # This MUST be read by inference to correctly compute predicted_price
     metrics = {
         "target_symbol": target_symbol,
+        "target_type": "simple_return",  # Model predicts: close(t+1)/close(t) - 1
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "train_samples": len(X_train),
         "val_samples": len(X_val),

@@ -277,6 +277,8 @@ def generate_analysis_report(
     Returns:
         Dict with analysis data matching the API schema
     """
+    settings = get_settings()
+    
     # Load model
     model = load_model(target_symbol)
     if model is None:
@@ -287,23 +289,42 @@ def generate_analysis_report(
     metadata = load_model_metadata(target_symbol)
     features = metadata.get("features", [])
     importance = metadata.get("importance", [])
+    metrics = metadata.get("metrics", {})
     
     if not features:
         logger.error("No feature list found for model")
         return None
     
+    # CRITICAL: Verify target_type is explicitly set
+    # Do NOT guess - wrong interpretation inverts prediction meaning
+    target_type = metrics.get("target_type")
+    if target_type not in ("simple_return", "log_return", "price"):
+        logger.error(f"Invalid or missing target_type in model metadata: {target_type}")
+        logger.error("Model must be retrained with explicit target_type. Cannot generate forecast.")
+        return None
+    
     # Get current price (for display - may be live yfinance or DB fallback)
     current_price = get_current_price(session, target_symbol)
+    price_source = "yfinance_live"  # Default assumption
+    
     if current_price is None:
         logger.error(f"No price data for {target_symbol}")
         return None
     
-    # Get latest DB close price for prediction base
+    # Get latest DB close price for prediction base (baseline_price)
     # Model predicts based on historical closes, not intraday prices
     latest_bar = session.query(PriceBar).filter(
         PriceBar.symbol == target_symbol
     ).order_by(PriceBar.date.desc()).first()
-    prediction_base = latest_bar.close if latest_bar else current_price
+    
+    if latest_bar:
+        baseline_price = latest_bar.close
+        baseline_price_date = latest_bar.date.strftime("%Y-%m-%d") if latest_bar.date else None
+        price_source = "yfinance_db_close"
+    else:
+        baseline_price = current_price
+        baseline_price_date = None
+        price_source = "yfinance_live_fallback"
     
     # Get current sentiment
     current_sentiment = get_current_sentiment(session)
@@ -318,10 +339,31 @@ def generate_analysis_report(
     
     # Make prediction
     dmatrix = xgb.DMatrix(X, feature_names=features)
-    predicted_return = float(model.predict(dmatrix)[0])
+    model_output = float(model.predict(dmatrix)[0])
     
-    # Calculate predicted price using DB close as base (model trains on closes)
-    predicted_price = prediction_base * (1 + predicted_return)
+    # Compute predicted_return and predicted_price based on target_type
+    if target_type == "simple_return":
+        predicted_return = model_output
+        predicted_price = baseline_price * (1 + predicted_return)
+    elif target_type == "log_return":
+        import math
+        predicted_return = math.exp(model_output) - 1
+        predicted_price = baseline_price * math.exp(model_output)
+    elif target_type == "price":
+        predicted_price = model_output
+        predicted_return = (predicted_price / baseline_price) - 1 if baseline_price > 0 else 0
+    
+    # Validate prediction (do not clamp by default - expose issues)
+    prediction_invalid = False
+    if predicted_return < -1.0:
+        logger.error(f"Invalid prediction: return {predicted_return:.4f} < -100%")
+        prediction_invalid = True
+    if predicted_price <= 0:
+        logger.error(f"Invalid prediction: price {predicted_price:.4f} <= 0")
+        prediction_invalid = True
+    
+    if prediction_invalid:
+        return None
     
     # Calculate confidence band
     conf_lower, conf_upper = calculate_confidence_band(
@@ -354,18 +396,24 @@ def generate_analysis_report(
             "description": desc,
         })
     
-    # Build report
+    # Build report with explicit baseline_price and target_type
     report = {
         "symbol": target_symbol,
         "current_price": round(current_price, 4),
+        "baseline_price": round(baseline_price, 4),
+        "baseline_price_date": baseline_price_date,
         "predicted_return": round(predicted_return, 6),
+        "predicted_return_pct": round(predicted_return * 100, 2),
         "predicted_price": round(predicted_price, 4),
+        "target_type": target_type,
+        "price_source": price_source,
         "confidence_lower": round(conf_lower, 4),
         "confidence_upper": round(conf_upper, 4),
         "sentiment_index": round(current_sentiment, 4),
         "sentiment_label": get_sentiment_label(current_sentiment),
         "top_influencers": top_influencers,
         "data_quality": data_quality,
+        "training_symbols_hash": settings.training_symbols_hash,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     
