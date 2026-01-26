@@ -102,24 +102,55 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 
 ## Symbol Sets
 
-The system uses two separate symbol lists:
+The system separates symbol discovery, testing, and production into distinct phases.
 
-### Training Symbols (17) - `active.json`
+### How Symbols Are Found
+
+The **Screener module** identifies symbols correlated with COMEX Copper (HG=F):
+
+1. **Universe Builder**: Loads ~3000 candidate tickers from seed files (ETFs, miners, macro indices)
+2. **Data Probe**: Fetches 2 years of weekly returns for each candidate via yfinance
+3. **Correlation Screening**: Computes Pearson and partial correlations with HG=F
+4. **Lead-Lag Analysis**: Tests if symbol leads or lags copper by 0-4 weeks
+5. **Stability Check**: Validates correlation holds in both in-sample and out-of-sample periods
+
+Output: A ranked list of symbols with stable, significant correlations.
+
+### Champion / Challenger Testing
+
+Symbol sets are managed via JSON files in `backend/config/symbol_sets/`:
+
+| File | Purpose |
+|------|---------|
+| `active.json` | **Production set** - Currently used for training. This is the "winner". |
+| `champion.json` | **Previous best** - Backup of last known good set before changes. |
+| `challenger.json` | **Candidate set** - New symbols being tested. Not used in production. |
+
+**Flow**:
+1. Run screener → produces candidate symbols
+2. Add candidates to `challenger.json`
+3. Train model with `SYMBOL_SET=challenger`, compare MAE/RMSE to active
+4. If challenger outperforms → promote to `active.json`, demote old active to `champion.json`
+5. If not → discard or iterate
+
+This allows risk-free experimentation without breaking production.
+
+### Current Active Set (17 symbols)
 
 Used for XGBoost feature engineering. Loaded from `backend/config/symbol_sets/active.json`.
 
-| Category | Symbols | Description |
-|----------|---------|-------------|
-| Target | HG=F | COMEX Copper Futures |
-| Macro | DX-Y.NYB, CL=F | USD Index, Crude Oil |
-| Precious | GC=F, SI=F, PL=F | Gold, Silver, Platinum |
-| ETFs | FXI, COPX | China Large-Cap, Global Copper Miners |
-| Miners | BHP, FCX, SCCO, RIO, TECK | Major copper producers |
-| Regional | IVN.TO, LUN.TO, FM.TO, 2899.HK | Regional mining companies |
+| Category | Symbols | Rationale |
+|----------|---------|-----------|
+| Target | HG=F | COMEX Copper Futures - prediction target |
+| Macro | DX-Y.NYB, CL=F | USD strength inversely correlated; oil = industrial demand proxy |
+| Precious | GC=F, SI=F, PL=F | Safe-haven flows; silver/platinum share industrial use |
+| ETFs | FXI, COPX | China demand (FXI); copper miner basket (COPX) |
+| Majors | BHP, FCX, SCCO, RIO, TECK | Large-cap producers with copper exposure |
+| Regional | IVN.TO, LUN.TO, FM.TO, 2899.HK | Mid-cap miners; Zijin (2899) = China stockpiling signal |
 
-### Dashboard Symbols (14) - Environment Variable
+### Dashboard Symbols (14) - Separate List
 
-Used for real-time price display. Configured via `YFINANCE_SYMBOLS` env var.
+Used for real-time price display only. Configured via `YFINANCE_SYMBOLS` env var. Does not affect model training.
 
 | Category | Symbols |
 |----------|---------|
@@ -128,23 +159,26 @@ Used for real-time price display. Configured via `YFINANCE_SYMBOLS` env var.
 | ETFs | FXI, COPX, COPJ |
 | Miners | BHP, FCX, SCCO, RIO, TECK, IVN.TO, LUN.TO, 2899.HK |
 
-### Symbol Set Management
+### Switching Symbol Sets
 
 ```bash
-# Symbol sets are JSON files in backend/config/symbol_sets/
-ls backend/config/symbol_sets/
-# active.json      ← Currently used for training
-# champion.json    ← Best performing set (backup)
-# challenger.json  ← Experimental set for A/B testing
+# Default: uses active.json
+SYMBOL_SET=active
 
-# Switch active set via SYMBOL_SET env var
-SYMBOL_SET=champion  # Uses champion.json instead of active.json
+# Test challenger set without changing production
+SYMBOL_SET=challenger python -m app.ai_engine --train-only
+
+# Compare metrics, then promote if better
+cp config/symbol_sets/active.json config/symbol_sets/champion.json
+cp config/symbol_sets/challenger.json config/symbol_sets/active.json
 ```
+
+### Audit Trail
 
 Each model training run records:
 - `symbol_set_name`: Which set was used (active/champion/challenger)
 - `training_symbols`: Full list of symbols
-- `training_symbols_hash`: SHA256 hash for audit
+- `training_symbols_hash`: SHA256 hash for reproducibility
 
 ## Model Details
 
