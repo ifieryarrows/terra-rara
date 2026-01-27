@@ -57,10 +57,14 @@ class Settings(BaseSettings):
     # Futures vs Spot adjustment factor
     futures_spot_adjustment: float = 0.985
     
-    # Scheduler
+    # Scheduler (DEPRECATED in API - external scheduler only)
+    # These are kept for backward compatibility but scheduler no longer runs in API
     schedule_time: str = "02:00"
     tz: str = "Europe/Istanbul"
-    scheduler_enabled: bool = True
+    scheduler_enabled: bool = False  # Default to False - scheduler is external now
+    
+    # Redis Queue (for worker)
+    redis_url: str = "redis://localhost:6379/0"
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
@@ -74,6 +78,12 @@ class Settings(BaseSettings):
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
+    
+    # Faz 2: Market cut-off for news aggregation
+    # Defines when "today's news" ends for sentiment calculation
+    market_timezone: str = "America/New_York"  # NYSE timezone
+    market_close_time: str = "16:00"  # 4 PM ET
+    cutoff_buffer_minutes: int = 30  # Allow 30 min after close for late news
     
     def _load_symbol_set_file(self, set_name: str) -> Optional[dict]:
         """Load symbol set from JSON file. Returns None on error."""

@@ -1,9 +1,44 @@
 services:
-  backend:
+  # PostgreSQL for local testing (Faz 2 requires partial unique index)
+  postgres:
+    image: postgres:15-alpine
+    container_name: coppermind-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: coppermind
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: coppermind
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coppermind"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Redis Queue for job distribution
+  redis:
+    image: redis:7-alpine
+    container_name: coppermind-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # API Service (read-only + enqueue)
+  api:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: coppermind-backend
+    container_name: coppermind-api
     ports:
       - "8000:8000"
     volumes:
@@ -15,13 +50,46 @@ services:
       - DATABASE_URL=sqlite:////data/app.db
       - MODEL_DIR=/data/models
       - PIPELINE_LOCK_FILE=/data/pipeline.lock
+      - REDIS_URL=redis://redis:6379/0
+      - SCHEDULER_ENABLED=false
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # Worker Service (job execution)
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: coppermind-worker
+    command: python -m worker.runner
+    volumes:
+      - ./data:/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=sqlite:////data/app.db
+      - MODEL_DIR=/data/models
+      - PIPELINE_LOCK_FILE=/data/pipeline.lock
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:
@@ -31,10 +99,13 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      - api
     restart: unless-stopped
 
 networks:
   default:
     name: coppermind-network
 
+volumes:
+  redis_data:
+  postgres_data:

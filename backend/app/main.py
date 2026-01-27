@@ -22,15 +22,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from app.db import init_db, SessionLocal, get_db_type
-from app.models import NewsArticle, PriceBar, DailySentiment
+from app.models import NewsArticle, PriceBar, DailySentiment, AnalysisSnapshot
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
-from app.inference import (
-    generate_analysis_report,
-    save_analysis_snapshot,
-    get_latest_snapshot,
-    get_any_snapshot,
-)
+# NOTE: Faz 1 - API is snapshot-only, no report generation
+# generate_analysis_report and save_analysis_snapshot are now worker-only
 from app.schemas import (
     AnalysisReport,
     HistoryResponse,
@@ -59,21 +55,21 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
     
-    # Start scheduler if enabled
-    settings = get_settings()
-    if settings.scheduler_enabled:
-        from app.scheduler import start_scheduler
-        start_scheduler()
-        logger.info("Scheduler started")
+    # NOTE: Scheduler is NO LONGER started here.
+    # Pipeline scheduling is now external (GitHub Actions cron).
+    # This API only reads data and enqueues jobs.
     
     yield
     
     # Shutdown
     logger.info("Shutting down CopperMind API...")
-    if settings.scheduler_enabled:
-        from app.scheduler import stop_scheduler
-        stop_scheduler()
-        logger.info("Scheduler stopped")
+    # Close Redis pool if initialized
+    try:
+        from adapters.queue.redis import close_redis_pool
+        import asyncio
+        asyncio.create_task(close_redis_pool())
+    except ImportError:
+        pass
 
 
 # =============================================================================
@@ -108,11 +104,11 @@ app.add_middleware(
     "/api/analysis",
     response_model=AnalysisReport,
     responses={
-        404: {"model": ErrorResponse, "description": "Model or data not found"},
-        503: {"model": ErrorResponse, "description": "Pipeline locked, snapshot unavailable"},
+        200: {"description": "Analysis report (may include quality_state for degraded modes)"},
+        404: {"model": ErrorResponse, "description": "No snapshot available"},
     },
-    summary="Get current analysis report",
-    description="Returns the latest analysis report with predictions, sentiment, and influencers."
+    summary="Get current analysis report (snapshot-only)",
+    description="Returns the latest cached analysis snapshot. No live computation - all heavy work is done by the worker."
 )
 async def get_analysis(
     symbol: str = Query(default="HG=F", description="Trading symbol")
@@ -120,165 +116,88 @@ async def get_analysis(
     """
     Get current analysis report.
     
-    Behavior:
-    - If fresh snapshot exists (within TTL), return it
-    - If pipeline is not locked, generate fresh report
-    - If pipeline is locked, return stale snapshot or 503
+    SNAPSHOT-ONLY MODE (Faz 1):
+    - Reads the latest snapshot from database
+    - NO yfinance calls
+    - NO model loading
+    - NO feature building
+    - All heavy computation is done by the worker pipeline
+    
+    Response includes quality_state:
+    - "ok": Fresh snapshot available
+    - "stale": Snapshot older than 36 hours
+    - "missing": No snapshot found
     """
-    settings = get_settings()
+    STALE_THRESHOLD_HOURS = 36
     
     with SessionLocal() as session:
-        # Check for fresh snapshot first
-        cached = get_latest_snapshot(
-            session,
-            symbol,
-            max_age_minutes=settings.analysis_ttl_minutes
-        )
+        # Get latest snapshot - any age
+        snapshot = session.query(AnalysisSnapshot).filter(
+            AnalysisSnapshot.symbol == symbol
+        ).order_by(AnalysisSnapshot.generated_at.desc()).first()
         
-        if cached:
-            logger.debug(f"Cached snapshot exists, but running live prediction for accuracy")
-            import yfinance as yf
-            import xgboost as xgb
-            
-            try:
-                # Get live price from yfinance
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                live_price = info.get('regularMarketPrice') or info.get('currentPrice')
-                
-                if live_price is not None:
-                    cached['current_price'] = round(float(live_price), 4)
-                    
-                    # Get latest DB close price for prediction base
-                    # Model predicts based on historical closes, not intraday prices
-                    latest_bar = session.query(PriceBar).filter(
-                        PriceBar.symbol == symbol
-                    ).order_by(PriceBar.date.desc()).first()
-                    if live_price is not None:
-                        # Prioritize live price for prediction base
-                        prediction_base = float(live_price)
-                    elif latest_bar:
-                        # Fallback to DB close
-                        prediction_base = latest_bar.close
-                    else:
-                        prediction_base = 0.0
-                    
-                    # Run LIVE model prediction
-                    from app.ai_engine import load_model, load_model_metadata
-                    from app.inference import build_features_for_prediction
-                    
-                    model = load_model(symbol)
-                    metadata = load_model_metadata(symbol)
-                    features = metadata.get("features", [])
-                    
-                    if model and features:
-                        # Build features and predict
-                        X = build_features_for_prediction(session, symbol, features)
-                        if X is not None and not X.empty:
-                            dmatrix = xgb.DMatrix(X, feature_names=features)
-                            predicted_return = float(model.predict(dmatrix)[0])
-                            
-                            # Update with live prediction
-                            # Apply futures-spot adjustment (HG=F is ~1.5% higher than XCU/USD)
-                            adjustment = settings.futures_spot_adjustment
-                            adjusted_base = float(prediction_base) * adjustment
-                            
-                            cached['predicted_return'] = round(predicted_return, 6)
-                            cached['predicted_price'] = round(
-                                adjusted_base * (1 + predicted_return),
-                                4
-                            )
-                            
-                            # Also adjust current_price for consistency
-                            cached['current_price'] = round(adjusted_base, 4)
-                            
-                            # Update confidence bounds (based on adjusted base)
-                            std_mult = 1.0  # 1 standard deviation
-                            cached['confidence_lower'] = round(adjusted_base * (1 - std_mult * abs(predicted_return)), 4)
-                            cached['confidence_upper'] = round(adjusted_base * (1 + std_mult * abs(predicted_return) * 2), 4)
-                            
-                            logger.info(f"LIVE prediction: HG=F=${prediction_base:.4f} -> XCU/USD≈${adjusted_base:.4f}, predicted=${cached['predicted_price']:.4f} ({predicted_return*100:.2f}%)")
-                    
-            except Exception as e:
-                logger.error(f"Live prediction failed, using cached: {e}")
-            
-            # Update top_influencers from current model metadata
-            try:
-                from app.ai_engine import load_model_metadata
-                from app.features import get_feature_descriptions
-                
-                metadata = load_model_metadata(symbol)
-                importance = metadata.get("importance", [])
-                
-                if importance:
-                    descriptions = get_feature_descriptions()
-                    top_influencers = []
-                    
-                    for item in importance[:10]:
-                        feat = item["feature"]
-                        desc = None
-                        for key, value in descriptions.items():
-                            if key in feat:
-                                desc = value
-                                break
-                        if desc is None:
-                            desc = feat.replace("_", " ").replace("  ", " ").title()
-                        
-                        top_influencers.append({
-                            "feature": feat,
-                            "importance": item["importance"],
-                            "description": desc,
-                        })
-                    
-                    cached['top_influencers'] = top_influencers
-                    logger.info(f"Updated cached snapshot with fresh influencers from model")
-            except Exception as e:
-                logger.debug(f"Could not update influencers in cached snapshot: {e}")
-            
-            return cached
+        if snapshot is None:
+            # No snapshot at all - return minimal response for UI compatibility
+            logger.warning(f"No snapshot found for {symbol}")
+            return {
+                "symbol": symbol,
+                "quality_state": "missing",
+                "model_state": "offline",
+                "current_price": 0.0,
+                "predicted_return": 0.0,
+                "predicted_price": 0.0,
+                "confidence_lower": 0.0,
+                "confidence_upper": 0.0,
+                "sentiment_index": 0.0,
+                "sentiment_label": "Neutral",
+                "top_influencers": [],
+                "data_quality": {
+                    "news_count_7d": 0,
+                    "missing_days": 0,
+                    "coverage_pct": 0,
+                },
+                "generated_at": None,
+                "message": "No analysis available. Pipeline may not have run yet.",
+            }
         
-        # Check if pipeline is locked
-        if is_pipeline_locked():
-            # Try to return stale snapshot
-            stale = get_any_snapshot(session, symbol)
-            if stale:
-                logger.info(f"Pipeline locked, returning stale snapshot for {symbol}")
-                return stale
-            
-            raise HTTPException(
-                status_code=503,
-                detail="Pipeline is currently running. No cached snapshot available. Please try again later."
-            )
+        # Calculate snapshot age
+        now = datetime.now(timezone.utc)
+        generated_at = snapshot.generated_at
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
         
-        # Generate fresh report
-        try:
-            report = generate_analysis_report(session, symbol)
-            
-            if report is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Could not generate analysis for {symbol}. "
-                           "Please ensure data has been fetched (make seed) and model trained (make train)."
-                )
-            
-            # Save as snapshot
-            save_analysis_snapshot(session, report, symbol)
-            
-            return report
-            
-        except Exception as e:
-            logger.error(f"Error generating analysis: {e}")
-            
-            # Try stale snapshot as fallback
-            stale = get_any_snapshot(session, symbol)
-            if stale:
-                logger.info(f"Error in fresh generation, returning stale snapshot")
-                return stale
-            
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error generating analysis: {str(e)}"
-            )
+        age_hours = (now - generated_at).total_seconds() / 3600
+        
+        # Determine quality state
+        if age_hours > STALE_THRESHOLD_HOURS:
+            quality_state = "stale"
+        else:
+            quality_state = "ok"
+        
+        # Build response from snapshot
+        report = snapshot.report_json.copy() if snapshot.report_json else {}
+        
+        # Add/override metadata
+        report["quality_state"] = quality_state
+        report["model_state"] = "ok" if quality_state == "ok" else "degraded"
+        report["snapshot_age_hours"] = round(age_hours, 1)
+        report["generated_at"] = generated_at.isoformat()
+        
+        # Ensure required fields exist (backward compatibility)
+        if "symbol" not in report:
+            report["symbol"] = symbol
+        if "data_quality" not in report:
+            report["data_quality"] = {
+                "news_count_7d": 0,
+                "missing_days": 0,
+                "coverage_pct": 0,
+            }
+        if "top_influencers" not in report:
+            report["top_influencers"] = []
+        
+        logger.info(f"Returning snapshot for {symbol}: age={age_hours:.1f}h, state={quality_state}")
+        
+        return report
 
 
 @app.get(
@@ -366,13 +285,14 @@ async def get_history(
     "/api/health",
     response_model=HealthResponse,
     summary="System health check",
-    description="Returns system status including database, models, and pipeline lock state."
+    description="Returns system status including database, Redis queue, models, and pipeline lock state."
 )
 async def health_check():
     """
     Perform system health check.
     
     Returns status information useful for monitoring and debugging.
+    Includes Redis queue status and snapshot age for Faz 1 observability.
     """
     settings = get_settings()
     model_dir = Path(settings.model_dir)
@@ -382,16 +302,41 @@ async def health_check():
     if model_dir.exists():
         models_found = len(list(model_dir.glob("xgb_*_latest.json")))
     
-    # Get counts
+    # Get counts and snapshot age
     news_count = None
     price_count = None
+    last_snapshot_age = None
     
     try:
         with SessionLocal() as session:
             news_count = session.query(func.count(NewsArticle.id)).scalar()
             price_count = session.query(func.count(PriceBar.id)).scalar()
+            
+            # Get latest snapshot age
+            from app.models import AnalysisSnapshot
+            latest_snapshot = session.query(AnalysisSnapshot).order_by(
+                AnalysisSnapshot.generated_at.desc()
+            ).first()
+            
+            if latest_snapshot and latest_snapshot.generated_at:
+                age = datetime.now(timezone.utc) - latest_snapshot.generated_at.replace(tzinfo=timezone.utc)
+                last_snapshot_age = int(age.total_seconds())
+                
     except Exception as e:
         logger.error(f"Error getting counts: {e}")
+    
+    # Check Redis connectivity
+    redis_ok = None
+    try:
+        from adapters.queue.redis import redis_healthcheck
+        redis_result = await redis_healthcheck()
+        redis_ok = redis_result.get("ok", False)
+    except ImportError:
+        # Redis adapter not available yet
+        redis_ok = None
+    except Exception as e:
+        logger.warning(f"Redis healthcheck failed: {e}")
+        redis_ok = False
     
     # Determine status
     pipeline_locked = is_pipeline_locked()
@@ -399,6 +344,8 @@ async def health_check():
     if models_found == 0:
         status = "degraded"
     elif pipeline_locked:
+        status = "degraded"
+    elif redis_ok is False:
         status = "degraded"
     else:
         status = "healthy"
@@ -410,7 +357,9 @@ async def health_check():
         pipeline_locked=pipeline_locked,
         timestamp=datetime.now(timezone.utc).isoformat(),
         news_count=news_count,
-        price_bars_count=price_count
+        price_bars_count=price_count,
+        redis_ok=redis_ok,
+        last_snapshot_age_seconds=last_snapshot_age,
     )
 
 
@@ -716,148 +665,61 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
 
 @app.post(
     "/api/pipeline/trigger",
-    summary="Trigger data pipeline (requires authentication)",
-    description="Manually trigger data fetch and AI pipeline. Requires Authorization: Bearer <PIPELINE_TRIGGER_SECRET> header.",
+    summary="Enqueue pipeline job (requires authentication)",
+    description="Enqueue a pipeline job to Redis queue. Worker executes the job. Requires Authorization: Bearer <PIPELINE_TRIGGER_SECRET> header.",
     responses={
-        200: {"description": "Pipeline triggered successfully"},
+        200: {"description": "Pipeline job enqueued successfully"},
         401: {"description": "Unauthorized - missing or invalid token"},
         409: {"description": "Pipeline already running"},
+        503: {"description": "Redis queue unavailable"},
     },
 )
 async def trigger_pipeline(
-    fetch_data: bool = Query(default=True, description="Fetch new data from sources"),
-    train_model: bool = Query(default=True, description="Train/retrain XGBoost model"),
+    train_model: bool = Query(default=False, description="Train/retrain XGBoost model"),
+    trigger_source: str = Query(default="api", description="Source of trigger (api, cron, manual)"),
     _auth: None = Depends(verify_pipeline_secret),
 ):
     """
-    Manually trigger the pipeline.
+    Enqueue a pipeline job to Redis queue.
     
-    This will:
-    1. Fetch new news and price data (if fetch_data=True)
-    2. Run sentiment scoring
-    3. Train XGBoost model (if train_model=True)
+    This endpoint does NOT run the pipeline - it only enqueues a job.
+    The worker service consumes and executes the job.
+    
+    Returns:
+        run_id: UUID for tracking this pipeline run
+        enqueued: True if job was enqueued successfully
     """
-    from threading import Thread
-    
+    # Check if pipeline is already running (advisory lock check)
+    # Note: This is a weak check - the worker will do the authoritative lock check
     if is_pipeline_locked():
         raise HTTPException(
             status_code=409,
             detail="Pipeline is already running. Please wait for it to complete."
         )
     
-    def run_pipeline():
-        try:
-            from app.lock import PipelineLock
-            from app.inference import generate_analysis_report, save_analysis_snapshot
-            from app.db import SessionLocal
-            
-            lock = PipelineLock(timeout=0)
-            if not lock.acquire():
-                logger.error("Could not acquire pipeline lock")
-                return
-            
-            try:
-                settings = get_settings()
-                
-                if fetch_data:
-                    logger.info("Step 1: Fetching data...")
-                    from app.data_manager import fetch_all
-                    fetch_all(news=True, prices=True)
-                    logger.info("Data fetch complete")
-                
-                logger.info(f"Step 2: Running AI pipeline (train_model={train_model})...")
-                from app.ai_engine import run_full_pipeline
-                ai_result = run_full_pipeline(
-                    target_symbol="HG=F",
-                    score_sentiment=True,
-                    aggregate_sentiment=True,
-                    train_model=train_model
-                )
-                logger.info(f"AI pipeline complete: scored={ai_result.get('scored_articles', 0)}, aggregated={ai_result.get('aggregated_days', 0)}")
-                
-                # Log model training result specifically
-                if train_model:
-                    model_result = ai_result.get('model_result')
-                    if model_result:
-                        logger.info(f"Model training SUCCESS: {model_result.get('model_path')}")
-                        logger.info(f"Top influencers updated: {[i['feature'] for i in model_result.get('top_influencers', [])[:3]]}")
-                    else:
-                        logger.warning("Model training returned None - check for errors above")
-                
-                # Step 3: Generate snapshot
-                logger.info("Step 3: Generating analysis snapshot...")
-                with SessionLocal() as session:
-                    # Clear old snapshots for this symbol to ensure fresh data
-                    from app.models import AnalysisSnapshot
-                    deleted = session.query(AnalysisSnapshot).filter(
-                        AnalysisSnapshot.symbol == settings.target_symbol
-                    ).delete()
-                    if deleted:
-                        session.commit()
-                        logger.info(f"Cleared {deleted} old snapshot(s) for {settings.target_symbol}")
-                    
-                    report = generate_analysis_report(session, settings.target_symbol)
-                    if report:
-                        save_analysis_snapshot(session, report, settings.target_symbol)
-                        logger.info(f"Snapshot generated")
-                        
-                        # Step 4: Generate AI Commentary
-                        logger.info("Step 4: Generating AI commentary...")
-                        try:
-                            import asyncio
-                            from app.commentary import generate_and_save_commentary
-                            from sqlalchemy import func
-                            from app.models import NewsArticle
-                            from datetime import timedelta
-                            
-                            # Get news count for last 7 days
-                            week_ago = datetime.now() - timedelta(days=7)
-                            news_count = session.query(func.count(NewsArticle.id)).filter(
-                                NewsArticle.published_at >= week_ago
-                            ).scalar() or 0
-                            
-                            # Run async function in sync context
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                commentary = loop.run_until_complete(
-                                    generate_and_save_commentary(
-                                        session=session,
-                                        symbol=settings.target_symbol,
-                                        current_price=report.get('current_price', 0),
-                                        predicted_price=report.get('predicted_price', 0),
-                                        predicted_return=report.get('predicted_return', 0),
-                                        sentiment_index=report.get('sentiment_index', 0),
-                                        sentiment_label=report.get('sentiment_label', 'Neutral'),
-                                        top_influencers=report.get('top_influencers', []),
-                                        news_count=news_count,
-                                    )
-                                )
-                                if commentary:
-                                    logger.info("AI commentary generated and saved")
-                                else:
-                                    logger.warning("AI commentary skipped (API key not configured or failed)")
-                            finally:
-                                loop.close()
-                        except Exception as ce:
-                            logger.error(f"AI commentary generation failed: {ce}")
-                    else:
-                        logger.warning("Could not generate analysis snapshot")
-                
-            finally:
-                lock.release()
-                
-        except Exception as e:
-            logger.error(f"Pipeline error: {e}", exc_info=True)
-    
-    # Run in background thread
-    thread = Thread(target=run_pipeline, daemon=True)
-    thread.start()
-    
-    return {
-        "status": "triggered",
-        "message": "Pipeline started in background. Check /api/health for status.",
-        "fetch_data": fetch_data,
-        "train_model": train_model
-    }
+    try:
+        from adapters.queue.jobs import enqueue_pipeline_job
+        
+        result = await enqueue_pipeline_job(
+            train_model=train_model,
+            trigger_source=trigger_source,
+        )
+        
+        logger.info(f"Pipeline job enqueued: run_id={result['run_id']}, trigger={trigger_source}")
+        
+        return {
+            "status": "enqueued",
+            "message": "Pipeline job enqueued. Worker will execute. Check /api/health for status.",
+            "run_id": result["run_id"],
+            "job_id": result["job_id"],
+            "train_model": train_model,
+            "trigger_source": trigger_source,
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to enqueue pipeline job: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to enqueue job. Redis may be unavailable: {str(e)}"
+        )
 

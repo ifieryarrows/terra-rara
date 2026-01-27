@@ -24,18 +24,37 @@ class DataQuality(BaseModel):
 
 
 class AnalysisReport(BaseModel):
-    """Full analysis report returned by /api/analysis."""
+    """
+    Full analysis report returned by /api/analysis.
+    
+    Faz 1: Snapshot-only mode - fields may be null in degraded states.
+    Check quality_state to determine data freshness.
+    """
     symbol: str = Field(..., description="Trading symbol (e.g., HG=F)")
-    current_price: float = Field(..., description="Most recent closing price")
-    predicted_return: float = Field(..., description="Predicted next-day return")
-    predicted_price: float = Field(..., description="Predicted next-day price")
-    confidence_lower: float = Field(..., description="Lower bound of confidence interval")
-    confidence_upper: float = Field(..., description="Upper bound of confidence interval")
-    sentiment_index: float = Field(..., description="Current sentiment index (-1 to 1)")
-    sentiment_label: str = Field(..., description="Sentiment label: Bullish, Bearish, or Neutral")
-    top_influencers: list[Influencer] = Field(..., description="Top feature influencers")
-    data_quality: DataQuality = Field(..., description="Data quality metrics")
-    generated_at: str = Field(..., description="ISO timestamp of report generation")
+    
+    # Core prediction data (nullable for degraded modes)
+    current_price: Optional[float] = Field(0.0, description="Most recent closing price")
+    predicted_return: Optional[float] = Field(0.0, description="Predicted next-day return")
+    predicted_price: Optional[float] = Field(0.0, description="Predicted next-day price")
+    confidence_lower: Optional[float] = Field(0.0, description="Lower bound of confidence interval")
+    confidence_upper: Optional[float] = Field(0.0, description="Upper bound of confidence interval")
+    sentiment_index: Optional[float] = Field(0.0, description="Current sentiment index (-1 to 1)")
+    sentiment_label: Optional[str] = Field("Neutral", description="Sentiment label: Bullish, Bearish, or Neutral")
+    
+    # Feature influencers (may be empty)
+    top_influencers: list[Influencer] = Field(default_factory=list, description="Top feature influencers")
+    
+    # Data quality (always present)
+    data_quality: Optional[DataQuality] = Field(None, description="Data quality metrics")
+    
+    # Timestamps
+    generated_at: Optional[str] = Field(None, description="ISO timestamp of report generation")
+    
+    # Faz 1: Quality state fields
+    quality_state: Optional[str] = Field("ok", description="Snapshot quality: ok, stale, missing")
+    model_state: Optional[str] = Field("ok", description="Model status: ok, degraded, offline")
+    snapshot_age_hours: Optional[float] = Field(None, description="Hours since snapshot was generated")
+    message: Optional[str] = Field(None, description="Human-readable status message")
 
     class Config:
         json_schema_extra = {
@@ -57,7 +76,10 @@ class AnalysisReport(BaseModel):
                     "missing_days": 0,
                     "coverage_pct": 100
                 },
-                "generated_at": "2026-01-02T09:00:00Z"
+                "generated_at": "2026-01-02T09:00:00Z",
+                "quality_state": "ok",
+                "model_state": "ok",
+                "snapshot_age_hours": 2.5
             }
         }
 
@@ -96,17 +118,23 @@ class HealthResponse(BaseModel):
     timestamp: str = Field(..., description="Current server timestamp")
     news_count: Optional[int] = Field(None, description="Total news articles in database")
     price_bars_count: Optional[int] = Field(None, description="Total price bars in database")
+    
+    # Faz 1: Queue and snapshot observability
+    redis_ok: Optional[bool] = Field(None, description="Redis queue connectivity")
+    last_snapshot_age_seconds: Optional[int] = Field(None, description="Age of last analysis snapshot in seconds")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "status": "healthy",
-                "db_type": "sqlite",
+                "db_type": "postgresql",
                 "models_found": 1,
                 "pipeline_locked": False,
                 "timestamp": "2026-01-02T10:00:00Z",
                 "news_count": 1250,
-                "price_bars_count": 1460
+                "price_bars_count": 1460,
+                "redis_ok": True,
+                "last_snapshot_age_seconds": 3600
             }
         }
 

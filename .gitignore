@@ -62,6 +62,7 @@ yarn-error.log*
 # IDE
 .idea/
 .vscode/
+.gemini/
 *.swp
 *.swo
 *~
