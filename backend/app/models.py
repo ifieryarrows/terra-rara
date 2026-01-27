@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy import (
     Column,
     Integer,
+    BigInteger,
     String,
     Float,
     DateTime,
@@ -24,7 +25,9 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     JSON,
+    func,
 )
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -302,15 +305,27 @@ class PipelineRunMetrics(Base):
     train_samples = Column(Integer, nullable=True)
     val_samples = Column(Integer, nullable=True)
     
-    # Data quality
+    # Data quality (legacy - news_articles table)
     news_imported = Column(Integer, nullable=True)
     news_duplicates = Column(Integer, nullable=True)
     price_bars_updated = Column(Integer, nullable=True)
     missing_price_days = Column(Integer, nullable=True)
     
+    # Faz 2: Reproducible news pipeline stats
+    news_raw_inserted = Column(Integer, nullable=True)
+    news_raw_duplicates = Column(Integer, nullable=True)
+    news_processed_inserted = Column(Integer, nullable=True)
+    news_processed_duplicates = Column(Integer, nullable=True)
+    
     # Snapshot info
     snapshot_generated = Column(Boolean, default=False)
     commentary_generated = Column(Boolean, default=False)
+    
+    # Faz 2: News cut-off time
+    news_cutoff_time = Column(DateTime(timezone=True), nullable=True)
+    
+    # Quality state for degraded runs
+    quality_state = Column(String(20), nullable=True, default="ok")  # ok/stale/degraded/failed
     
     # Status
     status = Column(String(20), nullable=False, default="running")  # running/success/failed
@@ -318,3 +333,97 @@ class PipelineRunMetrics(Base):
     
     def __repr__(self):
         return f"<PipelineRunMetrics(run_id={self.run_id}, status={self.status})>"
+
+
+# =============================================================================
+# Faz 2: Reproducible News Pipeline
+# =============================================================================
+
+class NewsRaw(Base):
+    """
+    Ham haber verisi - RSS/API'den geldiği gibi saklanır.
+    
+    Faz 2: Reproducibility için "golden source".
+    
+    Dedup stratejisi:
+    - url_hash: nullable + partial unique index (WHERE url_hash IS NOT NULL)
+    - URL eksikse title-based fallback processed seviyesinde yapılır
+    """
+    __tablename__ = "news_raw"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    
+    # URL (nullable - RSS'te eksik olabilir)
+    url = Column(String(2000), nullable=True)
+    url_hash = Column(String(64), nullable=True, index=True)  # sha256, partial unique
+    
+    # Content
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Metadata
+    source = Column(String(200), nullable=True)  # "google_news", "newsapi"
+    source_feed = Column(String(500), nullable=True)  # Exact RSS URL or query
+    published_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Pipeline run tracking (UUID)
+    run_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    
+    # Raw payload (debug/audit)
+    raw_payload = Column(JSONB, nullable=True)
+    
+    # Relationship
+    processed_items = relationship("NewsProcessed", back_populates="raw")
+    
+    def __repr__(self):
+        return f"<NewsRaw(id={self.id}, title='{self.title[:30]}...')>"
+
+
+class NewsProcessed(Base):
+    """
+    İşlenmiş haber - dedup, cleaning, language filter sonrası.
+    
+    Faz 2: Sentiment scoring için input.
+    
+    Dedup stratejisi:
+    - dedup_key: NOT NULL + UNIQUE - asıl dedup otoritesi
+    - Öncelik: url_hash varsa kullan, yoksa sha256(source + canonical_title_hash)
+    """
+    __tablename__ = "news_processed"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    
+    # FK to raw (RESTRICT - raw silinirse processed da silinmemeli)
+    raw_id = Column(
+        BigInteger, 
+        ForeignKey("news_raw.id", ondelete="RESTRICT"), 
+        nullable=False, 
+        index=True
+    )
+    
+    # Canonical content
+    canonical_title = Column(String(500), nullable=False)
+    canonical_title_hash = Column(String(64), nullable=False, index=True)  # sha256
+    cleaned_text = Column(Text, nullable=True)  # title + description, cleaned
+    
+    # Dedup key - ASIL OTORİTE
+    dedup_key = Column(String(64), unique=True, nullable=False, index=True)  # sha256
+    
+    # Language
+    language = Column(String(10), nullable=True, default="en")
+    language_confidence = Column(Float, nullable=True)
+    
+    # Processing metadata
+    processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    run_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    
+    # Future: Tone/Impact scores (Faz 3)
+    # tone_score = Column(Float, nullable=True)
+    # impact_direction = Column(String(20), nullable=True)  # bullish/bearish/neutral
+    
+    # Relationship
+    raw = relationship("NewsRaw", back_populates="processed_items")
+    
+    def __repr__(self):
+        return f"<NewsProcessed(id={self.id}, dedup_key='{self.dedup_key[:16]}...')>"
