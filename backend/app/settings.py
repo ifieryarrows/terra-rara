@@ -64,13 +64,13 @@ class Settings(BaseSettings):
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "xiaomi/mimo-v2-flash:free"
+    openrouter_model: str = "openai/gpt-oss-120b:free"
     
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
     
     # LLM Sentiment Analysis
-    llm_sentiment_model: str = "xiaomi/mimo-v2-flash:free"
+    llm_sentiment_model: str = "openai/gpt-oss-120b:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
