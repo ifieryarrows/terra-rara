@@ -47,14 +47,14 @@ def compute_url_hash(url: Optional[str]) -> Optional[str]:
 def insert_raw_article(
     session: Session,
     url: Optional[str],
-    title: str,
+    title: Optional[str],
     description: Optional[str],
     source: str,
     source_feed: str,
-    published_at: datetime,
+    published_at: Optional[datetime],
     run_id: uuid.UUID,
     raw_payload: Optional[dict] = None,
-) -> Optional[int]:
+) -> tuple[Optional[int], str]:
     """
     Insert single article to news_raw.
     
@@ -63,21 +63,28 @@ def insert_raw_article(
     Args:
         session: Database session
         url: Article URL (can be None)
-        title: Article title
+        title: Article title (will use fallback if empty)
         description: Article description
         source: Source name (e.g., "google_news", "newsapi")
         source_feed: Exact feed URL or query string
-        published_at: Publication timestamp (UTC)
+        published_at: Publication timestamp (will use now if None)
         run_id: Pipeline run UUID
         raw_payload: Original response fragment for debugging
         
     Returns:
-        raw_id if inserted, None if duplicate or error
+        Tuple of (raw_id, status) where status is 'inserted', 'duplicate', or 'error'
     """
-    if not title or not title.strip():
-        return None
+    fetched_at = datetime.now(timezone.utc)
     
+    # Ensure title is never None/empty (NOT NULL constraint)
+    if not title or not title.strip():
+        title = "(untitled)"
     title = clean_text(title)[:500]  # Truncate to column limit
+    
+    # Ensure published_at is never None (NOT NULL constraint)
+    if not published_at:
+        published_at = fetched_at
+    
     url_hash = compute_url_hash(url)
     
     try:
@@ -93,6 +100,7 @@ def insert_raw_article(
                 source=source,
                 source_feed=source_feed[:500] if source_feed else None,
                 published_at=published_at,
+                fetched_at=fetched_at,
                 run_id=run_id,
                 raw_payload=raw_payload,
             )
@@ -105,14 +113,13 @@ def insert_raw_article(
             
             if result.rowcount > 0:
                 # Get the inserted ID
-                # For PostgreSQL, we need to query it
                 row = session.execute(
                     text("SELECT id FROM news_raw WHERE url_hash = :hash ORDER BY id DESC LIMIT 1"),
                     {"hash": url_hash}
                 ).fetchone()
-                return row[0] if row else None
+                return (row[0] if row else None, "inserted")
             
-            return None  # Duplicate
+            return (None, "duplicate")
             
         else:
             # SQLite fallback - simple insert with error handling
@@ -124,17 +131,22 @@ def insert_raw_article(
                 source=source,
                 source_feed=source_feed[:500] if source_feed else None,
                 published_at=published_at,
+                fetched_at=fetched_at,
                 run_id=run_id,
                 raw_payload=raw_payload,
             )
             session.add(article)
             session.flush()
-            return article.id
+            return (article.id, "inserted")
             
     except Exception as e:
-        logger.debug(f"Insert raw article failed: {e}")
+        # Distinguish between duplicate (23505) and other errors
+        pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+        if pgcode == "23505":  # Unique violation
+            return (None, "duplicate")
+        logger.warning(f"Insert raw article failed (pgcode={pgcode}): {e}")
         session.rollback()
-        return None
+        return (None, "error")
 
 
 def ingest_news_to_raw(
@@ -202,22 +214,24 @@ def ingest_news_to_raw(
                     stats["fetched"] += len(articles)
                     
                     for article in articles:
-                        raw_id = insert_raw_article(
+                        raw_id, status = insert_raw_article(
                             session=session,
                             url=article.get("url"),
-                            title=article.get("title", ""),
+                            title=article.get("title"),
                             description=article.get("description"),
                             source="google_news",
                             source_feed=f"google_news:{query}",
-                            published_at=article.get("published_at", datetime.now(timezone.utc)),
+                            published_at=article.get("published_at"),
                             run_id=run_id,
                             raw_payload={"query": query, "source": article.get("source")},
                         )
                         
-                        if raw_id:
+                        if status == "inserted":
                             stats["inserted"] += 1
-                        else:
+                        elif status == "duplicate":
                             stats["duplicates"] += 1
+                        else:
+                            stats["errors"] += 1
                             
                 except Exception as e:
                     logger.warning(f"Error fetching {source} for '{query}': {e}")
@@ -239,22 +253,24 @@ def ingest_news_to_raw(
                     stats["fetched"] += len(articles)
                     
                     for article in articles:
-                        raw_id = insert_raw_article(
+                        raw_id, status = insert_raw_article(
                             session=session,
                             url=article.get("url"),
-                            title=article.get("title", ""),
+                            title=article.get("title"),
                             description=article.get("description"),
                             source="newsapi",
                             source_feed=f"newsapi:{query}",
-                            published_at=article.get("published_at", datetime.now(timezone.utc)),
+                            published_at=article.get("published_at"),
                             run_id=run_id,
                             raw_payload={"query": query, "author": article.get("author")},
                         )
                         
-                        if raw_id:
+                        if status == "inserted":
                             stats["inserted"] += 1
-                        else:
+                        elif status == "duplicate":
                             stats["duplicates"] += 1
+                        else:
+                            stats["errors"] += 1
                             
                 except Exception as e:
                     logger.warning(f"Error fetching newsapi for '{query}': {e}")
