@@ -20,6 +20,8 @@ COPY ./app /code/app
 COPY ./config /code/config
 COPY ./adapters /code/adapters
 COPY ./worker /code/worker
+COPY ./pipelines /code/pipelines
+COPY ./migrations /code/migrations
 
 # Copy pre-trained model files (from Kaggle)
 COPY ./data/models /data/models
