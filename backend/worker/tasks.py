@@ -145,7 +145,7 @@ async def run_pipeline(
     
     # Get a dedicated session for this pipeline run
     # IMPORTANT: This session holds the advisory lock
-    session: Session = get_session()
+    session: Session = SessionLocal()
     quality_state = "ok"
     result = {}
     
