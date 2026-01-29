@@ -10,6 +10,7 @@ Handles:
 
 import json
 import logging
+import re
 
 # Suppress httpx request logging to prevent API keys in URLs from appearing in logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -37,6 +38,72 @@ from app.ai_engine import load_model, load_model_metadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Feature Alignment Helpers (Train/Inference compatibility)
+# =============================================================================
+
+def _sanitize_symbol(sym: str) -> str:
+    """Convert symbol to safe column prefix (HG=F -> HG_F)."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", sym).strip("_")
+
+
+def _rename_sanitized_to_raw(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    """
+    Rename sanitized column prefixes back to raw symbol names.
+    Example: HG_F_ret1 -> HG=F_ret1
+    """
+    rename_map = {}
+    cols = list(df.columns)
+    
+    for sym in symbols:
+        sanitized = _sanitize_symbol(sym)
+        if sanitized == sym:
+            continue  # No change needed
+        
+        sanitized_prefix = sanitized + "_"
+        raw_prefix = sym + "_"
+        
+        for col in cols:
+            if col.startswith(sanitized_prefix):
+                new_name = raw_prefix + col[len(sanitized_prefix):]
+                rename_map[col] = new_name
+    
+    if rename_map:
+        logger.debug(f"Renaming {len(rename_map)} columns from sanitized to raw")
+        return df.rename(columns=rename_map)
+    return df
+
+
+def _align_features_to_model(df: pd.DataFrame, expected_features: list[str]) -> pd.DataFrame:
+    """
+    Align DataFrame columns to match model's expected feature names.
+    - Missing features are filled with 0.0
+    - Extra features are dropped
+    - Column order matches expected_features
+    """
+    if not expected_features:
+        logger.warning("No expected features provided; skipping alignment")
+        return df
+    
+    present = set(df.columns)
+    expected = set(expected_features)
+    
+    missing = expected - present
+    extra = present - expected
+    
+    if missing or extra:
+        logger.info(
+            f"Feature alignment: expected={len(expected_features)} present={len(df.columns)} "
+            f"missing={len(missing)} extra={len(extra)}"
+        )
+        if missing:
+            logger.debug(f"Missing features (first 10): {list(missing)[:10]}")
+        if extra:
+            logger.debug(f"Extra features (first 10): {list(extra)[:10]}")
+    
+    return df.reindex(columns=expected_features, fill_value=0.0)
 
 
 def get_current_price(session: Session, symbol: str) -> Optional[float]:
@@ -205,6 +272,10 @@ def build_features_for_prediction(
     Build feature vector for live prediction.
     Uses the most recent available data.
     MUST use training_symbols to match the model's training data.
+    
+    Includes robust alignment to handle:
+    - Sanitized vs raw symbol name differences (HG_F vs HG=F)
+    - Missing/extra features between training and inference
     """
     settings = get_settings()
     # Use training_symbols (not symbols_list) to match model training
@@ -256,12 +327,17 @@ def build_features_for_prediction(
     # Get latest row
     latest = all_features.iloc[[-1]].copy()
     
-    # Robust feature alignment:
-    # - Reindex to exactly match model's expected features
+    # STEP 1: Rename sanitized prefixes to raw symbol names if needed
+    # This handles cases where feature generation used sanitized names (HG_F)
+    # but model was trained with raw names (HG=F)
+    all_symbols = [target_symbol] + list(symbols)
+    latest = _rename_sanitized_to_raw(latest, all_symbols)
+    
+    # STEP 2: Align to model's expected features
     # - Missing features get 0.0 (same as missing data handling in training)
     # - Extra features are dropped
-    # This prevents ValueError when symbol set changes between training and inference
-    latest = latest.reindex(columns=feature_names, fill_value=0.0)
+    # - Column order matches expected feature_names
+    latest = _align_features_to_model(latest, feature_names)
     
     # Ensure float dtype for XGBoost
     latest = latest.astype(float)
