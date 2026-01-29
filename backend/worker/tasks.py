@@ -487,21 +487,25 @@ async def _execute_pipeline_stages_v2(
         session.rollback()
     
     # -------------------------------------------------------------------------
-    # Stage 6: Generate commentary
+    # Stage 6: Generate commentary (only if snapshot was generated)
     # -------------------------------------------------------------------------
-    logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
-    try:
-        from app.commentary import generate_and_save_commentary
-        
-        generate_and_save_commentary(session, "HG=F")
-        session.commit()
-        
-        result["commentary_generated"] = True
-        update_run_metrics(session, run_id, commentary_generated=True)
-        session.commit()
-        
-    except Exception as e:
-        logger.warning(f"[run_id={run_id}] Stage 6 failed: {e}")
+    if result.get("snapshot_generated"):
+        logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
+        try:
+            from app.commentary import generate_and_save_commentary
+            
+            generate_and_save_commentary(session, "HG=F")
+            session.commit()
+            
+            result["commentary_generated"] = True
+            update_run_metrics(session, run_id, commentary_generated=True)
+            session.commit()
+            
+        except Exception as e:
+            logger.warning(f"[run_id={run_id}] Stage 6 failed: {e}")
+            result["commentary_generated"] = False
+    else:
+        logger.warning(f"[run_id={run_id}] Stage 6 skipped: no snapshot generated")
         result["commentary_generated"] = False
     
     return result
