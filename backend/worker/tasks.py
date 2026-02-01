@@ -459,6 +459,7 @@ async def _execute_pipeline_stages_v2(
     # Stage 5: Generate snapshot
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 5: Generate snapshot")
+    snapshot_report = None  # Will be used by Stage 6
     try:
         from app.inference import generate_analysis_report, save_analysis_snapshot
         
@@ -475,6 +476,7 @@ async def _execute_pipeline_stages_v2(
             session.commit()
             
             result["snapshot_generated"] = True
+            snapshot_report = report  # Save for Stage 6
             update_run_metrics(session, run_id, snapshot_generated=True)
             session.commit()
         else:
@@ -489,12 +491,24 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     # Stage 6: Generate commentary (only if snapshot was generated)
     # -------------------------------------------------------------------------
-    if result.get("snapshot_generated"):
+    if result.get("snapshot_generated") and snapshot_report:
         logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
         try:
+            import asyncio
             from app.commentary import generate_and_save_commentary
             
-            generate_and_save_commentary(session, "HG=F")
+            # Extract required fields from snapshot
+            asyncio.run(generate_and_save_commentary(
+                session=session,
+                symbol="HG=F",
+                current_price=snapshot_report.get("current_price", 0.0),
+                predicted_price=snapshot_report.get("predicted_price", 0.0),
+                predicted_return=snapshot_report.get("predicted_return", 0.0),
+                sentiment_index=snapshot_report.get("sentiment_index", 0.0),
+                sentiment_label=snapshot_report.get("sentiment_label", "Neutral"),
+                top_influencers=snapshot_report.get("top_influencers", []),
+                news_count=snapshot_report.get("data_quality", {}).get("news_count_7d", 0),
+            ))
             session.commit()
             
             result["commentary_generated"] = True
