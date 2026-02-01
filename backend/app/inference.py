@@ -311,18 +311,27 @@ def build_features_for_prediction(
             symbol_features = generate_symbol_features(df, symbol)
             all_features = all_features.join(symbol_features, how="left")
     
-    # Add sentiment
+    # Add sentiment (use concat to avoid fragmentation warning)
     sentiment_df = load_sentiment_data(session, start_date, end_date)
+    sentiment_parts = []
     
     if not sentiment_df.empty:
         sentiment_aligned = sentiment_df.reindex(target_df.index).ffill(limit=3)
-        all_features["sentiment__index"] = sentiment_aligned["sentiment_index"].fillna(
-            settings.sentiment_missing_fill
+        sentiment_parts.append(
+            sentiment_aligned["sentiment_index"].fillna(settings.sentiment_missing_fill).rename("sentiment__index")
         )
-        all_features["sentiment__news_count"] = sentiment_aligned["news_count"].fillna(0)
+        sentiment_parts.append(
+            sentiment_aligned["news_count"].fillna(0).rename("sentiment__news_count")
+        )
     else:
-        all_features["sentiment__index"] = settings.sentiment_missing_fill
-        all_features["sentiment__news_count"] = 0
+        sentiment_parts.append(
+            pd.Series(settings.sentiment_missing_fill, index=all_features.index, name="sentiment__index")
+        )
+        sentiment_parts.append(
+            pd.Series(0, index=all_features.index, name="sentiment__news_count")
+        )
+    
+    all_features = pd.concat([all_features] + sentiment_parts, axis=1)
     
     # Get latest row
     latest = all_features.iloc[[-1]].copy()

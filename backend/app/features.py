@@ -297,23 +297,34 @@ def build_feature_matrix(
     # Load and join sentiment data
     sentiment_df = load_sentiment_data(session, start_date, end_date)
     
+    # Build sentiment features as separate Series, then concat (avoids fragmentation warning)
+    sentiment_parts = []
+    
     if not sentiment_df.empty:
         # Reindex sentiment to target calendar
         sentiment_aligned = sentiment_df.reindex(target_df.index)
         sentiment_aligned = sentiment_aligned.ffill(limit=max_ffill)
         
-        # Add sentiment features
-        all_features["sentiment__index"] = sentiment_aligned["sentiment_index"].fillna(
-            settings.sentiment_missing_fill
+        sentiment_parts.append(
+            sentiment_aligned["sentiment_index"].fillna(settings.sentiment_missing_fill).rename("sentiment__index")
         )
-        all_features["sentiment__news_count"] = sentiment_aligned["news_count"].fillna(0)
+        sentiment_parts.append(
+            sentiment_aligned["news_count"].fillna(0).rename("sentiment__news_count")
+        )
         
         logger.info(f"Sentiment data joined: {sentiment_df.shape[0]} daily records")
     else:
         # No sentiment data - use defaults
-        all_features["sentiment__index"] = settings.sentiment_missing_fill
-        all_features["sentiment__news_count"] = 0
+        sentiment_parts.append(
+            pd.Series(settings.sentiment_missing_fill, index=all_features.index, name="sentiment__index")
+        )
+        sentiment_parts.append(
+            pd.Series(0, index=all_features.index, name="sentiment__news_count")
+        )
         logger.warning("No sentiment data available, using default values")
+    
+    # Concat all at once to avoid fragmentation
+    all_features = pd.concat([all_features] + sentiment_parts, axis=1)
     
     # Create target: next-day return
     # IMPORTANT: Shift by -1 to get FUTURE return (what we're predicting)
