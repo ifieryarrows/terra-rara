@@ -494,11 +494,10 @@ async def _execute_pipeline_stages_v2(
     if result.get("snapshot_generated") and snapshot_report:
         logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
         try:
-            import asyncio
             from app.commentary import generate_and_save_commentary
             
-            # Extract required fields from snapshot
-            asyncio.run(generate_and_save_commentary(
+            # Extract required fields from snapshot and await async call
+            await generate_and_save_commentary(
                 session=session,
                 symbol="HG=F",
                 current_price=snapshot_report.get("current_price", 0.0),
@@ -508,7 +507,7 @@ async def _execute_pipeline_stages_v2(
                 sentiment_label=snapshot_report.get("sentiment_label", "Neutral"),
                 top_influencers=snapshot_report.get("top_influencers", []),
                 news_count=snapshot_report.get("data_quality", {}).get("news_count_7d", 0),
-            ))
+            )
             session.commit()
             
             result["commentary_generated"] = True
