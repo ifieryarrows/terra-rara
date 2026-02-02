@@ -429,6 +429,8 @@ def generate_analysis_report(
     dmatrix = xgb.DMatrix(X, feature_names=features)
     model_output = float(model.predict(dmatrix)[0])
     
+    logger.info(f"Model prediction: raw_output={model_output:.6f}, target_type={target_type}")
+    
     # Compute predicted_return and predicted_price based on target_type
     if target_type == "simple_return":
         predicted_return = model_output
