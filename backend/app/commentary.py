@@ -29,51 +29,84 @@ async def determine_ai_stance(commentary: str) -> str:
     """
     settings = get_settings()
     
-    if not settings.openrouter_api_key or not commentary:
+    if not commentary:
         return "NEUTRAL"
     
-    prompt = f"""Analyze the following market commentary and determine the overall market stance.
+    # First try API-based stance detection
+    if settings.openrouter_api_key:
+        prompt = f"""Analyze the following market commentary and determine the overall market stance.
 Respond with ONLY one word: BULLISH, NEUTRAL, or BEARISH.
 
 Commentary:
 {commentary}
 
 Your response (one word only):"""
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.openrouter_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10,
-                    "temperature": 0.1,
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                stance = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.openrouter_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 10,
+                        "temperature": 0.1,
+                    }
+                )
                 
-                # Validate response
-                if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
-                    logger.info(f"AI stance determined: {stance}")
-                    return stance
+                if response.status_code == 200:
+                    data = response.json()
+                    stance = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
+                    
+                    # Validate response
+                    if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
+                        logger.info(f"AI stance determined: {stance}")
+                        return stance
+                    else:
+                        logger.warning(f"Invalid AI stance response: '{stance}', using keyword fallback")
                 else:
-                    logger.warning(f"Invalid AI stance response: {stance}, defaulting to NEUTRAL")
-                    return "NEUTRAL"
-            else:
-                logger.error(f"AI stance API error: {response.status_code}")
-                return "NEUTRAL"
-                
-    except Exception as e:
-        logger.error(f"AI stance detection failed: {e}")
-        return "NEUTRAL"
+                    logger.warning(f"AI stance API error: {response.status_code}, using keyword fallback")
+                    
+        except Exception as e:
+            logger.warning(f"AI stance detection failed: {e}, using keyword fallback")
+    
+    # Fallback: keyword-based stance detection
+    return _detect_stance_from_keywords(commentary)
+
+
+def _detect_stance_from_keywords(text: str) -> str:
+    """
+    Detect market stance from commentary text using keyword matching.
+    
+    Simple heuristic based on bullish/bearish keyword counts.
+    """
+    text_lower = text.lower()
+    
+    bullish_keywords = [
+        "bullish", "upside", "upward", "positive", "gain", "rise", "rising",
+        "higher", "growth", "optimistic", "rally", "surge", "strength"
+    ]
+    bearish_keywords = [
+        "bearish", "downside", "downward", "negative", "decline", "fall", "falling",
+        "lower", "weakness", "pessimistic", "drop", "slump", "pressure"
+    ]
+    
+    bullish_count = sum(1 for kw in bullish_keywords if kw in text_lower)
+    bearish_count = sum(1 for kw in bearish_keywords if kw in text_lower)
+    
+    if bullish_count > bearish_count + 1:
+        stance = "BULLISH"
+    elif bearish_count > bullish_count + 1:
+        stance = "BEARISH"
+    else:
+        stance = "NEUTRAL"
+    
+    logger.info(f"Keyword stance detection: bullish={bullish_count}, bearish={bearish_count} -> {stance}")
+    return stance
 
 async def generate_commentary(
     current_price: float,
