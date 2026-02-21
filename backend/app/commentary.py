@@ -1,16 +1,38 @@
 """
 AI Commentary Generator using OpenRouter API.
-Generates human-readable market analysis from FinBERT + XGBoost results.
+Generates market commentary and stance in a single structured LLM call.
 """
 
-import logging
-from typing import Optional
-from datetime import datetime
+from __future__ import annotations
 
-from .settings import get_settings
+import json
+import logging
+from datetime import datetime
+from typing import Optional
+
 from .openrouter_client import OpenRouterError, create_chat_completion
+from .settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+VALID_STANCES = {"BULLISH", "NEUTRAL", "BEARISH"}
+
+COMMENTARY_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "commentary_with_stance",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "stance": {"type": "string", "enum": ["BULLISH", "NEUTRAL", "BEARISH"]},
+                "commentary": {"type": "string"},
+            },
+            "required": ["stance", "commentary"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def _extract_chat_message_content(data: dict) -> str:
@@ -30,6 +52,45 @@ def _extract_chat_message_content(data: dict) -> str:
     return ""
 
 
+def _clean_json_content(content: str) -> str:
+    """Normalize model text into parseable JSON content."""
+    normalized = content.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        normalized = "\n".join(lines).strip()
+
+    if normalized.startswith("json"):
+        normalized = normalized[4:].strip()
+
+    if not normalized.startswith("{"):
+        first = normalized.find("{")
+        last = normalized.rfind("}")
+        if first != -1 and last != -1 and last > first:
+            normalized = normalized[first : last + 1]
+
+    return normalized
+
+
+def _normalize_stance(value: str) -> str:
+    stance = str(value or "").strip().upper()
+    if stance not in VALID_STANCES:
+        raise ValueError(f"Invalid stance: {value!r}")
+    return stance
+
+
+def _deterministic_stance_from_inputs(predicted_return: float, sentiment_index: float) -> str:
+    combined = float(predicted_return) + float(sentiment_index)
+    if combined > 0:
+        return "BULLISH"
+    if combined < 0:
+        return "BEARISH"
+    return "NEUTRAL"
+
+
 def _build_commentary_template_fallback(
     current_price: float,
     predicted_price: float,
@@ -45,130 +106,114 @@ def _build_commentary_template_fallback(
     while len(top_driver_names) < 3:
         top_driver_names.append("unknown_driver")
 
-    return "\n".join([
-        "Risks:",
-        f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
-        f"2. Sentiment regime is {sentiment_label} with score {sentiment_index:.3f}, which can reverse quickly.",
-        f"3. News sample size ({news_count}) may be insufficient for stable short-horizon inference.",
-        "Opportunities:",
-        f"1. Predicted price path implies a move from ${current_price:.4f} to ${predicted_price:.4f}.",
-        f"2. Feature signal concentration around `{top_driver_names[0]}` can support tactical monitoring.",
-        f"3. Secondary drivers `{top_driver_names[1]}` and `{top_driver_names[2]}` provide confirmation checkpoints.",
-        f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
-        "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
-        "This is NOT financial advice.",
-    ])
-
-
-async def determine_ai_stance(commentary: str) -> str:
-    """
-    Have the AI analyze its own commentary to determine market stance.
-    
-    Args:
-        commentary: The generated commentary text
-        
-    Returns:
-        BULLISH, NEUTRAL, or BEARISH
-    """
-    settings = get_settings()
-    
-    if not commentary:
-        return "NEUTRAL"
-    
-    # First try API-based stance detection
-    if settings.openrouter_api_key:
-        prompt = f"""Analyze the following market commentary and determine the overall market stance.
-Respond with ONLY one word: BULLISH, NEUTRAL, or BEARISH.
-
-Commentary:
-{commentary}
-
-Your response (one word only):"""
-        
-        try:
-            data = await create_chat_completion(
-                api_key=settings.openrouter_api_key,
-                model=settings.resolved_commentary_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0.1,
-                timeout_seconds=30.0,
-                max_retries=settings.openrouter_max_retries,
-                rpm=settings.openrouter_rpm,
-                fallback_models=settings.openrouter_fallback_models_list,
-            )
-            stance = _extract_chat_message_content(data).upper()
-
-            # Validate response
-            if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
-                logger.info(f"AI stance determined: {stance}")
-                return stance
-            logger.warning(f"Invalid AI stance response: '{stance}', using keyword fallback")
-        except OpenRouterError as e:
-            logger.warning(f"AI stance detection failed via OpenRouter: {e}, using keyword fallback")
-        except Exception as e:
-            logger.warning(f"AI stance detection failed: {e}, using keyword fallback")
-    
-    # Fallback: keyword-based stance detection
-    return _detect_stance_from_keywords(commentary)
+    return "\n".join(
+        [
+            "Risks:",
+            f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
+            f"2. Sentiment regime is {sentiment_label} with score {sentiment_index:.3f}, which can reverse quickly.",
+            f"3. News sample size ({news_count}) may be insufficient for stable short-horizon inference.",
+            "Opportunities:",
+            f"1. Predicted price path implies a move from ${current_price:.4f} to ${predicted_price:.4f}.",
+            f"2. Feature signal concentration around `{top_driver_names[0]}` can support tactical monitoring.",
+            f"3. Secondary drivers `{top_driver_names[1]}` and `{top_driver_names[2]}` provide confirmation checkpoints.",
+            f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
+            "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
+            "This is NOT financial advice.",
+        ]
+    )
 
 
 def _detect_stance_from_keywords(text: str) -> str:
-    """
-    Detect market stance from commentary text using keyword matching.
-    
-    Simple heuristic based on bullish/bearish keyword counts.
-    """
-    text_lower = text.lower()
-    
+    """Fallback stance detector from commentary keywords."""
+    text_lower = (text or "").lower()
+
     bullish_keywords = [
-        "bullish", "upside", "upward", "positive", "gain", "rise", "rising",
-        "higher", "growth", "optimistic", "rally", "surge", "strength"
+        "bullish",
+        "upside",
+        "upward",
+        "positive",
+        "gain",
+        "rise",
+        "rising",
+        "higher",
+        "growth",
+        "optimistic",
+        "rally",
+        "surge",
+        "strength",
     ]
     bearish_keywords = [
-        "bearish", "downside", "downward", "negative", "decline", "fall", "falling",
-        "lower", "weakness", "pessimistic", "drop", "slump", "pressure"
+        "bearish",
+        "downside",
+        "downward",
+        "negative",
+        "decline",
+        "fall",
+        "falling",
+        "lower",
+        "weakness",
+        "pessimistic",
+        "drop",
+        "slump",
+        "pressure",
     ]
-    
+
     bullish_count = sum(1 for kw in bullish_keywords if kw in text_lower)
     bearish_count = sum(1 for kw in bearish_keywords if kw in text_lower)
-    
+
     if bullish_count > bearish_count + 1:
         stance = "BULLISH"
     elif bearish_count > bullish_count + 1:
         stance = "BEARISH"
     else:
         stance = "NEUTRAL"
-    
-    logger.info(f"Keyword stance detection: bullish={bullish_count}, bearish={bearish_count} -> {stance}")
+
+    logger.info(
+        "Keyword stance detection: bullish=%s, bearish=%s -> %s",
+        bullish_count,
+        bearish_count,
+        stance,
+    )
     return stance
 
-async def generate_commentary(
+
+async def determine_ai_stance(commentary: str) -> str:
+    """
+    Backward-compatible stance helper.
+    Dedicated stance LLM call is disabled; this fallback is deterministic and local.
+    """
+    if not commentary:
+        return "NEUTRAL"
+    return _detect_stance_from_keywords(commentary)
+
+
+def _parse_commentary_payload(content: str) -> tuple[str, str]:
+    payload = json.loads(_clean_json_content(content))
+    if not isinstance(payload, dict):
+        raise ValueError("Commentary payload must be a JSON object")
+
+    stance = _normalize_stance(payload.get("stance", ""))
+    commentary = str(payload.get("commentary", "")).strip()
+    if not commentary:
+        raise ValueError("Commentary text is empty")
+
+    if "This is NOT financial advice." not in commentary:
+        commentary = f"{commentary}\nThis is NOT financial advice."
+    return stance, commentary
+
+
+async def _generate_commentary_and_stance(
+    *,
     current_price: float,
     predicted_price: float,
     predicted_return: float,
     sentiment_index: float,
     sentiment_label: str,
     top_influencers: list[dict],
-    news_count: int = 0,
-) -> Optional[str]:
-    """
-    Generate AI commentary using OpenRouter API.
-    
-    Args:
-        current_price: Current copper price
-        predicted_price: Model's predicted price for tomorrow
-        predicted_return: Expected return percentage
-        sentiment_index: Current sentiment score (-1 to 1)
-        sentiment_label: Bullish/Bearish/Neutral
-        top_influencers: List of top feature influencers
-        news_count: Number of news articles analyzed
-        
-    Returns:
-        AI-generated commentary or None if failed
-    """
+    news_count: int,
+) -> tuple[str, str]:
     settings = get_settings()
-    
+    deterministic_stance = _deterministic_stance_from_inputs(predicted_return, sentiment_index)
     fallback_commentary = _build_commentary_template_fallback(
         current_price=current_price,
         predicted_price=predicted_price,
@@ -181,89 +226,152 @@ async def generate_commentary(
 
     if not settings.openrouter_api_key:
         logger.warning("OpenRouter API key not configured, using template commentary fallback")
-        return fallback_commentary
-    
-    # Build the prompt
-    influencers_text = "\n".join([
-        f"  - {inf.get('feature', 'Unknown')}: {inf.get('importance', 0)*100:.1f}%"
-        for inf in top_influencers[:5]
-    ])
-    
-    change_direction = "increase" if predicted_return > 0 else "decrease"
-    
-    prompt = f"""Using ONLY the data below, produce an investor-facing copper market note.
+        return fallback_commentary, deterministic_stance
 
-DATA PROVIDED:
-- Current Price: ${current_price:.4f}
-- Model-Predicted Return: {change_direction} of {abs(predicted_return*100):.2f}%
-- Predicted Price: ${predicted_price:.4f}
-- Market Sentiment: {sentiment_label} (Score: {sentiment_index:.3f}, range -1 to 1)
-- News Volume: {news_count} articles analyzed
-- Top Drivers/Influencers (XGBoost feature importance):
+    influencers_text = "\n".join(
+        [
+            f"- {inf.get('feature', 'Unknown')}: {inf.get('importance', 0) * 100:.1f}%"
+            for inf in top_influencers[:5]
+        ]
+    )
+
+    user_prompt = f"""Generate commentary and stance using only the provided data.
+Return strict JSON with keys: stance, commentary.
+
+Rules:
+- stance must be one of: BULLISH, BEARISH, NEUTRAL
+- commentary must include exactly:
+  1) 3 risk bullets
+  2) 3 opportunity bullets
+  3) 1 summary sentence
+  4) 1 bias warning sentence
+  5) final line: This is NOT financial advice.
+
+Data:
+- Current Price: {current_price:.4f}
+- Predicted Price: {predicted_price:.4f}
+- Predicted Return: {predicted_return:.6f}
+- Sentiment Index: {sentiment_index:.6f}
+- Sentiment Label: {sentiment_label}
+- News Count: {news_count}
+- Top Influencers:
 {influencers_text}
+"""
 
-Write 3-5 short paragraphs (200-260 words). Use the exact numeric inputs as given. If signals disagree, explicitly note the tension and what would resolve it. End with: This is NOT financial advice."""
+    base_request_kwargs = {
+        "api_key": settings.openrouter_api_key,
+        "model": settings.resolved_commentary_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a copper market analyst. "
+                    "Use only provided inputs. Return concise, structured output."
+                ),
+            },
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 700,
+        "temperature": 0.0,
+        "timeout_seconds": 45.0,
+        "max_retries": settings.openrouter_max_retries,
+        "rpm": settings.openrouter_rpm,
+        "fallback_models": settings.openrouter_fallback_models_list,
+        "referer": "https://copper-mind.vercel.app",
+        "title": "CopperMind Commentary",
+    }
 
-    # Comprehensive system prompt with strategic context
-    system_prompt = """You are a commodity and metals market analyst specializing in copper. Convert ONLY the user-provided inputs (e.g., current price, model-predicted price/return, sentiment score/label, news volume, and any listed drivers or influencers) into a clear, investor-facing market note. Do not introduce external facts, headlines, macro events, supply disruptions, policy actions, inventories, or company news unless the user explicitly provided them. If something is not provided, do not assume it - state the uncertainty and explain what additional information would matter.
+    async def _request_commentary(strict_schema: bool) -> str:
+        kwargs = dict(base_request_kwargs)
+        if strict_schema:
+            kwargs["response_format"] = COMMENTARY_RESPONSE_FORMAT
+            kwargs["provider"] = {"require_parameters": True}
+        data = await create_chat_completion(**kwargs)
+        content = _extract_chat_message_content(data)
+        if not content:
+            raise ValueError("Empty OpenRouter response content")
+        return content
 
-Core principles:
-- Data-grounded: every directional claim must trace back to an explicit input (price/return, sentiment, news count, named drivers).
-- Disciplined uncertainty: treat all forecasts as model-based indications, not certainties; avoid words like "will," "guaranteed," or "certain."
-- No trading instructions: do not tell the reader to buy/sell/short/enter/exit; avoid leverage/risk-on language.
-- Plain, professional English: concise, readable, non-sensational; no Turkish text anywhere in the response.
-
-Strategic context (apply ONLY when directly triggered by the user's inputs/news/drivers; otherwise ignore):
-- M&A signals: if the user references rising free cash flow, bid rumors, or acquisition chatter around BHP, Rio Tinto, or Glencore, interpret it as potentially supportive for mid-tier copper targets (examples: FIL, LUN, IVN) consistent with "buying is cheaper than building," but keep claims conditional.
-- Safe-jurisdiction premium: if the user references disruptions or political risk in Chile/Peru, frame it as relatively supportive for Australia/Canada-based miners (e.g., BHP, TECK) versus higher-risk jurisdictions, without overstating.
-- China factor: if the user references strength in Zijin Mining (2899.HK), interpret it as possible evidence of Chinese stockpiling and describe it as a lagging, confirmation-type signal for HG=F - not an immediate trigger.
-- Grade decline: if the user references ore grade decline, frame it as conditionally supportive for leaching/processing technology leaders (e.g., Freeport/FCX), keeping the logic modest.
-
-Conflict handling:
-- If signals disagree (e.g., bullish sentiment but negative predicted return), explicitly note the tension, outline 1-2 plausible reconciliations, and state what would resolve it (e.g., next-day price action relative to key levels, change in sentiment, or updated news flow - only in general terms).
-
-Output requirements:
-- Write 3-5 short paragraphs, aiming for a more detailed but still readable note (about 200-260 words unless the user specifies otherwise).
-- Use the exact numeric inputs as given; do not recalculate or "correct" them.
-- If referencing real-world current events beyond the provided inputs, you must include credible citations with links; otherwise do not cite and do not imply you looked up anything.
-- End with this exact line on its own: This is NOT financial advice."""
-
-    try:
-        data = await create_chat_completion(
+    async def _repair_commentary(malformed_content: str) -> str:
+        repair_prompt = (
+            "Fix this malformed output into valid JSON object with keys stance and commentary. "
+            "Do not change meaning. Output JSON only.\n\n"
+            f"{malformed_content}"
+        )
+        repair_data = await create_chat_completion(
             api_key=settings.openrouter_api_key,
             model=settings.resolved_commentary_model,
             messages=[
                 {
                     "role": "system",
-                    "content": system_prompt,
+                    "content": "You repair JSON only. Output valid JSON and nothing else.",
                 },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
+                {"role": "user", "content": repair_prompt},
             ],
             max_tokens=700,
-            temperature=0.6,
-            timeout_seconds=30.0,
+            temperature=0.0,
+            timeout_seconds=45.0,
             max_retries=settings.openrouter_max_retries,
             rpm=settings.openrouter_rpm,
             fallback_models=settings.openrouter_fallback_models_list,
             referer="https://copper-mind.vercel.app",
-            title="CopperMind AI Analysis",
+            title="CopperMind Commentary JSON Repair",
         )
-        commentary = _extract_chat_message_content(data)
-        if commentary:
-            logger.info(f"AI commentary generated successfully ({len(commentary)} chars)")
-            return commentary.strip()
+        repaired = _extract_chat_message_content(repair_data)
+        if not repaired:
+            raise ValueError("Empty commentary repair response")
+        return repaired
 
-        logger.warning("Empty response from OpenRouter, using template commentary fallback")
-        return fallback_commentary
-    except OpenRouterError as e:
-        logger.warning("OpenRouter commentary failed: %s. Using template fallback.", e)
-        return fallback_commentary
-    except Exception as e:
-        logger.error(f"Failed to generate AI commentary: {e}")
-        return fallback_commentary
+    try:
+        try:
+            content = await _request_commentary(strict_schema=True)
+        except OpenRouterError as exc:
+            message = str(exc).lower()
+            if exc.status_code == 404 and "no endpoints found" in message:
+                logger.warning(
+                    "Structured commentary request unsupported by provider routing; retrying relaxed."
+                )
+                content = await _request_commentary(strict_schema=False)
+            else:
+                raise
+
+        try:
+            stance, commentary = _parse_commentary_payload(content)
+            logger.info("AI commentary generated successfully (%s chars)", len(commentary))
+            return commentary, stance
+        except Exception as parse_exc:
+            logger.warning("Commentary JSON parse failed, attempting repair: %s", parse_exc)
+            repaired = await _repair_commentary(content)
+            stance, commentary = _parse_commentary_payload(repaired)
+            logger.info("AI commentary generated via JSON repair (%s chars)", len(commentary))
+            return commentary, stance
+    except Exception as exc:
+        logger.warning("Commentary generation failed, using deterministic fallback: %s", exc)
+        return fallback_commentary, deterministic_stance
+
+
+async def generate_commentary(
+    current_price: float,
+    predicted_price: float,
+    predicted_return: float,
+    sentiment_index: float,
+    sentiment_label: str,
+    top_influencers: list[dict],
+    news_count: int = 0,
+) -> Optional[str]:
+    """
+    Generate AI commentary text.
+    """
+    commentary, _stance = await _generate_commentary_and_stance(
+        current_price=current_price,
+        predicted_price=predicted_price,
+        predicted_return=predicted_return,
+        sentiment_index=sentiment_index,
+        sentiment_label=sentiment_label,
+        top_influencers=top_influencers,
+        news_count=news_count,
+    )
+    return commentary
 
 
 def save_commentary_to_db(
@@ -281,14 +389,11 @@ def save_commentary_to_db(
     Called after pipeline completion.
     """
     from .models import AICommentary
-    
+
     settings = get_settings()
-    
-    # Try to find existing record
     existing = session.query(AICommentary).filter(AICommentary.symbol == symbol).first()
-    
+
     if existing:
-        # Update existing
         existing.commentary = commentary
         existing.current_price = current_price
         existing.predicted_price = predicted_price
@@ -297,9 +402,8 @@ def save_commentary_to_db(
         existing.ai_stance = ai_stance
         existing.generated_at = datetime.utcnow()
         existing.model_name = settings.resolved_commentary_model
-        logger.info(f"Updated AI commentary for {symbol} (stance: {ai_stance})")
+        logger.info("Updated AI commentary for %s (stance: %s)", symbol, ai_stance)
     else:
-        # Create new
         new_commentary = AICommentary(
             symbol=symbol,
             commentary=commentary,
@@ -311,8 +415,8 @@ def save_commentary_to_db(
             model_name=settings.resolved_commentary_model,
         )
         session.add(new_commentary)
-        logger.info(f"Created new AI commentary for {symbol} (stance: {ai_stance})")
-    
+        logger.info("Created new AI commentary for %s (stance: %s)", symbol, ai_stance)
+
     session.commit()
 
 
@@ -322,9 +426,9 @@ def get_commentary_from_db(session, symbol: str) -> Optional[dict]:
     Returns dict with commentary and metadata, or None if not found.
     """
     from .models import AICommentary
-    
+
     record = session.query(AICommentary).filter(AICommentary.symbol == symbol).first()
-    
+
     if record:
         return {
             "commentary": record.commentary,
@@ -336,7 +440,7 @@ def get_commentary_from_db(session, symbol: str) -> Optional[dict]:
             "ai_stance": record.ai_stance or "NEUTRAL",
             "model_name": record.model_name,
         }
-    
+
     return None
 
 
@@ -355,7 +459,7 @@ async def generate_and_save_commentary(
     Generate commentary and save to database.
     Called after pipeline completion.
     """
-    commentary = await generate_commentary(
+    commentary, ai_stance = await _generate_commentary_and_stance(
         current_price=current_price,
         predicted_price=predicted_price,
         predicted_return=predicted_return,
@@ -364,11 +468,8 @@ async def generate_and_save_commentary(
         top_influencers=top_influencers,
         news_count=news_count,
     )
-    
+
     if commentary:
-        # Determine AI stance from the commentary
-        ai_stance = await determine_ai_stance(commentary)
-        
         save_commentary_to_db(
             session=session,
             symbol=symbol,
@@ -379,5 +480,5 @@ async def generate_and_save_commentary(
             sentiment_label=sentiment_label,
             ai_stance=ai_stance,
         )
-    
+
     return commentary

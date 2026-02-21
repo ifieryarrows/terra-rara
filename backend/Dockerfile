@@ -38,7 +38,8 @@ ENV PYTHONUNBUFFERED=1 \
     REDIS_URL=redis://127.0.0.1:6379/0 \
     HF_HUB_DISABLE_PROGRESS_BARS=1 \
     TRANSFORMERS_VERBOSITY=error \
-    TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    TOKENIZERS_PARALLELISM=false
 
 # Run supervisord (manages redis + api + worker)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

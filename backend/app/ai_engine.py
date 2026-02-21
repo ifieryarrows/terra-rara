@@ -1,9 +1,10 @@
 """
-AI Engine: LLM sentiment scoring (with FinBERT fallback) + XGBoost training.
+AI Engine: Hybrid LLM + FinBERT sentiment scoring + XGBoost training.
 
 Sentiment Analysis:
-    Primary: OpenRouter LLM with structured outputs
-    Fallback: FinBERT for generic financial sentiment
+    Direction: OpenRouter LLM (BULLISH/BEARISH/NEUTRAL)
+    Intensity: FinBERT probabilities for each article
+    Reliability: strict JSON + repair + deterministic fallback
 
 Usage:
     python -m app.ai_engine --run-all --target-symbol HG=F
@@ -33,7 +34,7 @@ from app.settings import get_settings
 from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
 from app.async_bridge import run_async_from_sync
-from app.openrouter_client import OpenRouterError, create_chat_completion
+from app.openrouter_client import OpenRouterError, OpenRouterRateLimitError, create_chat_completion
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 _FINBERT_OUTPUT_LOGGED = False
 _FINBERT_MISSING_LABELS_WARNED = False
+
+HYBRID_SCORING_VERSION = "hybrid_v1"
+HYBRID_FALLBACK_429_MODEL_NAME = "hybrid_fallback_429"
+HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
+LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
 
 
 # =============================================================================
@@ -126,9 +132,11 @@ def get_finbert_pipeline():
     Load FinBERT model pipeline.
     Lazy loading to avoid import overhead when not needed.
     """
+    settings = get_settings()
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", settings.tokenizers_parallelism)
 
     from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
     
@@ -226,63 +234,21 @@ def score_text_with_finbert(
 # LLM Sentiment Scoring (Primary - OpenRouter)
 # =============================================================================
 
-# Copper-specific system prompt for LLM sentiment analysis
-LLM_SENTIMENT_SYSTEM_PROMPT = """You are an independent, neutral Copper (HG=F) market intelligence analyst. You do not represent a buy-side or sell-side desk, you do not take positions, and you do not provide trade recommendations. Your sole objective is to quantify the immediate directional news impulse on COMEX Copper Futures (HG=F) over the next 1–5 trading days, based strictly on the text provided.
+# Copper-specific system prompt for LLM direction classification.
+LLM_SENTIMENT_SYSTEM_PROMPT = """You are a neutral copper market classifier.
+Task: For each input article, classify immediate 1-5 day HG=F price impact direction.
+Allowed labels:
+- BULLISH
+- BEARISH
+- NEUTRAL
 
-TASK
-You will receive a JSON array of news items, e.g.:
-[{"id": 1, "headline": "..."}]
-Items may include additional fields (e.g., "summary", "body", "source", "timestamp"). Use only the text present in each item. Do not browse, do not rely on outside knowledge, and do not assume missing details.
-
-WHAT TO SCORE
-For each item, output a single net impact score representing the DIRECT effect on copper futures price:
-- +1.0 = very strongly bullish impulse
--  0.0 = neutral / unclear / not copper-relevant
-- -1.0 = very strongly bearish impulse
-Score must be a float in [-1.0, 1.0].
-
-EVALUATION FRAMEWORK (only if explicitly implied by the item text)
-1) Supply availability (typically bullish when constrained)
-   - Bullish: strikes, accidents, shutdowns, flooding, power shortages, permitting delays, export bans, lower ore grades/grade decline, smelter/refinery outages, logistics constraints reducing supply.
-   - Bearish: ramp-ups, new capacity, higher output guidance, disruptions resolved, easing constraints increasing supply.
-2) Demand outlook (bullish when boosted; bearish when destroyed)
-   - Bullish: explicit China demand support (property/infrastructure/grid stimulus, EV/grid buildout) with clear copper linkage.
-   - Bearish: recession risk, manufacturing contraction, construction/property weakness, credit tightening explicitly reducing activity.
-3) Inventories / physical tightness (high signal if specific)
-   - Bullish: LME/COMEX/SHFE drawdowns; explicit "tightness"/backwardation tied to copper.
-   - Bearish: inventory builds; explicit "glut"/surplus/contango tied to copper.
-4) Macro FX / rates (only when explicitly stated)
-   - Bullish: USD weakness / DXY down explicitly cited as supportive for commodities.
-   - Bearish: USD strength / DXY up explicitly cited; restrictive rates explicitly hurting metals demand.
-5) Substitution / policy (only if clearly connected to copper usage)
-   - Bearish: explicit substitution from copper to aluminum with meaningful scale.
-   - Bullish: policy/capex explicitly increasing copper intensity (grid/electrification) per the text.
-
-CONFLICTS AND AMBIGUITY
-- If bullish and bearish elements coexist, output ONE net score reflecting the more direct, immediate, copper-specific channel.
-- If it's company-specific but not clearly linked to copper supply/demand/inventories/USD, keep the score near 0.
-- If details are vague (no scale, timing, location), reduce magnitude.
-- If it clearly states resolution of a prior disruption, treat as bearish versus prior tightness.
-
-MAGNITUDE CALIBRATION (symmetric for negatives)
-- 0.05–0.20: weak/indirect/uncertain linkage; generic market chatter; minimal specifics
-- 0.25–0.45: moderately copper-relevant with some specificity
-- 0.50–0.70: direct driver with clear mechanism and meaningful scale
-- 0.75–1.00: major, explicit, time-sensitive shock (large supply cut/strike escalation, sharp stock move, strong demand policy)
-
-OUTPUT FORMAT (STRICT)
-Return ONLY a raw JSON array. No markdown, no extra text.
-Each input item must yield exactly one output object with the matching id, in the same order:
-{
-  "id": <MATCHING_INPUT_ID>,
-  "score": <FLOAT_BETWEEN_-1_AND_1>,
-  "reasoning": "<MAX_15_WORDS, plain English, mechanism-based>"
-}
 Rules:
-- Do not skip any IDs.
+- Use only provided title/description text.
+- Return one output item per input id.
+- Keep reasoning one line, no newline/tab characters.
 - Do not add extra keys.
-- Reasoning must be ≤15 words, English only, single concise mechanism statement.
-- Use standard decimals (e.g., -0.4, 0.15, 1.0); no NaN, no scientific notation."""
+- If uncertain or non-copper-relevant, use NEUTRAL with low confidence.
+"""
 
 
 LLM_SCORING_RESPONSE_FORMAT = {
@@ -296,10 +262,11 @@ LLM_SCORING_RESPONSE_FORMAT = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "integer"},
-                    "score": {"type": "number", "minimum": -1, "maximum": 1},
+                    "label": {"type": "string", "enum": ["BULLISH", "BEARISH", "NEUTRAL"]},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "reasoning": {"type": "string"},
                 },
-                "required": ["id", "score"],
+                "required": ["id", "label", "confidence"],
                 "additionalProperties": False,
             },
         },
@@ -309,23 +276,81 @@ LLM_SCORING_RESPONSE_FORMAT = {
 LLM_SCORING_PROVIDER_OPTIONS = {"require_parameters": True}
 
 
-def _derive_probs_from_score(score: float) -> tuple[float, float, float]:
-    """Derive pseudo-probabilities from signed score for downstream compatibility."""
-    confidence = abs(score)
-    if score > 0:
-        prob_positive = 0.33 + (confidence * 0.67)
-        prob_negative = 0.33 - (confidence * 0.33)
-        prob_neutral = 1.0 - prob_positive - prob_negative
-    elif score < 0:
-        prob_negative = 0.33 + (confidence * 0.67)
-        prob_positive = 0.33 - (confidence * 0.33)
-        prob_neutral = 1.0 - prob_positive - prob_negative
-    else:
-        prob_positive = 0.33
-        prob_neutral = 0.34
-        prob_negative = 0.33
+class LLMStructuredOutputError(RuntimeError):
+    """Raised when LLM structured output remains invalid after repair attempts."""
 
-    return round(prob_positive, 4), round(prob_neutral, 4), round(prob_negative, 4)
+
+def _hybrid_model_name(llm_model: str) -> str:
+    """Stable model identifier for hybrid scoring rows."""
+    return f"hybrid({llm_model}+ProsusAI/finbert)"
+
+
+def _sanitize_reasoning_text(value: Any) -> str:
+    """Normalize reasoning to a single line without tabs/newlines."""
+    if value is None:
+        return ""
+    text = str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    return " ".join(text.split()).strip()
+
+
+def _neutral_llm_result(
+    *,
+    article_id: int,
+    llm_model: str,
+    reason: str,
+    model_name_override: Optional[str] = None,
+) -> dict:
+    return {
+        "id": int(article_id),
+        "label": "NEUTRAL",
+        "llm_confidence": 0.0,
+        "llm_reasoning": _sanitize_reasoning_text(reason),
+        "llm_model": llm_model,
+        "model_name": model_name_override or _hybrid_model_name(llm_model),
+        "json_repair_used": False,
+    }
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Classify OpenRouter 429 errors for deterministic neutral fallback semantics."""
+    if isinstance(exc, OpenRouterRateLimitError):
+        return True
+    if isinstance(exc, OpenRouterError) and exc.status_code == 429:
+        return True
+    message = str(exc).lower()
+    return "429" in message and "rate" in message
+
+
+def _build_hybrid_reasoning_payload(
+    *,
+    label: str,
+    llm_confidence: float,
+    finbert_strength: float,
+    llm_reasoning: str,
+    llm_model: str,
+) -> str:
+    payload = {
+        "label": label,
+        "llm_confidence": round(max(0.0, min(1.0, llm_confidence)), 4),
+        "finbert_strength": round(max(0.0, min(1.0, finbert_strength)), 4),
+        "llm_reasoning": _sanitize_reasoning_text(llm_reasoning),
+        "llm_model": llm_model,
+        "scoring_version": HYBRID_SCORING_VERSION,
+    }
+    return json.dumps(payload, ensure_ascii=True)
+
+
+def _compute_hybrid_score(*, label: str, llm_confidence: float, finbert_strength: float) -> float:
+    """Compute final hybrid impact score in [-1, 1] with hard neutral rule."""
+    normalized_label = str(label).upper().strip()
+    if normalized_label == "NEUTRAL":
+        return 0.0
+
+    sign = 1.0 if normalized_label == "BULLISH" else -1.0
+    confidence = max(0.0, min(1.0, float(llm_confidence)))
+    strength = max(0.0, min(1.0, float(finbert_strength)))
+    magnitude = max(0.0, min(1.0, (0.7 * confidence) + (0.3 * strength)))
+    return sign * magnitude
 
 
 def _extract_chat_message_content(data: dict[str, Any]) -> str:
@@ -374,13 +399,14 @@ def _clean_json_content(content: str) -> str:
     return normalized
 
 
-def _validate_and_enrich_llm_results(
+def _validate_llm_results(
     *,
     raw_results: Any,
     expected_ids: list[int],
     model_name: str,
+    json_repair_used: bool = False,
 ) -> list[dict]:
-    """Validate LLM result shape and enrich with derived probability fields."""
+    """Validate LLM structured output for direction+confidence labels."""
     if not isinstance(raw_results, list):
         raise ValueError(f"Structured result must be a list, got {type(raw_results).__name__}")
 
@@ -388,25 +414,25 @@ def _validate_and_enrich_llm_results(
     for item in raw_results:
         if not isinstance(item, dict):
             raise ValueError(f"Structured result item must be object, got {type(item).__name__}")
-        if "id" not in item or "score" not in item:
-            raise ValueError("Structured result missing required fields: id and score")
+        if "id" not in item or "label" not in item or "confidence" not in item:
+            raise ValueError("Structured result missing required fields: id, label, confidence")
 
         article_id = int(item["id"])
         if article_id in results_by_id:
             raise ValueError(f"Duplicate article id in structured output: {article_id}")
-        score = max(-1.0, min(1.0, float(item["score"])))
-        reasoning_raw = item.get("reasoning", "")
-        reasoning = reasoning_raw if isinstance(reasoning_raw, str) else str(reasoning_raw)
-
-        prob_positive, prob_neutral, prob_negative = _derive_probs_from_score(score)
+        label = str(item["label"]).upper().strip()
+        if label not in LLM_LABELS:
+            raise ValueError(f"Unsupported label in structured output: {label}")
+        confidence = max(0.0, min(1.0, float(item["confidence"])))
+        reasoning = _sanitize_reasoning_text(item.get("reasoning", ""))
         results_by_id[article_id] = {
             "id": article_id,
-            "score": score,
-            "reasoning": reasoning,
-            "prob_positive": prob_positive,
-            "prob_neutral": prob_neutral,
-            "prob_negative": prob_negative,
-            "model_name": model_name,
+            "label": label,
+            "llm_confidence": confidence,
+            "llm_reasoning": reasoning,
+            "llm_model": model_name,
+            "model_name": _hybrid_model_name(model_name),
+            "json_repair_used": json_repair_used,
         }
 
     expected = set(expected_ids)
@@ -423,25 +449,27 @@ async def score_batch_with_llm(
     articles: list[dict],
 ) -> list[dict]:
     """
-    Score a batch of articles using OpenRouter with strict JSON schema response.
+    Classify a batch with LLM direction + confidence using strict JSON schema.
     """
     settings = get_settings()
 
     if not settings.openrouter_api_key:
         raise RuntimeError("OpenRouter API key not configured")
 
-    articles_text = "\n".join([
-        f"{i+1}. [ID:{a['id']}] {a['title']}" + (f" - {a['description'][:200]}" if a.get("description") else "")
-        for i, a in enumerate(articles)
-    ])
-
-    user_prompt = f"""Score these {len(articles)} news articles for copper market sentiment.
-
-Articles:
-{articles_text}
-
-Output must follow the provided JSON schema."""
-
+    normalized_articles = [
+        {
+            "id": int(article["id"]),
+            "title": str(article.get("title") or ""),
+            "description": str(article.get("description") or "")[:600],
+        }
+        for article in articles
+    ]
+    expected_ids = [item["id"] for item in normalized_articles]
+    user_prompt = (
+        "Classify each article into BULLISH, BEARISH, or NEUTRAL for short-term HG=F price impact.\n"
+        "Return one output object per input id and keep reasoning single-line.\n\n"
+        f"Input articles JSON:\n{json.dumps(normalized_articles, ensure_ascii=True)}"
+    )
     model_name = settings.resolved_scoring_model
 
     async def _request_scoring(strict_schema: bool) -> dict[str, Any]:
@@ -453,7 +481,7 @@ Output must follow the provided JSON schema."""
                 {"role": "user", "content": user_prompt},
             ],
             "max_tokens": 2000,
-            "temperature": 0.3,
+            "temperature": 0.0,
             "timeout_seconds": 60.0,
             "max_retries": settings.openrouter_max_retries,
             "rpm": settings.openrouter_rpm,
@@ -465,6 +493,49 @@ Output must follow the provided JSON schema."""
             request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT
             request_kwargs["provider"] = LLM_SCORING_PROVIDER_OPTIONS
         return await create_chat_completion(**request_kwargs)
+
+    async def _repair_json_response(malformed_content: str) -> str:
+        repair_prompt = (
+            "Convert the following malformed model output into valid JSON WITHOUT changing meaning.\n"
+            f"Expected ids: {expected_ids}\n"
+            "Output only JSON array and keep keys: id,label,confidence,reasoning.\n\n"
+            f"MALFORMED:\n{malformed_content}"
+        )
+        repair_data = await create_chat_completion(
+            api_key=settings.openrouter_api_key,
+            model=model_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You fix JSON formatting only. Return valid JSON. "
+                        "No markdown and no extra text."
+                    ),
+                },
+                {"role": "user", "content": repair_prompt},
+            ],
+            max_tokens=2200,
+            temperature=0.0,
+            timeout_seconds=60.0,
+            max_retries=settings.openrouter_max_retries,
+            rpm=settings.openrouter_rpm,
+            fallback_models=settings.openrouter_fallback_models_list,
+            referer="https://copper-mind.vercel.app",
+            title="CopperMind JSON Repair",
+        )
+        repaired_content = _extract_chat_message_content(repair_data)
+        if not repaired_content:
+            raise LLMStructuredOutputError("JSON repair call returned empty content")
+        return repaired_content
+
+    def _parse_and_validate(content: str, *, repair_used: bool) -> list[dict]:
+        raw_results = json.loads(_clean_json_content(content))
+        return _validate_llm_results(
+            raw_results=raw_results,
+            expected_ids=expected_ids,
+            model_name=model_name,
+            json_repair_used=repair_used,
+        )
 
     try:
         data = await _request_scoring(strict_schema=True)
@@ -485,28 +556,27 @@ Output must follow the provided JSON schema."""
         raise OpenRouterError("Empty response content from LLM scoring")
 
     try:
-        raw_results = json.loads(_clean_json_content(content))
-    except json.JSONDecodeError as exc:
-        logger.error("LLM JSON parse error after structured output: %s", exc)
-        raise
-
-    expected_ids = [int(article["id"]) for article in articles]
-    return _validate_and_enrich_llm_results(
-        raw_results=raw_results,
-        expected_ids=expected_ids,
-        model_name=model_name,
-    )
+        return _parse_and_validate(content, repair_used=False)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("LLM structured parse failed, attempting JSON repair: %s", exc)
+        try:
+            repaired_content = await _repair_json_response(content)
+            return _parse_and_validate(repaired_content, repair_used=True)
+        except Exception as repair_exc:
+            raise LLMStructuredOutputError(
+                f"LLM structured output invalid after repair: {repair_exc}"
+            ) from repair_exc
 
 
 def score_batch_with_finbert(articles: list) -> list[dict]:
     """
-    Score articles with FinBERT (fallback when LLM fails).
+    Score articles with FinBERT to provide sentiment intensity probabilities.
     
     Args:
         articles: List of NewsArticle ORM objects
         
     Returns:
-        List of dicts with scoring results
+        List of dicts with FinBERT probabilities
     """
     pipe = get_finbert_pipeline()
     results = []
@@ -514,15 +584,15 @@ def score_batch_with_finbert(articles: list) -> list[dict]:
     for article in articles:
         text = f"{article.title} {article.description or ''}"
         scores = score_text_with_finbert(pipe, text)
+        finbert_strength = abs(scores["prob_positive"] - scores["prob_negative"])
         
         results.append({
             "id": article.id,
             "score": scores["score"],
-            "reasoning": None,  # FinBERT doesn't provide reasoning
             "prob_positive": scores["prob_positive"],
             "prob_neutral": scores["prob_neutral"],
             "prob_negative": scores["prob_negative"],
-            "model_name": "ProsusAI/finbert",
+            "finbert_strength": finbert_strength,
         })
     
     return results
@@ -530,15 +600,17 @@ def score_batch_with_finbert(articles: list) -> list[dict]:
 
 def score_unscored_articles(
     session: Session,
-    chunk_size: int = 20
+    chunk_size: int = 12
 ) -> int:
     """
     Score all articles that don't have sentiment scores yet.
     
     Strategy:
-    - Primary: OpenRouter LLM with strict JSON schema output
-    - Fallback: FinBERT per chunk if LLM fails
-    - Chunk size: 20 articles for error isolation
+    - Primary direction: OpenRouter LLM label + confidence
+    - Intensity: FinBERT probabilities for every article
+    - Final score: sign(LLM label) * (0.7*llm_conf + 0.3*finbert_strength)
+    - Hard neutral rule: LLM NEUTRAL always maps to final score 0
+    - Chunk size: 12 articles for lower free-tier rate-limit pressure
     - Run budget: cap LLM-scored articles per run, overflow uses FinBERT
     
     Returns:
@@ -560,9 +632,15 @@ def score_unscored_articles(
     
     scored_count = 0
     total_chunks = (len(unscored) + chunk_size - 1) // chunk_size
+    llm_model = settings.resolved_scoring_model
     llm_budget_remaining = max(0, settings.max_llm_articles_per_run)
     budget_exhausted_logged = False
     logger.info("LLM scoring budget for this run: %s articles", llm_budget_remaining)
+    llm_success = 0
+    json_repair_success = 0
+    fallback_429 = 0
+    fallback_parse = 0
+    finbert_used = 0
     
     # Process in chunks
     for chunk_idx in range(0, len(unscored), chunk_size):
@@ -572,21 +650,26 @@ def score_unscored_articles(
         logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} articles)")
 
         llm_candidates: list[Any] = []
-        finbert_candidates: list[Any] = []
-        results: list[dict] = []
+        non_llm_candidates: list[Any] = []
 
         if settings.openrouter_api_key and llm_budget_remaining > 0:
             llm_take = min(len(chunk), llm_budget_remaining)
             llm_candidates = chunk[:llm_take]
-            finbert_candidates = chunk[llm_take:]
+            non_llm_candidates = chunk[llm_take:]
         else:
-            finbert_candidates = chunk
+            non_llm_candidates = chunk
             if settings.openrouter_api_key and llm_budget_remaining <= 0 and not budget_exhausted_logged:
                 logger.info(
-                    "LLM budget exhausted (%s articles). Remaining chunks will use FinBERT fallback.",
+                    "LLM budget exhausted (%s articles). Remaining chunks use neutral-hard fallback with FinBERT probs.",
                     settings.max_llm_articles_per_run,
                 )
                 budget_exhausted_logged = True
+
+        finbert_results = score_batch_with_finbert(chunk)
+        finbert_used += len(finbert_results)
+        finbert_by_id = {result["id"]: result for result in finbert_results}
+
+        llm_results_by_id: dict[int, dict] = {}
 
         if llm_candidates:
             articles_data = [
@@ -595,7 +678,10 @@ def score_unscored_articles(
             ]
             try:
                 llm_results = run_async_from_sync(score_batch_with_llm, articles_data)
-                results.extend(llm_results)
+                llm_success += len(llm_results)
+                json_repair_success += sum(1 for result in llm_results if result.get("json_repair_used"))
+                for llm_result in llm_results:
+                    llm_results_by_id[int(llm_result["id"])] = llm_result
                 llm_budget_remaining -= len(llm_candidates)
                 logger.info(
                     "LLM scored %s article(s) in chunk %s. Budget remaining: %s",
@@ -604,45 +690,93 @@ def score_unscored_articles(
                     llm_budget_remaining,
                 )
             except Exception as e:
-                logger.warning(f"LLM scoring failed for chunk {chunk_num}, falling back to FinBERT: {e}")
-                finbert_candidates = chunk
-                results = []
+                if _is_rate_limit_error(e):
+                    fallback_model_name = HYBRID_FALLBACK_429_MODEL_NAME
+                    fallback_reason = "429 rate-limit fallback"
+                    fallback_429 += len(llm_candidates)
+                else:
+                    fallback_model_name = HYBRID_FALLBACK_PARSE_MODEL_NAME
+                    fallback_reason = "structured parse/repair fallback"
+                    fallback_parse += len(llm_candidates)
+                logger.warning("LLM scoring failed for chunk %s: %s", chunk_num, e)
+                for article in llm_candidates:
+                    llm_results_by_id[article.id] = _neutral_llm_result(
+                        article_id=article.id,
+                        llm_model=llm_model,
+                        reason=fallback_reason,
+                        model_name_override=fallback_model_name,
+                    )
 
-        if finbert_candidates:
-            logger.info(
-                "Using FinBERT fallback for %s article(s) in chunk %s",
-                len(finbert_candidates),
-                chunk_num,
+        for article in non_llm_candidates:
+            reason = (
+                "llm_skipped_budget"
+                if settings.openrouter_api_key and llm_budget_remaining <= 0
+                else "llm_unavailable_no_api_key"
             )
-            finbert_results = score_batch_with_finbert(finbert_candidates)
-            results.extend(finbert_results)
-        
-        # Create a lookup for results
-        results_by_id = {r["id"]: r for r in results}
+            llm_results_by_id[article.id] = _neutral_llm_result(
+                article_id=article.id,
+                llm_model=llm_model,
+                reason=reason,
+                model_name_override=_hybrid_model_name(llm_model),
+            )
         
         # Save to database
         for article in chunk:
-            result = results_by_id.get(article.id)
-            if not result:
-                # If article not in results (shouldn't happen), use neutral
-                logger.warning(f"No result for article {article.id}, using neutral")
-                result = {
-                    "score": 0.0,
-                    "reasoning": "Missing from LLM response",
-                    "prob_positive": 0.33,
-                    "prob_neutral": 0.34,
-                    "prob_negative": 0.33,
-                    "model_name": "ProsusAI/finbert",
+            finbert = finbert_by_id.get(article.id)
+            if not finbert:
+                neutral_finbert = _neutral_finbert_score()
+                finbert = {
+                    "prob_positive": neutral_finbert["prob_positive"],
+                    "prob_neutral": neutral_finbert["prob_neutral"],
+                    "prob_negative": neutral_finbert["prob_negative"],
+                    "finbert_strength": abs(
+                        neutral_finbert["prob_positive"] - neutral_finbert["prob_negative"]
+                    ),
                 }
+
+            llm_result = llm_results_by_id.get(article.id)
+            if not llm_result:
+                llm_result = _neutral_llm_result(
+                    article_id=article.id,
+                    llm_model=llm_model,
+                    reason="llm_result_missing",
+                    model_name_override=HYBRID_FALLBACK_PARSE_MODEL_NAME,
+                )
+                fallback_parse += 1
+
+            label = str(llm_result.get("label", "NEUTRAL")).upper().strip()
+            if label not in LLM_LABELS:
+                label = "NEUTRAL"
+
+            llm_confidence = float(llm_result.get("llm_confidence", 0.0))
+            finbert_strength = float(
+                finbert.get(
+                    "finbert_strength",
+                    abs(float(finbert["prob_positive"]) - float(finbert["prob_negative"])),
+                )
+            )
+            final_score = _compute_hybrid_score(
+                label=label,
+                llm_confidence=llm_confidence,
+                finbert_strength=finbert_strength,
+            )
+
+            reasoning_payload = _build_hybrid_reasoning_payload(
+                label=label,
+                llm_confidence=llm_confidence,
+                finbert_strength=finbert_strength,
+                llm_reasoning=llm_result.get("llm_reasoning", ""),
+                llm_model=llm_result.get("llm_model", llm_model),
+            )
             
             sentiment = NewsSentiment(
                 news_article_id=article.id,
-                prob_positive=result["prob_positive"],
-                prob_neutral=result["prob_neutral"],
-                prob_negative=result["prob_negative"],
-                score=result["score"],
-                reasoning=result.get("reasoning"),
-                model_name=result.get("model_name", settings.resolved_scoring_model),
+                prob_positive=float(finbert["prob_positive"]),
+                prob_neutral=float(finbert["prob_neutral"]),
+                prob_negative=float(finbert["prob_negative"]),
+                score=float(final_score),
+                reasoning=reasoning_payload,
+                model_name=str(llm_result.get("model_name", _hybrid_model_name(llm_model))),
                 scored_at=datetime.now(timezone.utc)
             )
             
@@ -653,6 +787,15 @@ def score_unscored_articles(
         session.commit()
         logger.info(f"Committed chunk {chunk_num}: {len(chunk)} articles")
     
+    logger.info(
+        "Hybrid scoring summary: llm_success=%s json_repair_success=%s fallback_429=%s "
+        "fallback_parse=%s finbert_used=%s",
+        llm_success,
+        json_repair_success,
+        fallback_429,
+        fallback_parse,
+        finbert_used,
+    )
     logger.info(f"Total articles scored: {scored_count}")
     return scored_count
 
@@ -676,7 +819,12 @@ def aggregate_daily_sentiment(
     settings = get_settings()
     tau_hours = tau_hours or settings.sentiment_tau_hours
     
-    # Get all scored articles with their sentiment
+    # Get scored articles with copper keyword filter to reduce symbol-unrelated noise.
+    copper_filter = (
+        func.lower(NewsArticle.title).like("%copper%")
+        | func.lower(func.coalesce(NewsArticle.description, "")).like("%copper%")
+    )
+
     scored_articles = session.query(
         NewsArticle.published_at,
         NewsSentiment.score,
@@ -686,10 +834,12 @@ def aggregate_daily_sentiment(
     ).join(
         NewsSentiment,
         NewsArticle.id == NewsSentiment.news_article_id
+    ).filter(
+        copper_filter
     ).all()
     
     if not scored_articles:
-        logger.info("No scored articles for aggregation")
+        logger.info("No copper-filtered scored articles for aggregation")
         return 0
     
     # Convert to DataFrame

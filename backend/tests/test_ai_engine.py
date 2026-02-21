@@ -11,6 +11,8 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 
 class TestFinBERTScoring:
@@ -256,6 +258,87 @@ class TestSentimentAggregation:
         assert -1 <= weighted_avg <= 1
 
 
+class TestDailyAggregationCopperFilter:
+    def test_aggregate_daily_sentiment_filters_non_copper_articles(self, monkeypatch):
+        from app import ai_engine
+        from app.models import DailySentiment, NewsArticle, NewsSentiment
+
+        engine = create_engine("sqlite:///:memory:")
+        TestingSession = sessionmaker(bind=engine)
+        NewsArticle.__table__.create(bind=engine)
+        NewsSentiment.__table__.create(bind=engine)
+        DailySentiment.__table__.create(bind=engine)
+        session = TestingSession()
+
+        monkeypatch.setattr(
+            ai_engine,
+            "get_settings",
+            lambda: SimpleNamespace(sentiment_tau_hours=12.0),
+        )
+
+        copper_article = NewsArticle(
+            dedup_key="copper-1",
+            title="Copper supply tightening",
+            description="Copper inventories decline",
+            content="",
+            url="https://example.com/copper",
+            source="source",
+            author="author",
+            language="en",
+            published_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 1, 1, 12, 1, tzinfo=timezone.utc),
+        )
+        oil_article = NewsArticle(
+            dedup_key="oil-1",
+            title="Crude oil inventory data",
+            description="Energy complex update",
+            content="",
+            url="https://example.com/oil",
+            source="source",
+            author="author",
+            language="en",
+            published_at=datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 1, 1, 13, 1, tzinfo=timezone.utc),
+        )
+        session.add(copper_article)
+        session.add(oil_article)
+        session.commit()
+
+        session.add(
+            NewsSentiment(
+                news_article_id=copper_article.id,
+                prob_positive=0.8,
+                prob_neutral=0.1,
+                prob_negative=0.1,
+                score=0.7,
+                reasoning="{}",
+                model_name="hybrid",
+                scored_at=datetime.now(timezone.utc),
+            )
+        )
+        session.add(
+            NewsSentiment(
+                news_article_id=oil_article.id,
+                prob_positive=0.2,
+                prob_neutral=0.3,
+                prob_negative=0.5,
+                score=-0.4,
+                reasoning="{}",
+                model_name="hybrid",
+                scored_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+
+        count = ai_engine.aggregate_daily_sentiment(session=session)
+
+        assert count == 1
+        daily = session.query(DailySentiment).first()
+        assert daily is not None
+        assert daily.news_count == 1
+        assert daily.sentiment_index == pytest.approx(0.7)
+
+
 class TestFeatureEngineering:
     """Tests for feature engineering."""
     
@@ -453,7 +536,7 @@ class TestLLMStructuredScoring:
                 "choices": [
                     {
                         "message": {
-                            "content": '[{"id": 101, "score": 0.45, "reasoning": "Supply disruption lowers near-term availability."}]'
+                            "content": '[{"id": 101, "label": "BULLISH", "confidence": 0.82, "reasoning": "Supply disruption tightens near-term availability."}]'
                         }
                     }
                 ]
@@ -470,8 +553,9 @@ class TestLLMStructuredScoring:
 
         assert len(results) == 1
         assert results[0]["id"] == 101
-        assert results[0]["score"] == pytest.approx(0.45)
-        assert results[0]["model_name"] == "stepfun/step-3.5-flash:free"
+        assert results[0]["label"] == "BULLISH"
+        assert results[0]["llm_confidence"] == pytest.approx(0.82)
+        assert results[0]["model_name"] == "hybrid(stepfun/step-3.5-flash:free+ProsusAI/finbert)"
 
     def test_score_batch_with_llm_retries_relaxed_mode_on_404_provider_mismatch(self, monkeypatch):
         from app import ai_engine
@@ -503,7 +587,7 @@ class TestLLMStructuredScoring:
                 "choices": [
                     {
                         "message": {
-                            "content": "```json\n[{\"id\": 42, \"score\": -0.25, \"reasoning\": \"Weak demand outlook weighs sentiment.\"}]\n```"
+                            "content": "```json\n[{\"id\": 42, \"label\": \"BEARISH\", \"confidence\": 0.4, \"reasoning\": \"Weak demand outlook weighs copper.\"}]\n```"
                         }
                     }
                 ]
@@ -521,7 +605,58 @@ class TestLLMStructuredScoring:
         assert call_count["n"] == 2
         assert len(results) == 1
         assert results[0]["id"] == 42
-        assert results[0]["score"] == pytest.approx(-0.25)
+        assert results[0]["label"] == "BEARISH"
+        assert results[0]["llm_confidence"] == pytest.approx(0.4)
+
+    def test_score_batch_with_llm_runs_json_repair_on_parse_failure(self, monkeypatch):
+        from app import ai_engine
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+            openrouter_max_retries=3,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        call_count = {"n": 0}
+
+        async def fake_create_chat_completion(**_kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '[{"id": 7, "label": "BULLISH", "confidence": 0.7, "reasoning": "bad"'
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '[{"id": 7, "label": "BULLISH", "confidence": 0.7, "reasoning": "Valid repaired json."}]'
+                        }
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        async def run_call():
+            return await ai_engine.score_batch_with_llm(
+                [{"id": 7, "title": "Copper demand improved", "description": "Strong grids"}]
+            )
+
+        results = asyncio.run(run_call())
+
+        assert call_count["n"] == 2
+        assert results[0]["id"] == 7
+        assert results[0]["label"] == "BULLISH"
+        assert results[0]["json_repair_used"] is True
 
 
 class TestScoringFallbackAndBudget:
@@ -542,18 +677,17 @@ class TestScoringFallbackAndBudget:
         monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
 
         def fail_llm(*_args, **_kwargs):
-            raise ValueError("LLM JSON parse error")
+            raise ai_engine.LLMStructuredOutputError("LLM JSON parse error")
 
         def fake_finbert(batch):
             return [
                 {
                     "id": article.id,
-                    "score": 0.0,
-                    "reasoning": None,
-                    "prob_positive": 0.33,
+                    "score": 0.3,
+                    "prob_positive": 0.51,
                     "prob_neutral": 0.34,
-                    "prob_negative": 0.33,
-                    "model_name": "ProsusAI/finbert",
+                    "prob_negative": 0.15,
+                    "finbert_strength": 0.36,
                 }
                 for article in batch
             ]
@@ -561,11 +695,12 @@ class TestScoringFallbackAndBudget:
         monkeypatch.setattr(ai_engine, "run_async_from_sync", fail_llm)
         monkeypatch.setattr(ai_engine, "score_batch_with_finbert", fake_finbert)
 
-        scored = ai_engine.score_unscored_articles(session=session, chunk_size=20)
+        scored = ai_engine.score_unscored_articles(session=session, chunk_size=2)
 
         assert scored == 2
         assert len(session.added) == 2
-        assert all(obj.model_name == "ProsusAI/finbert" for obj in session.added)
+        assert all(obj.model_name == "hybrid_fallback_parse" for obj in session.added)
+        assert all(obj.score == pytest.approx(0.0) for obj in session.added)
 
     def test_score_unscored_articles_respects_llm_budget(self, monkeypatch):
         from app import ai_engine
@@ -592,12 +727,12 @@ class TestScoringFallbackAndBudget:
             return [
                 {
                     "id": item["id"],
-                    "score": 0.2,
-                    "reasoning": "LLM scored",
-                    "prob_positive": 0.5,
-                    "prob_neutral": 0.3,
-                    "prob_negative": 0.2,
-                    "model_name": "stepfun/step-3.5-flash:free",
+                    "label": "BULLISH",
+                    "llm_confidence": 0.8,
+                    "llm_reasoning": "LLM scored",
+                    "llm_model": "stepfun/step-3.5-flash:free",
+                    "model_name": "hybrid(stepfun/step-3.5-flash:free+ProsusAI/finbert)",
+                    "json_repair_used": False,
                 }
                 for item in articles_data
             ]
@@ -606,12 +741,11 @@ class TestScoringFallbackAndBudget:
             return [
                 {
                     "id": article.id,
-                    "score": -0.1,
-                    "reasoning": None,
-                    "prob_positive": 0.2,
+                    "score": 0.6,
+                    "prob_positive": 0.8,
                     "prob_neutral": 0.3,
-                    "prob_negative": 0.5,
-                    "model_name": "ProsusAI/finbert",
+                    "prob_negative": 0.2,
+                    "finbert_strength": 0.6,
                 }
                 for article in batch
             ]
@@ -623,10 +757,66 @@ class TestScoringFallbackAndBudget:
 
         assert scored == 5
         assert llm_calls == [[1, 2], [3]]
-        llm_saved = [obj for obj in session.added if obj.model_name == "stepfun/step-3.5-flash:free"]
-        finbert_saved = [obj for obj in session.added if obj.model_name == "ProsusAI/finbert"]
-        assert len(llm_saved) == 3
-        assert len(finbert_saved) == 2
+        positive_scores = [obj for obj in session.added if obj.score > 0]
+        neutral_scores = [obj for obj in session.added if obj.score == pytest.approx(0.0)]
+        assert len(positive_scores) == 3
+        assert len(neutral_scores) == 2
+
+    def test_score_unscored_articles_uses_neutral_429_fallback(self, monkeypatch):
+        from app import ai_engine
+        from app.openrouter_client import OpenRouterRateLimitError
+
+        articles = [
+            SimpleNamespace(id=1, title="A", description="d1"),
+            SimpleNamespace(id=2, title="B", description="d2"),
+        ]
+        session = _FakeSession(articles)
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            max_llm_articles_per_run=200,
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        def fail_llm(*_args, **_kwargs):
+            raise OpenRouterRateLimitError("429", status_code=429)
+
+        def fake_finbert(batch):
+            return [
+                {
+                    "id": article.id,
+                    "score": 0.2,
+                    "prob_positive": 0.6,
+                    "prob_neutral": 0.2,
+                    "prob_negative": 0.2,
+                    "finbert_strength": 0.4,
+                }
+                for article in batch
+            ]
+
+        monkeypatch.setattr(ai_engine, "run_async_from_sync", fail_llm)
+        monkeypatch.setattr(ai_engine, "score_batch_with_finbert", fake_finbert)
+
+        scored = ai_engine.score_unscored_articles(session=session, chunk_size=2)
+
+        assert scored == 2
+        assert all(obj.model_name == "hybrid_fallback_429" for obj in session.added)
+        assert all(obj.score == pytest.approx(0.0) for obj in session.added)
+
+
+class TestHybridFormula:
+    def test_compute_hybrid_score_hard_neutral(self):
+        from app.ai_engine import _compute_hybrid_score
+
+        score = _compute_hybrid_score(label="NEUTRAL", llm_confidence=0.9, finbert_strength=1.0)
+        assert score == pytest.approx(0.0)
+
+    def test_compute_hybrid_score_bullish_weighted_magnitude(self):
+        from app.ai_engine import _compute_hybrid_score
+
+        score = _compute_hybrid_score(label="BULLISH", llm_confidence=0.7, finbert_strength=0.4)
+        assert score == pytest.approx(0.61)
 
 
 class TestFinbertPipelineCaching:

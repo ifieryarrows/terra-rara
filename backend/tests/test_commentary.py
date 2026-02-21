@@ -73,7 +73,120 @@ def test_generate_commentary_uses_template_when_api_key_missing(monkeypatch):
     assert text.strip().endswith("This is NOT financial advice.")
 
 
-def test_determine_ai_stance_falls_back_to_keywords(monkeypatch):
+def test_determine_ai_stance_uses_keywords(monkeypatch):
+    fake_settings = SimpleNamespace(
+        openrouter_api_key="test-key",
+        resolved_commentary_model="stepfun/step-3.5-flash:free",
+        openrouter_max_retries=3,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+
+    async def run_call():
+        return await commentary_module.determine_ai_stance(
+            "Bullish momentum, upside potential, strong growth setup with higher highs."
+        )
+
+    stance = asyncio.run(run_call())
+    assert stance == "BULLISH"
+
+
+def test_generate_commentary_single_call_json_success(monkeypatch):
+    fake_settings = SimpleNamespace(
+        openrouter_api_key="test-key",
+        resolved_commentary_model="stepfun/step-3.5-flash:free",
+        openrouter_max_retries=3,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+
+    async def fake_openrouter(**kwargs):
+        assert kwargs.get("response_format") == commentary_module.COMMENTARY_RESPONSE_FORMAT
+        assert kwargs.get("provider") == {"require_parameters": True}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"stance":"BEARISH","commentary":"Risks:\\n1. Risk a\\n2. Risk b\\n3. Risk c\\n'
+                            'Opportunities:\\n1. Opp a\\n2. Opp b\\n3. Opp c\\n'
+                            'Summary: cautious.\\nBias warning: model risk.\\nThis is NOT financial advice."}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(commentary_module, "create_chat_completion", fake_openrouter)
+
+    async def run_call():
+        return await commentary_module._generate_commentary_and_stance(
+            current_price=4.1,
+            predicted_price=4.0,
+            predicted_return=-0.02,
+            sentiment_index=-0.1,
+            sentiment_label="Bearish",
+            top_influencers=[],
+            news_count=8,
+        )
+
+    commentary, stance = asyncio.run(run_call())
+    assert stance == "BEARISH"
+    assert "This is NOT financial advice." in commentary
+
+
+def test_generate_commentary_repairs_invalid_json(monkeypatch):
+    fake_settings = SimpleNamespace(
+        openrouter_api_key="test-key",
+        resolved_commentary_model="stepfun/step-3.5-flash:free",
+        openrouter_max_retries=3,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+
+    call_count = {"n": 0}
+
+    async def fake_openrouter(**_kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"choices": [{"message": {"content": '{"stance":"BULLISH","commentary":"oops"'}}]}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"stance":"BULLISH","commentary":"Risks:\\n1. r1\\n2. r2\\n3. r3\\n'
+                            'Opportunities:\\n1. o1\\n2. o2\\n3. o3\\nSummary: s.\\n'
+                            'Bias warning: b.\\nThis is NOT financial advice."}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(commentary_module, "create_chat_completion", fake_openrouter)
+
+    async def run_call():
+        return await commentary_module._generate_commentary_and_stance(
+            current_price=4.1,
+            predicted_price=4.2,
+            predicted_return=0.02,
+            sentiment_index=0.1,
+            sentiment_label="Bullish",
+            top_influencers=[],
+            news_count=8,
+        )
+
+    commentary, stance = asyncio.run(run_call())
+    assert call_count["n"] == 2
+    assert stance == "BULLISH"
+    assert "This is NOT financial advice." in commentary
+
+
+def test_generate_and_save_commentary_uses_deterministic_stance_fallback(monkeypatch):
     fake_settings = SimpleNamespace(
         openrouter_api_key="test-key",
         resolved_commentary_model="stepfun/step-3.5-flash:free",
@@ -88,30 +201,6 @@ def test_determine_ai_stance_falls_back_to_keywords(monkeypatch):
 
     monkeypatch.setattr(commentary_module, "create_chat_completion", fail_openrouter)
 
-    async def run_call():
-        return await commentary_module.determine_ai_stance(
-            "Bullish momentum, upside potential, strong growth setup with higher highs."
-        )
-
-    stance = asyncio.run(run_call())
-
-    assert stance == "BULLISH"
-
-
-def test_generate_and_save_commentary_saves_template_fallback(monkeypatch):
-    fake_settings = SimpleNamespace(
-        openrouter_api_key=None,
-        resolved_commentary_model="stepfun/step-3.5-flash:free",
-        openrouter_max_retries=3,
-        openrouter_rpm=18,
-        openrouter_fallback_models_list=[],
-    )
-    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
-    async def fake_determine_ai_stance(_text):
-        return "NEUTRAL"
-
-    monkeypatch.setattr(commentary_module, "determine_ai_stance", fake_determine_ai_stance)
-
     captured = {}
 
     def fake_save_commentary_to_db(**kwargs):
@@ -124,16 +213,15 @@ def test_generate_and_save_commentary_saves_template_fallback(monkeypatch):
             session=object(),
             symbol="HG=F",
             current_price=4.1,
-            predicted_price=4.12,
-            predicted_return=0.005,
-            sentiment_index=0.1,
+            predicted_price=4.2,
+            predicted_return=0.02,
+            sentiment_index=-0.005,
             sentiment_label="Bullish",
-            top_influencers=[{"feature": "driver_a", "importance": 0.3}],
-            news_count=5,
+            top_influencers=[],
+            news_count=4,
         )
 
-    result = asyncio.run(run_call())
-
-    assert result is not None
-    assert captured["symbol"] == "HG=F"
-    assert "Risks:" in captured["commentary"]
+    commentary = asyncio.run(run_call())
+    assert commentary is not None
+    assert "Risks:" in commentary
+    assert captured["ai_stance"] == "BULLISH"

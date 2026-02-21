@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     openrouter_max_retries: int = 3
     max_llm_articles_per_run: int = 200
     openrouter_fallback_models: Optional[str] = None
+    tokenizers_parallelism: str = "false"
     
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
