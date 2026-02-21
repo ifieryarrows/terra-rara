@@ -12,14 +12,13 @@ Usage:
 """
 
 import argparse
-import asyncio
 import json
 import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Suppress httpx request logging to prevent API keys in URLs from appearing in logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -38,6 +37,7 @@ from app.models import NewsArticle, NewsSentiment, DailySentiment, PriceBar
 from app.settings import get_settings
 from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
+from app.async_bridge import run_async_from_sync
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,10 +45,83 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_FINBERT_OUTPUT_LOGGED = False
+
 
 # =============================================================================
 # FinBERT Sentiment Scoring
 # =============================================================================
+
+
+def _neutral_finbert_score() -> dict:
+    """Neutral fallback score used when FinBERT output is invalid or unavailable."""
+    return {
+        "prob_positive": 0.33,
+        "prob_neutral": 0.34,
+        "prob_negative": 0.33,
+        "score": 0.0,
+    }
+
+
+def _normalize_finbert_output(raw_output: Any) -> list[dict]:
+    """
+    Normalize FinBERT output into a flat ``list[dict]``.
+
+    Supported raw formats:
+    - list[dict]
+    - list[list[dict]]
+    - dict
+    - JSON string of any of the above
+    """
+    output = raw_output
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("FinBERT output is not valid JSON") from exc
+
+    if isinstance(output, dict):
+        output = [output]
+
+    if not isinstance(output, list):
+        raise TypeError(f"Unsupported FinBERT output type: {type(output).__name__}")
+
+    normalized: list[dict] = []
+    for item in output:
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        if isinstance(item, list):
+            normalized.extend([child for child in item if isinstance(child, dict)])
+            continue
+
+        logger.debug("Skipping unsupported FinBERT output item type: %s", type(item).__name__)
+
+    return normalized
+
+
+def _log_finbert_output_once(raw_output: Any) -> None:
+    """Log one representative FinBERT output shape for debugging parser mismatches."""
+    global _FINBERT_OUTPUT_LOGGED
+    if _FINBERT_OUTPUT_LOGGED:
+        return
+
+    first_item = raw_output
+    if isinstance(raw_output, list) and raw_output:
+        first_item = raw_output[0]
+
+    preview = repr(first_item)
+    if len(preview) > 220:
+        preview = f"{preview[:220]}..."
+
+    logger.info(
+        "FinBERT output sample: type=%s first_item_type=%s first_item=%s",
+        type(raw_output).__name__,
+        type(first_item).__name__,
+        preview,
+    )
+    _FINBERT_OUTPUT_LOGGED = True
 
 def get_finbert_pipeline():
     """
@@ -88,25 +161,42 @@ def score_text_with_finbert(
         Dict with prob_positive, prob_neutral, prob_negative, score
     """
     if not text or len(text.strip()) < 10:
-        return {
-            "prob_positive": 0.33,
-            "prob_neutral": 0.34,
-            "prob_negative": 0.33,
-            "score": 0.0
-        }
+        return _neutral_finbert_score()
     
     # Truncate long text
     text = text[:1000]
     
     try:
-        results = pipe(text)[0]
-        
-        # Extract probabilities
-        probs = {r["label"].lower(): r["score"] for r in results}
-        
-        prob_pos = probs.get("positive", 0.33)
-        prob_neu = probs.get("neutral", 0.34)
-        prob_neg = probs.get("negative", 0.33)
+        raw_output = pipe(text)
+        _log_finbert_output_once(raw_output)
+        results = _normalize_finbert_output(raw_output)
+        if not results:
+            logger.warning("FinBERT output normalized to empty list, using neutral fallback")
+            return _neutral_finbert_score()
+
+        probs: dict[str, float] = {}
+        for row in results:
+            label = row.get("label")
+            score = row.get("score")
+            if not isinstance(label, str):
+                continue
+            try:
+                probs[label.lower()] = float(score)
+            except (TypeError, ValueError):
+                continue
+
+        required_labels = {"positive", "neutral", "negative"}
+        if not required_labels.issubset(probs):
+            logger.warning(
+                "FinBERT output missing labels. found=%s expected=%s",
+                sorted(probs.keys()),
+                sorted(required_labels),
+            )
+            return _neutral_finbert_score()
+
+        prob_pos = probs["positive"]
+        prob_neu = probs["neutral"]
+        prob_neg = probs["negative"]
         
         # Derived score: positive - negative (range: -1 to 1)
         score = prob_pos - prob_neg
@@ -120,12 +210,7 @@ def score_text_with_finbert(
         
     except Exception as e:
         logger.warning(f"FinBERT scoring error: {e}")
-        return {
-            "prob_positive": 0.33,
-            "prob_neutral": 0.34,
-            "prob_negative": 0.33,
-            "score": 0.0
-        }
+        return _neutral_finbert_score()
 
 
 # =============================================================================
@@ -394,14 +479,9 @@ def score_unscored_articles(
         # Try LLM first
         if settings.openrouter_api_key:
             try:
-                # Run async function in sync context
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    results = loop.run_until_complete(score_batch_with_llm(articles_data))
-                    logger.info(f"LLM scored chunk {chunk_num} successfully")
-                finally:
-                    loop.close()
+                # Bridge async scoring into sync callers without nested-loop errors.
+                results = run_async_from_sync(score_batch_with_llm, articles_data)
+                logger.info(f"LLM scored chunk {chunk_num} successfully")
             except Exception as e:
                 logger.warning(f"LLM scoring failed for chunk {chunk_num}, falling back to FinBERT: {e}")
                 results = None

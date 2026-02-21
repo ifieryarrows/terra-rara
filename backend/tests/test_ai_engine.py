@@ -2,6 +2,7 @@
 Tests for AI Engine components.
 """
 
+import asyncio
 import pytest
 import numpy as np
 import pandas as pd
@@ -77,6 +78,140 @@ class TestFinBERTScoring:
         )
         
         assert result["score"] == -0.6  # 0.1 - 0.7
+
+    def test_score_text_list_dict_output(self):
+        """Test FinBERT parsing when output is list[dict]."""
+        from app.ai_engine import score_text_with_finbert
+
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = [
+            {"label": "positive", "score": 0.6},
+            {"label": "neutral", "score": 0.3},
+            {"label": "negative", "score": 0.1},
+        ]
+
+        result = score_text_with_finbert(
+            mock_pipe,
+            "Copper demand remains strong with supportive macro backdrop",
+        )
+
+        assert result["prob_positive"] == 0.6
+        assert result["prob_neutral"] == 0.3
+        assert result["prob_negative"] == 0.1
+        assert result["score"] == 0.5
+
+    def test_score_text_json_string_flat_output(self):
+        """Test FinBERT parsing when output is a JSON string of list[dict]."""
+        from app.ai_engine import score_text_with_finbert
+
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = (
+            '[{"label":"positive","score":0.55},'
+            '{"label":"neutral","score":0.35},'
+            '{"label":"negative","score":0.10}]'
+        )
+
+        result = score_text_with_finbert(
+            mock_pipe,
+            "Refined copper demand outlook improved after industrial utilization data",
+        )
+
+        assert result["prob_positive"] == 0.55
+        assert result["prob_neutral"] == 0.35
+        assert result["prob_negative"] == 0.10
+        assert result["score"] == pytest.approx(0.45)
+
+    def test_score_text_json_string_nested_output(self):
+        """Test FinBERT parsing when output is a JSON string of list[list[dict]]."""
+        from app.ai_engine import score_text_with_finbert
+
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = (
+            '[[{"label":"positive","score":0.40},'
+            '{"label":"neutral","score":0.20},'
+            '{"label":"negative","score":0.40}]]'
+        )
+
+        result = score_text_with_finbert(
+            mock_pipe,
+            "Balanced copper news flow kept near-term expectations mostly neutral",
+        )
+
+        assert result["prob_positive"] == 0.40
+        assert result["prob_neutral"] == 0.20
+        assert result["prob_negative"] == 0.40
+        assert result["score"] == 0.0
+
+    def test_score_text_invalid_json_string_returns_neutral(self):
+        """Invalid JSON string from FinBERT should fall back to neutral."""
+        from app.ai_engine import score_text_with_finbert
+
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = "not-valid-json"
+
+        result = score_text_with_finbert(
+            mock_pipe,
+            "Copper markets reacted sharply to mixed macro and inventory signals today",
+        )
+
+        assert result["prob_positive"] == 0.33
+        assert result["prob_neutral"] == 0.34
+        assert result["prob_negative"] == 0.33
+        assert result["score"] == 0.0
+
+    def test_score_text_missing_labels_returns_neutral(self):
+        """Missing required labels should fall back to neutral."""
+        from app.ai_engine import score_text_with_finbert
+
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = [{"label": "positive", "score": 0.95}]
+
+        result = score_text_with_finbert(
+            mock_pipe,
+            "Copper outlook remains constructive with selective demand-side support factors",
+        )
+
+        assert result["prob_positive"] == 0.33
+        assert result["prob_neutral"] == 0.34
+        assert result["prob_negative"] == 0.33
+        assert result["score"] == 0.0
+
+
+class TestAsyncBridge:
+    """Tests for async-to-sync bridge utility."""
+
+    def test_run_async_from_sync_without_running_loop(self):
+        """Bridge should run async callable directly when no loop is active."""
+        from app.async_bridge import run_async_from_sync
+
+        async def add(a, b):
+            await asyncio.sleep(0)
+            return a + b
+
+        assert run_async_from_sync(add, 2, 3) == 5
+
+    def test_run_async_from_sync_with_running_loop(self):
+        """Bridge should work when called from inside an active event loop."""
+        from app.async_bridge import run_async_from_sync
+
+        async def double(x):
+            await asyncio.sleep(0)
+            return x * 2
+
+        async def caller():
+            return run_async_from_sync(double, 21)
+
+        assert asyncio.run(caller()) == 42
+
+    def test_run_async_from_sync_propagates_exception(self):
+        """Bridge should propagate async exceptions back to sync caller."""
+        from app.async_bridge import run_async_from_sync
+
+        async def fail():
+            raise RuntimeError("bridge-failure")
+
+        with pytest.raises(RuntimeError, match="bridge-failure"):
+            run_async_from_sync(fail)
 
 
 class TestSentimentAggregation:
