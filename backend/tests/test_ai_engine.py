@@ -473,6 +473,56 @@ class TestLLMStructuredScoring:
         assert results[0]["score"] == pytest.approx(0.45)
         assert results[0]["model_name"] == "stepfun/step-3.5-flash:free"
 
+    def test_score_batch_with_llm_retries_relaxed_mode_on_404_provider_mismatch(self, monkeypatch):
+        from app import ai_engine
+        from app.openrouter_client import OpenRouterError
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+            openrouter_max_retries=3,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        call_count = {"n": 0}
+
+        async def fake_create_chat_completion(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                assert "response_format" in kwargs
+                assert "provider" in kwargs
+                raise OpenRouterError(
+                    "No endpoints found that can handle the requested parameters",
+                    status_code=404,
+                )
+            assert "response_format" not in kwargs
+            assert "provider" not in kwargs
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "```json\n[{\"id\": 42, \"score\": -0.25, \"reasoning\": \"Weak demand outlook weighs sentiment.\"}]\n```"
+                        }
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        async def run_call():
+            return await ai_engine.score_batch_with_llm([
+                {"id": 42, "title": "Copper demand slows", "description": "Manufacturing weakness"},
+            ])
+
+        results = asyncio.run(run_call())
+
+        assert call_count["n"] == 2
+        assert len(results) == 1
+        assert results[0]["id"] == 42
+        assert results[0]["score"] == pytest.approx(-0.25)
+
 
 class TestScoringFallbackAndBudget:
     def test_score_unscored_articles_falls_back_to_finbert_on_llm_error(self, monkeypatch):

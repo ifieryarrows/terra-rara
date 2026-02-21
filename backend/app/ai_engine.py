@@ -42,6 +42,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _FINBERT_OUTPUT_LOGGED = False
+_FINBERT_MISSING_LABELS_WARNED = False
 
 
 # =============================================================================
@@ -168,7 +169,11 @@ def score_text_with_finbert(
     text = text[:1000]
     
     try:
-        raw_output = pipe(text)
+        try:
+            raw_output = pipe(text, top_k=None)
+        except TypeError:
+            # Older transformers pipeline signature may not support top_k argument.
+            raw_output = pipe(text)
         _log_finbert_output_once(raw_output)
         results = _normalize_finbert_output(raw_output)
         if not results:
@@ -188,11 +193,14 @@ def score_text_with_finbert(
 
         required_labels = {"positive", "neutral", "negative"}
         if not required_labels.issubset(probs):
-            logger.warning(
-                "FinBERT output missing labels. found=%s expected=%s",
-                sorted(probs.keys()),
-                sorted(required_labels),
-            )
+            global _FINBERT_MISSING_LABELS_WARNED
+            if not _FINBERT_MISSING_LABELS_WARNED:
+                logger.warning(
+                    "FinBERT output missing labels. found=%s expected=%s (further repeats suppressed)",
+                    sorted(probs.keys()),
+                    sorted(required_labels),
+                )
+                _FINBERT_MISSING_LABELS_WARNED = True
             return _neutral_finbert_score()
 
         prob_pos = probs["positive"]
@@ -340,6 +348,32 @@ def _extract_chat_message_content(data: dict[str, Any]) -> str:
     return ""
 
 
+def _clean_json_content(content: str) -> str:
+    """
+    Normalize model text into parseable JSON content.
+    Supports markdown fenced output in relaxed fallback mode.
+    """
+    normalized = content.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        normalized = "\n".join(lines).strip()
+
+    if normalized.startswith("json"):
+        normalized = normalized[4:].strip()
+
+    if not normalized.startswith("["):
+        first = normalized.find("[")
+        last = normalized.rfind("]")
+        if first != -1 and last != -1 and last > first:
+            normalized = normalized[first:last + 1]
+
+    return normalized
+
+
 def _validate_and_enrich_llm_results(
     *,
     raw_results: Any,
@@ -410,31 +444,48 @@ Output must follow the provided JSON schema."""
 
     model_name = settings.resolved_scoring_model
 
-    data = await create_chat_completion(
-        api_key=settings.openrouter_api_key,
-        model=model_name,
-        messages=[
-            {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        max_tokens=2000,
-        temperature=0.3,
-        timeout_seconds=60.0,
-        max_retries=settings.openrouter_max_retries,
-        rpm=settings.openrouter_rpm,
-        response_format=LLM_SCORING_RESPONSE_FORMAT,
-        provider=LLM_SCORING_PROVIDER_OPTIONS,
-        fallback_models=settings.openrouter_fallback_models_list,
-        referer="https://copper-mind.vercel.app",
-        title="CopperMind Sentiment Analysis",
-    )
+    async def _request_scoring(strict_schema: bool) -> dict[str, Any]:
+        request_kwargs: dict[str, Any] = {
+            "api_key": settings.openrouter_api_key,
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.3,
+            "timeout_seconds": 60.0,
+            "max_retries": settings.openrouter_max_retries,
+            "rpm": settings.openrouter_rpm,
+            "fallback_models": settings.openrouter_fallback_models_list,
+            "referer": "https://copper-mind.vercel.app",
+            "title": "CopperMind Sentiment Analysis",
+        }
+        if strict_schema:
+            request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT
+            request_kwargs["provider"] = LLM_SCORING_PROVIDER_OPTIONS
+        return await create_chat_completion(**request_kwargs)
+
+    try:
+        data = await _request_scoring(strict_schema=True)
+    except OpenRouterError as exc:
+        message = str(exc).lower()
+        # Some free providers return 404 when strict provider parameters are not supported.
+        if exc.status_code == 404 and "no endpoints found" in message:
+            logger.warning(
+                "Structured scoring request unsupported by current provider routing. "
+                "Retrying without strict response_format/provider constraints."
+            )
+            data = await _request_scoring(strict_schema=False)
+        else:
+            raise
 
     content = _extract_chat_message_content(data)
     if not content:
         raise OpenRouterError("Empty response content from LLM scoring")
 
     try:
-        raw_results = json.loads(content)
+        raw_results = json.loads(_clean_json_content(content))
     except json.JSONDecodeError as exc:
         logger.error("LLM JSON parse error after structured output: %s", exc)
         raise
