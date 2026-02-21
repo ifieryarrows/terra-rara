@@ -68,12 +68,21 @@ class Settings(BaseSettings):
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
+    # Deprecated - kept for backward compatibility
     openrouter_model: str = "openai/gpt-oss-120b:free"
+    # New primary config
+    openrouter_model_scoring: str = "stepfun/step-3.5-flash:free"
+    openrouter_model_commentary: str = "stepfun/step-3.5-flash:free"
+    openrouter_rpm: int = 18
+    openrouter_max_retries: int = 3
+    max_llm_articles_per_run: int = 200
+    openrouter_fallback_models: Optional[str] = None
     
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
     
     # LLM Sentiment Analysis
+    # Deprecated - kept for backward compatibility
     llm_sentiment_model: str = "openai/gpt-oss-120b:free"
     
     # Pipeline trigger authentication
@@ -157,6 +166,48 @@ class Settings(BaseSettings):
         """Primary symbol for predictions (first in list)."""
         symbols = self.symbols_list
         return symbols[0] if symbols else "HG=F"
+
+    @staticmethod
+    def _first_non_empty(*values: Optional[str]) -> Optional[str]:
+        """Return first non-empty string value."""
+        for value in values:
+            if value and value.strip():
+                return value.strip()
+        return None
+
+    @property
+    def resolved_scoring_model(self) -> str:
+        """Preferred scoring model with backward-compatible fallback chain."""
+        return (
+            self._first_non_empty(
+                self.openrouter_model_scoring,
+                self.llm_sentiment_model,
+                self.openrouter_model,
+            )
+            or "stepfun/step-3.5-flash:free"
+        )
+
+    @property
+    def resolved_commentary_model(self) -> str:
+        """Preferred commentary model with backward-compatible fallback chain."""
+        return (
+            self._first_non_empty(
+                self.openrouter_model_commentary,
+                self.openrouter_model,
+                self.llm_sentiment_model,
+            )
+            or "stepfun/step-3.5-flash:free"
+        )
+
+    @property
+    def openrouter_fallback_models_list(self) -> list[str]:
+        """
+        Parse comma-separated fallback models.
+        Empty/whitespace items are ignored.
+        """
+        if not self.openrouter_fallback_models:
+            return []
+        return [m.strip() for m in self.openrouter_fallback_models.split(",") if m.strip()]
 
 
 @lru_cache

@@ -27,7 +27,7 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 
 ## Overview
 
-Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (MiMo Flash via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (Step-3.5 Flash via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
 
 **Model target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
@@ -38,7 +38,7 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 ## Features
 
 - Predict next-day copper futures returns using XGBoost regression trained on 250+ features
-- Score news sentiment using LLM (MiMo Flash) with FinBERT fallback when API is unavailable
+- Score news sentiment using LLM (Step-3.5 Flash) with FinBERT fallback when API is unavailable
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
 - Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
@@ -377,15 +377,24 @@ Copy `env.example` to `backend/.env` and configure:
 | `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM |
 | `PIPELINE_TRIGGER_SECRET` | Yes | - | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `SYMBOL_SET` | No | `active` | Which symbol set to use (active/champion/challenger) |
-| `OPENROUTER_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for AI commentary |
-| `LLM_SENTIMENT_MODEL` | No | `xiaomi/mimo-v2-flash:free` | Model for sentiment scoring |
+| `OPENROUTER_MODEL_SCORING` | No | `stepfun/step-3.5-flash:free` | Primary model for sentiment scoring |
+| `OPENROUTER_MODEL_COMMENTARY` | No | `stepfun/step-3.5-flash:free` | Primary model for commentary generation |
+| `OPENROUTER_RPM` | No | `18` | Soft throttle target for OpenRouter calls |
+| `OPENROUTER_MAX_RETRIES` | No | `3` | Max retry attempts for 429/5xx OpenRouter errors |
+| `MAX_LLM_ARTICLES_PER_RUN` | No | `200` | Per-run LLM scoring budget before FinBERT overflow |
+| `OPENROUTER_FALLBACK_MODELS` | No | empty | Optional comma-separated fallback model list |
+| `OPENROUTER_MODEL` | No | - | Deprecated fallback model env (backward compatibility) |
+| `LLM_SENTIMENT_MODEL` | No | - | Deprecated fallback scoring model env |
 | `TWELVEDATA_API_KEY` | No | - | Backup live price source |
-| `SCHEDULER_ENABLED` | No | `true` | Enable daily pipeline |
+| `SCHEDULER_ENABLED` | No | `false` | Local-only scheduler flag (production uses external trigger) |
 | `SCHEDULE_TIME` | No | `02:00` | Daily pipeline time (HH:MM) |
 | `TZ` | No | `Europe/Istanbul` | Scheduler timezone |
 | `YFINANCE_SYMBOLS` | No | (14 symbols) | Dashboard symbols (comma-separated) |
 | `NEWS_LOOKBACK_DAYS` | No | `30` | Days of news to fetch |
 | `SENTIMENT_DECAY_HALF_LIFE` | No | `7.0` | Sentiment decay half-life (days) |
+| `HF_HUB_DISABLE_PROGRESS_BARS` | No | `1` | Disable Hugging Face progress bars |
+| `TRANSFORMERS_VERBOSITY` | No | `error` | Reduce Transformers log noise |
+| `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No | `1` | Disable advisory warnings from Transformers |
 
 The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Generate a random secret before deploying.
 
@@ -536,7 +545,7 @@ ruff check .
 
 ### Daily Pipeline
 
-The pipeline runs automatically at 02:00 Istanbul time when `SCHEDULER_ENABLED=true`:
+The pipeline is triggered daily by external scheduler automation (GitHub Actions cron). Local scheduler mode (`SCHEDULER_ENABLED=true`) is for development only:
 
 1. Fetch news from 16 strategic Google News RSS queries
 2. Fetch price data for 17 training symbols via yfinance
@@ -599,7 +608,7 @@ Tracked metrics:
 
 **Cause**: Pipeline failed silently or scheduler is disabled.
 
-**Fix**: Check backend logs for pipeline errors. Verify `SCHEDULER_ENABLED=true`. Manually trigger pipeline via `POST /api/pipeline/trigger` to test.
+**Fix**: Check backend logs for pipeline errors and queue health. Manually trigger pipeline via `POST /api/pipeline/trigger` to test execution end-to-end.
 
 ### Invalid or missing target_type error
 

@@ -4,17 +4,60 @@ Generates human-readable market analysis from FinBERT + XGBoost results.
 """
 
 import logging
-
-# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-import httpx
 from typing import Optional
 from datetime import datetime
 
 from .settings import get_settings
+from .openrouter_client import OpenRouterError, create_chat_completion
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_chat_message_content(data: dict) -> str:
+    """Extract text content from OpenRouter chat completion response."""
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+        return "\n".join(text_parts).strip()
+    return ""
+
+
+def _build_commentary_template_fallback(
+    current_price: float,
+    predicted_price: float,
+    predicted_return: float,
+    sentiment_index: float,
+    sentiment_label: str,
+    top_influencers: list[dict],
+    news_count: int,
+) -> str:
+    """Deterministic fallback commentary used when LLM is unavailable."""
+    direction = "upside" if predicted_return >= 0 else "downside"
+    top_driver_names = [inf.get("feature", "unknown_driver") for inf in top_influencers[:3]]
+    while len(top_driver_names) < 3:
+        top_driver_names.append("unknown_driver")
+
+    return "\n".join([
+        "Risks:",
+        f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
+        f"2. Sentiment regime is {sentiment_label} with score {sentiment_index:.3f}, which can reverse quickly.",
+        f"3. News sample size ({news_count}) may be insufficient for stable short-horizon inference.",
+        "Opportunities:",
+        f"1. Predicted price path implies a move from ${current_price:.4f} to ${predicted_price:.4f}.",
+        f"2. Feature signal concentration around `{top_driver_names[0]}` can support tactical monitoring.",
+        f"3. Secondary drivers `{top_driver_names[1]}` and `{top_driver_names[2]}` provide confirmation checkpoints.",
+        f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
+        "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
+        "This is NOT financial advice.",
+    ])
 
 
 async def determine_ai_stance(commentary: str) -> str:
@@ -43,34 +86,26 @@ Commentary:
 Your response (one word only):"""
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.openrouter_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.openrouter_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 10,
-                        "temperature": 0.1,
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    stance = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
-                    
-                    # Validate response
-                    if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
-                        logger.info(f"AI stance determined: {stance}")
-                        return stance
-                    else:
-                        logger.warning(f"Invalid AI stance response: '{stance}', using keyword fallback")
-                else:
-                    logger.warning(f"AI stance API error: {response.status_code}, using keyword fallback")
-                    
+            data = await create_chat_completion(
+                api_key=settings.openrouter_api_key,
+                model=settings.resolved_commentary_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=10,
+                temperature=0.1,
+                timeout_seconds=30.0,
+                max_retries=settings.openrouter_max_retries,
+                rpm=settings.openrouter_rpm,
+                fallback_models=settings.openrouter_fallback_models_list,
+            )
+            stance = _extract_chat_message_content(data).upper()
+
+            # Validate response
+            if stance in ["BULLISH", "NEUTRAL", "BEARISH"]:
+                logger.info(f"AI stance determined: {stance}")
+                return stance
+            logger.warning(f"Invalid AI stance response: '{stance}', using keyword fallback")
+        except OpenRouterError as e:
+            logger.warning(f"AI stance detection failed via OpenRouter: {e}, using keyword fallback")
         except Exception as e:
             logger.warning(f"AI stance detection failed: {e}, using keyword fallback")
     
@@ -134,9 +169,19 @@ async def generate_commentary(
     """
     settings = get_settings()
     
+    fallback_commentary = _build_commentary_template_fallback(
+        current_price=current_price,
+        predicted_price=predicted_price,
+        predicted_return=predicted_return,
+        sentiment_index=sentiment_index,
+        sentiment_label=sentiment_label,
+        top_influencers=top_influencers,
+        news_count=news_count,
+    )
+
     if not settings.openrouter_api_key:
-        logger.warning("OpenRouter API key not configured, skipping commentary")
-        return None
+        logger.warning("OpenRouter API key not configured, using template commentary fallback")
+        return fallback_commentary
     
     # Build the prompt
     influencers_text = "\n".join([
@@ -184,48 +229,41 @@ Output requirements:
 - End with this exact line on its own: This is NOT financial advice."""
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://copper-mind.vercel.app",
-                    "X-Title": "CopperMind AI Analysis",
+        data = await create_chat_completion(
+            api_key=settings.openrouter_api_key,
+            model=settings.resolved_commentary_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt,
                 },
-                json={
-                    "model": settings.openrouter_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": system_prompt
-                        },
-                        {
-                            "role": "user", 
-                            "content": prompt
-                        }
-                    ],
-                    "max_tokens": 700,
-                    "temperature": 0.6,
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                commentary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if commentary:
-                    logger.info(f"AI commentary generated successfully ({len(commentary)} chars)")
-                    return commentary.strip()
-                else:
-                    logger.warning("Empty response from OpenRouter")
-                    return None
-            else:
-                logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
-                return None
-                
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            max_tokens=700,
+            temperature=0.6,
+            timeout_seconds=30.0,
+            max_retries=settings.openrouter_max_retries,
+            rpm=settings.openrouter_rpm,
+            fallback_models=settings.openrouter_fallback_models_list,
+            referer="https://copper-mind.vercel.app",
+            title="CopperMind AI Analysis",
+        )
+        commentary = _extract_chat_message_content(data)
+        if commentary:
+            logger.info(f"AI commentary generated successfully ({len(commentary)} chars)")
+            return commentary.strip()
+
+        logger.warning("Empty response from OpenRouter, using template commentary fallback")
+        return fallback_commentary
+    except OpenRouterError as e:
+        logger.warning("OpenRouter commentary failed: %s. Using template fallback.", e)
+        return fallback_commentary
     except Exception as e:
         logger.error(f"Failed to generate AI commentary: {e}")
-        return None
+        return fallback_commentary
 
 
 def save_commentary_to_db(
@@ -258,7 +296,7 @@ def save_commentary_to_db(
         existing.sentiment_label = sentiment_label
         existing.ai_stance = ai_stance
         existing.generated_at = datetime.utcnow()
-        existing.model_name = settings.openrouter_model
+        existing.model_name = settings.resolved_commentary_model
         logger.info(f"Updated AI commentary for {symbol} (stance: {ai_stance})")
     else:
         # Create new
@@ -270,7 +308,7 @@ def save_commentary_to_db(
             predicted_return=predicted_return,
             sentiment_label=sentiment_label,
             ai_stance=ai_stance,
-            model_name=settings.openrouter_model,
+            model_name=settings.resolved_commentary_model,
         )
         session.add(new_commentary)
         logger.info(f"Created new AI commentary for {symbol} (stance: {ai_stance})")

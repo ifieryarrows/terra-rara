@@ -2,7 +2,7 @@
 AI Engine: LLM sentiment scoring (with FinBERT fallback) + XGBoost training.
 
 Sentiment Analysis:
-    Primary: Gemini LLM with copper-specific context (1M token batch)
+    Primary: OpenRouter LLM with structured outputs
     Fallback: FinBERT for generic financial sentiment
 
 Usage:
@@ -15,15 +15,10 @@ import argparse
 import json
 import logging
 import os
-import time
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-
-# Suppress httpx request logging to prevent API keys in URLs from appearing in logs
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-import httpx
 
 import numpy as np
 import pandas as pd
@@ -38,6 +33,7 @@ from app.settings import get_settings
 from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
 from app.async_bridge import run_async_from_sync
+from app.openrouter_client import OpenRouterError, create_chat_completion
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,11 +119,16 @@ def _log_finbert_output_once(raw_output: Any) -> None:
     )
     _FINBERT_OUTPUT_LOGGED = True
 
+@lru_cache(maxsize=1)
 def get_finbert_pipeline():
     """
     Load FinBERT model pipeline.
     Lazy loading to avoid import overhead when not needed.
     """
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+
     from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
     
     model_name = "ProsusAI/finbert"
@@ -214,7 +215,7 @@ def score_text_with_finbert(
 
 
 # =============================================================================
-# LLM Sentiment Scoring (Primary - Gemini)
+# LLM Sentiment Scoring (Primary - OpenRouter)
 # =============================================================================
 
 # Copper-specific system prompt for LLM sentiment analysis
@@ -276,125 +277,174 @@ Rules:
 - Use standard decimals (e.g., -0.4, 0.15, 1.0); no NaN, no scientific notation."""
 
 
+LLM_SCORING_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "news_sentiment_scores",
+        "strict": True,
+        "schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "score": {"type": "number", "minimum": -1, "maximum": 1},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["id", "score"],
+                "additionalProperties": False,
+            },
+        },
+    },
+}
+
+LLM_SCORING_PROVIDER_OPTIONS = {"require_parameters": True}
+
+
+def _derive_probs_from_score(score: float) -> tuple[float, float, float]:
+    """Derive pseudo-probabilities from signed score for downstream compatibility."""
+    confidence = abs(score)
+    if score > 0:
+        prob_positive = 0.33 + (confidence * 0.67)
+        prob_negative = 0.33 - (confidence * 0.33)
+        prob_neutral = 1.0 - prob_positive - prob_negative
+    elif score < 0:
+        prob_negative = 0.33 + (confidence * 0.67)
+        prob_positive = 0.33 - (confidence * 0.33)
+        prob_neutral = 1.0 - prob_positive - prob_negative
+    else:
+        prob_positive = 0.33
+        prob_neutral = 0.34
+        prob_negative = 0.33
+
+    return round(prob_positive, 4), round(prob_neutral, 4), round(prob_negative, 4)
+
+
+def _extract_chat_message_content(data: dict[str, Any]) -> str:
+    """Extract text content from OpenRouter chat completion response."""
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+        return "\n".join(text_parts).strip()
+
+    return ""
+
+
+def _validate_and_enrich_llm_results(
+    *,
+    raw_results: Any,
+    expected_ids: list[int],
+    model_name: str,
+) -> list[dict]:
+    """Validate LLM result shape and enrich with derived probability fields."""
+    if not isinstance(raw_results, list):
+        raise ValueError(f"Structured result must be a list, got {type(raw_results).__name__}")
+
+    results_by_id: dict[int, dict] = {}
+    for item in raw_results:
+        if not isinstance(item, dict):
+            raise ValueError(f"Structured result item must be object, got {type(item).__name__}")
+        if "id" not in item or "score" not in item:
+            raise ValueError("Structured result missing required fields: id and score")
+
+        article_id = int(item["id"])
+        if article_id in results_by_id:
+            raise ValueError(f"Duplicate article id in structured output: {article_id}")
+        score = max(-1.0, min(1.0, float(item["score"])))
+        reasoning_raw = item.get("reasoning", "")
+        reasoning = reasoning_raw if isinstance(reasoning_raw, str) else str(reasoning_raw)
+
+        prob_positive, prob_neutral, prob_negative = _derive_probs_from_score(score)
+        results_by_id[article_id] = {
+            "id": article_id,
+            "score": score,
+            "reasoning": reasoning,
+            "prob_positive": prob_positive,
+            "prob_neutral": prob_neutral,
+            "prob_negative": prob_negative,
+            "model_name": model_name,
+        }
+
+    expected = set(expected_ids)
+    got = set(results_by_id.keys())
+    missing = sorted(expected - got)
+    extra = sorted(got - expected)
+    if missing or extra:
+        raise ValueError(f"Structured result ID mismatch. missing={missing} extra={extra}")
+
+    return [results_by_id[article_id] for article_id in expected_ids]
+
+
 async def score_batch_with_llm(
     articles: list[dict],
 ) -> list[dict]:
     """
-    Score a batch of articles using LLM (Gemini via OpenRouter).
-    
-    Args:
-        articles: List of dicts with 'id', 'title', 'description'
-        
-    Returns:
-        List of dicts with 'id', 'score', 'reasoning', 'prob_positive', 'prob_neutral', 'prob_negative'
-        
-    Raises:
-        Exception on API error or JSON parse failure
+    Score a batch of articles using OpenRouter with strict JSON schema response.
     """
     settings = get_settings()
-    
+
     if not settings.openrouter_api_key:
         raise RuntimeError("OpenRouter API key not configured")
-    
-    # Build articles text for prompt
+
     articles_text = "\n".join([
-        f"{i+1}. [ID:{a['id']}] {a['title']}" + (f" - {a['description'][:200]}" if a.get('description') else "")
+        f"{i+1}. [ID:{a['id']}] {a['title']}" + (f" - {a['description'][:200]}" if a.get("description") else "")
         for i, a in enumerate(articles)
     ])
-    
+
     user_prompt = f"""Score these {len(articles)} news articles for copper market sentiment.
 
 Articles:
 {articles_text}
 
-Return ONLY a valid JSON array with this exact structure (no markdown code blocks):
-[
-  {{"id": <article_id>, "score": <float from -1.0 to 1.0>, "reasoning": "<brief explanation>"}},
-  ...
-]
+Output must follow the provided JSON schema."""
 
-Rules:
-- score: -1.0 (very bearish) to +1.0 (very bullish), 0 = neutral
-- reasoning: 1 sentence max explaining the copper market impact
-- Include ALL {len(articles)} articles in your response"""
+    model_name = settings.resolved_scoring_model
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openrouter_api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://copper-mind.vercel.app",
-                "X-Title": "CopperMind Sentiment Analysis",
-            },
-            json={
-                "model": settings.llm_sentiment_model,
-                "messages": [
-                    {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "max_tokens": 2000,
-                "temperature": 0.3,  # Lower temperature for consistent scoring
-            }
-        )
-        
-        if response.status_code != 200:
-            raise RuntimeError(f"OpenRouter API error: {response.status_code} - {response.text}")
-        
-        data = response.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        
-        if not content:
-            raise RuntimeError("Empty response from LLM")
-        
-        # Clean up response - remove markdown code blocks if present
-        content = content.strip()
-        if content.startswith("```"):
-            # Remove ```json and ``` markers
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        
-        # Parse JSON
-        try:
-            results = json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.error(f"LLM JSON parse error: {e}\nContent: {content[:500]}")
-            raise
-        
-        # Validate and enrich results
-        enriched = []
-        for item in results:
-            score = float(item.get("score", 0))
-            # Clamp score to [-1, 1]
-            score = max(-1.0, min(1.0, score))
-            
-            # Derive probabilities from score
-            # score = prob_positive - prob_negative
-            # Assume prob_neutral is inverse of confidence
-            confidence = abs(score)
-            if score > 0:
-                prob_positive = 0.33 + (confidence * 0.67)
-                prob_negative = 0.33 - (confidence * 0.33)
-                prob_neutral = 1.0 - prob_positive - prob_negative
-            elif score < 0:
-                prob_negative = 0.33 + (confidence * 0.67)
-                prob_positive = 0.33 - (confidence * 0.33)
-                prob_neutral = 1.0 - prob_positive - prob_negative
-            else:
-                prob_positive = 0.33
-                prob_neutral = 0.34
-                prob_negative = 0.33
-            
-            enriched.append({
-                "id": item.get("id"),
-                "score": score,
-                "reasoning": item.get("reasoning", ""),
-                "prob_positive": round(prob_positive, 4),
-                "prob_neutral": round(prob_neutral, 4),
-                "prob_negative": round(prob_negative, 4),
-            })
-        
-        return enriched
+    data = await create_chat_completion(
+        api_key=settings.openrouter_api_key,
+        model=model_name,
+        messages=[
+            {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=2000,
+        temperature=0.3,
+        timeout_seconds=60.0,
+        max_retries=settings.openrouter_max_retries,
+        rpm=settings.openrouter_rpm,
+        response_format=LLM_SCORING_RESPONSE_FORMAT,
+        provider=LLM_SCORING_PROVIDER_OPTIONS,
+        fallback_models=settings.openrouter_fallback_models_list,
+        referer="https://copper-mind.vercel.app",
+        title="CopperMind Sentiment Analysis",
+    )
+
+    content = _extract_chat_message_content(data)
+    if not content:
+        raise OpenRouterError("Empty response content from LLM scoring")
+
+    try:
+        raw_results = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.error("LLM JSON parse error after structured output: %s", exc)
+        raise
+
+    expected_ids = [int(article["id"]) for article in articles]
+    return _validate_and_enrich_llm_results(
+        raw_results=raw_results,
+        expected_ids=expected_ids,
+        model_name=model_name,
+    )
 
 
 def score_batch_with_finbert(articles: list) -> list[dict]:
@@ -435,10 +485,10 @@ def score_unscored_articles(
     Score all articles that don't have sentiment scores yet.
     
     Strategy:
-    - Primary: LLM (Gemini) with copper-specific context
+    - Primary: OpenRouter LLM with strict JSON schema output
     - Fallback: FinBERT per chunk if LLM fails
     - Chunk size: 20 articles for error isolation
-    - Rate limiting: 2 second delay between chunks
+    - Run budget: cap LLM-scored articles per run, overflow uses FinBERT
     
     Returns:
         Number of articles scored
@@ -459,6 +509,9 @@ def score_unscored_articles(
     
     scored_count = 0
     total_chunks = (len(unscored) + chunk_size - 1) // chunk_size
+    llm_budget_remaining = max(0, settings.max_llm_articles_per_run)
+    budget_exhausted_logged = False
+    logger.info("LLM scoring budget for this run: %s articles", llm_budget_remaining)
     
     # Process in chunks
     for chunk_idx in range(0, len(unscored), chunk_size):
@@ -466,31 +519,52 @@ def score_unscored_articles(
         chunk_num = chunk_idx // chunk_size + 1
         
         logger.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} articles)")
-        
-        # Prepare articles for LLM
-        articles_data = [
-            {"id": a.id, "title": a.title, "description": a.description}
-            for a in chunk
-        ]
-        
-        results = None
-        used_model = settings.llm_sentiment_model
-        
-        # Try LLM first
-        if settings.openrouter_api_key:
+
+        llm_candidates: list[Any] = []
+        finbert_candidates: list[Any] = []
+        results: list[dict] = []
+
+        if settings.openrouter_api_key and llm_budget_remaining > 0:
+            llm_take = min(len(chunk), llm_budget_remaining)
+            llm_candidates = chunk[:llm_take]
+            finbert_candidates = chunk[llm_take:]
+        else:
+            finbert_candidates = chunk
+            if settings.openrouter_api_key and llm_budget_remaining <= 0 and not budget_exhausted_logged:
+                logger.info(
+                    "LLM budget exhausted (%s articles). Remaining chunks will use FinBERT fallback.",
+                    settings.max_llm_articles_per_run,
+                )
+                budget_exhausted_logged = True
+
+        if llm_candidates:
+            articles_data = [
+                {"id": a.id, "title": a.title, "description": a.description}
+                for a in llm_candidates
+            ]
             try:
-                # Bridge async scoring into sync callers without nested-loop errors.
-                results = run_async_from_sync(score_batch_with_llm, articles_data)
-                logger.info(f"LLM scored chunk {chunk_num} successfully")
+                llm_results = run_async_from_sync(score_batch_with_llm, articles_data)
+                results.extend(llm_results)
+                llm_budget_remaining -= len(llm_candidates)
+                logger.info(
+                    "LLM scored %s article(s) in chunk %s. Budget remaining: %s",
+                    len(llm_candidates),
+                    chunk_num,
+                    llm_budget_remaining,
+                )
             except Exception as e:
                 logger.warning(f"LLM scoring failed for chunk {chunk_num}, falling back to FinBERT: {e}")
-                results = None
-        
-        # Fallback to FinBERT if LLM failed or not configured
-        if results is None:
-            logger.info(f"Using FinBERT fallback for chunk {chunk_num}")
-            results = score_batch_with_finbert(chunk)
-            used_model = "ProsusAI/finbert"
+                finbert_candidates = chunk
+                results = []
+
+        if finbert_candidates:
+            logger.info(
+                "Using FinBERT fallback for %s article(s) in chunk %s",
+                len(finbert_candidates),
+                chunk_num,
+            )
+            finbert_results = score_batch_with_finbert(finbert_candidates)
+            results.extend(finbert_results)
         
         # Create a lookup for results
         results_by_id = {r["id"]: r for r in results}
@@ -507,6 +581,7 @@ def score_unscored_articles(
                     "prob_positive": 0.33,
                     "prob_neutral": 0.34,
                     "prob_negative": 0.33,
+                    "model_name": "ProsusAI/finbert",
                 }
             
             sentiment = NewsSentiment(
@@ -516,7 +591,7 @@ def score_unscored_articles(
                 prob_negative=result["prob_negative"],
                 score=result["score"],
                 reasoning=result.get("reasoning"),
-                model_name=result.get("model_name", used_model),
+                model_name=result.get("model_name", settings.resolved_scoring_model),
                 scored_at=datetime.now(timezone.utc)
             )
             
@@ -526,11 +601,6 @@ def score_unscored_articles(
         # Commit after each chunk
         session.commit()
         logger.info(f"Committed chunk {chunk_num}: {len(chunk)} articles")
-        
-        # Rate limiting: 2 second delay between chunks (except last)
-        if chunk_idx + chunk_size < len(unscored):
-            logger.debug("Rate limit delay: 2 seconds")
-            time.sleep(2)
     
     logger.info(f"Total articles scored: {scored_count}")
     return scored_count

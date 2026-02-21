@@ -3,10 +3,13 @@ Tests for AI Engine components.
 """
 
 import asyncio
+import sys
+import types
 import pytest
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 
@@ -400,3 +403,216 @@ class TestModelPersistence:
         
         assert loaded["target_symbol"] == "HG=F"
         assert loaded["val_mae"] == 0.02
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def outerjoin(self, *_args, **_kwargs):
+        return self
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _FakeSession:
+    def __init__(self, articles):
+        self._articles = articles
+        self.added = []
+        self.commit_count = 0
+
+    def query(self, *_args, **_kwargs):
+        return _FakeQuery(self._articles)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def commit(self):
+        self.commit_count += 1
+
+
+class TestLLMStructuredScoring:
+    def test_score_batch_with_llm_structured_output(self, monkeypatch):
+        from app import ai_engine
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+            openrouter_max_retries=3,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        async def fake_create_chat_completion(**_kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '[{"id": 101, "score": 0.45, "reasoning": "Supply disruption lowers near-term availability."}]'
+                        }
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        async def run_call():
+            return await ai_engine.score_batch_with_llm([
+                {"id": 101, "title": "Copper output disrupted", "description": "Mine outage reported"},
+            ])
+
+        results = asyncio.run(run_call())
+
+        assert len(results) == 1
+        assert results[0]["id"] == 101
+        assert results[0]["score"] == pytest.approx(0.45)
+        assert results[0]["model_name"] == "stepfun/step-3.5-flash:free"
+
+
+class TestScoringFallbackAndBudget:
+    def test_score_unscored_articles_falls_back_to_finbert_on_llm_error(self, monkeypatch):
+        from app import ai_engine
+
+        articles = [
+            SimpleNamespace(id=1, title="A", description="d1"),
+            SimpleNamespace(id=2, title="B", description="d2"),
+        ]
+        session = _FakeSession(articles)
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            max_llm_articles_per_run=200,
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        def fail_llm(*_args, **_kwargs):
+            raise ValueError("LLM JSON parse error")
+
+        def fake_finbert(batch):
+            return [
+                {
+                    "id": article.id,
+                    "score": 0.0,
+                    "reasoning": None,
+                    "prob_positive": 0.33,
+                    "prob_neutral": 0.34,
+                    "prob_negative": 0.33,
+                    "model_name": "ProsusAI/finbert",
+                }
+                for article in batch
+            ]
+
+        monkeypatch.setattr(ai_engine, "run_async_from_sync", fail_llm)
+        monkeypatch.setattr(ai_engine, "score_batch_with_finbert", fake_finbert)
+
+        scored = ai_engine.score_unscored_articles(session=session, chunk_size=20)
+
+        assert scored == 2
+        assert len(session.added) == 2
+        assert all(obj.model_name == "ProsusAI/finbert" for obj in session.added)
+
+    def test_score_unscored_articles_respects_llm_budget(self, monkeypatch):
+        from app import ai_engine
+
+        articles = [
+            SimpleNamespace(id=1, title="A", description="d1"),
+            SimpleNamespace(id=2, title="B", description="d2"),
+            SimpleNamespace(id=3, title="C", description="d3"),
+            SimpleNamespace(id=4, title="D", description="d4"),
+            SimpleNamespace(id=5, title="E", description="d5"),
+        ]
+        session = _FakeSession(articles)
+        llm_calls = []
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            max_llm_articles_per_run=3,
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        def fake_run_async(_fn, articles_data):
+            llm_calls.append([item["id"] for item in articles_data])
+            return [
+                {
+                    "id": item["id"],
+                    "score": 0.2,
+                    "reasoning": "LLM scored",
+                    "prob_positive": 0.5,
+                    "prob_neutral": 0.3,
+                    "prob_negative": 0.2,
+                    "model_name": "stepfun/step-3.5-flash:free",
+                }
+                for item in articles_data
+            ]
+
+        def fake_finbert(batch):
+            return [
+                {
+                    "id": article.id,
+                    "score": -0.1,
+                    "reasoning": None,
+                    "prob_positive": 0.2,
+                    "prob_neutral": 0.3,
+                    "prob_negative": 0.5,
+                    "model_name": "ProsusAI/finbert",
+                }
+                for article in batch
+            ]
+
+        monkeypatch.setattr(ai_engine, "run_async_from_sync", fake_run_async)
+        monkeypatch.setattr(ai_engine, "score_batch_with_finbert", fake_finbert)
+
+        scored = ai_engine.score_unscored_articles(session=session, chunk_size=2)
+
+        assert scored == 5
+        assert llm_calls == [[1, 2], [3]]
+        llm_saved = [obj for obj in session.added if obj.model_name == "stepfun/step-3.5-flash:free"]
+        finbert_saved = [obj for obj in session.added if obj.model_name == "ProsusAI/finbert"]
+        assert len(llm_saved) == 3
+        assert len(finbert_saved) == 2
+
+
+class TestFinbertPipelineCaching:
+    def test_get_finbert_pipeline_is_cached(self, monkeypatch):
+        from app import ai_engine
+
+        ai_engine.get_finbert_pipeline.cache_clear()
+        calls = {"tokenizer": 0, "model": 0, "pipeline": 0}
+
+        class FakeTokenizer:
+            @classmethod
+            def from_pretrained(cls, _model_name):
+                calls["tokenizer"] += 1
+                return "tokenizer"
+
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, _model_name):
+                calls["model"] += 1
+                return "model"
+
+        def fake_pipeline(*_args, **_kwargs):
+            calls["pipeline"] += 1
+            return object()
+
+        fake_transformers_module = types.SimpleNamespace(
+            pipeline=fake_pipeline,
+            AutoModelForSequenceClassification=FakeModel,
+            AutoTokenizer=FakeTokenizer,
+        )
+        monkeypatch.setitem(sys.modules, "transformers", fake_transformers_module)
+
+        first = ai_engine.get_finbert_pipeline()
+        second = ai_engine.get_finbert_pipeline()
+
+        assert first is second
+        assert calls["tokenizer"] == 1
+        assert calls["model"] == 1
+        assert calls["pipeline"] == 1

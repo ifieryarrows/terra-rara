@@ -105,7 +105,7 @@ class PriceBar(Base):
 class NewsSentiment(Base):
     """
     Sentiment scores for each news article.
-    Primary: LLM (Gemini) with copper-specific context
+    Primary: LLM (OpenRouter structured outputs) with copper-specific context
     Fallback: FinBERT for generic financial sentiment
     One-to-one relationship with NewsArticle.
     """
