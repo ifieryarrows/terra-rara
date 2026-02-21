@@ -49,6 +49,8 @@ HYBRID_SCORING_VERSION = "hybrid_v1"
 HYBRID_FALLBACK_429_MODEL_NAME = "hybrid_fallback_429"
 HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
 LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
+LLM_SCORING_MAX_TOKENS_PRIMARY = 2000
+LLM_SCORING_MAX_TOKENS_RETRY = 6000
 
 
 # =============================================================================
@@ -373,6 +375,14 @@ def _extract_chat_message_content(data: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_finish_reason(data: dict[str, Any]) -> str:
+    """Extract finish reason from first choice for empty-content diagnostics."""
+    reason = data.get("choices", [{}])[0].get("finish_reason", "")
+    if not isinstance(reason, str):
+        return ""
+    return reason.strip().lower()
+
+
 def _clean_json_content(content: str) -> str:
     """
     Normalize model text into parseable JSON content.
@@ -406,7 +416,7 @@ def _validate_llm_results(
     model_name: str,
     json_repair_used: bool = False,
 ) -> list[dict]:
-    """Validate LLM structured output for direction+confidence labels."""
+    """Validate/normalize LLM output for direction+confidence labels."""
     if not isinstance(raw_results, list):
         raise ValueError(f"Structured result must be a list, got {type(raw_results).__name__}")
 
@@ -414,16 +424,42 @@ def _validate_llm_results(
     for item in raw_results:
         if not isinstance(item, dict):
             raise ValueError(f"Structured result item must be object, got {type(item).__name__}")
-        if "id" not in item or "label" not in item or "confidence" not in item:
-            raise ValueError("Structured result missing required fields: id, label, confidence")
+        if "id" not in item:
+            raise ValueError("Structured result missing required field: id")
 
         article_id = int(item["id"])
         if article_id in results_by_id:
             raise ValueError(f"Duplicate article id in structured output: {article_id}")
-        label = str(item["label"]).upper().strip()
-        if label not in LLM_LABELS:
-            raise ValueError(f"Unsupported label in structured output: {label}")
-        confidence = max(0.0, min(1.0, float(item["confidence"])))
+
+        raw_label = item.get("label")
+        raw_confidence = item.get("confidence")
+        raw_score = item.get("score")
+
+        score_value: Optional[float] = None
+        if raw_score is not None:
+            score_value = max(-1.0, min(1.0, float(raw_score)))
+
+        if raw_label is not None:
+            label = str(raw_label).upper().strip()
+            if label not in LLM_LABELS:
+                raise ValueError(f"Unsupported label in structured output: {label}")
+        elif score_value is not None:
+            if score_value > 0.05:
+                label = "BULLISH"
+            elif score_value < -0.05:
+                label = "BEARISH"
+            else:
+                label = "NEUTRAL"
+        else:
+            raise ValueError("Structured result missing label/score fields")
+
+        if raw_confidence is not None:
+            confidence = max(0.0, min(1.0, float(raw_confidence)))
+        elif score_value is not None:
+            confidence = abs(score_value)
+        else:
+            confidence = 0.0 if label == "NEUTRAL" else 0.5
+
         reasoning = _sanitize_reasoning_text(item.get("reasoning", ""))
         results_by_id[article_id] = {
             "id": article_id,
@@ -472,7 +508,7 @@ async def score_batch_with_llm(
     )
     model_name = settings.resolved_scoring_model
 
-    async def _request_scoring(strict_schema: bool) -> dict[str, Any]:
+    async def _request_scoring(strict_schema: bool, *, max_tokens: int) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
             "api_key": settings.openrouter_api_key,
             "model": model_name,
@@ -480,7 +516,7 @@ async def score_batch_with_llm(
                 {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": 2000,
+            "max_tokens": max_tokens,
             "temperature": 0.0,
             "timeout_seconds": 60.0,
             "max_retries": settings.openrouter_max_retries,
@@ -488,6 +524,7 @@ async def score_batch_with_llm(
             "fallback_models": settings.openrouter_fallback_models_list,
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis",
+            "extra_payload": {"reasoning": {"exclude": True}},
         }
         if strict_schema:
             request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT
@@ -522,6 +559,7 @@ async def score_batch_with_llm(
             fallback_models=settings.openrouter_fallback_models_list,
             referer="https://copper-mind.vercel.app",
             title="CopperMind JSON Repair",
+            extra_payload={"reasoning": {"exclude": True}},
         )
         repaired_content = _extract_chat_message_content(repair_data)
         if not repaired_content:
@@ -537,23 +575,37 @@ async def score_batch_with_llm(
             json_repair_used=repair_used,
         )
 
-    try:
-        data = await _request_scoring(strict_schema=True)
-    except OpenRouterError as exc:
-        message = str(exc).lower()
-        # Some free providers return 404 when strict provider parameters are not supported.
-        if exc.status_code == 404 and "no endpoints found" in message:
-            logger.warning(
-                "Structured scoring request unsupported by current provider routing. "
-                "Retrying without strict response_format/provider constraints."
-            )
-            data = await _request_scoring(strict_schema=False)
-        else:
+    async def _request_with_provider_fallback(*, max_tokens: int) -> dict[str, Any]:
+        try:
+            return await _request_scoring(strict_schema=True, max_tokens=max_tokens)
+        except OpenRouterError as exc:
+            message = str(exc).lower()
+            # Some free providers return 404 when strict provider parameters are not supported.
+            if exc.status_code == 404 and "no endpoints found" in message:
+                logger.warning(
+                    "Structured scoring request unsupported by current provider routing. "
+                    "Retrying without strict response_format/provider constraints."
+                )
+                return await _request_scoring(strict_schema=False, max_tokens=max_tokens)
             raise
+
+    data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
 
     content = _extract_chat_message_content(data)
     if not content:
-        raise OpenRouterError("Empty response content from LLM scoring")
+        finish_reason = _extract_finish_reason(data)
+        if finish_reason == "length":
+            logger.warning(
+                "LLM response ended with finish_reason=length and empty content; "
+                "retrying with max_tokens=%s",
+                LLM_SCORING_MAX_TOKENS_RETRY,
+            )
+            data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+            content = _extract_chat_message_content(data)
+        if not content:
+            raise OpenRouterError(
+                f"Empty response content from LLM scoring (finish_reason={finish_reason or 'unknown'})"
+            )
 
     try:
         return _parse_and_validate(content, repair_used=False)

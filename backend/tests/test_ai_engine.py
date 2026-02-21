@@ -608,6 +608,53 @@ class TestLLMStructuredScoring:
         assert results[0]["label"] == "BEARISH"
         assert results[0]["llm_confidence"] == pytest.approx(0.4)
 
+    def test_score_batch_with_llm_accepts_missing_confidence_in_relaxed_mode(self, monkeypatch):
+        from app import ai_engine
+        from app.openrouter_client import OpenRouterError
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+            openrouter_max_retries=3,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        call_count = {"n": 0}
+
+        async def fake_create_chat_completion(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                assert "response_format" in kwargs
+                raise OpenRouterError(
+                    "No endpoints found that can handle the requested parameters",
+                    status_code=404,
+                )
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '[{"id": 55, "label": "BULLISH", "reasoning": "Supply shock."}]'
+                        }
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        async def run_call():
+            return await ai_engine.score_batch_with_llm(
+                [{"id": 55, "title": "Copper mine disruption", "description": "supply"}]
+            )
+
+        results = asyncio.run(run_call())
+
+        assert call_count["n"] == 2
+        assert results[0]["id"] == 55
+        assert results[0]["label"] == "BULLISH"
+        assert results[0]["llm_confidence"] == pytest.approx(0.5)
+
     def test_score_batch_with_llm_runs_json_repair_on_parse_failure(self, monkeypatch):
         from app import ai_engine
 
@@ -657,6 +704,59 @@ class TestLLMStructuredScoring:
         assert results[0]["id"] == 7
         assert results[0]["label"] == "BULLISH"
         assert results[0]["json_repair_used"] is True
+
+    def test_score_batch_with_llm_retries_with_higher_max_tokens_on_empty_length(self, monkeypatch):
+        from app import ai_engine
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_scoring_model="stepfun/step-3.5-flash:free",
+            openrouter_max_retries=3,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+
+        call_count = {"n": 0}
+        max_tokens_seen = []
+
+        async def fake_create_chat_completion(**kwargs):
+            call_count["n"] += 1
+            max_tokens_seen.append(kwargs.get("max_tokens"))
+            if call_count["n"] == 1:
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": ""},
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '[{"id": 9, "label": "NEUTRAL", "confidence": 0.2, "reasoning": "Mixed signals."}]'
+                        },
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        async def run_call():
+            return await ai_engine.score_batch_with_llm(
+                [{"id": 9, "title": "Mixed copper outlook", "description": "mixed"}]
+            )
+
+        results = asyncio.run(run_call())
+
+        assert call_count["n"] == 2
+        assert max_tokens_seen[0] == ai_engine.LLM_SCORING_MAX_TOKENS_PRIMARY
+        assert max_tokens_seen[1] == ai_engine.LLM_SCORING_MAX_TOKENS_RETRY
+        assert results[0]["id"] == 9
+        assert results[0]["label"] == "NEUTRAL"
 
 
 class TestScoringFallbackAndBudget:
