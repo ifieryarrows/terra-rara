@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Sentiment aggregation
     sentiment_tau_hours: float = 12.0
     sentiment_missing_fill: float = 0.0
+    sentiment_non_neutral_boost: float = 1.35
+    sentiment_soft_neutral_polarity_threshold: float = 0.12
+    sentiment_soft_neutral_max_mag: float = 0.25
+    sentiment_soft_neutral_scale: float = 0.8
     
     # API settings
     analysis_ttl_minutes: int = 30
@@ -81,6 +85,15 @@ class Settings(BaseSettings):
     
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
+
+    # Inference sentiment adjustment (aggressive but capped)
+    inference_sentiment_multiplier_max: float = 2.0
+    inference_sentiment_multiplier_min: float = 0.5
+    inference_sentiment_news_ref: int = 30
+    inference_sentiment_power_ref: float = 0.20
+    inference_tiny_signal_threshold: float = 0.0015
+    inference_tiny_signal_floor: float = 0.0025
+    inference_return_cap: float = 0.02
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility

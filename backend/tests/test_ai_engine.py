@@ -800,7 +800,7 @@ class TestScoringFallbackAndBudget:
         assert scored == 2
         assert len(session.added) == 2
         assert all(obj.model_name == "hybrid_fallback_parse" for obj in session.added)
-        assert all(obj.score == pytest.approx(0.0) for obj in session.added)
+        assert all(obj.score == pytest.approx(0.25) for obj in session.added)
 
     def test_score_unscored_articles_respects_llm_budget(self, monkeypatch):
         from app import ai_engine
@@ -857,10 +857,10 @@ class TestScoringFallbackAndBudget:
 
         assert scored == 5
         assert llm_calls == [[1, 2], [3]]
-        positive_scores = [obj for obj in session.added if obj.score > 0]
-        neutral_scores = [obj for obj in session.added if obj.score == pytest.approx(0.0)]
-        assert len(positive_scores) == 3
-        assert len(neutral_scores) == 2
+        boosted_llm_scores = [obj for obj in session.added if obj.score >= 0.99]
+        soft_neutral_scores = [obj for obj in session.added if obj.score == pytest.approx(0.25)]
+        assert len(boosted_llm_scores) == 3
+        assert len(soft_neutral_scores) == 2
 
     def test_score_unscored_articles_uses_neutral_429_fallback(self, monkeypatch):
         from app import ai_engine
@@ -902,21 +902,37 @@ class TestScoringFallbackAndBudget:
 
         assert scored == 2
         assert all(obj.model_name == "hybrid_fallback_429" for obj in session.added)
-        assert all(obj.score == pytest.approx(0.0) for obj in session.added)
+        assert all(obj.score == pytest.approx(0.25) for obj in session.added)
 
 
 class TestHybridFormula:
-    def test_compute_hybrid_score_hard_neutral(self):
+    def test_compute_hybrid_score_soft_neutral_below_threshold_returns_zero(self):
         from app.ai_engine import _compute_hybrid_score
 
-        score = _compute_hybrid_score(label="NEUTRAL", llm_confidence=0.9, finbert_strength=1.0)
+        score = _compute_hybrid_score(
+            label="NEUTRAL",
+            llm_confidence=0.9,
+            finbert_strength=0.2,
+            finbert_polarity=0.05,
+        )
         assert score == pytest.approx(0.0)
 
-    def test_compute_hybrid_score_bullish_weighted_magnitude(self):
+    def test_compute_hybrid_score_soft_neutral_above_threshold_emits_directional_score(self):
+        from app.ai_engine import _compute_hybrid_score
+
+        score = _compute_hybrid_score(
+            label="NEUTRAL",
+            llm_confidence=0.0,
+            finbert_strength=0.4,
+            finbert_polarity=-0.4,
+        )
+        assert score == pytest.approx(-0.25)
+
+    def test_compute_hybrid_score_bullish_boosted_magnitude(self):
         from app.ai_engine import _compute_hybrid_score
 
         score = _compute_hybrid_score(label="BULLISH", llm_confidence=0.7, finbert_strength=0.4)
-        assert score == pytest.approx(0.61)
+        assert score == pytest.approx(0.8235)
 
 
 class TestFinbertPipelineCaching:

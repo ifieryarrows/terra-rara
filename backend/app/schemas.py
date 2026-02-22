@@ -35,6 +35,18 @@ class AnalysisReport(BaseModel):
     # Core prediction data (nullable for degraded modes)
     current_price: Optional[float] = Field(0.0, description="Most recent closing price")
     predicted_return: Optional[float] = Field(0.0, description="Predicted next-day return")
+    raw_predicted_return: Optional[float] = Field(
+        None, description="Raw model output converted to return before sentiment adjustment"
+    )
+    sentiment_multiplier: Optional[float] = Field(
+        None, description="Sentiment-driven multiplier applied to raw predicted return"
+    )
+    sentiment_adjustment_applied: Optional[bool] = Field(
+        None, description="Whether sentiment adjustment layer altered predicted return"
+    )
+    predicted_return_capped: Optional[bool] = Field(
+        None, description="Whether final predicted return was clipped by safety cap"
+    )
     predicted_price: Optional[float] = Field(0.0, description="Predicted next-day price")
     confidence_lower: Optional[float] = Field(0.0, description="Lower bound of confidence interval")
     confidence_upper: Optional[float] = Field(0.0, description="Upper bound of confidence interval")

@@ -9,6 +9,7 @@ Sentiment Analysis:
 Usage:
     python -m app.ai_engine --run-all --target-symbol HG=F
     python -m app.ai_engine --score-only
+    python -m app.ai_engine --refresh-sentiment
     python -m app.ai_engine --train-only --target-symbol HG=F
 """
 
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 _FINBERT_OUTPUT_LOGGED = False
 _FINBERT_MISSING_LABELS_WARNED = False
 
-HYBRID_SCORING_VERSION = "hybrid_v1"
+HYBRID_SCORING_VERSION = "hybrid_v2"
 HYBRID_FALLBACK_429_MODEL_NAME = "hybrid_fallback_429"
 HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
 LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
@@ -328,31 +329,72 @@ def _build_hybrid_reasoning_payload(
     label: str,
     llm_confidence: float,
     finbert_strength: float,
+    finbert_polarity: float,
     llm_reasoning: str,
     llm_model: str,
+    soft_neutral_applied: bool = False,
 ) -> str:
     payload = {
         "label": label,
         "llm_confidence": round(max(0.0, min(1.0, llm_confidence)), 4),
         "finbert_strength": round(max(0.0, min(1.0, finbert_strength)), 4),
+        "finbert_polarity": round(max(-1.0, min(1.0, finbert_polarity)), 4),
         "llm_reasoning": _sanitize_reasoning_text(llm_reasoning),
         "llm_model": llm_model,
+        "soft_neutral_applied": bool(soft_neutral_applied),
         "scoring_version": HYBRID_SCORING_VERSION,
     }
     return json.dumps(payload, ensure_ascii=True)
 
 
-def _compute_hybrid_score(*, label: str, llm_confidence: float, finbert_strength: float) -> float:
-    """Compute final hybrid impact score in [-1, 1] with hard neutral rule."""
+def _compute_hybrid_score(
+    *,
+    label: str,
+    llm_confidence: float,
+    finbert_strength: float,
+    finbert_polarity: Optional[float] = None,
+    non_neutral_boost: float = 1.35,
+    soft_neutral_polarity_threshold: float = 0.12,
+    soft_neutral_max_mag: float = 0.25,
+    soft_neutral_scale: float = 0.8,
+    return_metadata: bool = False,
+) -> float | tuple[float, bool]:
+    """Compute final hybrid impact score in [-1, 1] with boosted non-neutral and soft-neutral rules."""
     normalized_label = str(label).upper().strip()
-    if normalized_label == "NEUTRAL":
-        return 0.0
+    if normalized_label not in LLM_LABELS:
+        normalized_label = "NEUTRAL"
 
-    sign = 1.0 if normalized_label == "BULLISH" else -1.0
     confidence = max(0.0, min(1.0, float(llm_confidence)))
     strength = max(0.0, min(1.0, float(finbert_strength)))
-    magnitude = max(0.0, min(1.0, (0.7 * confidence) + (0.3 * strength)))
-    return sign * magnitude
+    polarity_value = float(finbert_polarity) if finbert_polarity is not None else 0.0
+    polarity = max(-1.0, min(1.0, polarity_value))
+    soft_neutral_applied = False
+
+    if normalized_label == "NEUTRAL":
+        abs_polarity = abs(polarity)
+        if abs_polarity < max(0.0, float(soft_neutral_polarity_threshold)):
+            final_score = 0.0
+        else:
+            neutral_core = (0.6 * abs_polarity) + (0.4 * strength)
+            neutral_mag = min(
+                max(0.0, float(soft_neutral_max_mag)),
+                neutral_core * max(0.0, float(soft_neutral_scale)),
+            )
+            sign = 1.0 if polarity > 0 else -1.0
+            final_score = sign * neutral_mag
+            soft_neutral_applied = True
+
+        if return_metadata:
+            return final_score, soft_neutral_applied
+        return final_score
+
+    sign = 1.0 if normalized_label == "BULLISH" else -1.0
+    base_mag = max(0.0, min(1.0, (0.7 * confidence) + (0.3 * strength)))
+    boosted_mag = min(1.0, base_mag * max(0.0, float(non_neutral_boost)))
+    final_score = sign * boosted_mag
+    if return_metadata:
+        return final_score, soft_neutral_applied
+    return final_score
 
 
 def _extract_chat_message_content(data: dict[str, Any]) -> str:
@@ -660,8 +702,8 @@ def score_unscored_articles(
     Strategy:
     - Primary direction: OpenRouter LLM label + confidence
     - Intensity: FinBERT probabilities for every article
-    - Final score: sign(LLM label) * (0.7*llm_conf + 0.3*finbert_strength)
-    - Hard neutral rule: LLM NEUTRAL always maps to final score 0
+    - Non-neutral boost: (0.7*llm_conf + 0.3*finbert_strength) * boost
+    - Soft neutral: NEUTRAL labels can emit small directional score from FinBERT polarity
     - Chunk size: 12 articles for lower free-tier rate-limit pressure
     - Run budget: cap LLM-scored articles per run, overflow uses FinBERT
     
@@ -686,6 +728,12 @@ def score_unscored_articles(
     total_chunks = (len(unscored) + chunk_size - 1) // chunk_size
     llm_model = settings.resolved_scoring_model
     llm_budget_remaining = max(0, settings.max_llm_articles_per_run)
+    non_neutral_boost = float(getattr(settings, "sentiment_non_neutral_boost", 1.35))
+    soft_neutral_polarity_threshold = float(
+        getattr(settings, "sentiment_soft_neutral_polarity_threshold", 0.12)
+    )
+    soft_neutral_max_mag = float(getattr(settings, "sentiment_soft_neutral_max_mag", 0.25))
+    soft_neutral_scale = float(getattr(settings, "sentiment_soft_neutral_scale", 0.8))
     budget_exhausted_logged = False
     logger.info("LLM scoring budget for this run: %s articles", llm_budget_remaining)
     llm_success = 0
@@ -712,7 +760,7 @@ def score_unscored_articles(
             non_llm_candidates = chunk
             if settings.openrouter_api_key and llm_budget_remaining <= 0 and not budget_exhausted_logged:
                 logger.info(
-                    "LLM budget exhausted (%s articles). Remaining chunks use neutral-hard fallback with FinBERT probs.",
+                    "LLM budget exhausted (%s articles). Remaining chunks use soft-neutral FinBERT fallback.",
                     settings.max_llm_articles_per_run,
                 )
                 budget_exhausted_logged = True
@@ -801,24 +849,33 @@ def score_unscored_articles(
                 label = "NEUTRAL"
 
             llm_confidence = float(llm_result.get("llm_confidence", 0.0))
+            finbert_polarity = float(finbert["prob_positive"]) - float(finbert["prob_negative"])
             finbert_strength = float(
                 finbert.get(
                     "finbert_strength",
-                    abs(float(finbert["prob_positive"]) - float(finbert["prob_negative"])),
+                    abs(finbert_polarity),
                 )
             )
-            final_score = _compute_hybrid_score(
+            final_score, soft_neutral_applied = _compute_hybrid_score(
                 label=label,
                 llm_confidence=llm_confidence,
                 finbert_strength=finbert_strength,
+                finbert_polarity=finbert_polarity,
+                non_neutral_boost=non_neutral_boost,
+                soft_neutral_polarity_threshold=soft_neutral_polarity_threshold,
+                soft_neutral_max_mag=soft_neutral_max_mag,
+                soft_neutral_scale=soft_neutral_scale,
+                return_metadata=True,
             )
 
             reasoning_payload = _build_hybrid_reasoning_payload(
                 label=label,
                 llm_confidence=llm_confidence,
                 finbert_strength=finbert_strength,
+                finbert_polarity=finbert_polarity,
                 llm_reasoning=llm_result.get("llm_reasoning", ""),
                 llm_model=llm_result.get("llm_model", llm_model),
+                soft_neutral_applied=soft_neutral_applied,
             )
             
             sentiment = NewsSentiment(
@@ -1365,6 +1422,11 @@ def main():
         help="Only run XGBoost training"
     )
     parser.add_argument(
+        "--refresh-sentiment",
+        action="store_true",
+        help="Run sentiment scoring + daily aggregation (no training)"
+    )
+    parser.add_argument(
         "--target-symbol",
         type=str,
         default="HG=F",
@@ -1387,8 +1449,8 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Determine what to run
-    score = args.run_all or args.score_only
-    aggregate = args.run_all or args.aggregate_only
+    score = args.run_all or args.score_only or args.refresh_sentiment
+    aggregate = args.run_all or args.aggregate_only or args.refresh_sentiment
     train = args.run_all or args.train_only
     
     if not (score or aggregate or train):

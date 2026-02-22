@@ -69,6 +69,10 @@ class TestAnalysisSchema:
             symbol="HG=F",
             current_price=4.25,
             predicted_return=0.015,
+            raw_predicted_return=0.011,
+            sentiment_multiplier=1.35,
+            sentiment_adjustment_applied=True,
+            predicted_return_capped=False,
             predicted_price=4.3137,
             confidence_lower=4.20,
             confidence_upper=4.35,
@@ -81,6 +85,7 @@ class TestAnalysisSchema:
         
         assert report.symbol == "HG=F"
         assert report.predicted_price == 4.3137
+        assert report.raw_predicted_return == 0.011
         assert report.sentiment_label == "Bullish"
         assert len(report.top_influencers) == 2
     

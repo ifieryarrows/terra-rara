@@ -263,6 +263,74 @@ def get_sentiment_label(sentiment_index: float) -> str:
         return "Neutral"
 
 
+def _sign(value: float) -> int:
+    """Return numeric sign (-1, 0, 1)."""
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    """Clamp value to [lower, upper]."""
+    return max(lower, min(upper, value))
+
+
+def _apply_sentiment_adjustment(
+    raw_predicted_return: float,
+    sentiment_index: float,
+    news_count_7d: int,
+) -> tuple[float, float, bool, bool]:
+    """
+    Apply aggressive-but-capped sentiment multiplier to raw predicted return.
+
+    Returns:
+        (adjusted_return, multiplier, adjustment_applied, capped)
+    """
+    settings = get_settings()
+    news_ref = max(1.0, float(settings.inference_sentiment_news_ref))
+    power_ref = max(1e-6, float(settings.inference_sentiment_power_ref))
+    news_floor = max(1, int(round(news_ref * 0.4)))  # default: 12 when ref is 30
+
+    news_intensity = min(1.0, max(0.0, float(news_count_7d) / news_ref))
+    sentiment_power = float(np.tanh(abs(float(sentiment_index)) / power_ref))
+
+    raw_sign = _sign(float(raw_predicted_return))
+    sentiment_sign = _sign(float(sentiment_index))
+    direction = 1.0 if raw_sign == 0 or raw_sign == sentiment_sign else -1.0
+
+    multiplier = 1.0 + (direction * sentiment_power * news_intensity)
+    multiplier = _clamp(
+        multiplier,
+        float(settings.inference_sentiment_multiplier_min),
+        float(settings.inference_sentiment_multiplier_max),
+    )
+
+    use_tiny_floor = (
+        abs(float(raw_predicted_return)) < float(settings.inference_tiny_signal_threshold)
+        and abs(float(sentiment_index)) >= power_ref
+        and int(news_count_7d) >= news_floor
+    )
+
+    if use_tiny_floor:
+        adjusted_return = float(sentiment_sign) * float(settings.inference_tiny_signal_floor)
+    else:
+        adjusted_return = float(raw_predicted_return) * multiplier
+
+    cap = abs(float(settings.inference_return_cap))
+    capped = False
+    if adjusted_return > cap:
+        adjusted_return = cap
+        capped = True
+    elif adjusted_return < -cap:
+        adjusted_return = -cap
+        capped = True
+
+    adjustment_applied = use_tiny_floor or capped or abs(multiplier - 1.0) > 1e-9
+    return adjusted_return, multiplier, adjustment_applied, capped
+
+
 def build_features_for_prediction(
     session: Session,
     target_symbol: str,
@@ -431,19 +499,41 @@ def generate_analysis_report(
     
     logger.info(f"Model prediction: raw_output={model_output:.6f}, target_type={target_type}")
     
-    # Compute predicted_return and predicted_price based on target_type
+    # Compute raw predicted return based on target_type
     if target_type == "simple_return":
-        predicted_return = model_output
-        predicted_price = baseline_price * (1 + predicted_return)
+        raw_predicted_return = model_output
     elif target_type == "log_return":
         import math
-        predicted_return = math.exp(model_output) - 1
-        predicted_price = baseline_price * math.exp(model_output)
+        raw_predicted_return = math.exp(model_output) - 1
     elif target_type == "price":
-        predicted_price = model_output
-        predicted_return = (predicted_price / baseline_price) - 1 if baseline_price > 0 else 0
+        raw_predicted_return = (model_output / baseline_price) - 1 if baseline_price > 0 else 0
+    else:
+        raw_predicted_return = 0.0
+
+    # Data quality feeds sentiment multiplier intensity.
+    data_quality = get_data_quality_stats(session, target_symbol)
+    news_count_7d = int(data_quality.get("news_count_7d") or 0)
+
+    predicted_return, sentiment_multiplier, adjustment_applied, predicted_return_capped = (
+        _apply_sentiment_adjustment(
+            raw_predicted_return=float(raw_predicted_return),
+            sentiment_index=float(current_sentiment),
+            news_count_7d=news_count_7d,
+        )
+    )
+    logger.info(
+        "Sentiment adjustment: raw=%.6f adjusted=%.6f multiplier=%.4f applied=%s capped=%s news_count_7d=%s sentiment=%.4f",
+        raw_predicted_return,
+        predicted_return,
+        sentiment_multiplier,
+        adjustment_applied,
+        predicted_return_capped,
+        news_count_7d,
+        current_sentiment,
+    )
+    predicted_price = baseline_price * (1 + predicted_return)
     
-    # Validate prediction (do not clamp by default - expose issues)
+    # Validate prediction after sentiment adjustment/cap.
     prediction_invalid = False
     if predicted_return < -1.0:
         logger.error(f"Invalid prediction: return {predicted_return:.4f} < -100%")
@@ -459,9 +549,6 @@ def generate_analysis_report(
     conf_lower, conf_upper = calculate_confidence_band(
         session, target_symbol, predicted_price
     )
-    
-    # Get data quality
-    data_quality = get_data_quality_stats(session, target_symbol)
     
     # Build influencer descriptions
     descriptions = get_feature_descriptions()
@@ -493,6 +580,10 @@ def generate_analysis_report(
         "baseline_price": round(baseline_price, 4),
         "baseline_price_date": baseline_price_date,
         "predicted_return": round(predicted_return, 6),
+        "raw_predicted_return": round(raw_predicted_return, 6),
+        "sentiment_multiplier": round(sentiment_multiplier, 4),
+        "sentiment_adjustment_applied": bool(adjustment_applied),
+        "predicted_return_capped": bool(predicted_return_capped),
         "predicted_return_pct": round(predicted_return * 100, 2),
         "predicted_price": round(predicted_price, 4),
         "target_type": target_type,
