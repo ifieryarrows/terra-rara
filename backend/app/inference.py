@@ -25,7 +25,17 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import PriceBar, DailySentiment, AnalysisSnapshot, NewsArticle, NewsSentiment
+from app.models import (
+    PriceBar,
+    DailySentiment,
+    DailySentimentV2,
+    AnalysisSnapshot,
+    NewsArticle,
+    NewsSentiment,
+    NewsRaw,
+    NewsProcessed,
+    NewsSentimentV2,
+)
 from app.settings import get_settings
 from app.features import (
     load_price_data,
@@ -167,10 +177,20 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
 
 def get_current_sentiment(session: Session) -> Optional[float]:
     """Get the most recent daily sentiment index."""
+    settings = get_settings()
+    source = str(getattr(settings, "scoring_source", "news_articles")).strip().lower()
+
+    if source == "news_processed":
+        latest_v2 = session.query(DailySentimentV2).order_by(
+            DailySentimentV2.date.desc()
+        ).first()
+        if latest_v2 is not None:
+            return latest_v2.sentiment_index
+        logger.warning("No rows in daily_sentiments_v2; falling back to legacy daily_sentiments")
+
     latest = session.query(DailySentiment).order_by(
         DailySentiment.date.desc()
     ).first()
-    
     return latest.sentiment_index if latest else None
 
 
@@ -180,18 +200,38 @@ def get_data_quality_stats(
     days: int = 7
 ) -> dict:
     """Get data quality statistics for the report."""
+    settings = get_settings()
+    source = str(getattr(settings, "scoring_source", "news_articles")).strip().lower()
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    
-    # News count
-    news_count = session.query(func.count(NewsArticle.id)).filter(
-        NewsArticle.published_at >= cutoff
-    ).scalar()
-    
-    # Scored news count
-    scored_count = session.query(func.count(NewsSentiment.id)).join(
-        NewsArticle,
-        NewsSentiment.news_article_id == NewsArticle.id
-    ).filter(NewsArticle.published_at >= cutoff).scalar()
+
+    if source == "news_processed":
+        horizon_days = max(1, int(getattr(settings, "sentiment_horizon_days", 5)))
+        news_count = session.query(func.count(NewsProcessed.id)).join(
+            NewsRaw, NewsProcessed.raw_id == NewsRaw.id
+        ).filter(
+            NewsRaw.published_at >= cutoff
+        ).scalar()
+
+        scored_count = session.query(func.count(NewsSentimentV2.id)).join(
+            NewsProcessed,
+            NewsSentimentV2.news_processed_id == NewsProcessed.id
+        ).join(
+            NewsRaw,
+            NewsProcessed.raw_id == NewsRaw.id
+        ).filter(
+            NewsRaw.published_at >= cutoff,
+            NewsSentimentV2.horizon_days == horizon_days,
+        ).scalar()
+    else:
+        # Legacy article-level stats
+        news_count = session.query(func.count(NewsArticle.id)).filter(
+            NewsArticle.published_at >= cutoff
+        ).scalar()
+
+        scored_count = session.query(func.count(NewsSentiment.id)).join(
+            NewsArticle,
+            NewsSentiment.news_article_id == NewsArticle.id
+        ).filter(NewsArticle.published_at >= cutoff).scalar()
     
     # Price bar coverage
     expected_days = days

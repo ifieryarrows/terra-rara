@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from app.db import init_db, SessionLocal, get_db_type
-from app.models import NewsArticle, PriceBar, DailySentiment, AnalysisSnapshot
+from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
 # NOTE: Faz 1 - API is snapshot-only, no report generation
@@ -219,6 +219,9 @@ async def get_history(
     IMPORTANT: sentiment_index of 0.0 is a valid value (neutral sentiment),
     not the same as missing data. We return explicit 0.0 values.
     """
+    settings = get_settings()
+    source = str(getattr(settings, "scoring_source", "news_articles")).strip().lower()
+
     with SessionLocal() as session:
         # Calculate date range
         end_date = datetime.now(timezone.utc)
@@ -239,14 +242,28 @@ async def get_history(
                 detail=f"No price data found for {symbol}"
             )
         
-        # Query sentiment
-        sentiments = session.query(
-            DailySentiment.date,
-            DailySentiment.sentiment_index,
-            DailySentiment.news_count
-        ).filter(
-            DailySentiment.date >= start_date
-        ).order_by(DailySentiment.date.asc()).all()
+        # Query sentiment (prefer V2 when scoring source is news_processed)
+        sentiments = []
+        if source == "news_processed":
+            sentiments = session.query(
+                DailySentimentV2.date,
+                DailySentimentV2.sentiment_index,
+                DailySentimentV2.news_count
+            ).filter(
+                DailySentimentV2.date >= start_date
+            ).order_by(DailySentimentV2.date.asc()).all()
+
+            if not sentiments:
+                logger.warning("No rows in daily_sentiments_v2 for history; falling back to daily_sentiments")
+
+        if not sentiments:
+            sentiments = session.query(
+                DailySentiment.date,
+                DailySentiment.sentiment_index,
+                DailySentiment.news_count
+            ).filter(
+                DailySentiment.date >= start_date
+            ).order_by(DailySentiment.date.asc()).all()
         
         # Create sentiment lookup (by date string for easy matching)
         sentiment_lookup = {}

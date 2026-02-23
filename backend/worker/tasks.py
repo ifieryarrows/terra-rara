@@ -386,16 +386,30 @@ async def _execute_pipeline_stages_v2(
         session.rollback()
     
     # -------------------------------------------------------------------------
-    # Stage 2: Sentiment scoring (existing - uses news_articles for now)
+    # Stage 2: Sentiment scoring (V2 - news_processed based)
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 2: Sentiment scoring")
     try:
-        from app.ai_engine import score_unscored_articles
-        
-        scored = score_unscored_articles(session)
+        from app.ai_engine import score_unscored_processed_articles
+
+        scoring_stats = score_unscored_processed_articles(session)
         session.commit()
-        
-        result["articles_scored"] = scored
+
+        result["articles_scored"] = int(scoring_stats.get("scored_count", 0))
+        result["articles_scored_v2"] = int(scoring_stats.get("scored_count", 0))
+        result["llm_parse_fail_count"] = int(scoring_stats.get("parse_fail_count", 0))
+        result["escalation_count"] = int(scoring_stats.get("escalation_count", 0))
+        result["fallback_count"] = int(scoring_stats.get("fallback_count", 0))
+
+        update_run_metrics(
+            session,
+            run_id,
+            articles_scored_v2=result["articles_scored_v2"],
+            llm_parse_fail_count=result["llm_parse_fail_count"],
+            escalation_count=result["escalation_count"],
+            fallback_count=result["fallback_count"],
+        )
+        session.commit()
         
     except Exception as e:
         logger.error(f"[run_id={run_id}] Stage 2 failed: {e}")
@@ -407,12 +421,14 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 3: Sentiment aggregation")
     try:
-        from app.ai_engine import aggregate_daily_sentiment
-        
+        from app.ai_engine import aggregate_daily_sentiment, aggregate_daily_sentiment_v2
+
+        days_aggregated_v2 = aggregate_daily_sentiment_v2(session)
         days_aggregated = aggregate_daily_sentiment(session)
         session.commit()
         
         result["days_aggregated"] = days_aggregated
+        result["days_aggregated_v2"] = days_aggregated_v2
         
     except Exception as e:
         logger.error(f"[run_id={run_id}] Stage 3 failed: {e}")

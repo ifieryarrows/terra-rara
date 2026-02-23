@@ -148,6 +148,38 @@ def _run_migrations(engine):
         except Exception as e:
             logger.debug(f"Migration check for ai_stance: {e}")
 
+        # Migration: V2 stage-2 metrics columns
+        v2_metric_columns = [
+            ("articles_scored_v2", "INTEGER"),
+            ("llm_parse_fail_count", "INTEGER"),
+            ("escalation_count", "INTEGER"),
+            ("fallback_count", "INTEGER"),
+        ]
+        try:
+            if is_sqlite:
+                result = conn.execute(text("PRAGMA table_info(pipeline_run_metrics)"))
+                columns = [row[1] for row in result.fetchall()]
+                for column_name, column_type in v2_metric_columns:
+                    if column_name not in columns:
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE pipeline_run_metrics ADD COLUMN {column_name} {column_type}"
+                            )
+                        )
+                conn.commit()
+            else:
+                for column_name, column_type in v2_metric_columns:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE pipeline_run_metrics "
+                            f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                        )
+                    )
+                conn.commit()
+            logger.info("Migration: Ensured V2 Stage-2 metric columns exist")
+        except Exception as e:
+            logger.debug(f"Migration check for V2 metric columns: {e}")
+
 
 def init_db():
     """

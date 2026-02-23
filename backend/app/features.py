@@ -19,7 +19,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import PriceBar, DailySentiment
+from app.models import PriceBar, DailySentiment, DailySentimentV2
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -81,21 +81,37 @@ def load_sentiment_data(
     Returns:
         DataFrame with columns: date, sentiment_index, news_count
     """
-    query = session.query(
-        DailySentiment.date,
-        DailySentiment.sentiment_index,
-        DailySentiment.news_count
-    )
-    
-    if start_date:
-        query = query.filter(DailySentiment.date >= start_date)
-    if end_date:
-        query = query.filter(DailySentiment.date <= end_date)
-    
-    query = query.order_by(DailySentiment.date.asc())
-    
-    rows = query.all()
-    
+    settings = get_settings()
+    source = str(getattr(settings, "scoring_source", "news_articles")).strip().lower()
+    use_v2 = source == "news_processed"
+
+    rows = []
+    if use_v2:
+        query_v2 = session.query(
+            DailySentimentV2.date,
+            DailySentimentV2.sentiment_index,
+            DailySentimentV2.news_count
+        )
+        if start_date:
+            query_v2 = query_v2.filter(DailySentimentV2.date >= start_date)
+        if end_date:
+            query_v2 = query_v2.filter(DailySentimentV2.date <= end_date)
+        rows = query_v2.order_by(DailySentimentV2.date.asc()).all()
+        if not rows:
+            logger.warning("No rows in daily_sentiments_v2; falling back to daily_sentiments")
+
+    if not rows:
+        query = session.query(
+            DailySentiment.date,
+            DailySentiment.sentiment_index,
+            DailySentiment.news_count
+        )
+        if start_date:
+            query = query.filter(DailySentiment.date >= start_date)
+        if end_date:
+            query = query.filter(DailySentiment.date <= end_date)
+        rows = query.order_by(DailySentiment.date.asc()).all()
+
     if not rows:
         return pd.DataFrame()
     

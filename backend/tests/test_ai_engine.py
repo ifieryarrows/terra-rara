@@ -972,3 +972,103 @@ class TestFinbertPipelineCaching:
         assert calls["tokenizer"] == 1
         assert calls["model"] == 1
         assert calls["pipeline"] == 1
+
+
+class TestSentimentV2Helpers:
+    def test_parse_llm_v2_accepts_classification_key(self):
+        from app.ai_engine import _parse_llm_v2_items
+
+        raw_results = [
+            {
+                "id": 11,
+                "classification": "BULLISH",
+                "impact_score": 0.52,
+                "confidence": 0.77,
+                "relevance": 0.91,
+                "event_type": "supply_disruption",
+                "reasoning": "Mine outage tightens near-term supply.",
+            }
+        ]
+
+        parsed, failed = _parse_llm_v2_items(
+            raw_results=raw_results,
+            expected_ids=[11],
+            model_name="fast-model",
+        )
+
+        assert failed == []
+        assert parsed[11]["label"] == "BULLISH"
+        assert parsed[11]["impact_score"] == pytest.approx(0.52)
+
+    def test_parse_llm_v2_missing_confidence_marks_failed(self):
+        from app.ai_engine import _parse_llm_v2_items
+
+        raw_results = [
+            {
+                "id": 22,
+                "label": "BEARISH",
+                "impact_score": -0.41,
+                "relevance": 0.88,
+                "event_type": "demand_decrease",
+                "reasoning": "Demand slowdown weighs price outlook.",
+            }
+        ]
+
+        parsed, failed = _parse_llm_v2_items(
+            raw_results=raw_results,
+            expected_ids=[22],
+            model_name="fast-model",
+        )
+
+        assert parsed == {}
+        assert failed == [22]
+
+    def test_compute_final_score_v2_supply_disruption_is_positive(self):
+        from app.ai_engine import compute_final_score_v2
+
+        result = compute_final_score_v2(
+            impact_score_llm=0.45,
+            confidence_llm=0.71,
+            relevance_score=0.86,
+            event_type="supply_disruption",
+            prob_positive=0.15,
+            prob_negative=0.72,
+        )
+
+        assert result["rule_sign"] == 1
+        assert result["final_score"] > 0
+        assert 0.01 <= result["confidence_calibrated"] <= 0.99
+
+    def test_compute_final_score_v2_supply_expansion_is_negative(self):
+        from app.ai_engine import compute_final_score_v2
+
+        result = compute_final_score_v2(
+            impact_score_llm=-0.38,
+            confidence_llm=0.69,
+            relevance_score=0.82,
+            event_type="supply_expansion",
+            prob_positive=0.82,
+            prob_negative=0.07,
+        )
+
+        assert result["rule_sign"] == -1
+        assert result["final_score"] < 0
+
+    def test_build_article_fallback_v2_non_copper(self):
+        from app.ai_engine import _build_article_fallback_v2
+
+        fallback = _build_article_fallback_v2(
+            article={
+                "id": 99,
+                "title": "Semiconductor legal dispute update",
+                "description": "No commodity market linkage discussed.",
+                "text": "Semiconductor legal dispute update with no commodity linkage",
+            },
+            finbert={"tone": 0.02},
+            model_fast="fast",
+            model_reliable="reliable",
+        )
+
+        assert fallback["event_type"] == "non_copper"
+        assert fallback["label"] == "NEUTRAL"
+        assert fallback["relevance"] <= 0.2

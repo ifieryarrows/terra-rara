@@ -52,8 +52,10 @@ services:
       - PIPELINE_LOCK_FILE=/data/pipeline.lock
       - REDIS_URL=redis://redis:6379/0
       - SCHEDULER_ENABLED=false
-      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-stepfun/step-3.5-flash:free}
-      - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-stepfun/step-3.5-flash:free}
+      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-arcee-ai/trinity-large-preview:free}
       - OPENROUTER_RPM=${OPENROUTER_RPM:-18}
       - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
       - MAX_LLM_ARTICLES_PER_RUN=${MAX_LLM_ARTICLES_PER_RUN:-200}
@@ -96,8 +98,10 @@ services:
       - MODEL_DIR=/data/models
       - PIPELINE_LOCK_FILE=/data/pipeline.lock
       - REDIS_URL=redis://redis:6379/0
-      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-stepfun/step-3.5-flash:free}
-      - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-stepfun/step-3.5-flash:free}
+      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-arcee-ai/trinity-large-preview:free}
       - OPENROUTER_RPM=${OPENROUTER_RPM:-18}
       - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
       - MAX_LLM_ARTICLES_PER_RUN=${MAX_LLM_ARTICLES_PER_RUN:-200}

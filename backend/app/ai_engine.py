@@ -30,7 +30,16 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from app.db import SessionLocal, init_db
-from app.models import NewsArticle, NewsSentiment, DailySentiment, PriceBar
+from app.models import (
+    NewsArticle,
+    NewsSentiment,
+    DailySentiment,
+    PriceBar,
+    NewsProcessed,
+    NewsRaw,
+    NewsSentimentV2,
+    DailySentimentV2,
+)
 from app.settings import get_settings
 from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
@@ -52,6 +61,116 @@ HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
 LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
 LLM_SCORING_MAX_TOKENS_PRIMARY = 2000
 LLM_SCORING_MAX_TOKENS_RETRY = 6000
+LLM_V2_LABEL_THRESHOLD = 0.15
+LLM_V2_EVENT_TYPES = {
+    "supply_disruption",
+    "supply_expansion",
+    "demand_increase",
+    "demand_decrease",
+    "inventory_draw",
+    "inventory_build",
+    "policy_support",
+    "policy_drag",
+    "macro_usd_up",
+    "macro_usd_down",
+    "cost_push",
+    "mixed_unclear",
+    "non_copper",
+}
+LLM_V2_EVENT_SIGN = {
+    "supply_disruption": 1,
+    "inventory_draw": 1,
+    "demand_increase": 1,
+    "policy_support": 1,
+    "macro_usd_down": 1,
+    "cost_push": 1,
+    "supply_expansion": -1,
+    "inventory_build": -1,
+    "demand_decrease": -1,
+    "policy_drag": -1,
+    "macro_usd_up": -1,
+    "mixed_unclear": 0,
+    "non_copper": 0,
+}
+LLM_V2_EVENT_STRENGTH = {
+    "supply_disruption": 1.0,
+    "inventory_draw": 0.9,
+    "demand_increase": 0.95,
+    "policy_support": 0.8,
+    "macro_usd_down": 0.7,
+    "cost_push": 0.75,
+    "supply_expansion": 1.0,
+    "inventory_build": 0.9,
+    "demand_decrease": 0.95,
+    "policy_drag": 0.8,
+    "macro_usd_up": 0.7,
+    "mixed_unclear": 0.25,
+    "non_copper": 0.0,
+}
+LLM_V2_SYSTEM_PROMPT = """You are a Senior Copper Futures Analyst focused on COMEX HG=F front-month contract.
+Your job is to estimate 1-5 trading day copper price impact from each article.
+
+Core principle:
+Classify by expected HG=F price reaction, NOT by whether the news is "good" or "bad" for the economy/company.
+
+Output requirements:
+Return ONLY a JSON array. One object per input id.
+Each object must contain exactly:
+- id (integer)
+- label ("BULLISH" | "BEARISH" | "NEUTRAL")
+- impact_score (number, -1.00 to 1.00, two decimals)
+- confidence (number, 0.00 to 1.00, two decimals)
+- relevance (number, 0.00 to 1.00, two decimals)
+- event_type (one of: supply_disruption, supply_expansion, demand_increase, demand_decrease, inventory_draw, inventory_build, policy_support, policy_drag, macro_usd_up, macro_usd_down, cost_push, mixed_unclear, non_copper)
+- reasoning (single line, <= 160 chars)
+
+Copper-specific reasoning rules:
+1) Supply tightening is typically BULLISH for copper price.
+2) Supply expansion is typically BEARISH.
+3) Demand increase is typically BULLISH.
+4) Demand decrease is typically BEARISH.
+5) USD stronger is usually BEARISH for dollar-denominated copper; USD weaker is usually BULLISH.
+6) If article is not materially related to copper supply/demand/pricing, use non_copper + NEUTRAL with low relevance/confidence.
+7) Use NEUTRAL only when net effect is truly mixed/unclear within 1-5 day horizon.
+
+Label mapping:
+- impact_score >= 0.15 => BULLISH
+- impact_score <= -0.15 => BEARISH
+- otherwise => NEUTRAL
+"""
+LLM_SCORING_RESPONSE_FORMAT_V2 = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "news_sentiment_scores_v2",
+        "strict": True,
+        "schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "label": {"type": "string", "enum": ["BULLISH", "BEARISH", "NEUTRAL"]},
+                    "impact_score": {"type": "number", "minimum": -1, "maximum": 1},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "relevance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "event_type": {"type": "string", "enum": sorted(LLM_V2_EVENT_TYPES)},
+                    "reasoning": {"type": "string"},
+                },
+                "required": [
+                    "id",
+                    "label",
+                    "impact_score",
+                    "confidence",
+                    "relevance",
+                    "event_type",
+                    "reasoning",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+}
+SCORING_V2_VERSION = "commodity_v2"
 
 
 # =============================================================================
@@ -690,6 +809,837 @@ def score_batch_with_finbert(articles: list) -> list[dict]:
         })
     
     return results
+
+
+def _clip(value: float, lower: float, upper: float) -> float:
+    """Clamp numeric value."""
+    return max(lower, min(upper, float(value)))
+
+
+def _label_from_impact_score(impact_score: float) -> str:
+    """Map impact score to discrete label."""
+    if impact_score >= LLM_V2_LABEL_THRESHOLD:
+        return "BULLISH"
+    if impact_score <= -LLM_V2_LABEL_THRESHOLD:
+        return "BEARISH"
+    return "NEUTRAL"
+
+
+def _sign(value: float, eps: float = 1e-9) -> int:
+    """Return numeric sign with epsilon deadzone."""
+    if value > eps:
+        return 1
+    if value < -eps:
+        return -1
+    return 0
+
+
+def _normalize_event_type(value: Any) -> str:
+    """Normalize event type to allowed vocabulary."""
+    normalized = str(value or "").strip().lower()
+    if normalized in LLM_V2_EVENT_TYPES:
+        return normalized
+    return "mixed_unclear"
+
+
+def _infer_event_type_from_text(text: str) -> str:
+    """Heuristic event inference used only for deterministic fallback."""
+    lower = (text or "").lower()
+    if not lower or "copper" not in lower:
+        return "non_copper"
+
+    supply_disruption_keywords = [
+        "outage",
+        "strike",
+        "disruption",
+        "shutdown",
+        "halt",
+        "sanction",
+        "inventory draw",
+        "stocks fell",
+        "warehouse draw",
+    ]
+    supply_expansion_keywords = [
+        "ramp-up",
+        "ramp up",
+        "increase output",
+        "production increase",
+        "new mine",
+        "inventory build",
+        "stocks rose",
+    ]
+    demand_increase_keywords = [
+        "stimulus",
+        "grid investment",
+        "ev demand",
+        "demand rise",
+        "stockpile purchase",
+        "import growth",
+    ]
+    demand_decrease_keywords = [
+        "slowdown",
+        "weak demand",
+        "demand decline",
+        "construction slump",
+        "pmi contraction",
+        "import decline",
+    ]
+    if any(token in lower for token in supply_disruption_keywords):
+        return "supply_disruption"
+    if any(token in lower for token in supply_expansion_keywords):
+        return "supply_expansion"
+    if any(token in lower for token in demand_increase_keywords):
+        return "demand_increase"
+    if any(token in lower for token in demand_decrease_keywords):
+        return "demand_decrease"
+    if "dollar strengthens" in lower or "usd stronger" in lower:
+        return "macro_usd_up"
+    if "dollar weakens" in lower or "usd weaker" in lower:
+        return "macro_usd_down"
+    return "mixed_unclear"
+
+
+def _build_llm_v2_user_prompt(articles: list[dict], horizon_days: int) -> str:
+    """Build compact JSON prompt for batch scoring."""
+    normalized_articles = [
+        {
+            "id": int(article["id"]),
+            "title": str(article.get("title") or "")[:500],
+            "description": str(article.get("description") or "")[:800],
+        }
+        for article in articles
+    ]
+    return (
+        f"Classify each article for {horizon_days}-day HG=F copper futures impact.\n"
+        "Return one object per id.\n\n"
+        f"Input articles JSON:\n{json.dumps(normalized_articles, ensure_ascii=True)}"
+    )
+
+
+def _parse_llm_v2_items(
+    *,
+    raw_results: Any,
+    expected_ids: list[int],
+    model_name: str,
+) -> tuple[dict[int, dict], list[int]]:
+    """
+    Parse/validate V2 LLM outputs.
+
+    Returns:
+        (valid_results_by_id, failed_ids)
+    """
+    if not isinstance(raw_results, list):
+        raise ValueError(f"Structured result must be a list, got {type(raw_results).__name__}")
+
+    expected = set(expected_ids)
+    valid: dict[int, dict] = {}
+    failed_ids: set[int] = set()
+
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        if "id" not in item:
+            continue
+
+        try:
+            article_id = int(item["id"])
+        except (TypeError, ValueError):
+            continue
+
+        if article_id not in expected:
+            continue
+        if article_id in valid:
+            failed_ids.add(article_id)
+            continue
+
+        raw_label = item.get("label", item.get("classification"))
+        raw_impact = item.get("impact_score", item.get("score"))
+        raw_confidence = item.get("confidence")
+        raw_relevance = item.get("relevance", item.get("relevance_score"))
+        raw_event_type = item.get("event_type")
+        raw_reasoning = item.get("reasoning", "")
+
+        try:
+            if raw_impact is None:
+                raise ValueError("missing impact_score")
+            if raw_confidence is None:
+                raise ValueError("missing confidence")
+            if raw_relevance is None:
+                raise ValueError("missing relevance")
+
+            impact_score = _clip(float(raw_impact), -1.0, 1.0)
+            confidence = _clip(float(raw_confidence), 0.0, 1.0)
+            relevance = _clip(float(raw_relevance), 0.0, 1.0)
+        except (TypeError, ValueError):
+            failed_ids.add(article_id)
+            continue
+
+        event_type = _normalize_event_type(raw_event_type)
+        label_from_impact = _label_from_impact_score(impact_score)
+        if raw_label is None:
+            label = label_from_impact
+        else:
+            label = str(raw_label).upper().strip()
+            if label not in LLM_LABELS:
+                label = label_from_impact
+            if label != label_from_impact:
+                # Keep deterministic consistency between score and class.
+                label = label_from_impact
+
+        reasoning = _sanitize_reasoning_text(raw_reasoning)[:160]
+
+        valid[article_id] = {
+            "id": article_id,
+            "label": label,
+            "impact_score": impact_score,
+            "confidence": confidence,
+            "relevance": relevance,
+            "event_type": event_type,
+            "reasoning": reasoning,
+            "llm_model": model_name,
+        }
+
+    # Mark missing ids as failed.
+    for article_id in expected_ids:
+        if article_id not in valid:
+            failed_ids.add(article_id)
+
+    return valid, sorted(failed_ids)
+
+
+async def _repair_json_response_v2(
+    *,
+    settings: Any,
+    model_name: str,
+    malformed_content: str,
+    expected_ids: list[int],
+) -> str:
+    """Repair malformed JSON into V2 contract with no semantic rewrite."""
+    repair_prompt = (
+        "Convert the malformed output into valid JSON array.\n"
+        f"Expected ids: {expected_ids}\n"
+        "Keep keys: id,label,impact_score,confidence,relevance,event_type,reasoning.\n"
+        "Do not add explanations.\n\n"
+        f"MALFORMED:\n{malformed_content}"
+    )
+    repair_data = await create_chat_completion(
+        api_key=settings.openrouter_api_key,
+        model=model_name,
+        messages=[
+            {
+                "role": "system",
+                "content": "You repair JSON only. Return valid JSON array without markdown.",
+            },
+            {"role": "user", "content": repair_prompt},
+        ],
+        max_tokens=2600,
+        temperature=0.0,
+        timeout_seconds=60.0,
+        max_retries=settings.openrouter_max_retries,
+        rpm=settings.openrouter_rpm,
+        fallback_models=settings.openrouter_fallback_models_list,
+        referer="https://copper-mind.vercel.app",
+        title="CopperMind V2 JSON Repair",
+        extra_payload={"reasoning": {"exclude": True}},
+    )
+    repaired_content = _extract_chat_message_content(repair_data)
+    if not repaired_content:
+        raise LLMStructuredOutputError("V2 JSON repair returned empty content")
+    return repaired_content
+
+
+async def _score_subset_with_model_v2(
+    *,
+    settings: Any,
+    model_name: str,
+    articles: list[dict],
+    horizon_days: int,
+) -> tuple[dict[int, dict], list[int], int]:
+    """
+    Score subset with one model.
+
+    Returns:
+        (valid_results_by_id, failed_ids, parse_fail_count)
+    """
+    if not articles:
+        return {}, [], 0
+
+    expected_ids = [int(article["id"]) for article in articles]
+    user_prompt = _build_llm_v2_user_prompt(articles, horizon_days=horizon_days)
+
+    async def _request(strict_schema: bool, *, max_tokens: int) -> dict[str, Any]:
+        request_kwargs: dict[str, Any] = {
+            "api_key": settings.openrouter_api_key,
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": LLM_V2_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "timeout_seconds": 60.0,
+            "max_retries": settings.openrouter_max_retries,
+            "rpm": settings.openrouter_rpm,
+            "fallback_models": settings.openrouter_fallback_models_list,
+            "referer": "https://copper-mind.vercel.app",
+            "title": "CopperMind Sentiment Analysis V2",
+            "extra_payload": {"reasoning": {"exclude": True}},
+        }
+        if strict_schema:
+            request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT_V2
+            request_kwargs["provider"] = LLM_SCORING_PROVIDER_OPTIONS
+        return await create_chat_completion(**request_kwargs)
+
+    async def _request_with_provider_fallback(*, max_tokens: int) -> dict[str, Any]:
+        try:
+            return await _request(strict_schema=True, max_tokens=max_tokens)
+        except OpenRouterError as exc:
+            message = str(exc).lower()
+            if exc.status_code == 404 and "no endpoints found" in message:
+                logger.warning(
+                    "V2 structured scoring unsupported by provider route for model=%s. Retrying relaxed mode.",
+                    model_name,
+                )
+                return await _request(strict_schema=False, max_tokens=max_tokens)
+            raise
+
+    parse_fail_count = 0
+    try:
+        data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
+    except Exception:
+        return {}, expected_ids, len(expected_ids)
+
+    content = _extract_chat_message_content(data)
+    if not content:
+        finish_reason = _extract_finish_reason(data)
+        if finish_reason == "length":
+            data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+            content = _extract_chat_message_content(data)
+        if not content:
+            return {}, expected_ids, len(expected_ids)
+
+    try:
+        raw_results = json.loads(_clean_json_content(content))
+        valid, failed = _parse_llm_v2_items(
+            raw_results=raw_results,
+            expected_ids=expected_ids,
+            model_name=model_name,
+        )
+        parse_fail_count += len(failed)
+        return valid, failed, parse_fail_count
+    except Exception:
+        parse_fail_count += len(expected_ids)
+
+    try:
+        repaired = await _repair_json_response_v2(
+            settings=settings,
+            model_name=model_name,
+            malformed_content=content,
+            expected_ids=expected_ids,
+        )
+        raw_results = json.loads(_clean_json_content(repaired))
+        valid, failed = _parse_llm_v2_items(
+            raw_results=raw_results,
+            expected_ids=expected_ids,
+            model_name=model_name,
+        )
+        return valid, failed, parse_fail_count
+    except Exception:
+        return {}, expected_ids, parse_fail_count
+
+
+async def score_batch_with_llm_v2(
+    articles: list[dict],
+    *,
+    horizon_days: int = 5,
+) -> dict[str, Any]:
+    """
+    Commodity-aware sentiment scoring with fast+reliable model escalation.
+    """
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OpenRouter API key not configured")
+
+    fast_model = settings.resolved_scoring_fast_model
+    reliable_model = settings.resolved_scoring_reliable_model
+    conflict_threshold = _clip(
+        float(getattr(settings, "sentiment_escalate_conflict_threshold", 0.55)),
+        0.0,
+        1.0,
+    )
+
+    normalized_articles = [
+        {
+            "id": int(article["id"]),
+            "title": str(article.get("title") or "")[:500],
+            "description": str(article.get("description") or "")[:800],
+            "text": str(article.get("text") or "")[:1800],
+        }
+        for article in articles
+    ]
+    expected_ids = [item["id"] for item in normalized_articles]
+    article_by_id = {item["id"]: item for item in normalized_articles}
+
+    fast_valid, fast_failed, parse_fail_fast = await _score_subset_with_model_v2(
+        settings=settings,
+        model_name=fast_model,
+        articles=normalized_articles,
+        horizon_days=horizon_days,
+    )
+
+    results_by_id = dict(fast_valid)
+    parse_fail_total = int(parse_fail_fast)
+
+    conflict_ids: list[int] = []
+    for article_id, item in fast_valid.items():
+        event_type = _normalize_event_type(item.get("event_type"))
+        rule_sign = int(LLM_V2_EVENT_SIGN.get(event_type, 0))
+        llm_sign = _sign(float(item.get("impact_score", 0.0)))
+        conflict_strength = _clip(
+            float(item.get("confidence", 0.0)) * float(item.get("relevance", 0.0)),
+            0.0,
+            1.0,
+        )
+        if rule_sign != 0 and llm_sign != 0 and llm_sign != rule_sign and conflict_strength >= conflict_threshold:
+            conflict_ids.append(article_id)
+            results_by_id.pop(article_id, None)
+
+    escalation_ids = sorted(set(fast_failed).union(conflict_ids))
+    escalation_count = len(escalation_ids)
+
+    if escalation_ids:
+        reliable_subset = [
+            article_by_id[article_id]
+            for article_id in escalation_ids
+            if article_id in article_by_id
+        ]
+        reliable_valid, _reliable_failed, parse_fail_reliable = await _score_subset_with_model_v2(
+            settings=settings,
+            model_name=reliable_model,
+            articles=reliable_subset,
+            horizon_days=horizon_days,
+        )
+        results_by_id.update(reliable_valid)
+        parse_fail_total += int(parse_fail_reliable)
+
+    results = [results_by_id[article_id] for article_id in expected_ids if article_id in results_by_id]
+    failed_ids = [article_id for article_id in expected_ids if article_id not in results_by_id]
+    fallback_count = len(failed_ids)
+
+    return {
+        "results": results,
+        "failed_ids": failed_ids,
+        "parse_fail_count": parse_fail_total,
+        "escalation_count": escalation_count,
+        "fallback_count": fallback_count,
+        "model_fast": fast_model,
+        "model_reliable": reliable_model,
+    }
+
+
+def score_batch_with_finbert_v2(articles: list[dict]) -> dict[int, dict]:
+    """Score text with FinBERT for tone/intensity features."""
+    pipe = get_finbert_pipeline()
+    results: dict[int, dict] = {}
+
+    for article in articles:
+        article_id = int(article["id"])
+        text = str(
+            article.get("text")
+            or f"{article.get('title', '')} {article.get('description', '')}"
+        )[:1200]
+        scores = score_text_with_finbert(pipe, text)
+        results[article_id] = {
+            "prob_positive": float(scores["prob_positive"]),
+            "prob_neutral": float(scores["prob_neutral"]),
+            "prob_negative": float(scores["prob_negative"]),
+            "tone": float(scores["score"]),
+            "magnitude": abs(float(scores["prob_positive"]) - float(scores["prob_negative"])),
+        }
+
+    return results
+
+
+def compute_final_score_v2(
+    *,
+    impact_score_llm: float,
+    confidence_llm: float,
+    relevance_score: float,
+    event_type: str,
+    prob_positive: float,
+    prob_negative: float,
+) -> dict[str, float | int]:
+    """Compute deterministic ensemble score for V2."""
+    llm_impact = _clip(float(impact_score_llm), -1.0, 1.0)
+    llm_conf = _clip(float(confidence_llm), 0.0, 1.0)
+    relevance = _clip(float(relevance_score), 0.0, 1.0)
+    tone = _clip(float(prob_positive) - float(prob_negative), -1.0, 1.0)
+    tone_mag = abs(tone)
+
+    normalized_event = _normalize_event_type(event_type)
+    rule_sign = int(LLM_V2_EVENT_SIGN.get(normalized_event, 0))
+    rule_strength = float(LLM_V2_EVENT_STRENGTH.get(normalized_event, 0.25))
+
+    llm_sign = _sign(llm_impact)
+    final_sign = llm_sign if llm_sign != 0 else rule_sign
+    if final_sign == 0 and tone_mag >= 0.2:
+        final_sign = _sign(tone)
+
+    impact_mag = _clip(
+        (0.55 * abs(llm_impact))
+        + (0.25 * tone_mag)
+        + (0.20 * _clip(rule_strength, 0.0, 1.0)),
+        0.0,
+        1.0,
+    )
+    if final_sign == 0:
+        impact_mag = min(impact_mag, 0.12)
+
+    final_score = float(final_sign) * impact_mag
+    agreement = 1.0 if (rule_sign == 0 or llm_sign == 0 or llm_sign == rule_sign) else 0.4
+    confidence_cal = _clip((0.50 * llm_conf) + (0.30 * agreement) + (0.20 * relevance), 0.01, 0.99)
+
+    return {
+        "rule_sign": rule_sign,
+        "rule_strength": rule_strength,
+        "final_score": final_score,
+        "confidence_calibrated": confidence_cal,
+    }
+
+
+def _build_article_fallback_v2(
+    *,
+    article: dict,
+    finbert: dict,
+    model_fast: str,
+    model_reliable: str,
+) -> dict:
+    """Deterministic article-level fallback without zero-only outputs."""
+    text = str(article.get("text") or f"{article.get('title', '')} {article.get('description', '')}")
+    event_type = _infer_event_type_from_text(text)
+    rule_sign = int(LLM_V2_EVENT_SIGN.get(event_type, 0))
+    tone = float(finbert.get("tone", 0.0))
+    tone_sign = _sign(tone)
+    direction = rule_sign if rule_sign != 0 else tone_sign
+    if direction == 0:
+        impact_score = 0.0
+    else:
+        impact_score = float(direction) * _clip((abs(tone) * 0.35) + 0.08, 0.08, 0.25)
+
+    relevance = 0.10 if event_type == "non_copper" else 0.45
+    confidence = 0.18 if direction == 0 else _clip(0.22 + (abs(tone) * 0.22), 0.22, 0.45)
+
+    return {
+        "id": int(article["id"]),
+        "label": _label_from_impact_score(impact_score),
+        "impact_score": impact_score,
+        "confidence": confidence,
+        "relevance": relevance,
+        "event_type": event_type,
+        "reasoning": "deterministic_fallback",
+        "llm_model": model_fast,
+        "model_fast": model_fast,
+        "model_reliable": model_reliable,
+        "fallback_used": True,
+    }
+
+
+def score_unscored_processed_articles(
+    session: Session,
+    *,
+    chunk_size: int = 12,
+    backfill_days: Optional[int] = None,
+) -> dict[str, int]:
+    """
+    Score unscored `news_processed` articles into `news_sentiments_v2`.
+    """
+    settings = get_settings()
+    horizon_days = max(1, int(getattr(settings, "sentiment_horizon_days", 5)))
+    relevance_min = _clip(float(getattr(settings, "sentiment_relevance_min", 0.35)), 0.0, 1.0)
+
+    query = (
+        session.query(
+            NewsProcessed.id.label("processed_id"),
+            NewsProcessed.canonical_title,
+            NewsProcessed.cleaned_text,
+            NewsRaw.title.label("raw_title"),
+            NewsRaw.description.label("raw_description"),
+            NewsRaw.published_at,
+        )
+        .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
+        .outerjoin(
+            NewsSentimentV2,
+            (NewsProcessed.id == NewsSentimentV2.news_processed_id)
+            & (NewsSentimentV2.horizon_days == horizon_days),
+        )
+        .filter(NewsSentimentV2.id.is_(None))
+        .order_by(NewsRaw.published_at.asc(), NewsProcessed.id.asc())
+    )
+
+    if backfill_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(backfill_days)))
+        query = query.filter(NewsRaw.published_at >= cutoff)
+
+    rows = query.all()
+    if not rows:
+        logger.info("No unscored processed articles found")
+        return {
+            "scored_count": 0,
+            "parse_fail_count": 0,
+            "escalation_count": 0,
+            "fallback_count": 0,
+            "finbert_used": 0,
+        }
+
+    logger.info("Found %s unscored processed articles for V2 scoring", len(rows))
+
+    scored_count = 0
+    parse_fail_count = 0
+    escalation_count = 0
+    fallback_count = 0
+    finbert_used = 0
+    llm_budget_remaining = max(0, int(settings.max_llm_articles_per_run))
+    fast_model = settings.resolved_scoring_fast_model
+    reliable_model = settings.resolved_scoring_reliable_model
+
+    for chunk_idx in range(0, len(rows), chunk_size):
+        chunk_rows = rows[chunk_idx:chunk_idx + chunk_size]
+        chunk_items: list[dict] = []
+        for row in chunk_rows:
+            title = str(row.raw_title or row.canonical_title or "")[:500]
+            description = str(row.raw_description or "")[:1000]
+            text = str(row.cleaned_text or f"{title} {description}")[:2000]
+            chunk_items.append(
+                {
+                    "id": int(row.processed_id),
+                    "title": title,
+                    "description": description,
+                    "text": text,
+                    "published_at": row.published_at,
+                }
+            )
+
+        finbert_by_id = score_batch_with_finbert_v2(chunk_items)
+        finbert_used += len(finbert_by_id)
+
+        llm_results_by_id: dict[int, dict] = {}
+        llm_candidates: list[dict] = []
+        if settings.openrouter_api_key and llm_budget_remaining > 0:
+            llm_take = min(len(chunk_items), llm_budget_remaining)
+            llm_candidates = chunk_items[:llm_take]
+            llm_budget_remaining -= llm_take
+
+        if llm_candidates:
+            try:
+                llm_bundle = run_async_from_sync(
+                    score_batch_with_llm_v2,
+                    llm_candidates,
+                    horizon_days=horizon_days,
+                )
+                for item in llm_bundle.get("results", []):
+                    llm_results_by_id[int(item["id"])] = item
+                parse_fail_count += int(llm_bundle.get("parse_fail_count", 0))
+                escalation_count += int(llm_bundle.get("escalation_count", 0))
+                fast_model = str(llm_bundle.get("model_fast", fast_model))
+                reliable_model = str(llm_bundle.get("model_reliable", reliable_model))
+            except Exception as exc:
+                logger.warning("V2 LLM scoring failed for chunk starting at %s: %s", chunk_idx, exc)
+                parse_fail_count += len(llm_candidates)
+
+        for article in chunk_items:
+            article_id = int(article["id"])
+            finbert = finbert_by_id.get(article_id, _neutral_finbert_score())
+            llm = llm_results_by_id.get(article_id)
+
+            if llm is None:
+                llm = _build_article_fallback_v2(
+                    article=article,
+                    finbert=finbert if isinstance(finbert, dict) else {},
+                    model_fast=fast_model,
+                    model_reliable=reliable_model,
+                )
+            else:
+                llm["model_fast"] = fast_model
+                llm["model_reliable"] = reliable_model
+                llm["fallback_used"] = False
+
+            if bool(llm.get("fallback_used", False)):
+                fallback_count += 1
+
+            if float(llm.get("relevance", 0.0)) < relevance_min and llm.get("event_type") != "non_copper":
+                llm["event_type"] = "non_copper"
+                llm["label"] = "NEUTRAL"
+                llm["impact_score"] = 0.0
+
+            metrics = compute_final_score_v2(
+                impact_score_llm=float(llm.get("impact_score", 0.0)),
+                confidence_llm=float(llm.get("confidence", 0.01)),
+                relevance_score=float(llm.get("relevance", 0.01)),
+                event_type=str(llm.get("event_type", "mixed_unclear")),
+                prob_positive=float(finbert.get("prob_positive", 0.33)),
+                prob_negative=float(finbert.get("prob_negative", 0.33)),
+            )
+
+            payload = {
+                "label": llm.get("label", "NEUTRAL"),
+                "impact_score": round(float(llm.get("impact_score", 0.0)), 4),
+                "confidence": round(float(llm.get("confidence", 0.01)), 4),
+                "relevance": round(float(llm.get("relevance", 0.01)), 4),
+                "event_type": llm.get("event_type", "mixed_unclear"),
+                "reasoning": llm.get("reasoning", ""),
+                "rule_sign": metrics["rule_sign"],
+                "rule_strength": round(float(metrics["rule_strength"]), 4),
+                "confidence_calibrated": round(float(metrics["confidence_calibrated"]), 4),
+                "fallback_used": bool(llm.get("fallback_used", False)),
+                "llm_model": llm.get("llm_model", fast_model),
+                "scoring_version": SCORING_V2_VERSION,
+            }
+
+            sentiment_v2 = NewsSentimentV2(
+                news_processed_id=article_id,
+                horizon_days=horizon_days,
+                label=str(llm.get("label", "NEUTRAL")),
+                impact_score_llm=float(llm.get("impact_score", 0.0)),
+                confidence_llm=float(llm.get("confidence", 0.01)),
+                confidence_calibrated=float(metrics["confidence_calibrated"]),
+                relevance_score=float(llm.get("relevance", 0.01)),
+                event_type=str(llm.get("event_type", "mixed_unclear")),
+                rule_sign=int(metrics["rule_sign"]),
+                final_score=float(metrics["final_score"]),
+                finbert_pos=float(finbert.get("prob_positive", 0.33)),
+                finbert_neu=float(finbert.get("prob_neutral", 0.34)),
+                finbert_neg=float(finbert.get("prob_negative", 0.33)),
+                reasoning_json=json.dumps(payload, ensure_ascii=True),
+                model_fast=fast_model,
+                model_reliable=reliable_model,
+                scored_at=datetime.now(timezone.utc),
+            )
+            session.add(sentiment_v2)
+            scored_count += 1
+
+        session.commit()
+
+    logger.info(
+        "V2 scoring summary: scored=%s parse_fail=%s escalations=%s fallback=%s finbert_used=%s",
+        scored_count,
+        parse_fail_count,
+        escalation_count,
+        fallback_count,
+        finbert_used,
+    )
+    return {
+        "scored_count": scored_count,
+        "parse_fail_count": parse_fail_count,
+        "escalation_count": escalation_count,
+        "fallback_count": fallback_count,
+        "finbert_used": finbert_used,
+    }
+
+
+def aggregate_daily_sentiment_v2(
+    session: Session,
+    *,
+    tau_hours: float = 12.0,
+) -> int:
+    """Aggregate V2 article scores into daily_sentiments_v2."""
+    settings = get_settings()
+    tau_hours = tau_hours or settings.sentiment_tau_hours
+    horizon_days = max(1, int(getattr(settings, "sentiment_horizon_days", 5)))
+    relevance_min = _clip(float(getattr(settings, "sentiment_relevance_min", 0.35)), 0.0, 1.0)
+
+    rows = (
+        session.query(
+            NewsRaw.published_at,
+            NewsSentimentV2.final_score,
+            NewsSentimentV2.confidence_calibrated,
+            NewsSentimentV2.relevance_score,
+        )
+        .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+        .join(
+            NewsSentimentV2,
+            (NewsSentimentV2.news_processed_id == NewsProcessed.id)
+            & (NewsSentimentV2.horizon_days == horizon_days),
+        )
+        .filter(NewsSentimentV2.relevance_score >= relevance_min)
+        .all()
+    )
+
+    if not rows:
+        logger.info("No V2 scored articles available for daily aggregation")
+        return 0
+
+    df = pd.DataFrame(
+        rows,
+        columns=["published_at", "final_score", "confidence_calibrated", "relevance_score"],
+    )
+    df["date"] = pd.to_datetime(df["published_at"]).dt.normalize()
+
+    def calc_weights(group):
+        hours = (group["published_at"] - group["date"]).dt.total_seconds() / 3600.0
+        weights = np.exp(hours / tau_hours)
+        return weights / weights.sum()
+
+    daily_rows = []
+    for date, group in df.groupby("date"):
+        weights = calc_weights(group)
+        daily_rows.append(
+            {
+                "date": date,
+                "sentiment_index": float((group["final_score"] * weights).sum()),
+                "news_count": int(len(group)),
+                "avg_confidence": float(group["confidence_calibrated"].mean()),
+                "avg_relevance": float(group["relevance_score"].mean()),
+            }
+        )
+
+    count = 0
+    for row in daily_rows:
+        date_dt = row["date"].to_pydatetime()
+        if date_dt.tzinfo is None:
+            date_dt = date_dt.replace(tzinfo=timezone.utc)
+
+        existing = session.query(DailySentimentV2).filter(
+            func.date(DailySentimentV2.date) == func.date(date_dt)
+        ).first()
+        if existing:
+            existing.sentiment_index = row["sentiment_index"]
+            existing.news_count = row["news_count"]
+            existing.avg_confidence = row["avg_confidence"]
+            existing.avg_relevance = row["avg_relevance"]
+            existing.source_version = "v2"
+            existing.aggregated_at = datetime.now(timezone.utc)
+        else:
+            session.add(
+                DailySentimentV2(
+                    date=date_dt,
+                    sentiment_index=row["sentiment_index"],
+                    news_count=row["news_count"],
+                    avg_confidence=row["avg_confidence"],
+                    avg_relevance=row["avg_relevance"],
+                    source_version="v2",
+                    aggregated_at=datetime.now(timezone.utc),
+                )
+            )
+        count += 1
+
+    session.commit()
+    logger.info("Aggregated V2 sentiment for %s days", count)
+    return count
+
+
+def backfill_sentiment_v2(
+    session: Session,
+    *,
+    days: int = 180,
+    batch_size: int = 50,
+) -> dict[str, int]:
+    """Idempotent V2 backfill helper for last N days."""
+    logger.info("Starting V2 backfill for last %s days (batch_size=%s)", days, batch_size)
+    return score_unscored_processed_articles(
+        session=session,
+        chunk_size=batch_size,
+        backfill_days=days,
+    )
 
 
 def score_unscored_articles(
@@ -1374,18 +2324,31 @@ def run_full_pipeline(
     Returns:
         Dict with results from each stage
     """
+    settings = get_settings()
     results = {
         "scored_articles": 0,
+        "scored_articles_v2": 0,
         "aggregated_days": 0,
+        "aggregated_days_v2": 0,
         "model_result": None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     
     with SessionLocal() as session:
         if score_sentiment:
-            results["scored_articles"] = score_unscored_articles(session)
+            if settings.scoring_source == "news_processed":
+                scoring_stats = score_unscored_processed_articles(session)
+                results["scored_articles"] = int(scoring_stats.get("scored_count", 0))
+                results["scored_articles_v2"] = int(scoring_stats.get("scored_count", 0))
+                results["llm_parse_fail_count"] = int(scoring_stats.get("parse_fail_count", 0))
+                results["escalation_count"] = int(scoring_stats.get("escalation_count", 0))
+                results["fallback_count"] = int(scoring_stats.get("fallback_count", 0))
+            else:
+                results["scored_articles"] = score_unscored_articles(session)
         
         if aggregate_sentiment:
+            if settings.scoring_source == "news_processed":
+                results["aggregated_days_v2"] = aggregate_daily_sentiment_v2(session)
             results["aggregated_days"] = aggregate_daily_sentiment(session)
         
         if train_model:
@@ -1427,6 +2390,18 @@ def main():
         help="Run sentiment scoring + daily aggregation (no training)"
     )
     parser.add_argument(
+        "--backfill-v2-days",
+        type=int,
+        default=0,
+        help="Backfill unscored V2 sentiment for last N days (idempotent)"
+    )
+    parser.add_argument(
+        "--backfill-v2-batch-size",
+        type=int,
+        default=50,
+        help="Batch size for V2 backfill mode"
+    )
+    parser.add_argument(
         "--target-symbol",
         type=str,
         default="HG=F",
@@ -1452,8 +2427,9 @@ def main():
     score = args.run_all or args.score_only or args.refresh_sentiment
     aggregate = args.run_all or args.aggregate_only or args.refresh_sentiment
     train = args.run_all or args.train_only
+    backfill_v2 = args.backfill_v2_days > 0
     
-    if not (score or aggregate or train):
+    if not (score or aggregate or train or backfill_v2):
         parser.print_help()
         return
     
@@ -1463,6 +2439,26 @@ def main():
     
     # Run pipeline
     def do_run():
+        if backfill_v2:
+            with SessionLocal() as session:
+                scoring_stats = backfill_sentiment_v2(
+                    session,
+                    days=args.backfill_v2_days,
+                    batch_size=max(1, int(args.backfill_v2_batch_size)),
+                )
+                aggregated_days_v2 = aggregate_daily_sentiment_v2(session)
+                return {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "scored_articles": int(scoring_stats.get("scored_count", 0)),
+                    "scored_articles_v2": int(scoring_stats.get("scored_count", 0)),
+                    "aggregated_days": 0,
+                    "aggregated_days_v2": int(aggregated_days_v2),
+                    "llm_parse_fail_count": int(scoring_stats.get("parse_fail_count", 0)),
+                    "escalation_count": int(scoring_stats.get("escalation_count", 0)),
+                    "fallback_count": int(scoring_stats.get("fallback_count", 0)),
+                    "model_result": None,
+                    "backfill_days": int(args.backfill_v2_days),
+                }
         return run_full_pipeline(
             target_symbol=args.target_symbol,
             score_sentiment=score,
@@ -1487,9 +2483,21 @@ def main():
     
     if score:
         print(f"\nSentiment Scoring: {results['scored_articles']} articles")
+        if "scored_articles_v2" in results:
+            print(f"V2 Sentiment Scoring: {results.get('scored_articles_v2', 0)} articles")
+        if "llm_parse_fail_count" in results:
+            print(f"  - LLM parse failures: {results.get('llm_parse_fail_count', 0)}")
+            print(f"  - Escalations: {results.get('escalation_count', 0)}")
+            print(f"  - Deterministic fallbacks: {results.get('fallback_count', 0)}")
     
     if aggregate:
         print(f"Daily Aggregation: {results['aggregated_days']} days")
+        if results.get("aggregated_days_v2") is not None:
+            print(f"Daily Aggregation V2 (shadow): {results.get('aggregated_days_v2', 0)} days")
+
+    if backfill_v2:
+        print(f"\nBackfill V2 Days: {results.get('backfill_days', 0)}")
+        print(f"V2 Aggregation Days: {results.get('aggregated_days_v2', 0)}")
     
     if train and results.get("model_result"):
         mr = results["model_result"]

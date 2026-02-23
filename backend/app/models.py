@@ -316,6 +316,10 @@ class PipelineRunMetrics(Base):
     news_raw_duplicates = Column(Integer, nullable=True)
     news_processed_inserted = Column(Integer, nullable=True)
     news_processed_duplicates = Column(Integer, nullable=True)
+    articles_scored_v2 = Column(Integer, nullable=True)
+    llm_parse_fail_count = Column(Integer, nullable=True)
+    escalation_count = Column(Integer, nullable=True)
+    fallback_count = Column(Integer, nullable=True)
     
     # Snapshot info
     snapshot_generated = Column(Boolean, default=False)
@@ -424,6 +428,80 @@ class NewsProcessed(Base):
     
     # Relationship
     raw = relationship("NewsRaw", back_populates="processed_items")
+    sentiment_v2_items = relationship("NewsSentimentV2", back_populates="processed")
     
     def __repr__(self):
         return f"<NewsProcessed(id={self.id}, dedup_key='{self.dedup_key[:16]}...')>"
+
+
+class NewsSentimentV2(Base):
+    """
+    Commodity-aware sentiment scores generated from news_processed records.
+    """
+
+    __tablename__ = "news_sentiments_v2"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    news_processed_id = Column(
+        BigInteger,
+        ForeignKey("news_processed.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    horizon_days = Column(Integer, nullable=False, default=5)
+
+    label = Column(String(20), nullable=False, index=True)
+    impact_score_llm = Column(Float, nullable=False)
+    confidence_llm = Column(Float, nullable=False)
+    confidence_calibrated = Column(Float, nullable=False, index=True)
+    relevance_score = Column(Float, nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    rule_sign = Column(Integer, nullable=False)
+    final_score = Column(Float, nullable=False, index=True)
+
+    finbert_pos = Column(Float, nullable=False)
+    finbert_neu = Column(Float, nullable=False)
+    finbert_neg = Column(Float, nullable=False)
+
+    reasoning_json = Column(Text, nullable=True)
+    model_fast = Column(String(100), nullable=True)
+    model_reliable = Column(String(100), nullable=True)
+    scored_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    processed = relationship("NewsProcessed", back_populates="sentiment_v2_items")
+
+    __table_args__ = (
+        UniqueConstraint("news_processed_id", "horizon_days", name="uq_news_sentiments_v2_processed_horizon"),
+        Index("ix_news_sentiments_v2_processed_scored", "news_processed_id", "scored_at"),
+    )
+
+    def __repr__(self):
+        return (
+            "<NewsSentimentV2(processed_id="
+            f"{self.news_processed_id}, horizon_days={self.horizon_days}, final_score={self.final_score:.3f})>"
+        )
+
+
+class DailySentimentV2(Base):
+    """
+    Daily aggregate sentiment generated from NewsSentimentV2.
+    """
+
+    __tablename__ = "daily_sentiments_v2"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    date = Column(DateTime(timezone=True), nullable=False, unique=True, index=True)
+
+    sentiment_index = Column(Float, nullable=False, index=True)
+    news_count = Column(Integer, nullable=False, default=0)
+    avg_confidence = Column(Float, nullable=True)
+    avg_relevance = Column(Float, nullable=True)
+    source_version = Column(String(20), nullable=False, default="v2")
+    aggregated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return (
+            "<DailySentimentV2(date="
+            f"{self.date}, sentiment_index={self.sentiment_index:.3f}, news_count={self.news_count})>"
+        )

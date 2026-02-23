@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     sentiment_soft_neutral_polarity_threshold: float = 0.12
     sentiment_soft_neutral_max_mag: float = 0.25
     sentiment_soft_neutral_scale: float = 0.8
+    sentiment_relevance_min: float = 0.35
+    sentiment_escalate_conflict_threshold: float = 0.55
+    sentiment_horizon_days: int = 5
+    scoring_source: str = "news_processed"
     
     # API settings
     analysis_ttl_minutes: int = 30
@@ -73,10 +77,12 @@ class Settings(BaseSettings):
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
     # Deprecated - kept for backward compatibility
-    openrouter_model: str = "openai/gpt-oss-120b:free"
+    openrouter_model: str = "arcee-ai/trinity-large-preview:free"
     # New primary config
-    openrouter_model_scoring: str = "stepfun/step-3.5-flash:free"
-    openrouter_model_commentary: str = "stepfun/step-3.5-flash:free"
+    openrouter_model_scoring: str = "arcee-ai/trinity-large-preview:free"
+    openrouter_model_scoring_fast: Optional[str] = None
+    openrouter_model_scoring_reliable: Optional[str] = None
+    openrouter_model_commentary: str = "arcee-ai/trinity-large-preview:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
     max_llm_articles_per_run: int = 200
@@ -97,7 +103,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "openai/gpt-oss-120b:free"
+    llm_sentiment_model: str = "arcee-ai/trinity-large-preview:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
@@ -194,11 +200,30 @@ class Settings(BaseSettings):
         """Preferred scoring model with backward-compatible fallback chain."""
         return (
             self._first_non_empty(
+                self.openrouter_model_scoring_fast,
                 self.openrouter_model_scoring,
                 self.llm_sentiment_model,
                 self.openrouter_model,
             )
-            or "stepfun/step-3.5-flash:free"
+            or "arcee-ai/trinity-large-preview:free"
+        )
+
+    @property
+    def resolved_scoring_fast_model(self) -> str:
+        """Fast model used for primary sentiment scoring."""
+        return self.resolved_scoring_model
+
+    @property
+    def resolved_scoring_reliable_model(self) -> str:
+        """Reliable model used for escalation/retry on malformed outputs."""
+        return (
+            self._first_non_empty(
+                self.openrouter_model_scoring_reliable,
+                self.openrouter_model,
+                self.llm_sentiment_model,
+                self.openrouter_model_scoring,
+            )
+            or "arcee-ai/trinity-large-preview:free"
         )
 
     @property
@@ -210,7 +235,7 @@ class Settings(BaseSettings):
                 self.openrouter_model,
                 self.llm_sentiment_model,
             )
-            or "stepfun/step-3.5-flash:free"
+            or "arcee-ai/trinity-large-preview:free"
         )
 
     @property

@@ -27,7 +27,7 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 
 ## Overview
 
-Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (Step-3.5 Flash via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (Arcee Trinity Large Preview via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
 
 **Model target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
@@ -38,7 +38,7 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 ## Features
 
 - Predict next-day copper futures returns using XGBoost regression trained on 250+ features
-- Score news sentiment using LLM (Step-3.5 Flash) with FinBERT fallback when API is unavailable
+- Score news sentiment using LLM (Arcee Trinity Large Preview) with FinBERT fallback when API is unavailable
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
 - Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
@@ -377,8 +377,8 @@ Copy `env.example` to `backend/.env` and configure:
 | `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM |
 | `PIPELINE_TRIGGER_SECRET` | Yes | - | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `SYMBOL_SET` | No | `active` | Which symbol set to use (active/champion/challenger) |
-| `OPENROUTER_MODEL_SCORING` | No | `stepfun/step-3.5-flash:free` | Primary model for sentiment scoring |
-| `OPENROUTER_MODEL_COMMENTARY` | No | `stepfun/step-3.5-flash:free` | Primary model for commentary generation |
+| `OPENROUTER_MODEL_SCORING` | No | `arcee-ai/trinity-large-preview:free` | Primary model for sentiment scoring |
+| `OPENROUTER_MODEL_COMMENTARY` | No | `arcee-ai/trinity-large-preview:free` | Primary model for commentary generation |
 | `OPENROUTER_RPM` | No | `18` | Soft throttle target for OpenRouter calls |
 | `OPENROUTER_MAX_RETRIES` | No | `3` | Max retry attempts for 429/5xx OpenRouter errors |
 | `MAX_LLM_ARTICLES_PER_RUN` | No | `200` | Per-run LLM scoring budget before FinBERT overflow |
