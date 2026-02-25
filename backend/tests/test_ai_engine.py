@@ -557,9 +557,9 @@ class TestLLMStructuredScoring:
         assert results[0]["llm_confidence"] == pytest.approx(0.82)
         assert results[0]["model_name"] == "hybrid(stepfun/step-3.5-flash:free+ProsusAI/finbert)"
 
-    def test_score_batch_with_llm_retries_relaxed_mode_on_404_provider_mismatch(self, monkeypatch):
+    def test_score_batch_with_llm_sends_response_format_directly(self, monkeypatch):
+        """Test that response_format is always sent without provider constraint."""
         from app import ai_engine
-        from app.openrouter_client import OpenRouterError
 
         fake_settings = SimpleNamespace(
             openrouter_api_key="test-key",
@@ -570,24 +570,14 @@ class TestLLMStructuredScoring:
         )
         monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
 
-        call_count = {"n": 0}
-
         async def fake_create_chat_completion(**kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                assert "response_format" in kwargs
-                assert "provider" in kwargs
-                raise OpenRouterError(
-                    "No endpoints found that can handle the requested parameters",
-                    status_code=404,
-                )
-            assert "response_format" not in kwargs
+            assert "response_format" in kwargs
             assert "provider" not in kwargs
             return {
                 "choices": [
                     {
                         "message": {
-                            "content": "```json\n[{\"id\": 42, \"label\": \"BEARISH\", \"confidence\": 0.4, \"reasoning\": \"Weak demand outlook weighs copper.\"}]\n```"
+                            "content": '```json\n[{"id": 42, "label": "BEARISH", "confidence": 0.4, "reasoning": "Weak demand outlook weighs copper."}]\n```'
                         }
                     }
                 ]
@@ -602,15 +592,14 @@ class TestLLMStructuredScoring:
 
         results = asyncio.run(run_call())
 
-        assert call_count["n"] == 2
         assert len(results) == 1
         assert results[0]["id"] == 42
         assert results[0]["label"] == "BEARISH"
         assert results[0]["llm_confidence"] == pytest.approx(0.4)
 
-    def test_score_batch_with_llm_accepts_missing_confidence_in_relaxed_mode(self, monkeypatch):
+    def test_score_batch_with_llm_accepts_missing_confidence(self, monkeypatch):
+        """Test that missing confidence defaults to 0.5."""
         from app import ai_engine
-        from app.openrouter_client import OpenRouterError
 
         fake_settings = SimpleNamespace(
             openrouter_api_key="test-key",
@@ -621,16 +610,8 @@ class TestLLMStructuredScoring:
         )
         monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
 
-        call_count = {"n": 0}
-
         async def fake_create_chat_completion(**kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                assert "response_format" in kwargs
-                raise OpenRouterError(
-                    "No endpoints found that can handle the requested parameters",
-                    status_code=404,
-                )
+            assert "response_format" in kwargs
             return {
                 "choices": [
                     {
@@ -650,7 +631,6 @@ class TestLLMStructuredScoring:
 
         results = asyncio.run(run_call())
 
-        assert call_count["n"] == 2
         assert results[0]["id"] == 55
         assert results[0]["label"] == "BULLISH"
         assert results[0]["llm_confidence"] == pytest.approx(0.5)
