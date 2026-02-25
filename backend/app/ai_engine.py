@@ -906,13 +906,16 @@ def _parse_llm_v2_items(
 
     for item in raw_results:
         if not isinstance(item, dict):
+            logger.debug("V2 parse: skipping non-dict item: %s", type(item).__name__)
             continue
         if "id" not in item:
+            logger.debug("V2 parse: item missing 'id' key, keys=%s", list(item.keys()))
             continue
 
         try:
             article_id = int(item["id"])
         except (TypeError, ValueError):
+            logger.debug("V2 parse: invalid id value: %r", item.get("id"))
             continue
 
         if article_id not in expected:
@@ -934,14 +937,16 @@ def _parse_llm_v2_items(
                 if raw_label and str(raw_label).upper().strip() in LLM_LABELS:
                     lbl = str(raw_label).upper().strip()
                     raw_impact = {"BULLISH": 0.3, "BEARISH": -0.3, "NEUTRAL": 0.0}.get(lbl, 0.0)
+                    logger.debug("V2 parse: inferred impact_score=%.1f from label=%s for id=%d", raw_impact, lbl, article_id)
                 else:
-                    raise ValueError("missing impact_score")
+                    raise ValueError("missing impact_score and no valid label")
 
             impact_score = _clip(float(raw_impact), -1.0, 1.0)
             # confidence and relevance: default to 0.5 if missing
             confidence = _clip(float(raw_confidence), 0.0, 1.0) if raw_confidence is not None else 0.5
             relevance = _clip(float(raw_relevance), 0.0, 1.0) if raw_relevance is not None else 0.5
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug("V2 parse: field error for id=%d: %s (keys=%s)", article_id, exc, list(item.keys()))
             failed_ids.add(article_id)
             continue
 
@@ -971,9 +976,18 @@ def _parse_llm_v2_items(
         }
 
     # Mark missing ids as failed.
+    missing_ids = []
     for article_id in expected_ids:
         if article_id not in valid:
             failed_ids.add(article_id)
+            missing_ids.append(article_id)
+
+    if missing_ids:
+        logger.warning(
+            "V2 parse: %d/%d articles missing from LLM response (model=%s, returned=%d items, missing_ids=%s)",
+            len(missing_ids), len(expected_ids), model_name, len(raw_results),
+            missing_ids[:10],
+        )
 
     return valid, sorted(failed_ids)
 
