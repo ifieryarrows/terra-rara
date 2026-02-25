@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from .openrouter_client import OpenRouterError, create_chat_completion
@@ -18,20 +18,7 @@ logger = logging.getLogger(__name__)
 VALID_STANCES = {"BULLISH", "NEUTRAL", "BEARISH"}
 
 COMMENTARY_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "commentary_with_stance",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "stance": {"type": "string", "enum": ["BULLISH", "NEUTRAL", "BEARISH"]},
-                "commentary": {"type": "string"},
-            },
-            "required": ["stance", "commentary"],
-            "additionalProperties": False,
-        },
-    },
+    "type": "json_object",
 }
 
 
@@ -281,11 +268,9 @@ Data:
         "title": "CopperMind Commentary",
     }
 
-    async def _request_commentary(strict_schema: bool) -> str:
+    async def _request_commentary() -> str:
         kwargs = dict(base_request_kwargs)
-        if strict_schema:
-            kwargs["response_format"] = COMMENTARY_RESPONSE_FORMAT
-            kwargs["provider"] = {"require_parameters": True}
+        kwargs["response_format"] = COMMENTARY_RESPONSE_FORMAT
         data = await create_chat_completion(**kwargs)
         content = _extract_chat_message_content(data)
         if not content:
@@ -323,17 +308,7 @@ Data:
         return repaired
 
     try:
-        try:
-            content = await _request_commentary(strict_schema=True)
-        except OpenRouterError as exc:
-            message = str(exc).lower()
-            if exc.status_code == 404 and "no endpoints found" in message:
-                logger.warning(
-                    "Structured commentary request unsupported by provider routing; retrying relaxed."
-                )
-                content = await _request_commentary(strict_schema=False)
-            else:
-                raise
+        content = await _request_commentary()
 
         try:
             stance, commentary = _parse_commentary_payload(content)
@@ -400,7 +375,7 @@ def save_commentary_to_db(
         existing.predicted_return = predicted_return
         existing.sentiment_label = sentiment_label
         existing.ai_stance = ai_stance
-        existing.generated_at = datetime.utcnow()
+        existing.generated_at = datetime.now(timezone.utc)
         existing.model_name = settings.resolved_commentary_model
         logger.info("Updated AI commentary for %s (stance: %s)", symbol, ai_stance)
     else:

@@ -47,14 +47,13 @@ services:
       - path: .env
         required: false
     environment:
-      - DATABASE_URL=sqlite:////data/app.db
+      - DATABASE_URL=postgresql://coppermind:localdev@postgres:5432/coppermind
       - MODEL_DIR=/data/models
-      - PIPELINE_LOCK_FILE=/data/pipeline.lock
       - REDIS_URL=redis://redis:6379/0
       - SCHEDULER_ENABLED=false
-      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-arcee-ai/trinity-large-preview:free}
-      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-arcee-ai/trinity-large-preview:free}
-      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-nvidia/nemotron-3-nano-30b-a3b:free}
+      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-nvidia/nemotron-3-nano-30b-a3b:free}
+      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-google/gemma-3-27b-it:free}
       - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-arcee-ai/trinity-large-preview:free}
       - OPENROUTER_RPM=${OPENROUTER_RPM:-18}
       - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
@@ -94,13 +93,12 @@ services:
       - path: .env
         required: false
     environment:
-      - DATABASE_URL=sqlite:////data/app.db
+      - DATABASE_URL=postgresql://coppermind:localdev@postgres:5432/coppermind
       - MODEL_DIR=/data/models
-      - PIPELINE_LOCK_FILE=/data/pipeline.lock
       - REDIS_URL=redis://redis:6379/0
-      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-arcee-ai/trinity-large-preview:free}
-      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-arcee-ai/trinity-large-preview:free}
-      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-arcee-ai/trinity-large-preview:free}
+      - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-nvidia/nemotron-3-nano-30b-a3b:free}
+      - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-nvidia/nemotron-3-nano-30b-a3b:free}
+      - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-google/gemma-3-27b-it:free}
       - OPENROUTER_MODEL_COMMENTARY=${OPENROUTER_MODEL_COMMENTARY:-arcee-ai/trinity-large-preview:free}
       - OPENROUTER_RPM=${OPENROUTER_RPM:-18}
       - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
@@ -111,6 +109,8 @@ services:
       - TRANSFORMERS_NO_ADVISORY_WARNINGS=${TRANSFORMERS_NO_ADVISORY_WARNINGS:-1}
       - TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped

@@ -9,8 +9,13 @@ Tables:
 - AnalysisSnapshot: Cached analysis reports
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now, replacing deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc)
 
 from sqlalchemy import (
     Column,
@@ -59,7 +64,7 @@ class NewsArticle(Base):
     
     # Timestamps
     published_at = Column(DateTime(timezone=True), nullable=False, index=True)
-    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     
     # Relationships
     sentiment = relationship("NewsSentiment", back_populates="article", uselist=False)
@@ -91,7 +96,7 @@ class PriceBar(Base):
     adj_close = Column(Float, nullable=True)
     
     # When this record was fetched
-    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     
     __table_args__ = (
         UniqueConstraint("symbol", "date", name="uq_price_symbol_date"),
@@ -136,7 +141,7 @@ class NewsSentiment(Base):
     model_name = Column(String(100), default="google/gemini-2.0-flash-exp:free")
     
     # When scored
-    scored_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    scored_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     
     # Relationship
     article = relationship("NewsArticle", back_populates="sentiment")
@@ -169,7 +174,7 @@ class DailySentiment(Base):
     weighting_method = Column(String(50), default="recency_exponential")
     
     # When aggregated
-    aggregated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    aggregated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     
     def __repr__(self):
         return f"<DailySentiment(date={self.date}, index={self.sentiment_index:.3f}, news={self.news_count})>"
@@ -191,7 +196,7 @@ class AnalysisSnapshot(Base):
     report_json = Column(JSON, nullable=False)
     
     # When this snapshot was generated
-    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
     
     # Model version used
     model_version = Column(String(100), nullable=True)
@@ -230,7 +235,7 @@ class AICommentary(Base):
     ai_stance = Column(String(20), nullable=True, default="NEUTRAL")
     
     # When generated
-    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
     
     # Model used
     model_name = Column(String(100), nullable=True)
@@ -262,7 +267,7 @@ class ModelMetadata(Base):
     metrics_json = Column(Text, nullable=True)
     
     # When the model was trained
-    trained_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
     
     def __repr__(self):
         return f"<ModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
@@ -467,7 +472,7 @@ class NewsSentimentV2(Base):
     reasoning_json = Column(Text, nullable=True)
     model_fast = Column(String(100), nullable=True)
     model_reliable = Column(String(100), nullable=True)
-    scored_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    scored_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
 
     processed = relationship("NewsProcessed", back_populates="sentiment_v2_items")
 
@@ -498,7 +503,7 @@ class DailySentimentV2(Base):
     avg_confidence = Column(Float, nullable=True)
     avg_relevance = Column(Float, nullable=True)
     source_version = Column(String(20), nullable=False, default="v2")
-    aggregated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    aggregated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
 
     def __repr__(self):
         return (

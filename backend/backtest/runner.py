@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -166,7 +166,7 @@ class BacktestRunner:
     
     def __init__(self, config: BacktestConfig):
         self.config = config
-        self.run_id = f"backtest-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+        self.run_id = f"backtest-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     
     def fetch_prices(self, symbols: list[str], start: str, end: str) -> pd.DataFrame:
         """
@@ -476,7 +476,7 @@ class BacktestRunner:
         
         result = BacktestResult(
             run_id=self.run_id,
-            generated_at=datetime.utcnow().isoformat() + "Z",
+            generated_at=datetime.now(timezone.utc).isoformat() + "Z",
             config=self.config,
             champion={
                 "symbol_set": asdict(champion_set),

@@ -2165,7 +2165,7 @@ def save_model_metadata_to_db(
         existing.importance_json = json.dumps(importance)
         existing.features_json = json.dumps(features)
         existing.metrics_json = json.dumps(metrics)
-        existing.trained_at = datetime.utcnow()
+        existing.trained_at = datetime.now(timezone.utc)
         logger.info(f"Updated model metadata in DB for {symbol}")
     else:
         new_record = ModelMetadata(
