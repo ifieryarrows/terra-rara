@@ -139,36 +139,7 @@ Label mapping:
 - otherwise => NEUTRAL
 """
 LLM_SCORING_RESPONSE_FORMAT_V2 = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "news_sentiment_scores_v2",
-        "strict": True,
-        "schema": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "integer"},
-                    "label": {"type": "string", "enum": ["BULLISH", "BEARISH", "NEUTRAL"]},
-                    "impact_score": {"type": "number", "minimum": -1, "maximum": 1},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "relevance": {"type": "number", "minimum": 0, "maximum": 1},
-                    "event_type": {"type": "string", "enum": sorted(LLM_V2_EVENT_TYPES)},
-                    "reasoning": {"type": "string"},
-                },
-                "required": [
-                    "id",
-                    "label",
-                    "impact_score",
-                    "confidence",
-                    "relevance",
-                    "event_type",
-                    "reasoning",
-                ],
-                "additionalProperties": False,
-            },
-        },
-    },
+    "type": "json_object",
 }
 SCORING_V2_VERSION = "commodity_v2"
 
@@ -374,25 +345,7 @@ Rules:
 
 
 LLM_SCORING_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "news_sentiment_scores",
-        "strict": True,
-        "schema": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "integer"},
-                    "label": {"type": "string", "enum": ["BULLISH", "BEARISH", "NEUTRAL"]},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "reasoning": {"type": "string"},
-                },
-                "required": ["id", "label", "confidence"],
-                "additionalProperties": False,
-            },
-        },
-    },
+    "type": "json_object",
 }
 
 LLM_SCORING_PROVIDER_OPTIONS = {"require_parameters": True}
