@@ -929,16 +929,18 @@ def _parse_llm_v2_items(
         raw_reasoning = item.get("reasoning", "")
 
         try:
+            # impact_score is required; try label-based inference if missing
             if raw_impact is None:
-                raise ValueError("missing impact_score")
-            if raw_confidence is None:
-                raise ValueError("missing confidence")
-            if raw_relevance is None:
-                raise ValueError("missing relevance")
+                if raw_label and str(raw_label).upper().strip() in LLM_LABELS:
+                    lbl = str(raw_label).upper().strip()
+                    raw_impact = {"BULLISH": 0.3, "BEARISH": -0.3, "NEUTRAL": 0.0}.get(lbl, 0.0)
+                else:
+                    raise ValueError("missing impact_score")
 
             impact_score = _clip(float(raw_impact), -1.0, 1.0)
-            confidence = _clip(float(raw_confidence), 0.0, 1.0)
-            relevance = _clip(float(raw_relevance), 0.0, 1.0)
+            # confidence and relevance: default to 0.5 if missing
+            confidence = _clip(float(raw_confidence), 0.0, 1.0) if raw_confidence is not None else 0.5
+            relevance = _clip(float(raw_relevance), 0.0, 1.0) if raw_relevance is not None else 0.5
         except (TypeError, ValueError):
             failed_ids.add(article_id)
             continue
@@ -1081,7 +1083,11 @@ async def _score_subset_with_model_v2(
         )
         parse_fail_count += len(failed)
         return valid, failed, parse_fail_count
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "V2 JSON parse failed for model=%s: %s | response_preview=%.500s",
+            model_name, exc, content,
+        )
         parse_fail_count += len(expected_ids)
 
     try:
