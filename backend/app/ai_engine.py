@@ -1074,10 +1074,16 @@ async def _score_subset_with_model_v2(
         return await create_chat_completion(**request_kwargs)
 
     parse_fail_count = 0
+    rate_limited = False
     try:
         data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
-    except Exception:
-        return {}, expected_ids, len(expected_ids)
+    except OpenRouterRateLimitError:
+        logger.warning("V2 scoring rate-limited for model=%s, skipping batch (%d articles)", model_name, len(articles))
+        rate_limited = True
+        return {}, expected_ids, len(expected_ids), rate_limited
+    except Exception as exc:
+        logger.warning("V2 scoring failed for model=%s: %s", model_name, exc)
+        return {}, expected_ids, len(expected_ids), False
 
     content = _extract_chat_message_content(data)
     if not content:
@@ -1086,7 +1092,7 @@ async def _score_subset_with_model_v2(
             data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
             content = _extract_chat_message_content(data)
         if not content:
-            return {}, expected_ids, len(expected_ids)
+            return {}, expected_ids, len(expected_ids), False
 
     try:
         raw_results = json.loads(_clean_json_content(content))
@@ -1096,7 +1102,7 @@ async def _score_subset_with_model_v2(
             model_name=model_name,
         )
         parse_fail_count += len(failed)
-        return valid, failed, parse_fail_count
+        return valid, failed, parse_fail_count, False
     except Exception as exc:
         logger.warning(
             "V2 JSON parse failed for model=%s: %s | response_preview=%.500s",
@@ -1117,9 +1123,9 @@ async def _score_subset_with_model_v2(
             expected_ids=expected_ids,
             model_name=model_name,
         )
-        return valid, failed, parse_fail_count
+        return valid, failed, parse_fail_count, False
     except Exception:
-        return {}, expected_ids, parse_fail_count
+        return {}, expected_ids, parse_fail_count, False
 
 
 async def score_batch_with_llm_v2(
@@ -1154,7 +1160,7 @@ async def score_batch_with_llm_v2(
     expected_ids = [item["id"] for item in normalized_articles]
     article_by_id = {item["id"]: item for item in normalized_articles}
 
-    fast_valid, fast_failed, parse_fail_fast = await _score_subset_with_model_v2(
+    fast_valid, fast_failed, parse_fail_fast, fast_rate_limited = await _score_subset_with_model_v2(
         settings=settings,
         model_name=fast_model,
         articles=normalized_articles,
@@ -1181,13 +1187,13 @@ async def score_batch_with_llm_v2(
     escalation_ids = sorted(set(fast_failed).union(conflict_ids))
     escalation_count = len(escalation_ids)
 
-    if escalation_ids:
+    if escalation_ids and not fast_rate_limited:
         reliable_subset = [
             article_by_id[article_id]
             for article_id in escalation_ids
             if article_id in article_by_id
         ]
-        reliable_valid, _reliable_failed, parse_fail_reliable = await _score_subset_with_model_v2(
+        reliable_valid, _reliable_failed, parse_fail_reliable, _rl = await _score_subset_with_model_v2(
             settings=settings,
             model_name=reliable_model,
             articles=reliable_subset,
@@ -1195,6 +1201,11 @@ async def score_batch_with_llm_v2(
         )
         results_by_id.update(reliable_valid)
         parse_fail_total += int(parse_fail_reliable)
+    elif fast_rate_limited and escalation_ids:
+        logger.info(
+            "Skipping escalation to %s: fast model was rate-limited (%d articles → direct FinBERT fallback)",
+            reliable_model, len(escalation_ids),
+        )
 
     results = [results_by_id[article_id] for article_id in expected_ids if article_id in results_by_id]
     failed_ids = [article_id for article_id in expected_ids if article_id not in results_by_id]
