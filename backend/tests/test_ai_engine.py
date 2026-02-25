@@ -980,7 +980,8 @@ class TestSentimentV2Helpers:
         assert parsed[11]["label"] == "BULLISH"
         assert parsed[11]["impact_score"] == pytest.approx(0.52)
 
-    def test_parse_llm_v2_missing_confidence_marks_failed(self):
+    def test_parse_llm_v2_missing_confidence_defaults_to_half(self):
+        """Missing confidence should default to 0.5, not fail."""
         from app.ai_engine import _parse_llm_v2_items
 
         raw_results = [
@@ -1000,8 +1001,10 @@ class TestSentimentV2Helpers:
             model_name="fast-model",
         )
 
-        assert parsed == {}
-        assert failed == [22]
+        assert failed == []
+        assert 22 in parsed
+        assert parsed[22]["confidence"] == pytest.approx(0.5)
+        assert parsed[22]["impact_score"] == pytest.approx(-0.41)
 
     def test_compute_final_score_v2_supply_disruption_is_positive(self):
         from app.ai_engine import compute_final_score_v2
