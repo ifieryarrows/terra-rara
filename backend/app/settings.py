@@ -78,10 +78,10 @@ class Settings(BaseSettings):
     openrouter_api_key: Optional[str] = None
     # Deprecated - kept for backward compatibility
     openrouter_model: str = "arcee-ai/trinity-large-preview:free"
-    # New primary config
-    openrouter_model_scoring: str = "arcee-ai/trinity-large-preview:free"
+    # New primary config - Nemotron supports structured output (response_format/json_schema)
+    openrouter_model_scoring: str = "nvidia/nemotron-3-nano-30b-a3b:free"
     openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = None
+    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-3-27b-it:free"
     openrouter_model_commentary: str = "arcee-ai/trinity-large-preview:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3

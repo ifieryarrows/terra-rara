@@ -464,6 +464,10 @@ def ingest_prices(session: Session) -> dict:
     """
     Ingest price data for all configured symbols.
     
+    Uses INCREMENTAL fetching: checks latest bar date per symbol in DB
+    and only fetches from that point forward (plus 3-day overlap for corrections).
+    Falls back to full lookback if no existing data found for a symbol.
+    
     Returns:
         Dict with stats per symbol
     """
@@ -479,24 +483,44 @@ def ingest_prices(session: Session) -> dict:
     
     stats = {}
     
-    # Calculate date range
+    # Full lookback range (used only for first-time fetches)
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=settings.lookback_days)
+    full_start_date = end_date - timedelta(days=settings.lookback_days)
+    
+    # Overlap buffer: re-fetch last 3 days to catch any corrections/adjustments
+    OVERLAP_DAYS = 3
     
     for i, symbol in enumerate(symbols):
-        logger.info(f"Fetching prices for {symbol}...")
-        
         try:
+            # Check latest bar in DB for incremental fetch
+            latest_bar = session.query(PriceBar.date).filter(
+                PriceBar.symbol == symbol
+            ).order_by(PriceBar.date.desc()).first()
+            
+            if latest_bar and latest_bar.date:
+                # Incremental: fetch from (latest - overlap) to now
+                latest_date = latest_bar.date
+                if latest_date.tzinfo is None:
+                    latest_date = latest_date.replace(tzinfo=timezone.utc)
+                start_date = latest_date - timedelta(days=OVERLAP_DAYS)
+                mode = "incremental"
+            else:
+                # First time: full lookback
+                start_date = full_start_date
+                mode = "full"
+            
+            logger.info(f"Fetching prices for {symbol} ({mode})...")
+            
             # Fetch with retry mechanism
             df = fetch_symbol_with_retry(symbol, start_date, end_date)
             
             if df is None or df.empty:
                 logger.warning(f"No data returned for {symbol}")
-                stats[symbol] = {"imported": 0, "duplicates": 0, "error": "no_data"}
+                stats[symbol] = {"imported": 0, "updated": 0, "error": "no_data"}
                 continue
             
             imported = 0
-            duplicates = 0
+            updated = 0
             
             for date_idx, row in df.iterrows():
                 try:
@@ -537,7 +561,7 @@ def ingest_prices(session: Session) -> dict:
                     if result.rowcount > 0:
                         imported += 1
                     else:
-                        duplicates += 1
+                        updated += 1
                         
                 except Exception as e:
                     logger.debug(f"Error processing price bar: {e}")
@@ -545,8 +569,8 @@ def ingest_prices(session: Session) -> dict:
             
             session.commit()
             
-            stats[symbol] = {"imported": imported, "duplicates": duplicates}
-            logger.info(f"{symbol}: {imported} bars imported, {duplicates} updated")
+            stats[symbol] = {"imported": imported, "updated": updated, "mode": mode}
+            logger.info(f"{symbol}: {imported} bars imported, {updated} unchanged ({mode}, {len(df)} fetched)")
             
             # Add delay between symbols to avoid rate limiting
             if i < len(symbols) - 1:
@@ -554,7 +578,7 @@ def ingest_prices(session: Session) -> dict:
             
         except Exception as e:
             logger.error(f"Failed to fetch {symbol}: {e}")
-            stats[symbol] = {"imported": 0, "duplicates": 0, "error": str(e)}
+            stats[symbol] = {"imported": 0, "updated": 0, "error": str(e)}
     
     return stats
 

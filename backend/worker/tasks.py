@@ -421,13 +421,11 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 3: Sentiment aggregation")
     try:
-        from app.ai_engine import aggregate_daily_sentiment, aggregate_daily_sentiment_v2
+        from app.ai_engine import aggregate_daily_sentiment_v2
 
         days_aggregated_v2 = aggregate_daily_sentiment_v2(session)
-        days_aggregated = aggregate_daily_sentiment(session)
         session.commit()
         
-        result["days_aggregated"] = days_aggregated
         result["days_aggregated_v2"] = days_aggregated_v2
         
     except Exception as e:
