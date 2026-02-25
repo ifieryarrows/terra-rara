@@ -500,9 +500,16 @@ def _extract_finish_reason(data: dict[str, Any]) -> str:
 def _clean_json_content(content: str) -> str:
     """
     Normalize model text into parseable JSON content.
-    Supports markdown fenced output in relaxed fallback mode.
+
+    Handles common LLM output quirks:
+    - Markdown fenced code blocks (```json ... ```)
+    - Wrapped objects like {"results": [...]} or {"scores": [...]}
+    - Thinking/reasoning preamble before JSON
+    - Raw JSON arrays
     """
     normalized = content.strip()
+
+    # Strip markdown code fences
     if normalized.startswith("```"):
         lines = normalized.splitlines()
         if lines and lines[0].startswith("```"):
@@ -514,11 +521,36 @@ def _clean_json_content(content: str) -> str:
     if normalized.startswith("json"):
         normalized = normalized[4:].strip()
 
-    if not normalized.startswith("["):
-        first = normalized.find("[")
-        last = normalized.rfind("]")
-        if first != -1 and last != -1 and last > first:
-            normalized = normalized[first:last + 1]
+    # Already a JSON array — return as-is
+    if normalized.startswith("["):
+        return normalized
+
+    # Wrapped object: {"results": [...], ...} or {"scores": [...], ...}
+    if normalized.startswith("{"):
+        try:
+            import json as _json
+            obj = _json.loads(normalized)
+            if isinstance(obj, dict):
+                # Find the first list value
+                for v in obj.values():
+                    if isinstance(v, list):
+                        return _json.dumps(v)
+                # Single object — wrap in array
+                return _json.dumps([obj])
+        except Exception:
+            pass
+
+    # Preamble text before JSON — find the array
+    first = normalized.find("[")
+    last = normalized.rfind("]")
+    if first != -1 and last != -1 and last > first:
+        return normalized[first:last + 1]
+
+    # Last resort — try to find an object
+    first_obj = normalized.find("{")
+    last_obj = normalized.rfind("}")
+    if first_obj != -1 and last_obj != -1 and last_obj > first_obj:
+        return normalized[first_obj:last_obj + 1]
 
     return normalized
 
@@ -622,7 +654,7 @@ async def score_batch_with_llm(
     )
     model_name = settings.resolved_scoring_model
 
-    async def _request_scoring(strict_schema: bool, *, max_tokens: int) -> dict[str, Any]:
+    async def _request_scoring(*, max_tokens: int) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
             "api_key": settings.openrouter_api_key,
             "model": model_name,
@@ -638,11 +670,9 @@ async def score_batch_with_llm(
             "fallback_models": settings.openrouter_fallback_models_list,
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis",
+            "response_format": LLM_SCORING_RESPONSE_FORMAT,
             "extra_payload": {"reasoning": {"exclude": True}},
         }
-        if strict_schema:
-            request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT
-            request_kwargs["provider"] = LLM_SCORING_PROVIDER_OPTIONS
         return await create_chat_completion(**request_kwargs)
 
     async def _repair_json_response(malformed_content: str) -> str:
@@ -689,21 +719,7 @@ async def score_batch_with_llm(
             json_repair_used=repair_used,
         )
 
-    async def _request_with_provider_fallback(*, max_tokens: int) -> dict[str, Any]:
-        try:
-            return await _request_scoring(strict_schema=True, max_tokens=max_tokens)
-        except OpenRouterError as exc:
-            message = str(exc).lower()
-            # Some free providers return 404 when strict provider parameters are not supported.
-            if exc.status_code == 404 and "no endpoints found" in message:
-                logger.warning(
-                    "Structured scoring request unsupported by current provider routing. "
-                    "Retrying without strict response_format/provider constraints."
-                )
-                return await _request_scoring(strict_schema=False, max_tokens=max_tokens)
-            raise
-
-    data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
+    data = await _request_scoring(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
 
     content = _extract_chat_message_content(data)
     if not content:
@@ -714,7 +730,7 @@ async def score_batch_with_llm(
                 "retrying with max_tokens=%s",
                 LLM_SCORING_MAX_TOKENS_RETRY,
             )
-            data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+            data = await _request_scoring(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
             content = _extract_chat_message_content(data)
         if not content:
             raise OpenRouterError(
@@ -1020,7 +1036,7 @@ async def _score_subset_with_model_v2(
     expected_ids = [int(article["id"]) for article in articles]
     user_prompt = _build_llm_v2_user_prompt(articles, horizon_days=horizon_days)
 
-    async def _request(strict_schema: bool, *, max_tokens: int) -> dict[str, Any]:
+    async def _request(*, max_tokens: int) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
             "api_key": settings.openrouter_api_key,
             "model": model_name,
@@ -1036,29 +1052,14 @@ async def _score_subset_with_model_v2(
             "fallback_models": settings.openrouter_fallback_models_list,
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis V2",
+            "response_format": LLM_SCORING_RESPONSE_FORMAT_V2,
             "extra_payload": {"reasoning": {"exclude": True}},
         }
-        if strict_schema:
-            request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT_V2
-            request_kwargs["provider"] = LLM_SCORING_PROVIDER_OPTIONS
         return await create_chat_completion(**request_kwargs)
-
-    async def _request_with_provider_fallback(*, max_tokens: int) -> dict[str, Any]:
-        try:
-            return await _request(strict_schema=True, max_tokens=max_tokens)
-        except OpenRouterError as exc:
-            message = str(exc).lower()
-            if exc.status_code == 404 and "no endpoints found" in message:
-                logger.warning(
-                    "V2 structured scoring unsupported by provider route for model=%s. Retrying relaxed mode.",
-                    model_name,
-                )
-                return await _request(strict_schema=False, max_tokens=max_tokens)
-            raise
 
     parse_fail_count = 0
     try:
-        data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
+        data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
     except Exception:
         return {}, expected_ids, len(expected_ids)
 
@@ -1066,7 +1067,7 @@ async def _score_subset_with_model_v2(
     if not content:
         finish_reason = _extract_finish_reason(data)
         if finish_reason == "length":
-            data = await _request_with_provider_fallback(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+            data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
             content = _extract_chat_message_content(data)
         if not content:
             return {}, expected_ids, len(expected_ids)

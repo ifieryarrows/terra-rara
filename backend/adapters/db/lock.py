@@ -66,18 +66,25 @@ def release_lock(session: Session, lock_key: str) -> bool:
     
     Usually not needed - lock auto-releases on session close.
     Use this for early release if pipeline completes before session ends.
+    
+    Note: Returns False if lock was already released (e.g., connection recycled).
+    This is expected behavior, not an error.
     """
     lock_id = _lock_key_to_id(lock_key)
     
-    result = session.execute(
-        text("SELECT pg_advisory_unlock(:lock_id)"),
-        {"lock_id": lock_id}
-    ).scalar()
+    try:
+        result = session.execute(
+            text("SELECT pg_advisory_unlock(:lock_id)"),
+            {"lock_id": lock_id}
+        ).scalar()
+    except Exception as e:
+        logger.debug(f"Advisory lock release query failed (connection may have been recycled): {lock_key} - {e}")
+        return False
     
     if result:
         logger.info(f"Advisory lock released: {lock_key}")
     else:
-        logger.warning(f"Advisory lock release failed (not held?): {lock_key}")
+        logger.debug(f"Advisory lock already released (connection recycled): {lock_key}")
     
     return bool(result)
 
