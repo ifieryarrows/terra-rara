@@ -79,10 +79,10 @@ class Settings(BaseSettings):
     # Deprecated - kept for backward compatibility
     openrouter_model: str = "arcee-ai/trinity-large-preview:free"
     # New primary config - Nemotron supports structured output (response_format/json_schema)
-    openrouter_model_scoring: str = "google/gemma-3-1b-it:free"
+    openrouter_model_scoring: str = "google/gemma-3n-e4b-it:free"
     openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-3-4b-it:free"
-    openrouter_model_commentary: str = "google/gemma-3-27b-it:free"
+    openrouter_model_scoring_reliable: Optional[str] = "qwen/qwen3-next-80b-a3b-instruct:free"
+    openrouter_model_commentary: str = "qwen/qwen3-next-80b-a3b-instruct:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
     max_llm_articles_per_run: int = 200
