@@ -59,8 +59,8 @@ HYBRID_SCORING_VERSION = "hybrid_v2"
 HYBRID_FALLBACK_429_MODEL_NAME = "hybrid_fallback_429"
 HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
 LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
-LLM_SCORING_MAX_TOKENS_PRIMARY = 2000
-LLM_SCORING_MAX_TOKENS_RETRY = 6000
+LLM_SCORING_MAX_TOKENS_PRIMARY = 3500
+LLM_SCORING_MAX_TOKENS_RETRY = 8000
 LLM_V2_LABEL_THRESHOLD = 0.15
 LLM_V2_EVENT_TYPES = {
     "supply_disruption",
@@ -695,7 +695,7 @@ async def score_batch_with_llm(
                 },
                 {"role": "user", "content": repair_prompt},
             ],
-            max_tokens=2200,
+            max_tokens=4000,
             temperature=0.0,
             timeout_seconds=60.0,
             max_retries=settings.openrouter_max_retries,
@@ -1017,7 +1017,7 @@ async def _repair_json_response_v2(
             },
             {"role": "user", "content": repair_prompt},
         ],
-        max_tokens=2600,
+        max_tokens=4000,
         temperature=0.0,
         timeout_seconds=60.0,
         max_retries=settings.openrouter_max_retries,
