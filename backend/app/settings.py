@@ -81,8 +81,8 @@ class Settings(BaseSettings):
     # New primary config - Nemotron supports structured output (response_format/json_schema)
     openrouter_model_scoring: str = "google/gemma-3n-e4b-it:free"
     openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
-    openrouter_model_commentary: str = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
+    openrouter_model_scoring_reliable: Optional[str] = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_model_commentary: str = "meta-llama/llama-3.3-70b-instruct:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
     max_llm_articles_per_run: int = 200
