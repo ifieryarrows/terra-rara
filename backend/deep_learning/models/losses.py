@@ -1,0 +1,129 @@
+"""
+Custom Loss Functions for TFT-ASRO.
+
+Implements:
+- AdaptiveSharpeRatioLoss (ASRO): jointly optimises risk-adjusted return,
+  volatility calibration, and quantile coverage.
+- CombinedQuantileLoss: standard multi-quantile pinball loss used as a
+  component of ASRO and as a standalone baseline.
+"""
+
+from __future__ import annotations
+
+from typing import Optional, Sequence, Union
+
+import torch
+import torch.nn as nn
+import numpy as np
+
+from deep_learning.config import ASROConfig
+
+
+class CombinedQuantileLoss(nn.Module):
+    """
+    Multi-quantile pinball loss.
+
+    Given K quantile predictions and actual values, the loss is the average
+    pinball loss across all quantiles and samples.
+    """
+
+    def __init__(self, quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)):
+        super().__init__()
+        self.register_buffer(
+            "quantiles",
+            torch.tensor(quantiles, dtype=torch.float32),
+        )
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_actual: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            y_pred:   (batch, prediction_length, n_quantiles)
+            y_actual: (batch, prediction_length)
+        """
+        if y_actual.dim() == 2:
+            y_actual = y_actual.unsqueeze(-1)
+
+        errors = y_actual - y_pred
+        quantiles = self.quantiles.view(1, 1, -1)
+
+        loss = torch.max(quantiles * errors, (quantiles - 1) * errors)
+        return loss.mean()
+
+
+class AdaptiveSharpeRatioLoss(nn.Module):
+    """
+    TFT-ASRO loss: combines three objectives to break the low-variance trap.
+
+    L = -Sharpe_component
+        + lambda_vol  * volatility_calibration_loss
+        + lambda_quantile * quantile_coverage_loss
+
+    The Sharpe component incentivises the model to produce directionally correct
+    predictions (not just low MSE), while the volatility term penalises
+    under-estimation of realised variance, and the quantile term ensures
+    proper tail coverage.
+    """
+
+    def __init__(
+        self,
+        quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+        lambda_vol: float = 0.3,
+        lambda_quantile: float = 0.2,
+        risk_free_rate: float = 0.0,
+        sharpe_eps: float = 1e-6,
+        median_idx: Optional[int] = None,
+    ):
+        super().__init__()
+        self.lambda_vol = lambda_vol
+        self.lambda_quantile = lambda_quantile
+        self.rf = risk_free_rate
+        self.sharpe_eps = sharpe_eps
+        self.median_idx = median_idx if median_idx is not None else len(quantiles) // 2
+
+        self.quantile_loss = CombinedQuantileLoss(quantiles)
+
+        q = list(quantiles)
+        self._q10_idx = q.index(0.10) if 0.10 in q else 1
+        self._q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_actual: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            y_pred:   (batch, prediction_length, n_quantiles)
+            y_actual: (batch, prediction_length)
+        """
+        median_pred = y_pred[:, :, self.median_idx]
+
+        # --- Sharpe component ---
+        excess = median_pred - self.rf
+        batch_mean = excess.mean()
+        batch_std = excess.std() + self.sharpe_eps
+        sharpe_loss = -(batch_mean / batch_std)
+
+        # --- Volatility calibration ---
+        pred_spread = (y_pred[:, :, self._q90_idx] - y_pred[:, :, self._q10_idx]).mean()
+        actual_std = y_actual.std() + self.sharpe_eps
+        vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
+
+        # --- Quantile loss ---
+        q_loss = self.quantile_loss(y_pred, y_actual)
+
+        total = sharpe_loss + self.lambda_vol * vol_loss + self.lambda_quantile * q_loss
+        return total
+
+    @classmethod
+    def from_config(cls, cfg: ASROConfig, quantiles: Sequence[float]) -> "AdaptiveSharpeRatioLoss":
+        return cls(
+            quantiles=quantiles,
+            lambda_vol=cfg.lambda_vol,
+            lambda_quantile=cfg.lambda_quantile,
+            risk_free_rate=cfg.risk_free_rate,
+        )

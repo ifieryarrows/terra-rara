@@ -10,7 +10,7 @@ on:
         # Allow manual trigger from GitHub UI
         inputs:
             train_model:
-                description: "Train/retrain the XGBoost model"
+                description: "Train/retrain the XGBoost model (also triggers TFT if enabled)"
                 required: false
                 default: "false"
                 type: choice

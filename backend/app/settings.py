@@ -109,10 +109,17 @@ class Settings(BaseSettings):
     pipeline_trigger_secret: Optional[str] = None
     
     # Faz 2: Market cut-off for news aggregation
-    # Defines when "today's news" ends for sentiment calculation
     market_timezone: str = "America/New_York"  # NYSE timezone
     market_close_time: str = "16:00"  # 4 PM ET
     cutoff_buffer_minutes: int = 30  # Allow 30 min after close for late news
+
+    # TFT-ASRO Deep Learning
+    tft_enabled: bool = True
+    tft_embedding_batch_size: int = 64
+    tft_pca_dim: int = 32
+    tft_embedding_backfill_days: int = 30
+    tft_train_on_pipeline: bool = False
+    nasdaq_data_link_api_key: Optional[str] = None
     
     def _load_symbol_set_file(self, set_name: str) -> Optional[dict]:
         """Load symbol set from JSON file. Returns None on error."""

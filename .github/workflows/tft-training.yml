@@ -1,0 +1,97 @@
+name: TFT-ASRO Training Pipeline
+
+on:
+    workflow_dispatch:
+        inputs:
+            use_asro:
+                description: "Use ASRO loss (vs standard QuantileLoss)"
+                required: false
+                default: "true"
+                type: choice
+                options:
+                    - "true"
+                    - "false"
+            run_hyperopt:
+                description: "Run Optuna hyperparameter optimization"
+                required: false
+                default: "false"
+                type: choice
+                options:
+                    - "false"
+                    - "true"
+            hyperopt_trials:
+                description: "Number of Optuna trials (if hyperopt enabled)"
+                required: false
+                default: "30"
+                type: string
+
+env:
+    PYTHONPATH: backend
+
+jobs:
+    train-tft:
+        runs-on: ubuntu-latest
+        timeout-minutes: 120
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+                  cache: "pip"
+
+            - name: Install dependencies
+              working-directory: backend
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements.txt
+
+            - name: Backfill FinBERT embeddings
+              working-directory: backend
+              run: |
+                  python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 32
+              env:
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+              continue-on-error: true
+
+            - name: Run Optuna hyperparameter search
+              if: ${{ github.event.inputs.run_hyperopt == 'true' }}
+              working-directory: backend
+              run: |
+                  python -m deep_learning.training.hyperopt \
+                    --n-trials ${{ github.event.inputs.hyperopt_trials }} \
+                    --study-name tft_asro_optuna
+              env:
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+            - name: Train TFT-ASRO model
+              working-directory: backend
+              run: |
+                  ASRO_FLAG=""
+                  if [ "${{ github.event.inputs.use_asro }}" == "false" ]; then
+                    ASRO_FLAG="--no-asro"
+                  fi
+                  python -m deep_learning.training.trainer --symbol HG=F $ASRO_FLAG
+              env:
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+            - name: Upload model artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: tft-model-${{ github.run_id }}
+                  path: |
+                      backend/models/tft/
+                  retention-days: 90
+
+            - name: Display training results
+              run: |
+                  echo "=== TFT-ASRO Training Complete ==="
+                  if [ -f "backend/models/tft/checkpoints/optuna_results.json" ]; then
+                    echo "--- Optuna Results ---"
+                    cat backend/models/tft/checkpoints/optuna_results.json | python -m json.tool
+                  fi
+                  ls -la backend/models/tft/ 2>/dev/null || echo "No model directory"
+                  ls -la backend/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"

@@ -28,6 +28,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Index,
+    LargeBinary,
     UniqueConstraint,
     JSON,
     func,
@@ -329,6 +330,14 @@ class PipelineRunMetrics(Base):
     # Snapshot info
     snapshot_generated = Column(Boolean, default=False)
     commentary_generated = Column(Boolean, default=False)
+
+    # TFT-ASRO deep learning pipeline stats
+    tft_embeddings_computed = Column(Integer, nullable=True)
+    tft_trained = Column(Boolean, default=False)
+    tft_val_loss = Column(Float, nullable=True)
+    tft_sharpe = Column(Float, nullable=True)
+    tft_directional_accuracy = Column(Float, nullable=True)
+    tft_snapshot_generated = Column(Boolean, default=False)
     
     # Faz 2: News cut-off time
     news_cutoff_time = Column(DateTime(timezone=True), nullable=True)
@@ -510,3 +519,78 @@ class DailySentimentV2(Base):
             "<DailySentimentV2(date="
             f"{self.date}, sentiment_index={self.sentiment_index:.3f}, news_count={self.news_count})>"
         )
+
+
+# =============================================================================
+# TFT-ASRO: Deep Learning Pipeline Tables
+# =============================================================================
+
+
+class NewsEmbedding(Base):
+    """
+    FinBERT CLS token embeddings for news articles.
+
+    Stores both the full 768-dim vector and PCA-reduced representation
+    used by the Temporal Fusion Transformer.
+    """
+
+    __tablename__ = "news_embeddings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    news_processed_id = Column(
+        BigInteger,
+        ForeignKey("news_processed.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    embedding_full = Column(LargeBinary, nullable=True)
+    embedding_pca = Column(LargeBinary, nullable=False)
+    pca_version = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+    processed = relationship("NewsProcessed")
+
+    def __repr__(self):
+        return f"<NewsEmbedding(processed_id={self.news_processed_id}, pca={self.pca_version})>"
+
+
+class LMEWarehouseData(Base):
+    """
+    LME copper warehouse stock data: total stocks, cancelled warrants,
+    and derived ratios used as physical-market features for the TFT.
+    """
+
+    __tablename__ = "lme_warehouse_data"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    date = Column(DateTime(timezone=True), unique=True, nullable=False, index=True)
+
+    total_stock_tonnes = Column(Float, nullable=False)
+    cancelled_warrants_tonnes = Column(Float, nullable=True)
+    on_warrant_tonnes = Column(Float, nullable=True)
+    cancelled_ratio = Column(Float, nullable=True)
+
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+    def __repr__(self):
+        return f"<LMEWarehouseData(date={self.date}, stock={self.total_stock_tonnes})>"
+
+
+class TFTModelMetadata(Base):
+    """
+    Persisted TFT-ASRO model metadata (parallel to XGBoost ModelMetadata).
+    """
+
+    __tablename__ = "tft_model_metadata"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, unique=True, index=True)
+    config_json = Column(Text, nullable=True)
+    metrics_json = Column(Text, nullable=True)
+    checkpoint_path = Column(String(500), nullable=True)
+    trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+
+    def __repr__(self):
+        return f"<TFTModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"

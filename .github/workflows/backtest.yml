@@ -19,6 +19,14 @@ on:
                 description: "OOS end date (YYYY-MM-DD)"
                 required: false
                 default: "2025-01-17"
+            include_tft:
+                description: "Include TFT-ASRO vs XGBoost comparison"
+                required: false
+                default: "false"
+                type: choice
+                options:
+                    - "false"
+                    - "true"
 
 jobs:
     backtest:
@@ -41,12 +49,17 @@ jobs:
 
             - name: Run backtest
               run: |
+                  TFT_FLAG=""
+                  if [ "${{ github.event.inputs.include_tft }}" == "true" ]; then
+                    TFT_FLAG="--include-tft"
+                  fi
                   python -m backend.backtest.runner \
                     --champion "${{ github.event.inputs.champion_path }}" \
                     --challenger "${{ github.event.inputs.challenger_path }}" \
                     --oos-start "${{ github.event.inputs.oos_start }}" \
                     --oos-end "${{ github.event.inputs.oos_end }}" \
-                    --output-dir backend/artifacts/backtests
+                    --output-dir backend/artifacts/backtests \
+                    $TFT_FLAG
 
             - name: Upload backtest artifacts
               uses: actions/upload-artifact@v4

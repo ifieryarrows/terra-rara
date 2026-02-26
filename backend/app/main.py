@@ -612,6 +612,57 @@ async def get_commentary(
 # Root redirect (optional convenience)
 # =============================================================================
 
+@app.get(
+    "/api/analysis/tft/{symbol}",
+    summary="Get TFT-ASRO deep learning analysis",
+    description="Returns probabilistic multi-quantile prediction from the Temporal Fusion Transformer model.",
+    responses={
+        200: {"description": "TFT-ASRO analysis with quantile predictions"},
+        404: {"description": "TFT model not available"},
+        500: {"description": "Prediction failed"},
+    },
+)
+async def get_tft_analysis(symbol: str = "HG=F"):
+    """
+    Get TFT-ASRO analysis for the given symbol.
+
+    Returns multi-quantile probabilistic forecasts including:
+    - Median predicted return and price
+    - 80% and 96% confidence bands
+    - Volatility estimate
+    - Model metadata and variable importance
+
+    This endpoint runs in parallel with the existing XGBoost-based
+    /api/analysis endpoint for A/B comparison.
+    """
+    try:
+        from deep_learning.inference.predictor import generate_tft_analysis
+
+        with SessionLocal() as session:
+            result = generate_tft_analysis(session, symbol)
+
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        return result
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="TFT-ASRO model not trained yet. Run training pipeline first.",
+        )
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"TFT-ASRO module not available: {exc}",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("TFT analysis failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/", include_in_schema=False)
 async def root_redirect():
     """Redirect root to API docs."""

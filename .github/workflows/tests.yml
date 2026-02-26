@@ -39,6 +39,8 @@ jobs:
               working-directory: backend
               run: |
                   pytest tests/ -v --tb=short --junitxml=pytest-results.xml -m "not online"
+              env:
+                  TOKENIZERS_PARALLELISM: "false"
 
             - name: Upload test results
               uses: actions/upload-artifact@v4

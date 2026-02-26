@@ -434,6 +434,38 @@ async def _execute_pipeline_stages_v2(
         session.rollback()
     
     # -------------------------------------------------------------------------
+    # Stage 3.5: FinBERT embedding extraction (TFT-ASRO)
+    # -------------------------------------------------------------------------
+    logger.info(f"[run_id={run_id}] Stage 3.5: FinBERT embedding extraction")
+    try:
+        from deep_learning.data.embeddings import backfill_embeddings
+
+        emb_stats = backfill_embeddings(days=30, pca_dim=32, batch_size=64)
+        session.commit()
+
+        result["tft_embeddings_computed"] = emb_stats.get("embedded", 0)
+        result["tft_embeddings_skipped"] = emb_stats.get("skipped", 0)
+        result["tft_pca_fitted"] = emb_stats.get("pca_fitted", False)
+
+        update_run_metrics(
+            session, run_id,
+            tft_embeddings_computed=emb_stats.get("embedded", 0),
+        )
+        session.commit()
+
+        logger.info(
+            f"[run_id={run_id}] FinBERT embeddings: "
+            f"{emb_stats.get('embedded', 0)} computed, {emb_stats.get('skipped', 0)} skipped"
+        )
+
+    except ImportError:
+        logger.info(f"[run_id={run_id}] Stage 3.5 skipped: deep_learning module not available")
+    except Exception as e:
+        logger.warning(f"[run_id={run_id}] Stage 3.5 failed (non-critical): {e}")
+        result["tft_embedding_error"] = str(e)
+        session.rollback()
+
+    # -------------------------------------------------------------------------
     # Stage 4: Model training (optional)
     # -------------------------------------------------------------------------
     if train_model:
@@ -468,7 +500,42 @@ async def _execute_pipeline_stages_v2(
             session.rollback()
     else:
         result["model_trained"] = False
-    
+
+    # -------------------------------------------------------------------------
+    # Stage 4.5: TFT-ASRO training (optional, parallel to XGBoost)
+    # -------------------------------------------------------------------------
+    if train_model:
+        logger.info(f"[run_id={run_id}] Stage 4.5: TFT-ASRO training")
+        try:
+            from deep_learning.training.trainer import train_tft_model
+
+            tft_result = train_tft_model(use_asro=True)
+
+            result["tft_trained"] = True
+            result["tft_metrics"] = tft_result.get("test_metrics", {})
+
+            update_run_metrics(
+                session, run_id,
+                tft_trained=True,
+                tft_val_loss=tft_result.get("test_metrics", {}).get("mae"),
+                tft_sharpe=tft_result.get("test_metrics", {}).get("sharpe_ratio"),
+                tft_directional_accuracy=tft_result.get("test_metrics", {}).get("directional_accuracy"),
+            )
+            session.commit()
+
+            logger.info(f"[run_id={run_id}] TFT-ASRO training complete")
+
+        except ImportError:
+            logger.info(f"[run_id={run_id}] Stage 4.5 skipped: pytorch-forecasting not installed")
+            result["tft_trained"] = False
+        except Exception as e:
+            logger.warning(f"[run_id={run_id}] Stage 4.5 failed (non-critical): {e}")
+            result["tft_training_error"] = str(e)
+            result["tft_trained"] = False
+            session.rollback()
+    else:
+        result["tft_trained"] = False
+
     # -------------------------------------------------------------------------
     # Stage 5: Generate snapshot
     # -------------------------------------------------------------------------
@@ -502,6 +569,37 @@ async def _execute_pipeline_stages_v2(
         result["snapshot_generated"] = False
         session.rollback()
     
+    # -------------------------------------------------------------------------
+    # Stage 5.5: TFT-ASRO snapshot (parallel to XGBoost snapshot)
+    # -------------------------------------------------------------------------
+    logger.info(f"[run_id={run_id}] Stage 5.5: TFT-ASRO snapshot")
+    try:
+        from deep_learning.inference.predictor import generate_tft_analysis
+        from pathlib import Path
+
+        ckpt = Path("models/tft/best_tft_asro.ckpt")
+        if ckpt.exists():
+            tft_report = generate_tft_analysis(session, "HG=F")
+
+            if "error" not in tft_report:
+                result["tft_snapshot_generated"] = True
+                update_run_metrics(session, run_id, tft_snapshot_generated=True)
+                session.commit()
+                logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
+            else:
+                result["tft_snapshot_generated"] = False
+                logger.warning(f"[run_id={run_id}] TFT prediction error: {tft_report.get('error')}")
+        else:
+            result["tft_snapshot_generated"] = False
+            logger.info(f"[run_id={run_id}] Stage 5.5 skipped: no TFT checkpoint found")
+
+    except ImportError:
+        result["tft_snapshot_generated"] = False
+    except Exception as e:
+        logger.warning(f"[run_id={run_id}] Stage 5.5 failed (non-critical): {e}")
+        result["tft_snapshot_generated"] = False
+        session.rollback()
+
     # -------------------------------------------------------------------------
     # Stage 6: Generate commentary (only if snapshot was generated)
     # -------------------------------------------------------------------------

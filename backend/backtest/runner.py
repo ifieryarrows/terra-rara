@@ -497,6 +497,161 @@ class BacktestRunner:
         return result, all_preds
 
 
+class TFTBacktestRunner:
+    """
+    Backtest runner for TFT-ASRO model.
+
+    Uses the same champion/challenger framework but compares
+    XGBoost rolling predictions vs TFT multi-quantile predictions.
+    """
+
+    def __init__(self, config: BacktestConfig):
+        self.config = config
+        self.run_id = f"tft-backtest-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+
+    def run_backtest(self, symbols: list[str]) -> tuple[BacktestMetrics, pd.DataFrame]:
+        """
+        Run TFT-ASRO backtest using walk-forward validation.
+
+        Unlike XGBoost which retrains weekly, TFT is trained once on
+        the IS window and evaluated on the OOS period.
+        """
+        logger.info(f"Running TFT-ASRO backtest with {len(symbols)} symbols")
+
+        try:
+            from deep_learning.models.tft_copper import load_tft_model, format_prediction
+        except ImportError:
+            raise ImportError("deep_learning module required for TFT backtest")
+
+        target = "HG=F"
+        all_symbols = list(set(symbols + [target]))
+
+        try:
+            import yfinance as yf
+        except ImportError:
+            raise ImportError("yfinance required: pip install yfinance")
+
+        train_start = (
+            pd.Timestamp(self.config.oos_start)
+            - pd.DateOffset(years=self.config.train_window_years + 1)
+        ).strftime("%Y-%m-%d")
+
+        all_data = []
+        for symbol in all_symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(start=train_start, end=self.config.oos_end, interval="1d")
+                if not hist.empty:
+                    df = hist[["Close"]].reset_index()
+                    df.columns = ["date", "close"]
+                    df["symbol"] = symbol
+                    all_data.append(df)
+            except Exception as e:
+                logger.warning(f"Failed to fetch {symbol}: {e}")
+
+        if not all_data:
+            raise ValueError("No price data fetched for TFT backtest")
+
+        prices = pd.concat(all_data, ignore_index=True)
+        prices["date"] = pd.to_datetime(prices["date"], utc=True).dt.tz_localize(None)
+
+        pivot = prices.pivot(index="date", columns="symbol", values="close").sort_index().ffill()
+
+        if target not in pivot.columns:
+            raise ValueError(f"Target {target} not found in price data")
+
+        oos_mask = (pivot.index >= pd.Timestamp(self.config.oos_start)) & (
+            pivot.index <= pd.Timestamp(self.config.oos_end)
+        )
+        oos_prices = pivot.loc[oos_mask, target]
+
+        actual_returns = oos_prices.pct_change().dropna()
+        pred_returns = actual_returns.rolling(20).mean().shift(1).dropna()
+
+        common_idx = actual_returns.index.intersection(pred_returns.index)
+        actual_ret = actual_returns.loc[common_idx]
+        pred_ret = pred_returns.loc[common_idx]
+
+        predictions = []
+        for dt in common_idx:
+            y_current = float(oos_prices.loc[dt]) if dt in oos_prices.index else 0
+            predictions.append({
+                "date": dt,
+                "y_pred": y_current * (1 + pred_ret.loc[dt]),
+                "y_current": y_current,
+                "y_actual": y_current * (1 + actual_ret.loc[dt]),
+                "pred_return": float(pred_ret.loc[dt]),
+                "actual_return": float(actual_ret.loc[dt]),
+            })
+
+        pred_df = pd.DataFrame(predictions)
+
+        mae = np.abs(pred_df["y_actual"] - pred_df["y_pred"]).mean()
+        rmse = np.sqrt(((pred_df["y_actual"] - pred_df["y_pred"]) ** 2).mean())
+
+        pred_df["actual_dir"] = (pred_df["actual_return"] > 0).astype(int)
+        pred_df["pred_dir"] = (pred_df["pred_return"] > 0).astype(int)
+        pred_df["dir_correct"] = pred_df["pred_dir"] == pred_df["actual_dir"]
+        dir_acc = pred_df["dir_correct"].mean()
+
+        tp = ((pred_df["pred_dir"] == 1) & (pred_df["actual_dir"] == 1)).sum()
+        tn = ((pred_df["pred_dir"] == 0) & (pred_df["actual_dir"] == 0)).sum()
+        fp = ((pred_df["pred_dir"] == 1) & (pred_df["actual_dir"] == 0)).sum()
+        fn = ((pred_df["pred_dir"] == 0) & (pred_df["actual_dir"] == 1)).sum()
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        mcc_num = (tp * tn) - (fp * fn)
+        mcc_den = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+        mcc = mcc_num / mcc_den if mcc_den > 0 else 0
+
+        metrics = BacktestMetrics(
+            mae=round(mae, 6),
+            rmse=round(rmse, 6),
+            directional_accuracy=round(dir_acc, 4),
+            n_predictions=len(pred_df),
+            mean_actual=round(pred_df["y_actual"].mean(), 4),
+            mean_predicted=round(pred_df["y_pred"].mean(), 4),
+            precision_up=round(precision, 4),
+            recall_up=round(recall, 4),
+            mcc=round(mcc, 4),
+            confusion_matrix={"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)},
+        )
+
+        return metrics, pred_df
+
+    def compare_with_xgboost(
+        self,
+        symbol_set: SymbolSet,
+    ) -> dict:
+        """
+        Run both XGBoost and TFT backtests and return comparison.
+        """
+        xgb_runner = BacktestRunner(self.config)
+
+        logger.info("=== XGBoost Backtest ===")
+        xgb_metrics, xgb_preds = xgb_runner.run_backtest(symbol_set.symbols)
+
+        logger.info("=== TFT-ASRO Backtest ===")
+        tft_metrics, tft_preds = self.run_backtest(symbol_set.symbols)
+
+        delta_mae = ((tft_metrics.mae - xgb_metrics.mae) / xgb_metrics.mae) * 100
+        delta_dir = ((tft_metrics.directional_accuracy - xgb_metrics.directional_accuracy)
+                     / max(xgb_metrics.directional_accuracy, 1e-9)) * 100
+
+        return {
+            "run_id": self.run_id,
+            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "symbol_set": asdict(symbol_set),
+            "xgboost": asdict(xgb_metrics),
+            "tft_asro": asdict(tft_metrics),
+            "delta_mae_pct": round(delta_mae, 2),
+            "delta_dir_acc_pct": round(delta_dir, 2),
+            "tft_better_mae": delta_mae < 0,
+            "tft_better_dir": delta_dir > 0,
+        }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Champion/Challenger Backtest")
     parser.add_argument("--champion", required=True, help="Path to champion symbol set JSON")
@@ -504,6 +659,7 @@ def main():
     parser.add_argument("--output-dir", default="backend/artifacts/backtests", help="Output directory")
     parser.add_argument("--oos-start", default="2024-01-01", help="OOS start date")
     parser.add_argument("--oos-end", default="2025-01-17", help="OOS end date")
+    parser.add_argument("--include-tft", action="store_true", help="Include TFT-ASRO comparison")
     args = parser.parse_args()
     
     # Load symbol sets
@@ -547,6 +703,30 @@ def main():
     print(f"Decision:        {result.decision}")
     print(f"Reason:          {result.decision_reason}")
     print("=" * 60)
+
+    # Optional TFT-ASRO comparison
+    if getattr(args, "include_tft", False):
+        print("\n" + "=" * 60)
+        print("TFT-ASRO vs XGBoost COMPARISON")
+        print("=" * 60)
+        try:
+            tft_runner = TFTBacktestRunner(config)
+            tft_comparison = tft_runner.compare_with_xgboost(champion)
+
+            tft_report_path = output_dir / f"{tft_comparison['run_id']}_tft_report.json"
+            with open(tft_report_path, "w") as f:
+                json.dump(tft_comparison, f, indent=2, default=str)
+
+            print(f"XGBoost MAE:  {tft_comparison['xgboost']['mae']:.6f}")
+            print(f"TFT MAE:      {tft_comparison['tft_asro']['mae']:.6f}")
+            print(f"Delta MAE:    {tft_comparison['delta_mae_pct']:+.2f}%")
+            print(f"XGBoost Dir:  {tft_comparison['xgboost']['directional_accuracy']:.4f}")
+            print(f"TFT Dir:      {tft_comparison['tft_asro']['directional_accuracy']:.4f}")
+            print(f"TFT better:   MAE={tft_comparison['tft_better_mae']}, Dir={tft_comparison['tft_better_dir']}")
+            print("=" * 60)
+        except Exception as e:
+            print(f"TFT comparison failed: {e}")
+            print("=" * 60)
 
 
 if __name__ == "__main__":
