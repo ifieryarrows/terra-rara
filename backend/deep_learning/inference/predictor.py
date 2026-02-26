@@ -42,10 +42,40 @@ class TFTPredictor:
         self._checkpoint_path = checkpoint_path or self.cfg.training.best_model_path
         self._model = None
         self._pca = None
+        self._hub_checked = False
+
+    def _ensure_local_artifacts(self) -> None:
+        """Download checkpoint from HF Hub if not present locally."""
+        if self._hub_checked:
+            return
+        self._hub_checked = True
+
+        if Path(self._checkpoint_path).exists():
+            return
+
+        try:
+            from deep_learning.models.hub import download_tft_artifacts
+
+            tft_dir = Path(self._checkpoint_path).parent
+            downloaded = download_tft_artifacts(
+                local_dir=tft_dir,
+                repo_id=self.cfg.training.hf_model_repo,
+            )
+            if downloaded:
+                logger.info("TFT checkpoint downloaded from HF Hub")
+            else:
+                logger.warning("TFT checkpoint not available on HF Hub")
+        except Exception as exc:
+            logger.warning("HF Hub download attempt failed: %s", exc)
 
     @property
     def model(self):
         if self._model is None:
+            self._ensure_local_artifacts()
+            if not Path(self._checkpoint_path).exists():
+                raise FileNotFoundError(
+                    f"TFT checkpoint not found: {self._checkpoint_path}"
+                )
             from deep_learning.models.tft_copper import load_tft_model
             self._model = load_tft_model(self._checkpoint_path)
         return self._model
@@ -53,6 +83,7 @@ class TFTPredictor:
     @property
     def pca(self):
         if self._pca is None:
+            self._ensure_local_artifacts()
             pca_path = self.cfg.embedding.pca_model_path
             if Path(pca_path).exists():
                 from deep_learning.data.embeddings import load_pca

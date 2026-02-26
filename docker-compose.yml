@@ -51,6 +51,7 @@ services:
       - MODEL_DIR=/data/models
       - REDIS_URL=redis://redis:6379/0
       - SCHEDULER_ENABLED=false
+      - HF_TOKEN=${HF_TOKEN:-}
       - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-google/gemma-3n-e4b-it:free}
       - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-google/gemma-3n-e4b-it:free}
       - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-liquid/lfm-2.5-1.2b-thinking:free}
@@ -96,6 +97,7 @@ services:
       - DATABASE_URL=postgresql://coppermind:localdev@postgres:5432/coppermind
       - MODEL_DIR=/data/models
       - REDIS_URL=redis://redis:6379/0
+      - HF_TOKEN=${HF_TOKEN:-}
       - OPENROUTER_MODEL_SCORING=${OPENROUTER_MODEL_SCORING:-google/gemma-3n-e4b-it:free}
       - OPENROUTER_MODEL_SCORING_FAST=${OPENROUTER_MODEL_SCORING_FAST:-google/gemma-3n-e4b-it:free}
       - OPENROUTER_MODEL_SCORING_RELIABLE=${OPENROUTER_MODEL_SCORING_RELIABLE:-liquid/lfm-2.5-1.2b-thinking:free}

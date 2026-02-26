@@ -575,9 +575,10 @@ async def _execute_pipeline_stages_v2(
     logger.info(f"[run_id={run_id}] Stage 5.5: TFT-ASRO snapshot")
     try:
         from deep_learning.inference.predictor import generate_tft_analysis
+        from deep_learning.config import get_tft_config
         from pathlib import Path
 
-        ckpt = Path("models/tft/best_tft_asro.ckpt")
+        ckpt = Path(get_tft_config().training.best_model_path)
         if ckpt.exists():
             tft_report = generate_tft_analysis(session, "HG=F")
 

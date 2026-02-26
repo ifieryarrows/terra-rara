@@ -44,6 +44,9 @@ jobs:
             echo "⚠️ No model files found in data/models/"
           fi
 
+          # Ensure TFT model directory exists (checkpoints are stored on HF Hub)
+          mkdir -p backend/data/models/tft
+
       - name: Upload backend to Space
         run: |
           cd backend

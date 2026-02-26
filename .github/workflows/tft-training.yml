@@ -27,6 +27,7 @@ on:
 
 env:
     PYTHONPATH: backend
+    MODEL_DIR: /tmp/models
 
 jobs:
     train-tft:
@@ -48,6 +49,9 @@ jobs:
               run: |
                   python -m pip install --upgrade pip
                   pip install -r requirements.txt
+
+            - name: Create model directory
+              run: mkdir -p /tmp/models/tft/checkpoints
 
             - name: Backfill FinBERT embeddings
               working-directory: backend
@@ -77,21 +81,24 @@ jobs:
                   python -m deep_learning.training.trainer --symbol HG=F $ASRO_FLAG
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
+                  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
-            - name: Upload model artifacts
+            - name: Upload model artifacts (GitHub)
               uses: actions/upload-artifact@v4
               with:
                   name: tft-model-${{ github.run_id }}
-                  path: |
-                      backend/models/tft/
+                  path: /tmp/models/tft/
                   retention-days: 90
 
             - name: Display training results
               run: |
                   echo "=== TFT-ASRO Training Complete ==="
-                  if [ -f "backend/models/tft/checkpoints/optuna_results.json" ]; then
+                  if [ -f "/tmp/models/tft/checkpoints/optuna_results.json" ]; then
                     echo "--- Optuna Results ---"
-                    cat backend/models/tft/checkpoints/optuna_results.json | python -m json.tool
+                    python -m json.tool /tmp/models/tft/checkpoints/optuna_results.json
                   fi
-                  ls -la backend/models/tft/ 2>/dev/null || echo "No model directory"
-                  ls -la backend/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
+                  ls -la /tmp/models/tft/ 2>/dev/null || echo "No model directory"
+                  ls -la /tmp/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
+                  echo ""
+                  echo "Model checkpoint has been automatically uploaded to HF Hub."
+                  echo "The HF Space will download it on next inference request."

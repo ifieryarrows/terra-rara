@@ -183,6 +183,23 @@ def train_tft_model(
 
     _persist_tft_metadata(cfg.feature_store.target_symbol, result)
 
+    # ---- 10. Upload to HF Hub (for persistence across HF Space rebuilds) ----
+    try:
+        from deep_learning.models.hub import upload_tft_artifacts
+
+        tft_dir = final_path.parent
+        uploaded = upload_tft_artifacts(
+            local_dir=tft_dir,
+            repo_id=cfg.training.hf_model_repo,
+            commit_message=f"TFT-ASRO checkpoint (val_loss={trainer.checkpoint_callback.best_model_score:.4f})"
+            if trainer.checkpoint_callback.best_model_score
+            else "TFT-ASRO checkpoint",
+        )
+        result["hub_uploaded"] = uploaded
+    except Exception as exc:
+        logger.warning("HF Hub upload skipped: %s", exc)
+        result["hub_uploaded"] = False
+
     return result
 
 

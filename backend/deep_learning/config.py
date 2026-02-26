@@ -3,13 +3,23 @@ Central configuration for the TFT-ASRO deep learning pipeline.
 
 All hyperparameters, feature dimensions, and training settings live here
 so every module draws from a single source of truth.
+
+Model paths honour the MODEL_DIR environment variable so they work both
+locally (``data/models``) and inside the HF Space container
+(``/data/models``).
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+
+def _model_dir() -> str:
+    """Resolve the base model directory from env (same as app.settings)."""
+    return os.environ.get("MODEL_DIR", "/data/models")
 
 
 @dataclass(frozen=True)
@@ -19,7 +29,7 @@ class EmbeddingConfig:
     pca_dim: int = 32
     max_token_length: int = 512
     batch_size: int = 64
-    pca_model_path: str = "models/tft/pca_finbert.joblib"
+    pca_model_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,8 +96,9 @@ class TrainingConfig:
     seed: int = 42
     num_workers: int = 0
     optuna_n_trials: int = 50
-    checkpoint_dir: str = "models/tft/checkpoints"
-    best_model_path: str = "models/tft/best_tft_asro.ckpt"
+    checkpoint_dir: str = ""
+    best_model_path: str = ""
+    hf_model_repo: str = "ifieryarrows/copper-mind-tft"
 
 
 @dataclass(frozen=True)
@@ -116,5 +127,17 @@ class TFTASROConfig:
 
 
 def get_tft_config() -> TFTASROConfig:
-    """Return the default TFT-ASRO configuration."""
-    return TFTASROConfig()
+    """
+    Return the default TFT-ASRO configuration with paths resolved from
+    MODEL_DIR (``/data/models`` on HF Space, configurable locally).
+    """
+    base = Path(_model_dir()) / "tft"
+    return TFTASROConfig(
+        embedding=EmbeddingConfig(
+            pca_model_path=str(base / "pca_finbert.joblib"),
+        ),
+        training=TrainingConfig(
+            checkpoint_dir=str(base / "checkpoints"),
+            best_model_path=str(base / "best_tft_asro.ckpt"),
+        ),
+    )
