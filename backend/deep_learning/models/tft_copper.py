@@ -22,32 +22,66 @@ from deep_learning.models.losses import AdaptiveSharpeRatioLoss, CombinedQuantil
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level ASRO loss class (must be at module level for pickle / checkpoint)
+# ---------------------------------------------------------------------------
 
-def _build_asro_pf_loss(asro_cfg, quantiles: list):
-    """
-    Build an ASRO loss that satisfies pytorch_forecasting >= 1.0 requirements.
+try:
+    from pytorch_forecasting.metrics import QuantileLoss as _PFQuantileLoss
 
-    pytorch_forecasting requires the loss to be a torchmetrics ``Metric``
-    subclass.  We subclass ``QuantileLoss`` (which already satisfies this)
-    and override its ``loss()`` method with our ASRO logic.
-    """
-    from pytorch_forecasting.metrics import QuantileLoss
+    class ASROPFLoss(_PFQuantileLoss):
+        """
+        pytorch_forecasting >= 1.0 compatible ASRO loss.
 
-    # Capture ASRO nn.Module so it runs inside the Metric wrapper
-    _asro_module = AdaptiveSharpeRatioLoss.from_config(asro_cfg, quantiles)
+        Inherits from ``QuantileLoss`` (a proper torchmetrics ``Metric``) so
+        that ``TemporalFusionTransformer.from_dataset()`` accepts it.
+        Defined at module level so Lightning checkpoints can pickle it.
+        """
 
-    class _ASROPFLoss(QuantileLoss):
-        """pytorch_forecasting-compatible ASRO loss wrapper."""
+        def __init__(
+            self,
+            quantiles: list,
+            lambda_vol: float = 0.3,
+            lambda_quantile: float = 0.2,
+            risk_free_rate: float = 0.0,
+            sharpe_eps: float = 1e-6,
+        ):
+            super().__init__(quantiles=quantiles)
+            self.lambda_vol = lambda_vol
+            self.lambda_quantile = lambda_quantile
+            self.rf = risk_free_rate
+            self.sharpe_eps = sharpe_eps
+            self.median_idx = len(quantiles) // 2
+            q = list(quantiles)
+            self._q10_idx = q.index(0.10) if 0.10 in q else 1
+            self._q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
 
         def loss(self, y_pred: torch.Tensor, target) -> torch.Tensor:  # type: ignore[override]
-            # pytorch_forecasting passes target as a tuple (values, weights)
             if isinstance(target, (list, tuple)):
                 y_actual = target[0]
             else:
                 y_actual = target
-            return _asro_module(y_pred, y_actual)
 
-    return _ASROPFLoss(quantiles=quantiles)
+            y_actual = y_actual.float()
+            median_pred = y_pred[..., self.median_idx]
+
+            # Sharpe component
+            excess = median_pred - self.rf
+            sharpe_loss = -(excess.mean() / (excess.std() + self.sharpe_eps))
+
+            # Volatility calibration
+            pred_spread = (
+                y_pred[..., self._q90_idx] - y_pred[..., self._q10_idx]
+            ).mean()
+            vol_loss = torch.abs(pred_spread - 2.0 * (y_actual.std() + self.sharpe_eps))
+
+            # Quantile (pinball) loss via parent
+            q_loss = super().loss(y_pred, target)
+
+            return sharpe_loss + self.lambda_vol * vol_loss + self.lambda_quantile * q_loss
+
+except ImportError:
+    ASROPFLoss = None  # type: ignore[assignment,misc]
 
 
 def create_tft_model(
@@ -74,9 +108,18 @@ def create_tft_model(
 
     quantiles = list(cfg.model.quantiles)
 
-    if use_asro:
-        loss = _build_asro_pf_loss(cfg.asro, quantiles)
-        logger.info("Using ASRO loss (lambda_vol=%.2f, lambda_quantile=%.2f)", cfg.asro.lambda_vol, cfg.asro.lambda_quantile)
+    if use_asro and ASROPFLoss is not None:
+        loss = ASROPFLoss(
+            quantiles=quantiles,
+            lambda_vol=cfg.asro.lambda_vol,
+            lambda_quantile=cfg.asro.lambda_quantile,
+            risk_free_rate=cfg.asro.risk_free_rate,
+        )
+        logger.info(
+            "Using ASRO loss (lambda_vol=%.2f, lambda_quantile=%.2f)",
+            cfg.asro.lambda_vol,
+            cfg.asro.lambda_quantile,
+        )
     else:
         loss = QuantileLoss(quantiles=quantiles)
         logger.info("Using standard QuantileLoss with %d quantiles", len(quantiles))
