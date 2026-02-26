@@ -83,8 +83,12 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     Optimises for a composite score:
         score = -val_loss + 0.5 * directional_accuracy
     """
-    import pytorch_lightning as pl
-    from pytorch_lightning.callbacks import EarlyStopping
+    try:
+        import lightning.pytorch as pl
+        from lightning.pytorch.callbacks import EarlyStopping
+    except ImportError:
+        import pytorch_lightning as pl  # type: ignore[no-redef]
+        from pytorch_lightning.callbacks import EarlyStopping  # type: ignore[no-redef]
     from optuna.integration import PyTorchLightningPruningCallback
 
     from deep_learning.data.dataset import build_datasets, create_dataloaders
@@ -148,7 +152,10 @@ def run_hyperopt(
         Dict with best params, best value, and study summary.
     """
     import optuna
-    import pytorch_lightning as pl
+    try:
+        import lightning.pytorch as pl
+    except ImportError:
+        import pytorch_lightning as pl  # type: ignore[no-redef]
 
     from app.db import SessionLocal, init_db
     from deep_learning.data.feature_store import build_tft_dataframe

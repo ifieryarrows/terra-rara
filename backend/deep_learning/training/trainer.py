@@ -39,8 +39,15 @@ def train_tft_model(
     Returns:
         Dict with metrics, checkpoint path, and feature importance.
     """
-    import pytorch_lightning as pl
-    from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+    # pytorch_forecasting >=1.0 uses the unified `lightning` package.
+    # Importing from `pytorch_lightning` gives a different LightningModule
+    # base class, causing "model must be a LightningModule" at trainer.fit().
+    try:
+        import lightning.pytorch as pl
+        from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+    except ImportError:
+        import pytorch_lightning as pl  # type: ignore[no-redef]
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # type: ignore[no-redef]
 
     from app.db import SessionLocal, init_db
     from deep_learning.data.feature_store import build_tft_dataframe
