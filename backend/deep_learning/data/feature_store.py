@@ -334,11 +334,20 @@ def build_tft_dataframe(
 
     master = master.fillna(0.0)
 
+    # Sanitize column names: pytorch_forecasting forbids '.' and '-' in names
+    master.columns = [
+        col.replace(".", "_").replace("-", "_")
+        for col in master.columns
+    ]
+
     master["time_idx"] = np.arange(len(master))
     master["group_id"] = "copper"
 
-    # Categorise columns
-    calendar_cols = list(calendar_features.columns)
+    # Categorise columns – use sanitized calendar col names
+    calendar_cols = [
+        c.replace(".", "_").replace("-", "_")
+        for c in calendar_features.columns
+    ]
     target_cols = ["target"]
 
     all_feature_cols = [c for c in master.columns if c not in ("time_idx", "group_id", "target")]
