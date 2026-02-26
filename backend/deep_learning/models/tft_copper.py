@@ -23,6 +23,33 @@ from deep_learning.models.losses import AdaptiveSharpeRatioLoss, CombinedQuantil
 logger = logging.getLogger(__name__)
 
 
+def _build_asro_pf_loss(asro_cfg, quantiles: list):
+    """
+    Build an ASRO loss that satisfies pytorch_forecasting >= 1.0 requirements.
+
+    pytorch_forecasting requires the loss to be a torchmetrics ``Metric``
+    subclass.  We subclass ``QuantileLoss`` (which already satisfies this)
+    and override its ``loss()`` method with our ASRO logic.
+    """
+    from pytorch_forecasting.metrics import QuantileLoss
+
+    # Capture ASRO nn.Module so it runs inside the Metric wrapper
+    _asro_module = AdaptiveSharpeRatioLoss.from_config(asro_cfg, quantiles)
+
+    class _ASROPFLoss(QuantileLoss):
+        """pytorch_forecasting-compatible ASRO loss wrapper."""
+
+        def loss(self, y_pred: torch.Tensor, target) -> torch.Tensor:  # type: ignore[override]
+            # pytorch_forecasting passes target as a tuple (values, weights)
+            if isinstance(target, (list, tuple)):
+                y_actual = target[0]
+            else:
+                y_actual = target
+            return _asro_module(y_pred, y_actual)
+
+    return _ASROPFLoss(quantiles=quantiles)
+
+
 def create_tft_model(
     training_dataset,
     cfg: Optional[TFTASROConfig] = None,
@@ -48,7 +75,7 @@ def create_tft_model(
     quantiles = list(cfg.model.quantiles)
 
     if use_asro:
-        loss = AdaptiveSharpeRatioLoss.from_config(cfg.asro, quantiles)
+        loss = _build_asro_pf_loss(cfg.asro, quantiles)
         logger.info("Using ASRO loss (lambda_vol=%.2f, lambda_quantile=%.2f)", cfg.asro.lambda_vol, cfg.asro.lambda_quantile)
     else:
         loss = QuantileLoss(quantiles=quantiles)
