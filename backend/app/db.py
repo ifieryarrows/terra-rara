@@ -180,6 +180,41 @@ def _run_migrations(engine):
         except Exception as e:
             logger.debug(f"Migration check for V2 metric columns: {e}")
 
+        # Migration: TFT-ASRO metric columns on pipeline_run_metrics
+        tft_metric_columns = [
+            ("tft_embeddings_computed", "INTEGER"),
+            ("tft_trained", "BOOLEAN DEFAULT FALSE"),
+            ("tft_val_loss", "FLOAT"),
+            ("tft_sharpe", "FLOAT"),
+            ("tft_directional_accuracy", "FLOAT"),
+            ("tft_snapshot_generated", "BOOLEAN DEFAULT FALSE"),
+        ]
+        try:
+            if is_sqlite:
+                result = conn.execute(text("PRAGMA table_info(pipeline_run_metrics)"))
+                columns = [row[1] for row in result.fetchall()]
+                for column_name, column_type in tft_metric_columns:
+                    col_name_only = column_name
+                    if col_name_only not in columns:
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE pipeline_run_metrics ADD COLUMN {column_name} {column_type}"
+                            )
+                        )
+                conn.commit()
+            else:
+                for column_name, column_type in tft_metric_columns:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE pipeline_run_metrics "
+                            f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                        )
+                    )
+                conn.commit()
+            logger.info("Migration: Ensured TFT-ASRO metric columns exist")
+        except Exception as e:
+            logger.debug(f"Migration check for TFT metric columns: {e}")
+
 
 def init_db():
     """
