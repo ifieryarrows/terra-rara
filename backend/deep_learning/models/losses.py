@@ -215,7 +215,24 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
 
-        total = sharpe_loss + self.lambda_vol * vol_loss + self.lambda_quantile * q_loss
+        # --- Weighted combination: w_quantile * calibration + w_sharpe * directional ---
+        #
+        # Old formula: sharpe + lambda_vol*vol + lambda_quantile*q
+        #   → implicit Sharpe weight = 1.0 (not normalised, hard to interpret)
+        #
+        # New formula: w_q * (q + lambda_vol*vol) + (1-w_q) * sharpe
+        #   → w_quantile + w_sharpe = 1.0, both components are interpretable
+        #   → lambda_quantile config value IS the quantile bundle weight (e.g. 0.4)
+        #
+        # Calibration bundle (quantile + vol):
+        #   ensures the 7 quantile bands remain properly calibrated;
+        #   TFT's probabilistic nature requires this or it degenerates to regression.
+        # Sharpe component:
+        #   ensures the median prediction is directionally correct;
+        #   without this the model regresses to mean → variance collapse.
+        w_sharpe = 1.0 - self.lambda_quantile          # e.g. 0.6
+        calibration = q_loss + self.lambda_vol * vol_loss
+        total = self.lambda_quantile * calibration + w_sharpe * sharpe_loss
         return total
 
     @classmethod

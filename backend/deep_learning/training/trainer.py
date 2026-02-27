@@ -123,10 +123,11 @@ def train_tft_model(
     )
     logger.info(
         "Training data  | samples=%d batch_size=%d batches/epoch=%d "
-        "patience=%d lambda_vol=%.1f lambda_q=%.1f",
+        "patience=%d w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
         len(training_ds), cfg.training.batch_size, n_batches,
         cfg.training.early_stopping_patience,
-        cfg.asro.lambda_vol, cfg.asro.lambda_quantile,
+        cfg.asro.lambda_quantile, 1.0 - cfg.asro.lambda_quantile,
+        cfg.asro.lambda_vol,
     )
     logger.info(
         "Model params   | total=%s trainable=%s",

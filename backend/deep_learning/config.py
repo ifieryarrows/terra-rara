@@ -88,13 +88,21 @@ class TFTModelConfig:
 
 @dataclass(frozen=True)
 class ASROConfig:
-    # lambda_vol 0.3→0.2: with tanh signal the Sharpe term is now on the same
-    # scale as actual_std (~0.024); slightly reduce vol weight to give Sharpe
-    # more room to drive directional learning.
+    # Total loss = lambda_quantile * calibration + (1-lambda_quantile) * sharpe
+    #
+    # lambda_quantile is the EXPLICIT weight of the quantile calibration bundle:
+    #   calibration = q_loss + lambda_vol * vol_loss
+    # w_sharpe = 1 - lambda_quantile (the complementary directional weight)
+    #
+    # This normalised (sum-to-1) formulation makes both components interpretable
+    # and prevents either from silently dominating across loss-magnitude regimes.
+    #
+    # 0.4 / 0.6 split: 40% calibration (keeps TFT probabilistic),
+    #                   60% Sharpe     (drives directional / amplitude learning)
+    lambda_quantile: float = 0.4   # w_quantile; was 0.3 (unnormalised old formula)
+    # lambda_vol is a sub-weight within the calibration bundle only.
+    # It controls how much the Q90-Q10 spread tracks 2× actual σ.
     lambda_vol: float = 0.2
-    # lambda_quantile 0.2→0.3: acts as a regulariser preventing the model from
-    # ignoring tail coverage while chasing directional Sharpe.
-    lambda_quantile: float = 0.3
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
 

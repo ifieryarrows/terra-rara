@@ -82,10 +82,15 @@ try:
             actual_std = y_actual.std() + self.sharpe_eps
             vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
 
-            # Quantile (pinball) loss via parent
+            # Quantile (pinball) loss via parent — covers all 7 quantile bands
             q_loss = super().loss(y_pred, target)
 
-            return sharpe_loss + self.lambda_vol * vol_loss + self.lambda_quantile * q_loss
+            # Weighted combination: w_q * calibration + (1-w_q) * sharpe
+            # lambda_quantile = explicit quantile bundle weight (e.g. 0.4 → 40/60 split)
+            # Sharpe operates only on the median (q50); quantile loss operates on all 7.
+            w_sharpe = 1.0 - self.lambda_quantile
+            calibration = q_loss + self.lambda_vol * vol_loss
+            return self.lambda_quantile * calibration + w_sharpe * sharpe_loss
 
 except ImportError:
     ASROPFLoss = None  # type: ignore[assignment,misc]
@@ -123,9 +128,10 @@ def create_tft_model(
             risk_free_rate=cfg.asro.risk_free_rate,
         )
         logger.info(
-            "Using ASRO loss (lambda_vol=%.2f, lambda_quantile=%.2f)",
-            cfg.asro.lambda_vol,
+            "Using ASRO loss | w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
             cfg.asro.lambda_quantile,
+            1.0 - cfg.asro.lambda_quantile,
+            cfg.asro.lambda_vol,
         )
     else:
         loss = QuantileLoss(quantiles=quantiles)
