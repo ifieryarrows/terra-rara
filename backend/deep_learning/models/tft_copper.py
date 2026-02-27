@@ -65,10 +65,12 @@ try:
             y_actual = y_actual.float()
             median_pred = y_pred[..., self.median_idx]
 
-            # Strategy-based Sharpe: position × actual_return
-            # Rewards correct-direction & large predictions; punishes wrong direction.
-            # Using -(mean(preds)/std(preds)) would MINIMISE prediction variance.
-            strategy_returns = median_pred * y_actual - self.rf
+            # tanh-normalised strategy Sharpe.
+            # tanh(pred) ∈ (-1, 1) → strategy_returns scale ≈ actual_std (~0.024)
+            # instead of pred * actual ≈ 0.0002 which swamps the Sharpe term
+            # and causes directional accuracy to collapse below 50%.
+            signal = torch.tanh(median_pred)
+            strategy_returns = signal * y_actual - self.rf
             sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
             # Volatility calibration: match Q90-Q10 spread to 2× actual σ

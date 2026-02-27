@@ -103,12 +103,16 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         median_pred = y_pred[:, :, self.median_idx]
         y_actual_f = y_actual.float()
 
-        # --- Sharpe component (strategy-based, NOT prediction SNR) ---
-        # strategy_returns = position * actual_return  (proportional sizing)
-        # Maximising this Sharpe *rewards* larger predictions when correct and
-        # larger predictions when wrong — producing calibrated variance.
-        # Computing -(mean(preds)/std(preds)) would actively minimise variance.
-        strategy_returns = median_pred * y_actual_f - self.rf
+        # --- Sharpe component (strategy-based, tanh-normalised signal) ---
+        # Using tanh(pred) as the position signal:
+        #   1. Saturates to ±1 → strategy_returns scale ≈ actual_std (not 0.0002)
+        #   2. Fully differentiable — sign() would kill gradients everywhere
+        #   3. Focuses optimisation on direction first, magnitude second
+        #   4. Prevents the Sharpe term from being swamped by the quantile loss
+        # median_pred * y_actual would give strategy_returns ≈ 0.0098 * 0.024 = 0.0002,
+        # making the Sharpe computation noise-dominated and causing directional collapse.
+        signal = torch.tanh(median_pred)
+        strategy_returns = signal * y_actual_f - self.rf
         sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
         # --- Volatility calibration ---
