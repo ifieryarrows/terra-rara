@@ -578,7 +578,21 @@ async def _execute_pipeline_stages_v2(
         from deep_learning.config import get_tft_config
         from pathlib import Path
 
-        ckpt = Path(get_tft_config().training.best_model_path)
+        tft_cfg = get_tft_config()
+        ckpt = Path(tft_cfg.training.best_model_path)
+
+        # If checkpoint is not cached locally, try to pull from HF Hub first
+        if not ckpt.exists():
+            try:
+                from deep_learning.models.hub import download_tft_artifacts
+                logger.info(f"[run_id={run_id}] TFT checkpoint not found locally – attempting HF Hub download")
+                download_tft_artifacts(
+                    local_dir=ckpt.parent,
+                    repo_id=tft_cfg.training.hf_model_repo,
+                )
+            except Exception as hub_exc:
+                logger.warning(f"[run_id={run_id}] HF Hub download failed: {hub_exc}")
+
         if ckpt.exists():
             tft_report = generate_tft_analysis(session, "HG=F")
 
@@ -592,7 +606,7 @@ async def _execute_pipeline_stages_v2(
                 logger.warning(f"[run_id={run_id}] TFT prediction error: {tft_report.get('error')}")
         else:
             result["tft_snapshot_generated"] = False
-            logger.info(f"[run_id={run_id}] Stage 5.5 skipped: no TFT checkpoint found")
+            logger.info(f"[run_id={run_id}] Stage 5.5 skipped: no TFT checkpoint found (train-tft workflow has not run yet)")
 
     except ImportError:
         result["tft_snapshot_generated"] = False
@@ -604,7 +618,7 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     # Stage 6: Generate commentary (only if snapshot was generated)
     # -------------------------------------------------------------------------
-    if result.get("snapshot_generated") and snapshot_report:
+    if (result.get("snapshot_generated") and snapshot_report) or result.get("tft_snapshot_generated"):
         logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
         try:
             from app.commentary import generate_and_save_commentary
