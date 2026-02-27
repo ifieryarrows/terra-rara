@@ -101,19 +101,24 @@ class AdaptiveSharpeRatioLoss(nn.Module):
             y_actual: (batch, prediction_length)
         """
         median_pred = y_pred[:, :, self.median_idx]
+        y_actual_f = y_actual.float()
 
-        # --- Sharpe component ---
-        excess = median_pred - self.rf
-        batch_mean = excess.mean()
-        batch_std = excess.std() + self.sharpe_eps
-        sharpe_loss = -(batch_mean / batch_std)
+        # --- Sharpe component (strategy-based, NOT prediction SNR) ---
+        # strategy_returns = position * actual_return  (proportional sizing)
+        # Maximising this Sharpe *rewards* larger predictions when correct and
+        # larger predictions when wrong — producing calibrated variance.
+        # Computing -(mean(preds)/std(preds)) would actively minimise variance.
+        strategy_returns = median_pred * y_actual_f - self.rf
+        sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
         # --- Volatility calibration ---
+        # Match Q90-Q10 spread to 2× actual σ so the prediction interval tracks
+        # realised volatility rather than collapsing to a constant.
         pred_spread = (y_pred[:, :, self._q90_idx] - y_pred[:, :, self._q10_idx]).mean()
-        actual_std = y_actual.std() + self.sharpe_eps
+        actual_std = y_actual_f.std() + self.sharpe_eps
         vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
 
-        # --- Quantile loss ---
+        # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
 
         total = sharpe_loss + self.lambda_vol * vol_loss + self.lambda_quantile * q_loss

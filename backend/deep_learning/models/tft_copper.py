@@ -65,15 +65,18 @@ try:
             y_actual = y_actual.float()
             median_pred = y_pred[..., self.median_idx]
 
-            # Sharpe component
-            excess = median_pred - self.rf
-            sharpe_loss = -(excess.mean() / (excess.std() + self.sharpe_eps))
+            # Strategy-based Sharpe: position × actual_return
+            # Rewards correct-direction & large predictions; punishes wrong direction.
+            # Using -(mean(preds)/std(preds)) would MINIMISE prediction variance.
+            strategy_returns = median_pred * y_actual - self.rf
+            sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
-            # Volatility calibration
+            # Volatility calibration: match Q90-Q10 spread to 2× actual σ
             pred_spread = (
                 y_pred[..., self._q90_idx] - y_pred[..., self._q10_idx]
             ).mean()
-            vol_loss = torch.abs(pred_spread - 2.0 * (y_actual.std() + self.sharpe_eps))
+            actual_std = y_actual.std() + self.sharpe_eps
+            vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
 
             # Quantile (pinball) loss via parent
             q_loss = super().loss(y_pred, target)

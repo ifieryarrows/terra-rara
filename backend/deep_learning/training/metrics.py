@@ -113,13 +113,18 @@ def compute_all_metrics(
     y_actual = np.asarray(y_actual, dtype=np.float64)
     y_pred_median = np.asarray(y_pred_median, dtype=np.float64)
 
+    # Simulated binary long/short strategy: take direction from model, size from actual return.
+    # This is the correct series to compute Sharpe/Sortino on — not the raw predictions.
+    # Using y_pred_median directly produces an inflated ratio because pred_std << actual_std.
+    strategy_returns = np.sign(y_pred_median) * y_actual
+
     metrics: dict[str, float] = {
         "mae": float(np.abs(y_actual - y_pred_median).mean()),
         "rmse": float(np.sqrt(((y_actual - y_pred_median) ** 2).mean())),
         "directional_accuracy": directional_accuracy(y_actual, y_pred_median),
         "tail_capture_rate": tail_capture_rate(y_actual, y_pred_median, tail_threshold),
-        "sharpe_ratio": sharpe_ratio(y_pred_median),
-        "sortino_ratio": sortino_ratio(y_pred_median),
+        "sharpe_ratio": sharpe_ratio(strategy_returns),
+        "sortino_ratio": sortino_ratio(strategy_returns),
     }
 
     pred_std = float(y_pred_median.std())
