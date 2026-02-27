@@ -8,6 +8,7 @@ with proper temporal ordering (no leakage).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import numpy as np
@@ -107,6 +108,23 @@ def build_datasets(
     return training, validation, test
 
 
+def _resolve_num_workers(configured: int) -> int:
+    """
+    Return a safe num_workers value for the current platform.
+
+    On Windows (os.name == 'nt'), PyTorch DataLoader multiprocessing requires
+    the script to be inside an ``if __name__ == '__main__'`` guard, which is
+    not the case in training scripts. Force 0 to avoid deadlocks.
+
+    On Linux/macOS (GitHub Actions, HF Spaces), use the configured value;
+    default to 2 when the config still carries the old 0.
+    """
+    if os.name == "nt":
+        return 0
+    # On POSIX: honour config; upgrade 0 → 2 as a sensible floor
+    return max(configured, 2)
+
+
 def create_dataloaders(
     training_dataset,
     validation_dataset,
@@ -119,22 +137,28 @@ def create_dataloaders(
     if cfg is None:
         cfg = get_tft_config()
 
+    nw = _resolve_num_workers(cfg.training.num_workers)
+    logger.info(
+        "DataLoader workers: %d (platform=%s, configured=%d)",
+        nw, os.name, cfg.training.num_workers,
+    )
+
     train_dl = training_dataset.to_dataloader(
         train=True,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers,
+        num_workers=nw,
     )
     val_dl = validation_dataset.to_dataloader(
         train=False,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers,
+        num_workers=nw,
     )
     test_dl = None
     if test_dataset is not None:
         test_dl = test_dataset.to_dataloader(
             train=False,
             batch_size=cfg.training.batch_size,
-            num_workers=cfg.training.num_workers,
+            num_workers=nw,
         )
 
     return train_dl, val_dl, test_dl

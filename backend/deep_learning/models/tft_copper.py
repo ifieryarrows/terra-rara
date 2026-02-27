@@ -65,15 +65,13 @@ try:
             y_actual = y_actual.float()
             median_pred = y_pred[..., self.median_idx]
 
-            # Adaptive tanh soft-sign: normalise predictions by batch actual_std
-            # before applying tanh so the function operates in its non-linear
-            # (soft-sign) regime rather than the linear region.
-            #   pred ≈ 0.5× actual_std → tanh(0.5) ≈ 0.46  (directional)
-            #   pred ≈ 1.0× actual_std → tanh(1.0) ≈ 0.76  (soft-sign onset)
-            #   pred ≈ 2.0× actual_std → tanh(2.0) ≈ 0.96  (full soft-sign)
-            # detach() prevents gradients flowing through the normaliser.
-            actual_std_batch = y_actual.float().std().detach() + self.sharpe_eps
-            signal = torch.tanh(median_pred / actual_std_batch)
+            # Fixed-scale tanh soft-sign (scale = 100).
+            # Mirrors losses.AdaptiveSharpeRatioLoss exactly.
+            # For return-scale predictions (pred_std ≈ 0.01):
+            #   pred = 0.010 → tanh(1.0) ≈ 0.76  (soft-sign, gradient=0.42)
+            #   pred = 0.020 → tanh(2.0) ≈ 0.96  (full soft-sign, gradient=0.07)
+            _TANH_SCALE = 100.0
+            signal = torch.tanh(median_pred * _TANH_SCALE)
             strategy_returns = signal * y_actual.float() - self.rf
             sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 

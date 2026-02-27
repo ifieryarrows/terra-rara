@@ -110,6 +110,29 @@ def train_tft_model(
     # ---- 3. Model ----
     model = create_tft_model(training_ds, cfg, use_asro=use_asro)
 
+    # Log active config so every run is fully reproducible from logs
+    n_batches = len(train_dl)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(
+        "Training config | hidden=%d hidden_cont=%d dropout=%.2f "
+        "heads=%d lr=%.0e clip=%.1f",
+        cfg.model.hidden_size, cfg.model.hidden_continuous_size,
+        cfg.model.dropout, cfg.model.attention_head_size,
+        cfg.model.learning_rate, cfg.model.gradient_clip_val,
+    )
+    logger.info(
+        "Training data  | samples=%d batch_size=%d batches/epoch=%d "
+        "patience=%d lambda_vol=%.1f lambda_q=%.1f",
+        len(training_ds), cfg.training.batch_size, n_batches,
+        cfg.training.early_stopping_patience,
+        cfg.asro.lambda_vol, cfg.asro.lambda_quantile,
+    )
+    logger.info(
+        "Model params   | total=%s trainable=%s",
+        f"{total_params:,}", f"{trainable_params:,}",
+    )
+
     # ---- 4. Callbacks ----
     ckpt_dir = Path(cfg.training.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +155,9 @@ def train_tft_model(
         ),
     ]
 
+    # log_every_n_steps must not exceed the number of training batches
+    log_steps = max(1, min(5, n_batches))
+
     # ---- 5. Train ----
     trainer = pl.Trainer(
         max_epochs=cfg.training.max_epochs,
@@ -139,7 +165,7 @@ def train_tft_model(
         gradient_clip_val=cfg.model.gradient_clip_val,
         callbacks=callbacks,
         enable_progress_bar=True,
-        log_every_n_steps=10,
+        log_every_n_steps=log_steps,
     )
 
     logger.info("Starting TFT-ASRO training ...")

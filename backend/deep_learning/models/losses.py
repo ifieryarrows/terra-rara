@@ -73,8 +73,7 @@ def debug_asro_loss_direction() -> dict:
 
         with torch.no_grad():
             med = p.detach()[..., len(quantiles) // 2]
-            actual_std_batch = actual.std() + 1e-6
-            signal = torch.tanh(med / actual_std_batch)   # same formula as training
+            signal = torch.tanh(med * 100.0)   # same scale as training loss
             sr = float(
                 (signal * actual).mean() / ((signal * actual).std() + 1e-6)
             )
@@ -189,23 +188,20 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         median_pred = y_pred[:, :, self.median_idx]
         y_actual_f = y_actual.float()
 
-        # --- Sharpe component: adaptive tanh soft-sign ---
-        # Problem: tanh(pred) without scaling stays in the linear region when
-        # pred_std is small relative to its dynamic range.
-        # Example: pred=0.01 → tanh(0.01)=0.01 (linear, no benefit over raw pred).
+        # --- Sharpe component: fixed-scale tanh soft-sign (scale = 100) ---
+        # Root cause of directional collapse:
+        #   pred_std ≈ 0.01 (actual return space) → tanh(0.01) ≈ 0.01 (linear)
+        #   The Sharpe term becomes noise-dominated; quantile loss takes over.
         #
-        # Fix: normalise predictions by batch actual_std BEFORE tanh so that a
-        # prediction equal to 1× actual_std maps to tanh(1)≈0.76 and a prediction
-        # equal to 2× actual_std maps to tanh(2)≈0.96 (full soft-sign zone).
-        # This is equivalent to the user-requested "scaling_factor ≈ 1/actual_std".
-        #
-        # Formula: signal = tanh(median_pred / actual_std_batch)
-        #   • pred ≈ 0.5 × actual_std → tanh(0.5) ≈ 0.46  (directional, linear)
-        #   • pred ≈ 1.0 × actual_std → tanh(1.0) ≈ 0.76  (soft-sign onset)
-        #   • pred ≈ 2.0 × actual_std → tanh(2.0) ≈ 0.96  (full soft-sign)
-        # detach() prevents gradients from flowing through the normaliser itself.
-        actual_std_batch = y_actual_f.std().detach() + self.sharpe_eps
-        signal = torch.tanh(median_pred / actual_std_batch)
+        # Fix: multiply pred by 100 before tanh so that return-scale predictions
+        # map into the soft-sign zone of tanh:
+        #   pred = 0.005 → tanh(0.5)  ≈ 0.46  (directional onset, gradient=0.79)
+        #   pred = 0.010 → tanh(1.0)  ≈ 0.76  (soft-sign, gradient=0.42)
+        #   pred = 0.020 → tanh(2.0)  ≈ 0.96  (full soft-sign, gradient=0.07)
+        # Gradient through tanh is non-zero everywhere (unlike sign()), preserving
+        # backprop in the early training epochs where |pred| is still small.
+        _TANH_SCALE = 100.0
+        signal = torch.tanh(median_pred * _TANH_SCALE)
         strategy_returns = signal * y_actual_f - self.rf
         sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
