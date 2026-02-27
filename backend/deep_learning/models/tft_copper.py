@@ -65,12 +65,16 @@ try:
             y_actual = y_actual.float()
             median_pred = y_pred[..., self.median_idx]
 
-            # tanh-normalised strategy Sharpe.
-            # tanh(pred) ∈ (-1, 1) → strategy_returns scale ≈ actual_std (~0.024)
-            # instead of pred * actual ≈ 0.0002 which swamps the Sharpe term
-            # and causes directional accuracy to collapse below 50%.
-            signal = torch.tanh(median_pred)
-            strategy_returns = signal * y_actual - self.rf
+            # Adaptive tanh soft-sign: normalise predictions by batch actual_std
+            # before applying tanh so the function operates in its non-linear
+            # (soft-sign) regime rather than the linear region.
+            #   pred ≈ 0.5× actual_std → tanh(0.5) ≈ 0.46  (directional)
+            #   pred ≈ 1.0× actual_std → tanh(1.0) ≈ 0.76  (soft-sign onset)
+            #   pred ≈ 2.0× actual_std → tanh(2.0) ≈ 0.96  (full soft-sign)
+            # detach() prevents gradients flowing through the normaliser.
+            actual_std_batch = y_actual.float().std().detach() + self.sharpe_eps
+            signal = torch.tanh(median_pred / actual_std_batch)
+            strategy_returns = signal * y_actual.float() - self.rf
             sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
             # Volatility calibration: match Q90-Q10 spread to 2× actual σ

@@ -72,7 +72,9 @@ def debug_asro_loss_direction() -> dict:
         grad_norm = float(p.grad.norm().item()) if p.grad is not None else 0.0
 
         with torch.no_grad():
-            signal = torch.tanh(p.detach()[..., len(quantiles) // 2])
+            med = p.detach()[..., len(quantiles) // 2]
+            actual_std_batch = actual.std() + 1e-6
+            signal = torch.tanh(med / actual_std_batch)   # same formula as training
             sr = float(
                 (signal * actual).mean() / ((signal * actual).std() + 1e-6)
             )
@@ -187,15 +189,23 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         median_pred = y_pred[:, :, self.median_idx]
         y_actual_f = y_actual.float()
 
-        # --- Sharpe component (strategy-based, tanh-normalised signal) ---
-        # Using tanh(pred) as the position signal:
-        #   1. Saturates to ±1 → strategy_returns scale ≈ actual_std (not 0.0002)
-        #   2. Fully differentiable — sign() would kill gradients everywhere
-        #   3. Focuses optimisation on direction first, magnitude second
-        #   4. Prevents the Sharpe term from being swamped by the quantile loss
-        # median_pred * y_actual would give strategy_returns ≈ 0.0098 * 0.024 = 0.0002,
-        # making the Sharpe computation noise-dominated and causing directional collapse.
-        signal = torch.tanh(median_pred)
+        # --- Sharpe component: adaptive tanh soft-sign ---
+        # Problem: tanh(pred) without scaling stays in the linear region when
+        # pred_std is small relative to its dynamic range.
+        # Example: pred=0.01 → tanh(0.01)=0.01 (linear, no benefit over raw pred).
+        #
+        # Fix: normalise predictions by batch actual_std BEFORE tanh so that a
+        # prediction equal to 1× actual_std maps to tanh(1)≈0.76 and a prediction
+        # equal to 2× actual_std maps to tanh(2)≈0.96 (full soft-sign zone).
+        # This is equivalent to the user-requested "scaling_factor ≈ 1/actual_std".
+        #
+        # Formula: signal = tanh(median_pred / actual_std_batch)
+        #   • pred ≈ 0.5 × actual_std → tanh(0.5) ≈ 0.46  (directional, linear)
+        #   • pred ≈ 1.0 × actual_std → tanh(1.0) ≈ 0.76  (soft-sign onset)
+        #   • pred ≈ 2.0 × actual_std → tanh(2.0) ≈ 0.96  (full soft-sign)
+        # detach() prevents gradients from flowing through the normaliser itself.
+        actual_std_batch = y_actual_f.std().detach() + self.sharpe_eps
+        signal = torch.tanh(median_pred / actual_std_batch)
         strategy_returns = signal * y_actual_f - self.rf
         sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
 
