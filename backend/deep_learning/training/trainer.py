@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,15 @@ from typing import Optional
 import numpy as np
 
 from deep_learning.config import TFTASROConfig, get_tft_config
+
+# pytorch_forecasting prescalers are fit on DataFrames but transform numpy arrays
+# internally on every batch — this produces thousands of identical sklearn warnings.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names",
+    category=UserWarning,
+    module="sklearn",
+)
 
 logger = logging.getLogger(__name__)
 

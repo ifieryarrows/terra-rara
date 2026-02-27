@@ -13,11 +13,19 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names",
+    category=UserWarning,
+    module="sklearn",
+)
 
 from deep_learning.config import (
     ASROConfig,
