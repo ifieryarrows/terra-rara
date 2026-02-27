@@ -19,6 +19,90 @@ import numpy as np
 from deep_learning.config import ASROConfig
 
 
+def debug_asro_loss_direction() -> dict:
+    """
+    ASRO kayıp fonksiyonunun matematiksel doğrulaması.
+
+    Üç test senaryosu:
+      1. correct_direction : tanh(pred) ile actual aynı işaret → loss minimum, Sharpe pozitif
+      2. anti_direction    : tanh(pred) ile actual ters işaret → loss maksimum, Sharpe negatif
+      3. zero_predictions  : model sıfır tahmin üretiyor     → Sharpe sıfır (dar varyans tuzağı)
+
+    Gradyan kontrolleri:
+      - Her senaryoda grad_norm > 0 olmalı (tanh türevi var, sign() yok)
+      - Doğru yönde kayıp < sıfır tahmin < ters yön kaybı sırası bozulmamalı
+
+    Returns:
+        {
+          "passed": bool,
+          "results": {scenario: {"loss", "grad_norm", "strategy_sharpe"}},
+          "diagnostics": str   # geçti/kaldı açıklaması
+        }
+    """
+    import torch
+
+    torch.manual_seed(42)
+
+    B, T, Q = 64, 5, 7
+    quantiles = [0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98]
+    actual_std = 0.024
+
+    actual = torch.randn(B, T) * actual_std
+
+    def _make_preds(median: torch.Tensor) -> torch.Tensor:
+        """Build a quantile tensor from a given median, spread ≈ 2*actual_std."""
+        out = torch.zeros(B, T, Q)
+        for i, q in enumerate(quantiles):
+            out[..., i] = median + (q - 0.5) * actual_std * 2
+        return out
+
+    scenarios = {
+        "correct_direction": _make_preds(actual * 0.5),
+        "anti_direction":    _make_preds(-actual * 0.5),
+        "zero_predictions":  _make_preds(torch.zeros(B, T)),
+    }
+
+    fn = AdaptiveSharpeRatioLoss(quantiles=quantiles)
+    results: dict = {}
+
+    for name, preds in scenarios.items():
+        p = preds.detach().requires_grad_(True)
+        loss_val = fn(p, actual.detach())
+        loss_val.backward()
+        grad_norm = float(p.grad.norm().item()) if p.grad is not None else 0.0
+
+        with torch.no_grad():
+            signal = torch.tanh(p.detach()[..., len(quantiles) // 2])
+            sr = float(
+                (signal * actual).mean() / ((signal * actual).std() + 1e-6)
+            )
+
+        results[name] = {
+            "loss": round(float(loss_val.item()), 6),
+            "grad_norm": round(grad_norm, 6),
+            "strategy_sharpe": round(sr, 4),
+        }
+
+    checks = {
+        "correct < anti loss":
+            results["correct_direction"]["loss"] < results["anti_direction"]["loss"],
+        "correct Sharpe > 0":
+            results["correct_direction"]["strategy_sharpe"] > 0,
+        "anti Sharpe < 0":
+            results["anti_direction"]["strategy_sharpe"] < 0,
+        "gradients non-zero (correct)":
+            results["correct_direction"]["grad_norm"] > 1e-6,
+        "gradients non-zero (anti)":
+            results["anti_direction"]["grad_norm"] > 1e-6,
+    }
+
+    passed = all(checks.values())
+    failed = [k for k, v in checks.items() if not v]
+    diagnostics = "ALL CHECKS PASSED" if passed else f"FAILED: {failed}"
+
+    return {"passed": passed, "results": results, "diagnostics": diagnostics}
+
+
 class CombinedQuantileLoss(nn.Module):
     """
     Multi-quantile pinball loss.

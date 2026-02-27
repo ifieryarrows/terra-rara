@@ -67,20 +67,34 @@ class LMEConfig:
 class TFTModelConfig:
     max_encoder_length: int = 60
     max_prediction_length: int = 5
-    hidden_size: int = 64
-    attention_head_size: int = 4
-    dropout: float = 0.1
-    hidden_continuous_size: int = 32
+    # hidden_size 64→32: VSN encoder had 3.2M params for only 313 training
+    # samples (344 features × hidden_size × hidden_continuous_size).
+    # Reducing halves the dominant layer while keeping expressiveness.
+    hidden_size: int = 32
+    # attention_head_size 4→2: fewer heads for a small, single-series dataset.
+    attention_head_size: int = 2
+    # dropout 0.1→0.3: 313 samples / ~900K params still demands heavy regularisation.
+    dropout: float = 0.3
+    hidden_continuous_size: int = 16   # was 32; paired reduction with hidden_size
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
-    learning_rate: float = 1e-3
+    # lr 1e-3→3e-4: smaller batches produce noisier gradients; conservative LR
+    # reduces the risk of overshooting the narrow-loss landscape.
+    learning_rate: float = 3e-4
     reduce_on_plateau_patience: int = 4
-    gradient_clip_val: float = 0.5
+    # clip 0.5→1.0: tanh-based Sharpe gradients are inherently bounded;
+    # relaxing the clip lets the model escape flat regions more aggressively.
+    gradient_clip_val: float = 1.0
 
 
 @dataclass(frozen=True)
 class ASROConfig:
-    lambda_vol: float = 0.3
-    lambda_quantile: float = 0.2
+    # lambda_vol 0.3→0.2: with tanh signal the Sharpe term is now on the same
+    # scale as actual_std (~0.024); slightly reduce vol weight to give Sharpe
+    # more room to drive directional learning.
+    lambda_vol: float = 0.2
+    # lambda_quantile 0.2→0.3: acts as a regulariser preventing the model from
+    # ignoring tail coverage while chasing directional Sharpe.
+    lambda_quantile: float = 0.3
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
 
@@ -88,8 +102,12 @@ class ASROConfig:
 @dataclass(frozen=True)
 class TrainingConfig:
     max_epochs: int = 100
-    early_stopping_patience: int = 10
-    batch_size: int = 64
+    # patience 10→15: with 19 batches/epoch (vs 4 before) each epoch carries
+    # more information; give the model more time to converge.
+    early_stopping_patience: int = 15
+    # batch_size 64→16: 313 samples / 64 = 4 batches/epoch → noisy gradients.
+    # 313 / 16 ≈ 19 batches/epoch gives stable, consistent gradient estimates.
+    batch_size: int = 16
     val_ratio: float = 0.15
     test_ratio: float = 0.10
     lookback_days: int = 730

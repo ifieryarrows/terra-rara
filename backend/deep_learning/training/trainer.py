@@ -68,6 +68,29 @@ def train_tft_model(
     if cfg is None:
         cfg = get_tft_config()
 
+    # ---- 0. ASRO loss sanity check (runs before any training) ----
+    try:
+        from deep_learning.models.losses import debug_asro_loss_direction
+        debug = debug_asro_loss_direction()
+        logger.info(
+            "ASRO loss direction check: %s | "
+            "correct_dir loss=%.4f sharpe=%.4f | "
+            "anti_dir loss=%.4f sharpe=%.4f | "
+            "zero loss=%.4f sharpe=%.4f",
+            debug["diagnostics"],
+            debug["results"]["correct_direction"]["loss"],
+            debug["results"]["correct_direction"]["strategy_sharpe"],
+            debug["results"]["anti_direction"]["loss"],
+            debug["results"]["anti_direction"]["strategy_sharpe"],
+            debug["results"]["zero_predictions"]["loss"],
+            debug["results"]["zero_predictions"]["strategy_sharpe"],
+        )
+        if not debug["passed"]:
+            logger.error("ASRO loss direction check FAILED — stopping training")
+            return {"error": "ASRO loss check failed", "debug": debug}
+    except Exception as exc:
+        logger.warning("Could not run ASRO debug check: %s", exc)
+
     init_db()
     pl.seed_everything(cfg.training.seed)
 
