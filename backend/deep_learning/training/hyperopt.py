@@ -102,7 +102,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     except ImportError:
         import pytorch_lightning as pl  # type: ignore[no-redef]
         from pytorch_lightning.callbacks import EarlyStopping  # type: ignore[no-redef]
-    from optuna.integration import PyTorchLightningPruningCallback
+    try:
+        from optuna_integration.pytorch_lightning import PyTorchLightningPruningCallback
+    except ImportError:
+        from optuna.integration import PyTorchLightningPruningCallback  # type: ignore[no-redef]
 
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
