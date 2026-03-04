@@ -14,15 +14,15 @@ on:
             run_hyperopt:
                 description: "Run Optuna hyperparameter optimization"
                 required: false
-                default: "false"
+                default: "true"
                 type: choice
                 options:
-                    - "false"
                     - "true"
+                    - "false"
             hyperopt_trials:
                 description: "Number of Optuna trials (if hyperopt enabled)"
                 required: false
-                default: "30"
+                default: "20"
                 type: string
 
 env:
@@ -32,7 +32,7 @@ env:
 jobs:
     train-tft:
         runs-on: ubuntu-latest
-        timeout-minutes: 120
+        timeout-minutes: 180
 
         steps:
             - name: Checkout repository

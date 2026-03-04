@@ -43,26 +43,31 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     model_cfg = TFTModelConfig(
         max_encoder_length=trial.suggest_int("max_encoder_length", 30, 90, step=10),
         max_prediction_length=base_cfg.model.max_prediction_length,
-        hidden_size=trial.suggest_int("hidden_size", 32, 128, step=16),
-        attention_head_size=trial.suggest_int("attention_head_size", 1, 8),
-        dropout=trial.suggest_float("dropout", 0.05, 0.3, step=0.05),
-        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 16, 64, step=8),
+        # Cap at 64: beyond that the VSN encoder explodes to 3M+ params for our
+        # 313-sample dataset, causing the same overfitting we already saw at 64.
+        hidden_size=trial.suggest_int("hidden_size", 16, 64, step=16),
+        attention_head_size=trial.suggest_int("attention_head_size", 1, 4),
+        dropout=trial.suggest_float("dropout", 0.1, 0.5, step=0.05),
+        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 32, step=8),
         quantiles=base_cfg.model.quantiles,
-        learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True),
+        learning_rate=trial.suggest_float("learning_rate", 5e-5, 5e-3, log=True),
         reduce_on_plateau_patience=4,
-        gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.1, 1.0, step=0.1),
+        gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.5, 2.0, step=0.5),
     )
 
     asro_cfg = ASROConfig(
-        lambda_vol=trial.suggest_float("lambda_vol", 0.1, 0.5, step=0.05),
-        lambda_quantile=trial.suggest_float("lambda_quantile", 0.1, 0.5, step=0.05),
+        lambda_vol=trial.suggest_float("lambda_vol", 0.1, 0.4, step=0.05),
+        # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
+        lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.6, step=0.05),
         risk_free_rate=0.0,
     )
 
     training_cfg = TrainingConfig(
         max_epochs=50,
         early_stopping_patience=8,
-        batch_size=trial.suggest_categorical("batch_size", [32, 64, 128]),
+        # Include 16 which gives 19 batches/epoch (vs 4 at batch_size=64)
+        # — more gradient steps per epoch → more stable convergence.
+        batch_size=trial.suggest_categorical("batch_size", [16, 32, 64]),
         val_ratio=base_cfg.training.val_ratio,
         test_ratio=base_cfg.training.test_ratio,
         lookback_days=base_cfg.training.lookback_days,
