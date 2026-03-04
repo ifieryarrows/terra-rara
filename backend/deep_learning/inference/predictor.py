@@ -196,7 +196,7 @@ class TFTPredictor:
         row = (
             session.query(PriceBar.close)
             .filter(PriceBar.symbol == symbol)
-            .order_by(PriceBar.bar_time.desc())
+            .order_by(PriceBar.date.desc())
             .first()
         )
         return float(row.close) if row else 1.0
