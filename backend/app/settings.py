@@ -78,14 +78,20 @@ class Settings(BaseSettings):
     openrouter_api_key: Optional[str] = None
     # Deprecated - kept for backward compatibility
     openrouter_model: str = "arcee-ai/trinity-large-preview:free"
-    # New primary config - Nemotron supports structured output (response_format/json_schema)
-    openrouter_model_scoring: str = "google/gemma-3n-e4b-it:free"
+    # Scoring models:
+    #   fast   → google/gemma-3-4b-it:free   (131K ctx, JSON mode, system prompt OK)
+    #            Note: gemma-3-4b ≠ gemma-3n-e4b; the nano variant blocks system prompts.
+    #   reliable → mistralai/mistral-small-3.1-24b-instruct:free (128K ctx, 24B, reliable JSON)
+    #   commentary → same as reliable for higher quality prose
+    openrouter_model_scoring: str = "google/gemma-3-4b-it:free"
     openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = "liquid/lfm-2.5-1.2b-thinking:free"
-    openrouter_model_commentary: str = "liquid/lfm-2.5-1.2b-thinking:free"
+    openrouter_model_scoring_reliable: Optional[str] = "mistralai/mistral-small-3.1-24b-instruct:free"
+    openrouter_model_commentary: str = "mistralai/mistral-small-3.1-24b-instruct:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
-    max_llm_articles_per_run: int = 200
+    # Free tier: 50 req/day. At 12 articles/chunk, 100 articles = ~9 chunks = ~9-18 req.
+    # Keep well under the daily limit to avoid rate-limit cascades mid-run.
+    max_llm_articles_per_run: int = 100
     openrouter_fallback_models: Optional[str] = None
     tokenizers_parallelism: str = "false"
     
