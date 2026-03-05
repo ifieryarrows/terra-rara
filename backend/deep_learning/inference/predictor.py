@@ -19,6 +19,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -142,7 +144,8 @@ class TFTPredictor:
             logger.error("Failed to create inference dataset: %s", exc)
             return {"error": str(exc)}
 
-        dl = ds.to_dataloader(train=False, batch_size=1, num_workers=0)
+        _nw = 0 if os.name == "nt" else 2
+        dl = ds.to_dataloader(train=False, batch_size=1, num_workers=_nw)
 
         try:
             import torch

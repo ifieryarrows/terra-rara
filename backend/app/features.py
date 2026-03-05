@@ -18,6 +18,8 @@ import pandas as pd
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+pd.set_option("future.no_silent_downcasting", True)
+
 from app.db import SessionLocal
 from app.models import PriceBar, DailySentiment, DailySentimentV2
 from app.settings import get_settings

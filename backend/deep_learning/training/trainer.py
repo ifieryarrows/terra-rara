@@ -230,7 +230,7 @@ def train_tft_model(
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
 
     # ---- 8. Variable importance ----
-    var_importance = get_variable_importance(model)
+    var_importance = get_variable_importance(model, val_dataloader=val_dl)
 
     # ---- 9. Persist metadata ----
     result = {

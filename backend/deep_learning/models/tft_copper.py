@@ -179,15 +179,19 @@ def load_tft_model(
 # Interpretation helpers
 # ---------------------------------------------------------------------------
 
-def get_variable_importance(model) -> Dict[str, float]:
+def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
     """
     Extract learned variable importance from the TFT's Variable Selection Networks.
 
     Returns a dict mapping feature name -> normalised importance score.
+    val_dataloader must be passed explicitly (model.val_dataloader() only works
+    inside a Lightning Trainer context and raises an error otherwise).
     """
+    if val_dataloader is None:
+        return {}
     try:
         interpretation = model.interpret_output(
-            model.predict(model.val_dataloader(), return_x=True),
+            model.predict(val_dataloader, return_x=True),
             reduction="sum",
         )
         importance = interpretation.get("encoder_variables", {})

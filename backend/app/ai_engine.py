@@ -1409,7 +1409,11 @@ def score_unscored_processed_articles(
 
         llm_results_by_id: dict[int, dict] = {}
         llm_candidates: list[dict] = []
-        global_rate_limited = getattr(score_unscored_processed_articles, "_rate_limited", False)
+
+        # Rate-limit flag is keyed to today's UTC date so it resets automatically at midnight.
+        today_utc = datetime.now(timezone.utc).date().isoformat()
+        rate_limited_date = getattr(score_unscored_processed_articles, "_rate_limited_date", None)
+        global_rate_limited = rate_limited_date == today_utc
 
         if settings.openrouter_api_key and llm_budget_remaining > 0 and not global_rate_limited:
             llm_take = min(len(chunk_items), llm_budget_remaining)
@@ -1430,10 +1434,14 @@ def score_unscored_processed_articles(
                 fast_model = str(llm_bundle.get("model_fast", fast_model))
                 reliable_model = str(llm_bundle.get("model_reliable", reliable_model))
 
-                # If LLM returned 100% fail and flagged rate limit:
+                # If LLM returned 100% fail and flagged rate limit, mark for today's UTC date.
+                # Flag resets automatically the next UTC day when the daily limit refreshes.
                 if llm_bundle.get("rate_limited", False):
-                    score_unscored_processed_articles._rate_limited = True
-                    logger.warning("V2 batch hit rate limit - disabling LLM for remaining chunks in this run.")
+                    score_unscored_processed_articles._rate_limited_date = datetime.now(timezone.utc).date().isoformat()
+                    logger.warning(
+                        "V2 batch hit OpenRouter daily rate limit - LLM scoring disabled for the rest of UTC day %s.",
+                        score_unscored_processed_articles._rate_limited_date,
+                    )
 
             except Exception as exc:
                 logger.warning("V2 LLM scoring failed for chunk starting at %s: %s", chunk_idx, exc)
