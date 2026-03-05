@@ -145,19 +145,19 @@ class TFTPredictor:
         dl = ds.to_dataloader(train=False, batch_size=1, num_workers=0)
 
         try:
-            raw = self.model.predict(dl, mode="raw")
-
-            if isinstance(raw, dict):
-                pred_tensor = raw.get("prediction", list(raw.values())[0])
-            else:
-                pred_tensor = raw
-
             import torch
+
+            # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
+            # Avoids the inhomogeneous-shape error from mode="raw" which returns a
+            # NamedTuple; np.array() cannot convert that to a uniform array.
+            pred_tensor = self.model.predict(dl, mode="quantiles")
+
             if isinstance(pred_tensor, torch.Tensor):
                 pred_np = pred_tensor.cpu().numpy()
             else:
                 pred_np = np.array(pred_tensor)
 
+            # Take first sample: (pred_len, n_quantiles)
             if pred_np.ndim == 3:
                 pred_for_format = pred_np[0]
             elif pred_np.ndim == 2:

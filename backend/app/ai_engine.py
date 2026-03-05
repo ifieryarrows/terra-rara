@@ -1409,7 +1409,7 @@ def score_unscored_processed_articles(
 
         llm_results_by_id: dict[int, dict] = {}
         llm_candidates: list[dict] = []
-        global_rate_limited = getattr(run_v2_scoring_pipeline, "_rate_limited", False)
+        global_rate_limited = getattr(score_unscored_processed_articles, "_rate_limited", False)
 
         if settings.openrouter_api_key and llm_budget_remaining > 0 and not global_rate_limited:
             llm_take = min(len(chunk_items), llm_budget_remaining)
@@ -1432,7 +1432,7 @@ def score_unscored_processed_articles(
 
                 # If LLM returned 100% fail and flagged rate limit:
                 if llm_bundle.get("rate_limited", False):
-                    run_v2_scoring_pipeline._rate_limited = True
+                    score_unscored_processed_articles._rate_limited = True
                     logger.warning("V2 batch hit rate limit - disabling LLM for remaining chunks in this run.")
 
             except Exception as exc:
