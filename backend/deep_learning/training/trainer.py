@@ -286,7 +286,9 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
     from dataclasses import replace
     from deep_learning.config import ASROConfig, TFTModelConfig, TrainingConfig
 
-    results_path = Path(cfg.training.checkpoint_dir) / "optuna_results.json"
+    # optuna_results.json is saved at tft/ root (alongside best_tft_asro.ckpt),
+    # not inside the checkpoints/ subdirectory.
+    results_path = Path(cfg.training.best_model_path).parent / "optuna_results.json"
     if not results_path.exists():
         return cfg
 

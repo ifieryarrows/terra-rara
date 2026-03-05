@@ -20,6 +20,7 @@ _HF_TOKEN_ENV = "HF_TOKEN"
 _ARTIFACTS = [
     "best_tft_asro.ckpt",
     "pca_finbert.joblib",
+    "optuna_results.json",
 ]
 
 

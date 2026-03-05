@@ -204,7 +204,8 @@ def run_hyperopt(
     logger.info("Optuna best trial #%d: val_loss=%.6f", best.number, best.value)
     logger.info("Best params: %s", best.params)
 
-    results_path = Path(base_cfg.training.checkpoint_dir) / "optuna_results.json"
+    # Save alongside best_tft_asro.ckpt (tft/ root) so upload_tft_artifacts picks it up.
+    results_path = Path(base_cfg.training.best_model_path).parent / "optuna_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.write_text(json.dumps({
         "best_trial": best.number,
