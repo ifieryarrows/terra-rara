@@ -50,7 +50,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         dropout=trial.suggest_float("dropout", 0.1, 0.5, step=0.05),
         hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 32, step=8),
         quantiles=base_cfg.model.quantiles,
-        learning_rate=trial.suggest_float("learning_rate", 5e-5, 5e-3, log=True),
+        # Cap at 1e-3: two consecutive Optuna runs both selected ~3-4e-3 which
+        # caused the model to converge in 1 epoch then diverge. 1e-3 is the
+        # practical upper bound for stable TFT training on ~300 samples.
+        learning_rate=trial.suggest_float("learning_rate", 5e-5, 1e-3, log=True),
         reduce_on_plateau_patience=4,
         gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.5, 2.0, step=0.5),
     )

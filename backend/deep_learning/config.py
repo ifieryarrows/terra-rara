@@ -102,7 +102,9 @@ class ASROConfig:
     lambda_quantile: float = 0.4   # w_quantile; was 0.3 (unnormalised old formula)
     # lambda_vol is a sub-weight within the calibration bundle only.
     # It controls how much the Q90-Q10 spread tracks 2× actual σ.
-    lambda_vol: float = 0.2
+    # Two independent Optuna runs (20 trials each) both converged on 0.35 —
+    # updating default to match confirmed optimal value.
+    lambda_vol: float = 0.35
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
 
