@@ -43,11 +43,13 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     model_cfg = TFTModelConfig(
         max_encoder_length=trial.suggest_int("max_encoder_length", 30, 90, step=10),
         max_prediction_length=base_cfg.model.max_prediction_length,
-        # Cap at 64: beyond that the VSN encoder explodes to 3M+ params for our
-        # 313-sample dataset, causing the same overfitting we already saw at 64.
-        hidden_size=trial.suggest_int("hidden_size", 16, 64, step=16),
+        # Floor at 32: hidden=16 with dropout>0.3 leaves ~8 active neurons,
+        # compressing output distribution and preventing amplitude learning.
+        hidden_size=trial.suggest_int("hidden_size", 32, 64, step=16),
         attention_head_size=trial.suggest_int("attention_head_size", 1, 4),
-        dropout=trial.suggest_float("dropout", 0.1, 0.5, step=0.05),
+        # Cap at 0.35: dropout=0.5 with small hidden_size collapses the output
+        # range — the model physically cannot produce large predictions.
+        dropout=trial.suggest_float("dropout", 0.1, 0.35, step=0.05),
         hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 32, step=8),
         quantiles=base_cfg.model.quantiles,
         # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
@@ -98,12 +100,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     Single Optuna trial: train a TFT variant and return a composite score.
 
     Composite objective (lower is better):
-        score = val_loss - 0.5 * variance_penalty
+        score = val_loss + variance_penalty
 
     The variance penalty pushes Optuna away from "flat but directionally correct"
-    configs that game the Sharpe component with near-zero pred_std.  The penalty
-    fires when variance_ratio < 0.5 (i.e. predictions capture less than half the
-    actual volatility).
+    configs that game the Sharpe component with near-zero pred_std.  Penalty
+    coefficient is 2.0 (strong) — VR<0.5 configs are heavily penalised because
+    the loss function changes (TANH_SCALE, amplitude_loss) now make the model
+    *capable* of higher VR; low VR indicates a bad config, not a fundamental limit.
     """
     try:
         import lightning.pytorch as pl
@@ -187,9 +190,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
 
         # Penalty activates when VR < 0.5 (predictions cover less than half
-        # the real volatility). Scaled so VR=0 → penalty=0.5, VR=0.5 → 0.
+        # the real volatility). Scaled so VR=0 → penalty=2.0, VR=0.5 → 0.
+        # Strong coefficient (2.0) ensures flat configs cannot win even with
+        # very good val_loss, since typical val_loss range is [-0.15, +0.3].
         if vr < 0.5:
-            variance_penalty = 0.5 * (1.0 - vr / 0.5)
+            variance_penalty = 2.0 * (1.0 - vr / 0.5)
 
         trial.set_user_attr("variance_ratio", round(vr, 4))
         trial.set_user_attr("pred_std", round(pred_std, 6))

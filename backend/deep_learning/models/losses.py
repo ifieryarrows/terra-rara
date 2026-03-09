@@ -73,7 +73,7 @@ def debug_asro_loss_direction() -> dict:
 
         with torch.no_grad():
             med = p.detach()[..., len(quantiles) // 2]
-            signal = torch.tanh(med * 100.0)   # same scale as training loss
+            signal = torch.tanh(med * 20.0)   # same scale as training loss
             sr = float(
                 (signal * actual).mean() / ((signal * actual).std() + 1e-6)
             )
@@ -188,19 +188,20 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         median_pred = y_pred[:, :, self.median_idx]
         y_actual_f = y_actual.float()
 
-        # --- Sharpe component: fixed-scale tanh soft-sign (scale = 100) ---
-        # Root cause of directional collapse:
-        #   pred_std ≈ 0.01 (actual return space) → tanh(0.01) ≈ 0.01 (linear)
-        #   The Sharpe term becomes noise-dominated; quantile loss takes over.
+        # --- Sharpe component: tanh soft-sign ---
+        # Scale chosen so gradients stay alive through the full return distribution.
+        # Copper daily return std ≈ 0.024; we need sech²(pred*scale) > 0.5 for
+        # predictions up to ~actual_std, which requires scale*0.024 < 0.66 → scale < 28.
         #
-        # Fix: multiply pred by 100 before tanh so that return-scale predictions
-        # map into the soft-sign zone of tanh:
-        #   pred = 0.005 → tanh(0.5)  ≈ 0.46  (directional onset, gradient=0.79)
-        #   pred = 0.010 → tanh(1.0)  ≈ 0.76  (soft-sign, gradient=0.42)
-        #   pred = 0.020 → tanh(2.0)  ≈ 0.96  (full soft-sign, gradient=0.07)
-        # Gradient through tanh is non-zero everywhere (unlike sign()), preserving
-        # backprop in the early training epochs where |pred| is still small.
-        _TANH_SCALE = 100.0
+        # scale=20 gradient profile:
+        #   pred = 0.003 → tanh(0.06) = 0.06, grad = 0.996  (tiny signal → model must grow)
+        #   pred = 0.010 → tanh(0.20) = 0.20, grad = 0.961  (still linear zone)
+        #   pred = 0.024 → tanh(0.48) = 0.45, grad = 0.800  (actual_std level: strong grad)
+        #   pred = 0.050 → tanh(1.00) = 0.76, grad = 0.420  (only saturates at 2× actual)
+        #
+        # Previous scale=100 killed gradients above pred=0.015 (sech²=0.18), letting
+        # the model earn full Sharpe reward from predictions 7× smaller than actual vol.
+        _TANH_SCALE = 20.0
         signal = torch.tanh(median_pred * _TANH_SCALE)
         strategy_returns = signal * y_actual_f - self.rf
         sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
@@ -212,26 +213,22 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         actual_std = y_actual_f.std() + self.sharpe_eps
         vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
 
+        # --- Median amplitude penalty ---
+        # vol_loss only targets the Q10-Q90 band width; the model can widen bands
+        # while keeping median predictions flat.  This term directly penalises the
+        # median for having lower variance than actual returns.
+        # relu(1 - VR) fires when pred_std < actual_std; zero otherwise.
+        median_std = median_pred.std() + self.sharpe_eps
+        amplitude_loss = torch.relu(1.0 - median_std / actual_std)
+
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
 
-        # --- Weighted combination: w_quantile * calibration + w_sharpe * directional ---
-        #
-        # Old formula: sharpe + lambda_vol*vol + lambda_quantile*q
-        #   → implicit Sharpe weight = 1.0 (not normalised, hard to interpret)
-        #
-        # New formula: w_q * (q + lambda_vol*vol) + (1-w_q) * sharpe
-        #   → w_quantile + w_sharpe = 1.0, both components are interpretable
-        #   → lambda_quantile config value IS the quantile bundle weight (e.g. 0.4)
-        #
-        # Calibration bundle (quantile + vol):
-        #   ensures the 7 quantile bands remain properly calibrated;
-        #   TFT's probabilistic nature requires this or it degenerates to regression.
-        # Sharpe component:
-        #   ensures the median prediction is directionally correct;
-        #   without this the model regresses to mean → variance collapse.
-        w_sharpe = 1.0 - self.lambda_quantile          # e.g. 0.6
-        calibration = q_loss + self.lambda_vol * vol_loss
+        # --- Weighted combination ---
+        # calibration = quantile bands + band width + median amplitude
+        # w_quantile + w_sharpe = 1.0
+        w_sharpe = 1.0 - self.lambda_quantile
+        calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
         total = self.lambda_quantile * calibration + w_sharpe * sharpe_loss
         return total
 

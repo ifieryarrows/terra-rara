@@ -65,12 +65,10 @@ try:
             y_actual = y_actual.float()
             median_pred = y_pred[..., self.median_idx]
 
-            # Fixed-scale tanh soft-sign (scale = 100).
             # Mirrors losses.AdaptiveSharpeRatioLoss exactly.
-            # For return-scale predictions (pred_std ≈ 0.01):
-            #   pred = 0.010 → tanh(1.0) ≈ 0.76  (soft-sign, gradient=0.42)
-            #   pred = 0.020 → tanh(2.0) ≈ 0.96  (full soft-sign, gradient=0.07)
-            _TANH_SCALE = 100.0
+            # scale=20 keeps gradients alive through the full return distribution;
+            # previous scale=100 saturated above pred=0.015, killing amplitude learning.
+            _TANH_SCALE = 20.0
             signal = torch.tanh(median_pred * _TANH_SCALE)
             strategy_returns = signal * y_actual.float() - self.rf
             sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
@@ -82,14 +80,15 @@ try:
             actual_std = y_actual.std() + self.sharpe_eps
             vol_loss = torch.abs(pred_spread - 2.0 * actual_std)
 
+            # Median amplitude: penalise if median pred variance < actual variance
+            median_std = median_pred.std() + self.sharpe_eps
+            amplitude_loss = torch.relu(1.0 - median_std / actual_std)
+
             # Quantile (pinball) loss via parent — covers all 7 quantile bands
             q_loss = super().loss(y_pred, target)
 
-            # Weighted combination: w_q * calibration + (1-w_q) * sharpe
-            # lambda_quantile = explicit quantile bundle weight (e.g. 0.4 → 40/60 split)
-            # Sharpe operates only on the median (q50); quantile loss operates on all 7.
             w_sharpe = 1.0 - self.lambda_quantile
-            calibration = q_loss + self.lambda_vol * vol_loss
+            calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
             return self.lambda_quantile * calibration + w_sharpe * sharpe_loss
 
 except ImportError:
