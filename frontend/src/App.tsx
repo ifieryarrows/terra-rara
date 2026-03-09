@@ -337,8 +337,8 @@ function App() {
                     <div className="mt-2 flex justify-between text-xs py-1.5">
                       <span className="text-gray-500">Risk</span>
                       <span className={clsx("font-mono text-xs font-bold",
-                        tftAnalysis.risk_level === 'DUSUK' ? "text-emerald-400" :
-                        tftAnalysis.risk_level === 'ORTA' ? "text-amber-400" : "text-rose-400"
+                        tftAnalysis.risk_level === 'LOW' ? "text-emerald-400" :
+                        tftAnalysis.risk_level === 'MEDIUM' ? "text-amber-400" : "text-rose-400"
                       )}>
                         {tftAnalysis.risk_level}
                       </span>
@@ -349,13 +349,13 @@ function App() {
                     <div className="flex items-center gap-2">
                       <div className={clsx(
                         "w-2 h-2 rounded-full animate-pulse",
-                        tftDirection === 'YUKARI' ? "bg-emerald-400" :
-                          tftDirection === 'ASAGI' ? "bg-rose-400" : "bg-amber-400"
+                        tftDirection === 'BULLISH' ? "bg-emerald-400" :
+                          tftDirection === 'BEARISH' ? "bg-rose-400" : "bg-amber-400"
                       )} />
                       <span className={clsx(
                         "text-[10px] font-bold tracking-wider",
-                        tftDirection === 'YUKARI' ? "text-emerald-400" :
-                          tftDirection === 'ASAGI' ? "text-rose-400" : "text-amber-400"
+                        tftDirection === 'BULLISH' ? "text-emerald-400" :
+                          tftDirection === 'BEARISH' ? "text-rose-400" : "text-amber-400"
                       )}>
                         DEEP LEARNING: {tftDirection}
                       </span>

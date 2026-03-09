@@ -108,8 +108,8 @@ export interface TFTModelMetadata {
 export interface TFTAnalysisResponse {
   symbol: string;
   model_type: string;
-  direction: 'YUKARI' | 'ASAGI' | 'YATAY';
-  risk_level: 'YUKSEK' | 'ORTA' | 'DUSUK';
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  risk_level: 'HIGH' | 'MEDIUM' | 'LOW';
   prediction: TFTPrediction;
   model_metadata: TFTModelMetadata | null;
   generated_at: string;

@@ -257,19 +257,19 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
 
     median_ret = prediction.get("predicted_return_median", 0)
     if median_ret > 0.005:
-        direction = "YUKARI"
+        direction = "BULLISH"
     elif median_ret < -0.005:
-        direction = "ASAGI"
+        direction = "BEARISH"
     else:
-        direction = "YATAY"
+        direction = "NEUTRAL"
 
     vol = prediction.get("volatility_estimate", 0)
     if vol > 0.02:
-        risk_level = "YUKSEK"
+        risk_level = "HIGH"
     elif vol > 0.01:
-        risk_level = "ORTA"
+        risk_level = "MEDIUM"
     else:
-        risk_level = "DUSUK"
+        risk_level = "LOW"
 
     return {
         "symbol": symbol,
