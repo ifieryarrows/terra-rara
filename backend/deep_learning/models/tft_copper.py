@@ -244,33 +244,47 @@ def format_prediction(
         baseline_price: current price for return-to-price conversion
 
     Returns:
-        Dict with median forecast, confidence bands, and volatility estimate.
+        Dict with per-day forecasts, confidence bands, and volatility estimate.
+        Top-level fields use the *final* day (end of horizon) for backward compat.
     """
     pred = raw_prediction.cpu().numpy() if isinstance(raw_prediction, torch.Tensor) else raw_prediction
-
+    n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
-    q_dict = {f"q{q:.2f}": float(pred[0, i]) for i, q in enumerate(quantiles)}
 
-    median_return = float(pred[0, median_idx])
-    q10_return = float(pred[0, 1]) if len(quantiles) > 2 else median_return
-    q90_return = float(pred[0, -2]) if len(quantiles) > 2 else median_return
-    q02_return = float(pred[0, 0])
-    q98_return = float(pred[0, -1])
+    # Per-day forecast array
+    daily_forecasts = []
+    for d in range(n_days):
+        med = float(pred[d, median_idx])
+        q10 = float(pred[d, 1]) if len(quantiles) > 2 else med
+        q90 = float(pred[d, -2]) if len(quantiles) > 2 else med
+        q02 = float(pred[d, 0])
+        q98 = float(pred[d, -1])
+        daily_forecasts.append({
+            "day": d + 1,
+            "return_median": med,
+            "return_q10": q10,
+            "return_q90": q90,
+            "price_median": baseline_price * (1 + med),
+            "price_q10": baseline_price * (1 + q10),
+            "price_q90": baseline_price * (1 + q90),
+            "price_q02": baseline_price * (1 + q02),
+            "price_q98": baseline_price * (1 + q98),
+        })
 
-    vol_estimate = (q90_return - q10_return) / 2.0
+    # Use the last day as the headline (end-of-horizon target)
+    last = daily_forecasts[-1]
+    vol_estimate = (last["return_q90"] - last["return_q10"]) / 2.0
 
     return {
-        "predicted_return_median": median_return,
-        "predicted_return_q10": q10_return,
-        "predicted_return_q90": q90_return,
-        "predicted_price_median": baseline_price * (1 + median_return),
-        "predicted_price_q10": baseline_price * (1 + q10_return),
-        "predicted_price_q90": baseline_price * (1 + q90_return),
-        "confidence_band_96": (
-            baseline_price * (1 + q02_return),
-            baseline_price * (1 + q98_return),
-        ),
+        "predicted_return_median": last["return_median"],
+        "predicted_return_q10": last["return_q10"],
+        "predicted_return_q90": last["return_q90"],
+        "predicted_price_median": last["price_median"],
+        "predicted_price_q10": last["price_q10"],
+        "predicted_price_q90": last["price_q90"],
+        "confidence_band_96": (last["price_q02"], last["price_q98"]),
         "volatility_estimate": vol_estimate,
-        "quantiles": q_dict,
-        "prediction_horizon_days": pred.shape[0],
+        "quantiles": {f"q{q:.2f}": float(pred[-1, i]) for i, q in enumerate(quantiles)},
+        "prediction_horizon_days": n_days,
+        "daily_forecasts": daily_forecasts,
     }

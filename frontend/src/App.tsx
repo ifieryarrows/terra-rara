@@ -293,7 +293,7 @@ function App() {
           </GlassCard>
 
           {/* TFT-ASRO Prediction Card */}
-          <GlassCard title="TFT-ASRO (T+1)" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+          <GlassCard title={`TFT-ASRO (${tftAnalysis ? tftAnalysis.prediction.prediction_horizon_days + 'D' : '5D'})`} icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
             {tftAnalysis ? (
               <>
                 <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -301,39 +301,51 @@ function App() {
                 </div>
                 <div className="relative z-10 flex flex-col h-full justify-between py-1">
                   <div>
+                    {/* Headline: end-of-horizon return */}
                     <div className="flex items-baseline gap-2">
                       <span className={clsx("text-4xl font-light font-mono tracking-tighter", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                         {tftBullish ? '+' : ''}<NumberTicker value={(tftReturn || 0) * 100} />%
                       </span>
+                      <span className="text-xs text-gray-500 font-mono">T+{tftAnalysis.prediction.prediction_horizon_days}</span>
                     </div>
-                    <div className="mt-3 space-y-1">
-                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
-                        <span className="text-gray-500">Target</span>
-                        <span className="font-mono text-gray-200">${tftAnalysis.prediction.predicted_price_median.toFixed(2)}</span>
+
+                    {/* Daily forecast mini-table */}
+                    <div className="mt-3 border border-white/5 rounded-lg overflow-hidden">
+                      <div className="grid grid-cols-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-white/[0.02] px-2 py-1.5">
+                        <span>Day</span>
+                        <span className="text-right">Return</span>
+                        <span className="text-right">Price</span>
+                        <span className="text-right">Band</span>
                       </div>
-                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
-                        <span className="text-gray-500">Band (80%)</span>
-                        <span className="font-mono text-gray-200">
-                          ${tftAnalysis.prediction.predicted_price_q10.toFixed(2)} – ${tftAnalysis.prediction.predicted_price_q90.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
-                        <span className="text-gray-500">Volatility</span>
-                        <span className="font-mono text-gray-200">{(tftAnalysis.prediction.volatility_estimate * 100).toFixed(2)}%</span>
-                      </div>
-                      <div className="flex justify-between text-xs py-1.5">
-                        <span className="text-gray-500">Risk</span>
-                        <span className={clsx("font-mono text-xs font-bold",
-                          tftAnalysis.risk_level === 'DUSUK' ? "text-emerald-400" :
-                          tftAnalysis.risk_level === 'ORTA' ? "text-amber-400" : "text-rose-400"
-                        )}>
-                          {tftAnalysis.risk_level}
-                        </span>
-                      </div>
+                      {tftAnalysis.prediction.daily_forecasts?.map((fc) => {
+                        const dayBull = fc.return_median >= 0;
+                        return (
+                          <div key={fc.day} className="grid grid-cols-4 text-[11px] font-mono px-2 py-1 border-t border-white/5 hover:bg-white/[0.02] transition-colors">
+                            <span className="text-gray-400">T+{fc.day}</span>
+                            <span className={clsx("text-right", dayBull ? "text-emerald-400" : "text-rose-400")}>
+                              {dayBull ? '+' : ''}{(fc.return_median * 100).toFixed(2)}%
+                            </span>
+                            <span className="text-right text-gray-300">${fc.price_median.toFixed(2)}</span>
+                            <span className="text-right text-gray-500 text-[10px]">
+                              {fc.price_q10.toFixed(2)}–{fc.price_q90.toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 flex justify-between text-xs py-1.5">
+                      <span className="text-gray-500">Risk</span>
+                      <span className={clsx("font-mono text-xs font-bold",
+                        tftAnalysis.risk_level === 'DUSUK' ? "text-emerald-400" :
+                        tftAnalysis.risk_level === 'ORTA' ? "text-amber-400" : "text-rose-400"
+                      )}>
+                        {tftAnalysis.risk_level}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-white/5">
+                  <div className="mt-3 pt-3 border-t border-white/5">
                     <div className="flex items-center gap-2">
                       <div className={clsx(
                         "w-2 h-2 rounded-full animate-pulse",

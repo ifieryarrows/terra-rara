@@ -61,6 +61,18 @@ export interface CommentaryResponse {
   ai_stance?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
 }
 
+export interface TFTDailyForecast {
+  day: number;
+  return_median: number;
+  return_q10: number;
+  return_q90: number;
+  price_median: number;
+  price_q10: number;
+  price_q90: number;
+  price_q02: number;
+  price_q98: number;
+}
+
 export interface TFTPrediction {
   predicted_return_median: number;
   predicted_return_q10: number;
@@ -72,6 +84,7 @@ export interface TFTPrediction {
   volatility_estimate: number;
   quantiles: Record<string, number>;
   prediction_horizon_days: number;
+  daily_forecasts: TFTDailyForecast[];
 }
 
 export interface TFTModelMetadata {
