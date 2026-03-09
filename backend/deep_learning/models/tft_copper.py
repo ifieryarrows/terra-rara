@@ -271,20 +271,24 @@ def format_prediction(
             "price_q98": baseline_price * (1 + q98),
         })
 
-    # Use the last day as the headline (end-of-horizon target)
+    # T+1 is the primary signal (most reliable, highest signal-to-noise).
+    # T+5 (end-of-horizon) provides the weekly trend direction.
+    first = daily_forecasts[0]
     last = daily_forecasts[-1]
-    vol_estimate = (last["return_q90"] - last["return_q10"]) / 2.0
+    vol_estimate = (first["return_q90"] - first["return_q10"]) / 2.0
 
     return {
-        "predicted_return_median": last["return_median"],
-        "predicted_return_q10": last["return_q10"],
-        "predicted_return_q90": last["return_q90"],
-        "predicted_price_median": last["price_median"],
-        "predicted_price_q10": last["price_q10"],
-        "predicted_price_q90": last["price_q90"],
-        "confidence_band_96": (last["price_q02"], last["price_q98"]),
+        "predicted_return_median": first["return_median"],
+        "predicted_return_q10": first["return_q10"],
+        "predicted_return_q90": first["return_q90"],
+        "predicted_price_median": first["price_median"],
+        "predicted_price_q10": first["price_q10"],
+        "predicted_price_q90": first["price_q90"],
+        "confidence_band_96": (first["price_q02"], first["price_q98"]),
         "volatility_estimate": vol_estimate,
-        "quantiles": {f"q{q:.2f}": float(pred[-1, i]) for i, q in enumerate(quantiles)},
+        "quantiles": {f"q{q:.2f}": float(pred[0, i]) for i, q in enumerate(quantiles)},
+        "weekly_return": last["return_median"],
+        "weekly_price": last["price_median"],
         "prediction_horizon_days": n_days,
         "daily_forecasts": daily_forecasts,
     }

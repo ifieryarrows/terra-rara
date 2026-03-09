@@ -255,6 +255,7 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
 
     metadata = predictor.get_model_metadata(session)
 
+    # Direction based on T+1 (most reliable signal)
     median_ret = prediction.get("predicted_return_median", 0)
     if median_ret > 0.005:
         direction = "BULLISH"
@@ -262,6 +263,15 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
         direction = "BEARISH"
     else:
         direction = "NEUTRAL"
+
+    # Weekly trend based on T+5 (end-of-horizon)
+    weekly_ret = prediction.get("weekly_return", median_ret)
+    if weekly_ret > 0.005:
+        weekly_trend = "BULLISH"
+    elif weekly_ret < -0.005:
+        weekly_trend = "BEARISH"
+    else:
+        weekly_trend = "NEUTRAL"
 
     vol = prediction.get("volatility_estimate", 0)
     if vol > 0.02:
@@ -275,6 +285,7 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
         "symbol": symbol,
         "model_type": "TFT-ASRO",
         "direction": direction,
+        "weekly_trend": weekly_trend,
         "risk_level": risk_level,
         "prediction": prediction,
         "model_metadata": metadata,

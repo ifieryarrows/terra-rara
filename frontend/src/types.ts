@@ -83,6 +83,8 @@ export interface TFTPrediction {
   confidence_band_96: [number, number];
   volatility_estimate: number;
   quantiles: Record<string, number>;
+  weekly_return: number;
+  weekly_price: number;
   prediction_horizon_days: number;
   daily_forecasts: TFTDailyForecast[];
 }
@@ -109,6 +111,7 @@ export interface TFTAnalysisResponse {
   symbol: string;
   model_type: string;
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  weekly_trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   risk_level: 'HIGH' | 'MEDIUM' | 'LOW';
   prediction: TFTPrediction;
   model_metadata: TFTModelMetadata | null;

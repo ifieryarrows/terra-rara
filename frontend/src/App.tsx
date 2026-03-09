@@ -192,10 +192,12 @@ function App() {
 
   const isBullish = analysis && analysis.predicted_return >= 0;
 
-  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;
+  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;  // T+1
+  const tftWeeklyReturn = tftAnalysis?.prediction?.weekly_return ?? null;     // T+5
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
-  const tftDirection = tftAnalysis?.direction;
+  const tftDirection = tftAnalysis?.direction;           // T+1 based
+  const tftWeeklyTrend = tftAnalysis?.weekly_trend;      // T+5 based
 
   return (
     <div className="min-h-screen bg-midnight text-gray-100 p-8 font-sans selection:bg-copper-500/30">
@@ -293,7 +295,7 @@ function App() {
           </GlassCard>
 
           {/* TFT-ASRO Prediction Card */}
-          <GlassCard title={`TFT-ASRO (${tftAnalysis ? tftAnalysis.prediction.prediction_horizon_days + 'D' : '5D'})`} icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+          <GlassCard title="TFT-ASRO" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
             {tftAnalysis ? (
               <>
                 <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -301,12 +303,29 @@ function App() {
                 </div>
                 <div className="relative z-10 flex flex-col h-full justify-between py-1">
                   <div>
-                    {/* Headline: end-of-horizon return */}
+                    {/* T+1 headline (most reliable signal) */}
                     <div className="flex items-baseline gap-2">
                       <span className={clsx("text-4xl font-light font-mono tracking-tighter", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                         {tftBullish ? '+' : ''}<NumberTicker value={(tftReturn || 0) * 100} />%
                       </span>
-                      <span className="text-xs text-gray-500 font-mono">T+{tftAnalysis.prediction.prediction_horizon_days}</span>
+                      <span className="text-xs text-gray-500 font-mono">T+1</span>
+                    </div>
+
+                    {/* Weekly trend summary */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">5D Trend</span>
+                      <span className={clsx("font-mono text-xs font-medium",
+                        tftWeeklyTrend === 'BULLISH' ? "text-emerald-400" :
+                        tftWeeklyTrend === 'BEARISH' ? "text-rose-400" : "text-amber-400"
+                      )}>
+                        {tftWeeklyReturn !== null ? `${tftWeeklyReturn >= 0 ? '+' : ''}${(tftWeeklyReturn * 100).toFixed(2)}%` : '—'}
+                      </span>
+                      <span className={clsx("text-[10px] font-bold",
+                        tftWeeklyTrend === 'BULLISH' ? "text-emerald-400" :
+                        tftWeeklyTrend === 'BEARISH' ? "text-rose-400" : "text-amber-400"
+                      )}>
+                        {tftWeeklyTrend}
+                      </span>
                     </div>
 
                     {/* Daily forecast mini-table */}
@@ -320,8 +339,11 @@ function App() {
                       {tftAnalysis.prediction.daily_forecasts?.map((fc) => {
                         const dayBull = fc.return_median >= 0;
                         return (
-                          <div key={fc.day} className="grid grid-cols-4 text-[11px] font-mono px-2 py-1 border-t border-white/5 hover:bg-white/[0.02] transition-colors">
-                            <span className="text-gray-400">T+{fc.day}</span>
+                          <div key={fc.day} className={clsx(
+                            "grid grid-cols-4 text-[11px] font-mono px-2 py-1 border-t border-white/5 transition-colors",
+                            fc.day === 1 ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"
+                          )}>
+                            <span className={clsx("text-gray-400", fc.day === 1 && "text-gray-200 font-medium")}>T+{fc.day}</span>
                             <span className={clsx("text-right", dayBull ? "text-emerald-400" : "text-rose-400")}>
                               {dayBull ? '+' : ''}{(fc.return_median * 100).toFixed(2)}%
                             </span>
@@ -357,7 +379,7 @@ function App() {
                         tftDirection === 'BULLISH' ? "text-emerald-400" :
                           tftDirection === 'BEARISH' ? "text-rose-400" : "text-amber-400"
                       )}>
-                        DEEP LEARNING: {tftDirection}
+                        T+1: {tftDirection}
                       </span>
                       <span className="ml-auto px-2 py-0.5 rounded text-[10px] font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">TFT</span>
                     </div>
