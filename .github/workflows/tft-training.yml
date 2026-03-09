@@ -1,6 +1,10 @@
 name: TFT-ASRO Training Pipeline
 
 on:
+    schedule:
+        # Weekly retrain: every Sunday at 22:00 UTC (01:00 Istanbul Monday)
+        - cron: "0 22 * * 0"
+
     workflow_dispatch:
         inputs:
             use_asro:
@@ -62,11 +66,12 @@ jobs:
               continue-on-error: true
 
             - name: Run Optuna hyperparameter search
-              if: ${{ github.event.inputs.run_hyperopt == 'true' }}
+              if: ${{ github.event.inputs.run_hyperopt != 'false' }}
               working-directory: backend
               run: |
+                  N_TRIALS="${{ github.event.inputs.hyperopt_trials || '20' }}"
                   python -m deep_learning.training.hyperopt \
-                    --n-trials ${{ github.event.inputs.hyperopt_trials }} \
+                    --n-trials "$N_TRIALS" \
                     --study-name tft_asro_optuna
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -75,7 +80,7 @@ jobs:
               working-directory: backend
               run: |
                   ASRO_FLAG=""
-                  if [ "${{ github.event.inputs.use_asro }}" == "false" ]; then
+                  if [ "${{ github.event.inputs.use_asro || 'true' }}" == "false" ]; then
                     ASRO_FLAG="--no-asro"
                   fi
                   python -m deep_learning.training.trainer --symbol HG=F $ASRO_FLAG

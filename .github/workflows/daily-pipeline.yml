@@ -7,10 +7,9 @@ on:
         - cron: "0 23 * * *"
 
     workflow_dispatch:
-        # Allow manual trigger from GitHub UI
         inputs:
             train_model:
-                description: "Train/retrain the XGBoost model (also triggers TFT if enabled)"
+                description: "Retrain XGBoost model (TFT retrain is handled by the weekly tft-training workflow)"
                 required: false
                 default: "false"
                 type: choice

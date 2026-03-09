@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceDot, ReferenceLine, ComposedChart, Line
+  ReferenceDot, ReferenceLine
 } from 'recharts';
 import { motion } from 'framer-motion';
 import {
@@ -14,7 +14,7 @@ import { SpeedInsights } from '@vercel/speed-insights/react';
 import { fetchAnalysis, fetchHistory, fetchCommentary, fetchTFTAnalysis } from './api';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
-  CommentaryResponse, TFTAnalysisResponse, TFTDailyForecast
+  CommentaryResponse, TFTAnalysisResponse
 } from './types';
 import './App.css';
 
@@ -80,49 +80,6 @@ const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className =
     >
       {format(value)}
     </motion.span>
-  );
-};
-
-// 5-day forecast sparkline with uncertainty band
-const TFTSparkline = ({ forecasts, currentPrice }: { forecasts: TFTDailyForecast[], currentPrice: number }) => {
-  if (!forecasts?.length) return null;
-  const lastMedian = forecasts[forecasts.length - 1].price_median;
-  const isBull = lastMedian >= currentPrice;
-  const color = isBull ? '#34D399' : '#FB7185';
-
-  const raw = [
-    { label: 'Now', med: currentPrice, base: currentPrice, spread: 0 },
-    ...forecasts.map(fc => ({
-      label: `T+${fc.day}`,
-      med: fc.price_median,
-      base: fc.price_q10,
-      spread: fc.price_q90 - fc.price_q10,
-    })),
-  ];
-
-  const allVals = [currentPrice, ...forecasts.flatMap(fc => [fc.price_q10, fc.price_q90])];
-  const lo = Math.min(...allVals);
-  const hi = Math.max(...allVals);
-  const pad = (hi - lo) * 0.6 || 0.05;
-
-  return (
-    <ResponsiveContainer width="100%" height={72}>
-      <ComposedChart data={raw} margin={{ top: 6, right: 2, bottom: 0, left: 2 }}>
-        <defs>
-          <linearGradient id="tftBand" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={color} stopOpacity={0.05} />
-          </linearGradient>
-        </defs>
-        <YAxis domain={[lo - pad, hi + pad]} hide />
-        {/* Transparent base positions band at Q10 */}
-        <Area type="monotone" dataKey="base" stackId="b" fill="transparent" stroke="none" isAnimationActive={false} legendType="none" />
-        {/* Colored spread from Q10 to Q90 */}
-        <Area type="monotone" dataKey="spread" stackId="b" fill="url(#tftBand)" stroke="none" legendType="none" />
-        {/* Median price line */}
-        <Line type="monotone" dataKey="med" stroke={color} strokeWidth={2} dot={false} legendType="none" />
-      </ComposedChart>
-    </ResponsiveContainer>
   );
 };
 
@@ -247,12 +204,11 @@ function App() {
 
   const isBullish = analysis && analysis.predicted_return >= 0;
 
-  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;  // T+1
-  const tftWeeklyReturn = tftAnalysis?.prediction?.weekly_return ?? null;     // T+5
+  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
-  const tftDirection = tftAnalysis?.direction;           // T+1 based
-  const tftWeeklyTrend = tftAnalysis?.weekly_trend;      // T+5 based
+  const tftDirection = tftAnalysis?.direction;
+  const tftWeeklyTrend = tftAnalysis?.weekly_trend;
 
   return (
     <div className="min-h-screen bg-midnight text-gray-100 p-8 font-sans selection:bg-copper-500/30">
@@ -349,20 +305,18 @@ function App() {
             </div>
           </GlassCard>
 
-          {/* TFT-ASRO Prediction Card */}
+          {/* TFT-ASRO Prediction Card — T+1 focused */}
           <GlassCard title="Deep Learning Forecast" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
             {tftAnalysis ? (() => {
               const t1 = tftAnalysis.prediction.daily_forecasts?.[0];
-              const t5 = tftAnalysis.prediction.daily_forecasts?.[4];
-              const currentPrice = tftAnalysis.prediction.predicted_price_median / (1 + (tftReturn ?? 0));
               return (
                 <>
                   <div className="absolute top-0 right-0 p-4 opacity-5">
                     {tftBullish ? <TrendingUp size={100} /> : <TrendingDown size={100} />}
                   </div>
-                  <div className="relative z-10 space-y-3">
+                  <div className="relative z-10 space-y-4">
 
-                    {/* Direction badge */}
+                    {/* T+1 Direction badge */}
                     <div className={clsx(
                       "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-bold tracking-wide",
                       tftDirection === 'BULLISH' ? "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20" :
@@ -373,34 +327,53 @@ function App() {
                       {tftDirection}
                     </div>
 
-                    {/* Tomorrow headline */}
+                    {/* Next session headline */}
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">Tomorrow</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">Next Session (T+1)</p>
                       <div className="flex items-baseline gap-2">
                         <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                           {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
                         </span>
                         <span className="text-sm text-gray-400 font-mono">${t1?.price_median.toFixed(2)}</span>
                       </div>
-                      <p className="text-[10px] text-gray-600 mt-0.5 font-mono">
-                        range ${t1?.price_q10.toFixed(2)} – ${t1?.price_q90.toFixed(2)}
-                      </p>
                     </div>
 
-                    {/* 5-day sparkline */}
-                    <div className="rounded-xl bg-white/[0.02] border border-white/5 px-2 pt-2 pb-1">
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1 px-1">5-Day Outlook</p>
-                      <TFTSparkline forecasts={tftAnalysis.prediction.daily_forecasts} currentPrice={currentPrice} />
-                      <div className="flex justify-between text-[10px] text-gray-600 font-mono px-1 mt-1">
-                        <span>Now ${currentPrice.toFixed(2)}</span>
-                        <span className={clsx(tftWeeklyTrend === 'BULLISH' ? "text-emerald-400/70" : "text-rose-400/70")}>
-                          Fri {tftWeeklyReturn !== null ? `${tftWeeklyReturn >= 0 ? '+' : ''}${(tftWeeklyReturn * 100).toFixed(1)}%` : ''} ${t5?.price_median.toFixed(2)}
+                    {/* T+1 expected range */}
+                    <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">Expected Range (80% confidence)</p>
+                      <div className="flex items-center justify-between">
+                        <div className="text-center">
+                          <p className="text-[10px] text-gray-600 mb-0.5">Low</p>
+                          <span className="text-sm font-mono text-rose-400/80">${t1?.price_q10.toFixed(2)}</span>
+                        </div>
+                        <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/5 relative overflow-hidden">
+                          <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 via-gray-500/20 to-emerald-500/40 rounded-full" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] text-gray-600 mb-0.5">High</p>
+                          <span className="text-sm font-mono text-emerald-400/80">${t1?.price_q90.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Weekly trend — direction only, no price targets */}
+                    <div className="flex items-center justify-between py-2 border-t border-white/5">
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">Week Trend</span>
+                      <div className="flex items-center gap-1.5">
+                        {tftWeeklyTrend === 'BULLISH' ? <TrendingUp size={12} className="text-emerald-400" /> :
+                         tftWeeklyTrend === 'BEARISH' ? <TrendingDown size={12} className="text-rose-400" /> :
+                         <Activity size={12} className="text-amber-400" />}
+                        <span className={clsx("text-xs font-bold tracking-wide",
+                          tftWeeklyTrend === 'BULLISH' ? "text-emerald-400" :
+                          tftWeeklyTrend === 'BEARISH' ? "text-rose-400" : "text-amber-400"
+                        )}>
+                          {tftWeeklyTrend}
                         </span>
                       </div>
                     </div>
 
                     {/* Risk + model tag */}
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         {tftAnalysis.risk_level === 'LOW'
                           ? <CheckCircle2 size={13} className="text-emerald-400" />
@@ -411,7 +384,7 @@ function App() {
                           tftAnalysis.risk_level === 'LOW' ? "text-emerald-400" :
                           tftAnalysis.risk_level === 'MEDIUM' ? "text-amber-400" : "text-rose-400"
                         )}>
-                          {tftAnalysis.risk_level} VOLATILITY
+                          {tftAnalysis.risk_level} RISK
                         </span>
                       </div>
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">TFT-ASRO</span>

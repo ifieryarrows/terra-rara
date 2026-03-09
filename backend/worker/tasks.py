@@ -119,11 +119,16 @@ async def run_pipeline(
         Stage 1c: Cut-off calculation
         Stage 1d: Price ingestion
         Stage 2: Sentiment scoring
-        Stage 3: Sentiment aggregation  
-        Stage 4: Model training (optional)
-        Stage 5: Snapshot generation
+        Stage 3: Sentiment aggregation
+        Stage 3.5: FinBERT embedding extraction
+        Stage 4: XGBoost training (optional)
+        Stage 5: XGBoost snapshot
+        Stage 5.5: TFT-ASRO inference (downloads checkpoint from HF Hub)
         Stage 6: Commentary generation
-    
+
+    Note: TFT-ASRO full training is handled exclusively by the weekly
+    tft-training.yml GitHub workflow. The daily pipeline only runs inference.
+
     Args:
         ctx: arq context (contains redis connection)
         run_id: Unique identifier for this run
@@ -502,39 +507,10 @@ async def _execute_pipeline_stages_v2(
         result["model_trained"] = False
 
     # -------------------------------------------------------------------------
-    # Stage 4.5: TFT-ASRO training (optional, parallel to XGBoost)
+    # Stage 4.5: TFT-ASRO — inference only (training handled by weekly
+    # tft-training.yml workflow; daily pipeline never retrains TFT)
     # -------------------------------------------------------------------------
-    if train_model:
-        logger.info(f"[run_id={run_id}] Stage 4.5: TFT-ASRO training")
-        try:
-            from deep_learning.training.trainer import train_tft_model
-
-            tft_result = train_tft_model(use_asro=True)
-
-            result["tft_trained"] = True
-            result["tft_metrics"] = tft_result.get("test_metrics", {})
-
-            update_run_metrics(
-                session, run_id,
-                tft_trained=True,
-                tft_val_loss=tft_result.get("test_metrics", {}).get("mae"),
-                tft_sharpe=tft_result.get("test_metrics", {}).get("sharpe_ratio"),
-                tft_directional_accuracy=tft_result.get("test_metrics", {}).get("directional_accuracy"),
-            )
-            session.commit()
-
-            logger.info(f"[run_id={run_id}] TFT-ASRO training complete")
-
-        except ImportError:
-            logger.info(f"[run_id={run_id}] Stage 4.5 skipped: pytorch-forecasting not installed")
-            result["tft_trained"] = False
-        except Exception as e:
-            logger.warning(f"[run_id={run_id}] Stage 4.5 failed (non-critical): {e}")
-            result["tft_training_error"] = str(e)
-            result["tft_trained"] = False
-            session.rollback()
-    else:
-        result["tft_trained"] = False
+    result["tft_trained"] = False
 
     # -------------------------------------------------------------------------
     # Stage 5: Generate snapshot
@@ -616,31 +592,34 @@ async def _execute_pipeline_stages_v2(
         session.rollback()
 
     # -------------------------------------------------------------------------
-    # Stage 6: Generate commentary (only if snapshot was generated)
+    # Stage 6: Generate commentary (if any snapshot was generated)
     # -------------------------------------------------------------------------
-    if (result.get("snapshot_generated") and snapshot_report) or result.get("tft_snapshot_generated"):
+    has_xgb_snapshot = result.get("snapshot_generated") and snapshot_report
+    has_tft_snapshot = result.get("tft_snapshot_generated")
+
+    if has_xgb_snapshot or has_tft_snapshot:
         logger.info(f"[run_id={run_id}] Stage 6: Generate commentary")
         try:
             from app.commentary import generate_and_save_commentary
-            
-            # Extract required fields from snapshot and await async call
+
+            report = snapshot_report or {}
             await generate_and_save_commentary(
                 session=session,
                 symbol="HG=F",
-                current_price=snapshot_report.get("current_price", 0.0),
-                predicted_price=snapshot_report.get("predicted_price", 0.0),
-                predicted_return=snapshot_report.get("predicted_return", 0.0),
-                sentiment_index=snapshot_report.get("sentiment_index", 0.0),
-                sentiment_label=snapshot_report.get("sentiment_label", "Neutral"),
-                top_influencers=snapshot_report.get("top_influencers", []),
-                news_count=snapshot_report.get("data_quality", {}).get("news_count_7d", 0),
+                current_price=report.get("current_price", 0.0),
+                predicted_price=report.get("predicted_price", 0.0),
+                predicted_return=report.get("predicted_return", 0.0),
+                sentiment_index=report.get("sentiment_index", 0.0),
+                sentiment_label=report.get("sentiment_label", "Neutral"),
+                top_influencers=report.get("top_influencers", []),
+                news_count=report.get("data_quality", {}).get("news_count_7d", 0),
             )
             session.commit()
-            
+
             result["commentary_generated"] = True
             update_run_metrics(session, run_id, commentary_generated=True)
             session.commit()
-            
+
         except Exception as e:
             logger.warning(f"[run_id={run_id}] Stage 6 failed: {e}")
             result["commentary_generated"] = False
