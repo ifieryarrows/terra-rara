@@ -60,3 +60,44 @@ export interface CommentaryResponse {
   generated_at: string | null;
   ai_stance?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
 }
+
+export interface TFTPrediction {
+  predicted_return_median: number;
+  predicted_return_q10: number;
+  predicted_return_q90: number;
+  predicted_price_median: number;
+  predicted_price_q10: number;
+  predicted_price_q90: number;
+  confidence_band_96: [number, number];
+  volatility_estimate: number;
+  quantiles: Record<string, number>;
+  prediction_horizon_days: number;
+}
+
+export interface TFTModelMetadata {
+  symbol: string;
+  trained_at: string | null;
+  checkpoint_path: string | null;
+  config: Record<string, any>;
+  metrics: {
+    mae?: number;
+    rmse?: number;
+    directional_accuracy?: number;
+    sharpe_ratio?: number;
+    sortino_ratio?: number;
+    variance_ratio?: number;
+    pred_std?: number;
+    actual_std?: number;
+    tail_capture_rate?: number;
+  };
+}
+
+export interface TFTAnalysisResponse {
+  symbol: string;
+  model_type: string;
+  direction: 'YUKARI' | 'ASAGI' | 'YATAY';
+  risk_level: 'YUKSEK' | 'ORTA' | 'DUSUK';
+  prediction: TFTPrediction;
+  model_metadata: TFTModelMetadata | null;
+  generated_at: string;
+}

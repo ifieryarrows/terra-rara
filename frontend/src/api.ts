@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisReport, HistoryResponse, HealthResponse, CommentaryResponse } from './types';
+import type { AnalysisReport, HistoryResponse, HealthResponse, CommentaryResponse, TFTAnalysisResponse } from './types';
 
 // Base URL for API calls
 // In production (Vercel), use VITE_API_URL env var pointing to Hugging Face backend
@@ -103,6 +103,19 @@ export interface MarketPricesResponse {
 export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
   const response = await api.get<MarketPricesResponse>('/market-prices');
   return response.data;
+}
+
+/**
+ * Fetch TFT-ASRO deep learning analysis
+ */
+export async function fetchTFTAnalysis(symbol: string = 'HG=F'): Promise<TFTAnalysisResponse | null> {
+  try {
+    const response = await api.get<TFTAnalysisResponse>(`/analysis/tft/${symbol}`);
+    return response.data;
+  } catch {
+    // TFT model may not be available yet — return null instead of throwing
+    return null;
+  }
 }
 
 export default api;

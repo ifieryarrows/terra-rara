@@ -1,16 +1,20 @@
 import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceDot, ReferenceLine, ReferenceArea
 } from 'recharts';
 import { motion } from 'framer-motion';
-import { Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown } from 'lucide-react';
+import {
+  Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown,
+  Brain, Target, Shield, BarChart2
+} from 'lucide-react';
 import clsx from 'clsx';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
-import { fetchAnalysis, fetchHistory, fetchCommentary } from './api';
+import { fetchAnalysis, fetchHistory, fetchCommentary, fetchTFTAnalysis } from './api';
 import type {
   AnalysisReport, HistoryResponse, HistoryDataPoint,
-  CommentaryResponse
+  CommentaryResponse, TFTAnalysisResponse
 } from './types';
 import './App.css';
 
@@ -83,6 +87,7 @@ const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className =
 
 function App() {
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
+  const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -91,12 +96,14 @@ function App() {
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
     try {
-      const [analysisData, historyData] = await Promise.all([
+      const [analysisData, historyData, tftData] = await Promise.all([
         fetchAnalysis('HG=F'),
         fetchHistory('HG=F', 180),
+        fetchTFTAnalysis('HG=F'),
       ]);
       setAnalysis(analysisData);
       setHistory(historyData);
+      setTftAnalysis(tftData);
       if (!silent) setIsInitialLoad(false);
     } catch (err) {
       console.error('Data load failed:', err);
@@ -185,6 +192,11 @@ function App() {
 
   const isBullish = analysis && analysis.predicted_return >= 0;
 
+  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;
+  const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
+  const tftMetrics = tftAnalysis?.model_metadata?.metrics;
+  const tftDirection = tftAnalysis?.direction;
+
   return (
     <div className="min-h-screen bg-midnight text-gray-100 p-8 font-sans selection:bg-copper-500/30">
 
@@ -230,45 +242,32 @@ function App() {
         {/* Dashboard Grid */}
         <div className="grid grid-cols-12 gap-6">
 
-          {/* Prediction Card */}
-          <GlassCard title="Model Forecast (T+1)" icon={Zap} colSpan={4} className={clsx("relative overflow-hidden", isBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
-            <div className="absolute top-0 right-0 p-6 opacity-10">
-              {isBullish ? <TrendingUp size={120} /> : <TrendingDown size={120} />}
+          {/* XGBoost Prediction Card */}
+          <GlassCard title="XGBoost (T+1)" icon={Zap} colSpan={3} className={clsx("relative overflow-hidden", isBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              {isBullish ? <TrendingUp size={80} /> : <TrendingDown size={80} />}
             </div>
-
-            <div className="relative z-10 flex flex-col h-full justify-between py-2">
+            <div className="relative z-10 flex flex-col h-full justify-between py-1">
               <div>
                 <div className="flex items-baseline gap-2">
-                  <span className={clsx("text-5xl font-light font-mono tracking-tighter", isBullish ? "text-emerald-400" : "text-rose-400")}>
+                  <span className={clsx("text-4xl font-light font-mono tracking-tighter", isBullish ? "text-emerald-400" : "text-rose-400")}>
                     {isBullish ? '+' : ''}<NumberTicker value={(analysis?.predicted_return || 0) * 100} />%
                   </span>
                 </div>
-                <div className="mt-4 space-y-2">
-                  <div className="flex justify-between text-sm py-2 border-b border-white/5">
-                    <span className="text-gray-500">Confidence</span>
+                <div className="mt-3 space-y-1">
+                  <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
+                    <span className="text-gray-500">Target</span>
+                    <span className="font-mono text-gray-200">${analysis?.predicted_price?.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
+                    <span className="text-gray-500">Coverage</span>
                     <span className="font-mono text-gray-200">{(analysis?.data_quality.coverage_pct || 0)}%</span>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-6 pt-4 border-t border-white/5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Cpu size={12} className="text-copper-400" />
-                    <span className="text-xs text-gray-400 font-bold tracking-wider">NEURAL ANALYSIS</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
-                    {commentary?.generated_at && (
-                      <span className="text-[10px] text-gray-600 font-mono">
-                        {new Date(commentary.generated_at).toLocaleTimeString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* AI Stance Indicator */}
-                <div className="flex items-center gap-2 mb-3">
+              <div className="mt-4 pt-3 border-t border-white/5">
+                <div className="flex items-center gap-2 mb-2">
                   <div className={clsx(
                     "w-2 h-2 rounded-full animate-pulse",
                     commentary?.ai_stance === 'BULLISH' ? "bg-emerald-400" :
@@ -279,23 +278,90 @@ function App() {
                     commentary?.ai_stance === 'BULLISH' ? "text-emerald-400" :
                       commentary?.ai_stance === 'BEARISH' ? "text-rose-400" : "text-amber-400"
                   )}>
-                    AI CONVICTION: {commentary?.ai_stance || 'ANALYZING...'}
+                    {commentary?.ai_stance || 'ANALYZING...'}
                   </span>
                 </div>
-
-                <div className="h-[100px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
+                <div className="h-[80px] overflow-y-auto text-xs text-gray-400 leading-relaxed custom-scrollbar">
                   {commentary ? (
                     <p className="font-light">{(commentary.commentary || '').split('\n')[0]}</p>
                   ) : (
-                    <span className="text-gray-500 animate-pulse">Processing market signals...</span>
+                    <span className="text-gray-500 animate-pulse">Processing...</span>
                   )}
                 </div>
               </div>
             </div>
           </GlassCard>
 
+          {/* TFT-ASRO Prediction Card */}
+          <GlassCard title="TFT-ASRO (T+5)" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+            {tftAnalysis ? (
+              <>
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                  {tftBullish ? <TrendingUp size={80} /> : <TrendingDown size={80} />}
+                </div>
+                <div className="relative z-10 flex flex-col h-full justify-between py-1">
+                  <div>
+                    <div className="flex items-baseline gap-2">
+                      <span className={clsx("text-4xl font-light font-mono tracking-tighter", tftBullish ? "text-emerald-400" : "text-rose-400")}>
+                        {tftBullish ? '+' : ''}<NumberTicker value={(tftReturn || 0) * 100} />%
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-1">
+                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
+                        <span className="text-gray-500">Target</span>
+                        <span className="font-mono text-gray-200">${tftAnalysis.prediction.predicted_price_median.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
+                        <span className="text-gray-500">Band (80%)</span>
+                        <span className="font-mono text-gray-200">
+                          ${tftAnalysis.prediction.predicted_price_q10.toFixed(2)} – ${tftAnalysis.prediction.predicted_price_q90.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
+                        <span className="text-gray-500">Volatility</span>
+                        <span className="font-mono text-gray-200">{(tftAnalysis.prediction.volatility_estimate * 100).toFixed(2)}%</span>
+                      </div>
+                      <div className="flex justify-between text-xs py-1.5">
+                        <span className="text-gray-500">Risk</span>
+                        <span className={clsx("font-mono text-xs font-bold",
+                          tftAnalysis.risk_level === 'DUSUK' ? "text-emerald-400" :
+                          tftAnalysis.risk_level === 'ORTA' ? "text-amber-400" : "text-rose-400"
+                        )}>
+                          {tftAnalysis.risk_level}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-white/5">
+                    <div className="flex items-center gap-2">
+                      <div className={clsx(
+                        "w-2 h-2 rounded-full animate-pulse",
+                        tftDirection === 'YUKARI' ? "bg-emerald-400" :
+                          tftDirection === 'ASAGI' ? "bg-rose-400" : "bg-amber-400"
+                      )} />
+                      <span className={clsx(
+                        "text-[10px] font-bold tracking-wider",
+                        tftDirection === 'YUKARI' ? "text-emerald-400" :
+                          tftDirection === 'ASAGI' ? "text-rose-400" : "text-amber-400"
+                      )}>
+                        DEEP LEARNING: {tftDirection}
+                      </span>
+                      <span className="ml-auto px-2 py-0.5 rounded text-[10px] font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">TFT</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full py-8 text-center">
+                <Brain size={32} className="text-gray-600 mb-3" />
+                <span className="text-xs text-gray-500">TFT model not available yet</span>
+              </div>
+            )}
+          </GlassCard>
+
           {/* Chart Card */}
-          <GlassCard title="Market Flow" icon={Activity} colSpan={8} className="min-h-[400px]">
+          <GlassCard title="Market Flow" icon={Activity} colSpan={6} className="min-h-[400px]">
             {chartData.length > 0 ? (
               <div className="h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -343,12 +409,52 @@ function App() {
                       fill="url(#priceGradient)"
                       strokeWidth={2}
                     />
+                    {/* TFT confidence band (Q10–Q90) */}
+                    {tftAnalysis && lastPoint && (
+                      <ReferenceArea
+                        x1={lastPoint.date}
+                        x2={lastPoint.date}
+                        y1={tftAnalysis.prediction.predicted_price_q10}
+                        y2={tftAnalysis.prediction.predicted_price_q90}
+                        fill="#8B5CF6"
+                        fillOpacity={0.15}
+                        strokeOpacity={0}
+                      />
+                    )}
+                    {tftAnalysis && lastPoint && (
+                      <ReferenceLine
+                        y={tftAnalysis.prediction.predicted_price_q10}
+                        stroke="#8B5CF6"
+                        strokeDasharray="4 4"
+                        strokeOpacity={0.3}
+                      />
+                    )}
+                    {tftAnalysis && lastPoint && (
+                      <ReferenceLine
+                        y={tftAnalysis.prediction.predicted_price_q90}
+                        stroke="#8B5CF6"
+                        strokeDasharray="4 4"
+                        strokeOpacity={0.3}
+                      />
+                    )}
+                    {/* XGBoost prediction dot */}
                     {analysis && lastPoint && (
                       <ReferenceDot
                         x={lastPoint.date}
                         y={analysis.predicted_price}
                         r={4}
                         fill={isBullish ? theme.bull : theme.bear}
+                        stroke="#fff"
+                        strokeWidth={2}
+                      />
+                    )}
+                    {/* TFT median prediction dot */}
+                    {tftAnalysis && lastPoint && (
+                      <ReferenceDot
+                        x={lastPoint.date}
+                        y={tftAnalysis.prediction.predicted_price_median}
+                        r={4}
+                        fill="#8B5CF6"
                         stroke="#fff"
                         strokeWidth={2}
                       />
@@ -362,7 +468,7 @@ function App() {
           </GlassCard>
 
           {/* Influencers Card */}
-          <GlassCard title="Market Drivers" icon={BarChart3} colSpan={6}>
+          <GlassCard title="Market Drivers" icon={BarChart3} colSpan={4}>
             <div className="space-y-4">
               {analysis?.top_influencers.slice(0, 5).map((inf, i) => (
                 <div key={inf.feature} className="group">
@@ -382,6 +488,64 @@ function App() {
                   </div>
                 </div>
               ))}
+            </div>
+          </GlassCard>
+
+          {/* TFT Model Metrics Card */}
+          <GlassCard title="Deep Learning Metrics" icon={BarChart2} colSpan={4}>
+            {tftMetrics ? (
+              <div className="space-y-3">
+                {[
+                  { label: 'Directional Accuracy', value: tftMetrics.directional_accuracy, fmt: (v: number) => `${(v * 100).toFixed(1)}%`, threshold: 0.5, icon: Target },
+                  { label: 'Sharpe Ratio', value: tftMetrics.sharpe_ratio, fmt: (v: number) => v.toFixed(2), threshold: 0, icon: Zap },
+                  { label: 'Variance Ratio', value: tftMetrics.variance_ratio, fmt: (v: number) => v.toFixed(2), threshold: 0.5, icon: Activity },
+                  { label: 'Tail Capture', value: tftMetrics.tail_capture_rate, fmt: (v: number) => `${(v * 100).toFixed(1)}%`, threshold: 0.5, icon: Shield },
+                ].map(({ label, value, fmt, threshold, icon: MetricIcon }) => {
+                  const v = value ?? 0;
+                  const good = v >= threshold;
+                  return (
+                    <div key={label} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <MetricIcon size={14} className="text-gray-500" />
+                        <span className="text-xs text-gray-400">{label}</span>
+                      </div>
+                      <span className={clsx("font-mono text-sm font-medium", good ? "text-emerald-400" : "text-rose-400")}>
+                        {fmt(v)}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="pt-2 flex items-center justify-between text-[10px] text-gray-600">
+                  <span>pred_std: {tftMetrics.pred_std?.toFixed(4)}</span>
+                  <span>actual_std: {tftMetrics.actual_std?.toFixed(4)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <BarChart2 size={28} className="text-gray-600 mb-2" />
+                <span className="text-xs text-gray-500">Metrics unavailable</span>
+              </div>
+            )}
+          </GlassCard>
+
+          {/* AI Commentary Card */}
+          <GlassCard title="Neural Analysis" icon={Cpu} colSpan={4}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
+                {commentary?.generated_at && (
+                  <span className="text-[10px] text-gray-600 font-mono">
+                    {new Date(commentary.generated_at).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="h-[140px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
+              {commentary ? (
+                <p className="font-light">{commentary.commentary || ''}</p>
+              ) : (
+                <span className="text-gray-500 animate-pulse">Processing market signals...</span>
+              )}
             </div>
           </GlassCard>
 
