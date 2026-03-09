@@ -20,9 +20,17 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
+
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names",
+    category=UserWarning,
+    module="sklearn",
+)
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 
