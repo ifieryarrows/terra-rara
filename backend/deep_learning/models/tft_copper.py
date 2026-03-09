@@ -251,43 +251,58 @@ def format_prediction(
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
 
-    # Per-day forecast array
+    # Each output step is the predicted *daily* return for that day.
+    # Prices are compounded: price_T+d = price_T+d-1 * (1 + return_d).
+    # Cumulative return from today: product of (1+r_i) for i=1..d, minus 1.
     daily_forecasts = []
+    cum_price_med = baseline_price
+    cum_price_q10 = baseline_price
+    cum_price_q90 = baseline_price
+    cum_price_q02 = baseline_price
+    cum_price_q98 = baseline_price
+
     for d in range(n_days):
         med = float(pred[d, median_idx])
         q10 = float(pred[d, 1]) if len(quantiles) > 2 else med
         q90 = float(pred[d, -2]) if len(quantiles) > 2 else med
         q02 = float(pred[d, 0])
         q98 = float(pred[d, -1])
+
+        cum_price_med *= (1 + med)
+        cum_price_q10 *= (1 + q10)
+        cum_price_q90 *= (1 + q90)
+        cum_price_q02 *= (1 + q02)
+        cum_price_q98 *= (1 + q98)
+
+        cum_return = (cum_price_med / baseline_price) - 1.0
+
         daily_forecasts.append({
             "day": d + 1,
-            "return_median": med,
-            "return_q10": q10,
-            "return_q90": q90,
-            "price_median": baseline_price * (1 + med),
-            "price_q10": baseline_price * (1 + q10),
-            "price_q90": baseline_price * (1 + q90),
-            "price_q02": baseline_price * (1 + q02),
-            "price_q98": baseline_price * (1 + q98),
+            "daily_return": med,
+            "cumulative_return": cum_return,
+            "price_median": cum_price_med,
+            "price_q10": cum_price_q10,
+            "price_q90": cum_price_q90,
+            "price_q02": cum_price_q02,
+            "price_q98": cum_price_q98,
         })
 
     # T+1 is the primary signal (most reliable, highest signal-to-noise).
-    # T+5 (end-of-horizon) provides the weekly trend direction.
     first = daily_forecasts[0]
     last = daily_forecasts[-1]
-    vol_estimate = (first["return_q90"] - first["return_q10"]) / 2.0
+    vol_estimate = (first["price_q90"] - first["price_q10"]) / (2.0 * baseline_price)
 
     return {
-        "predicted_return_median": first["return_median"],
-        "predicted_return_q10": first["return_q10"],
-        "predicted_return_q90": first["return_q90"],
+        "predicted_return_median": first["daily_return"],
+        "predicted_return_q10": float(pred[0, 1]) if len(quantiles) > 2 else first["daily_return"],
+        "predicted_return_q90": float(pred[0, -2]) if len(quantiles) > 2 else first["daily_return"],
         "predicted_price_median": first["price_median"],
         "predicted_price_q10": first["price_q10"],
         "predicted_price_q90": first["price_q90"],
         "confidence_band_96": (first["price_q02"], first["price_q98"]),
         "volatility_estimate": vol_estimate,
         "quantiles": {f"q{q:.2f}": float(pred[0, i]) for i, q in enumerate(quantiles)},
-        "weekly_return": last["return_median"],
+        "weekly_return": last["cumulative_return"],
         "weekly_price": last["price_median"],
         "prediction_horizon_days": n_days,
         "daily_forecasts": daily_forecasts,

@@ -330,22 +330,27 @@ function App() {
 
                     {/* Daily forecast mini-table */}
                     <div className="mt-3 border border-white/5 rounded-lg overflow-hidden">
-                      <div className="grid grid-cols-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-white/[0.02] px-2 py-1.5">
+                      <div className="grid grid-cols-5 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-white/[0.02] px-2 py-1.5">
                         <span>Day</span>
-                        <span className="text-right">Return</span>
+                        <span className="text-right">Daily</span>
+                        <span className="text-right">Cum.</span>
                         <span className="text-right">Price</span>
                         <span className="text-right">Band</span>
                       </div>
                       {tftAnalysis.prediction.daily_forecasts?.map((fc) => {
-                        const dayBull = fc.return_median >= 0;
+                        const dayBull = fc.daily_return >= 0;
+                        const cumBull = fc.cumulative_return >= 0;
                         return (
                           <div key={fc.day} className={clsx(
-                            "grid grid-cols-4 text-[11px] font-mono px-2 py-1 border-t border-white/5 transition-colors",
+                            "grid grid-cols-5 text-[11px] font-mono px-2 py-1 border-t border-white/5 transition-colors",
                             fc.day === 1 ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"
                           )}>
                             <span className={clsx("text-gray-400", fc.day === 1 && "text-gray-200 font-medium")}>T+{fc.day}</span>
                             <span className={clsx("text-right", dayBull ? "text-emerald-400" : "text-rose-400")}>
-                              {dayBull ? '+' : ''}{(fc.return_median * 100).toFixed(2)}%
+                              {dayBull ? '+' : ''}{(fc.daily_return * 100).toFixed(2)}%
+                            </span>
+                            <span className={clsx("text-right", cumBull ? "text-emerald-400/70" : "text-rose-400/70")}>
+                              {cumBull ? '+' : ''}{(fc.cumulative_return * 100).toFixed(2)}%
                             </span>
                             <span className="text-right text-gray-300">${fc.price_median.toFixed(2)}</span>
                             <span className="text-right text-gray-500 text-[10px]">

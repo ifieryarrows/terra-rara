@@ -63,9 +63,8 @@ export interface CommentaryResponse {
 
 export interface TFTDailyForecast {
   day: number;
-  return_median: number;
-  return_q10: number;
-  return_q90: number;
+  daily_return: number;
+  cumulative_return: number;
   price_median: number;
   price_q10: number;
   price_q90: number;
