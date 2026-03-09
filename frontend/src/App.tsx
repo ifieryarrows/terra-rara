@@ -293,7 +293,7 @@ function App() {
           </GlassCard>
 
           {/* TFT-ASRO Prediction Card */}
-          <GlassCard title="TFT-ASRO (T+5)" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
+          <GlassCard title="TFT-ASRO (T+1)" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "shadow-glow-emerald" : "shadow-glow-rose")}>
             {tftAnalysis ? (
               <>
                 <div className="absolute top-0 right-0 p-4 opacity-10">
