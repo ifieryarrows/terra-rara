@@ -50,16 +50,17 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         dropout=trial.suggest_float("dropout", 0.1, 0.5, step=0.05),
         hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 32, step=8),
         quantiles=base_cfg.model.quantiles,
-        # Cap at 1e-3: two consecutive Optuna runs both selected ~3-4e-3 which
-        # caused the model to converge in 1 epoch then diverge. 1e-3 is the
-        # practical upper bound for stable TFT training on ~300 samples.
-        learning_rate=trial.suggest_float("learning_rate", 5e-5, 1e-3, log=True),
+        # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
+        # LR > 1e-3 causes 1-epoch divergence. This band is the stable zone.
+        learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True),
         reduce_on_plateau_patience=4,
         gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.5, 2.0, step=0.5),
     )
 
     asro_cfg = ASROConfig(
-        lambda_vol=trial.suggest_float("lambda_vol", 0.1, 0.4, step=0.05),
+        # Floor at 0.25: three Optuna runs consistently selected 0.30-0.35.
+        # Lower values let the model collapse to near-zero pred_std.
+        lambda_vol=trial.suggest_float("lambda_vol", 0.25, 0.45, step=0.05),
         # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
         lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.6, step=0.05),
         risk_free_rate=0.0,
@@ -94,10 +95,15 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
 
 def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     """
-    Single Optuna trial: train a TFT variant and return the validation metric.
+    Single Optuna trial: train a TFT variant and return a composite score.
 
-    Optimises for a composite score:
-        score = -val_loss + 0.5 * directional_accuracy
+    Composite objective (lower is better):
+        score = val_loss - 0.5 * variance_penalty
+
+    The variance penalty pushes Optuna away from "flat but directionally correct"
+    configs that game the Sharpe component with near-zero pred_std.  The penalty
+    fires when variance_ratio < 0.5 (i.e. predictions capture less than half the
+    actual volatility).
     """
     try:
         import lightning.pytorch as pl
@@ -110,9 +116,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     except ImportError:
         from optuna.integration import PyTorchLightningPruningCallback  # type: ignore[no-redef]
 
+    import numpy as np
+    import torch
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
-    from deep_learning.training.metrics import compute_all_metrics
 
     trial_cfg = create_trial_config(trial, base_cfg)
     master_df, tv_unknown, tv_known, target_cols = master_data
@@ -155,7 +162,46 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     if val_loss is None:
         return float("inf")
 
-    return float(val_loss)
+    # --- Variance-ratio penalty on validation set ---
+    # Prevents Optuna from selecting configs that produce near-zero pred_std
+    # (which games Sharpe by being "flat but directionally correct").
+    variance_penalty = 0.0
+    try:
+        pred_tensor = model.predict(val_dl, mode="quantiles")
+        if hasattr(pred_tensor, "cpu"):
+            pred_np = pred_tensor.cpu().numpy()
+        else:
+            pred_np = np.array(pred_tensor)
+
+        median_idx = len(trial_cfg.model.quantiles) // 2
+        y_pred = pred_np[:, 0, median_idx] if pred_np.ndim == 3 else pred_np.flatten()
+
+        y_actual_parts = []
+        for batch in val_dl:
+            y_actual_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
+        y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
+
+        n = min(len(y_actual), len(y_pred))
+        pred_std = float(y_pred[:n].std())
+        actual_std = float(y_actual[:n].std())
+        vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
+
+        # Penalty activates when VR < 0.5 (predictions cover less than half
+        # the real volatility). Scaled so VR=0 → penalty=0.5, VR=0.5 → 0.
+        if vr < 0.5:
+            variance_penalty = 0.5 * (1.0 - vr / 0.5)
+
+        trial.set_user_attr("variance_ratio", round(vr, 4))
+        trial.set_user_attr("pred_std", round(pred_std, 6))
+    except Exception as exc:
+        logger.debug("Trial %d variance check failed: %s", trial.number, exc)
+
+    score = float(val_loss) + variance_penalty
+    logger.info(
+        "Trial %d: val_loss=%.4f vr_penalty=%.4f → score=%.4f",
+        trial.number, float(val_loss), variance_penalty, score,
+    )
+    return score
 
 
 def run_hyperopt(
