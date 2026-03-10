@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceDot, ReferenceLine
 } from 'recharts';
 import { motion } from 'framer-motion';
@@ -13,7 +13,7 @@ import { SpeedInsights } from '@vercel/speed-insights/react';
 
 import { fetchAnalysis, fetchHistory, fetchCommentary, fetchTFTAnalysis } from './api';
 import type {
-  AnalysisReport, HistoryResponse, HistoryDataPoint,
+  AnalysisReport, HistoryResponse,
   CommentaryResponse, TFTAnalysisResponse
 } from './types';
 import './App.css';
@@ -94,6 +94,41 @@ const ProgressBar = ({ value, max = 100, color = 'bg-emerald-500' }: { value: nu
     />
   </div>
 );
+
+function addBusinessDays(start: Date, n: number): Date {
+  const result = new Date(start);
+  let added = 0;
+  while (added < n) {
+    result.setDate(result.getDate() + 1);
+    if (result.getDay() !== 0 && result.getDay() !== 6) added++;
+  }
+  return result;
+}
+
+const ForecastTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  return (
+    <div className="bg-midnight/90 backdrop-blur-md border border-white/10 rounded-xl px-3 py-2 text-xs font-mono">
+      <p className="text-gray-400 mb-1 font-sans">
+        {new Date(label).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+      </p>
+      {d?.price != null && (
+        <p className="text-copper-400">Price: ${d.price.toFixed(2)}</p>
+      )}
+      {d?.isForecast && d?.priceMedian != null && (
+        <>
+          <p className="text-violet-400">Forecast: ${d.priceMedian.toFixed(2)}</p>
+          {d?.innerLow != null && (
+            <p className="text-violet-400/60">
+              80% Range: ${d.innerLow.toFixed(2)} — ${(d.innerLow + d.innerWidth).toFixed(2)}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 // --- Main App ---
 
@@ -179,8 +214,63 @@ function App() {
     if (analysis) loadCommentary();
   }, [analysis, loadCommentary]);
 
-  const chartData: HistoryDataPoint[] = useMemo(() => history?.data || [], [history]);
-  const lastPoint = chartData[chartData.length - 1];
+  const { forecastChartData, yDomain, lastHistDate } = useMemo(() => {
+    const all = history?.data || [];
+    if (all.length === 0) return { forecastChartData: [] as any[], yDomain: [0, 10] as [number, number], lastHistDate: '' };
+
+    const recent = all.slice(-30);
+    const last = recent[recent.length - 1];
+
+    const hist = recent.slice(0, -1).map(p => ({ date: p.date, price: p.price }));
+
+    const hasForecast = !!tftAnalysis?.prediction?.daily_forecasts?.length;
+
+    const bridge: any = {
+      date: last.date,
+      price: last.price,
+      ...(hasForecast && {
+        priceMedian: last.price,
+        outerLow: last.price,
+        outerWidth: 0,
+        innerLow: last.price,
+        innerWidth: 0,
+      }),
+    };
+
+    const forecasts = hasForecast
+      ? tftAnalysis!.prediction.daily_forecasts.map(fc => {
+          const d = addBusinessDays(new Date(last.date), fc.day);
+          return {
+            date: d.toISOString().split('T')[0],
+            priceMedian: fc.price_median,
+            outerLow: fc.price_q02,
+            outerWidth: fc.price_q98 - fc.price_q02,
+            innerLow: fc.price_q10,
+            innerWidth: fc.price_q90 - fc.price_q10,
+            isForecast: true as const,
+          };
+        })
+      : [];
+
+    const data = [...hist, bridge, ...forecasts];
+
+    let min = Infinity, max = -Infinity;
+    for (const p of data) {
+      if (p.price != null) { min = Math.min(min, p.price); max = Math.max(max, p.price); }
+      if (p.outerLow != null) {
+        min = Math.min(min, p.outerLow);
+        max = Math.max(max, p.outerLow + (p.outerWidth || 0));
+      }
+      if (p.priceMedian != null) { min = Math.min(min, p.priceMedian); max = Math.max(max, p.priceMedian); }
+    }
+    const pad = (max - min) * 0.04;
+
+    return {
+      forecastChartData: data,
+      yDomain: [min - pad, max + pad] as [number, number],
+      lastHistDate: last.date,
+    };
+  }, [history, tftAnalysis]);
 
   const theme = {
     bull: '#34D399',
@@ -403,12 +493,12 @@ function App() {
             )}
           </GlassCard>
 
-          {/* Chart Card */}
-          <GlassCard title="Market Flow" icon={Activity} colSpan={6} className="min-h-[400px]">
-            {chartData.length > 0 ? (
+          {/* Price Forecast Chart */}
+          <GlassCard title="Price Forecast" icon={Activity} colSpan={6} className="min-h-[400px]">
+            {forecastChartData.length > 0 ? (
               <div className="h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                  <ComposedChart data={forecastChartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
@@ -427,54 +517,58 @@ function App() {
                     />
                     <YAxis
                       orientation="right"
-                      domain={['auto', 'auto']}
+                      domain={yDomain}
                       tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(val) => `$${val.toFixed(2)}`}
                       width={60}
                     />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'rgba(11, 17, 32, 0.8)',
-                        backdropFilter: 'blur(8px)',
-                        borderColor: 'rgba(255,255,255,0.1)',
-                        borderRadius: '12px',
-                        color: '#F3F4F6'
-                      }}
-                      itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }}
-                      labelStyle={{ fontFamily: 'Plus Jakarta Sans', color: '#9CA3AF', marginBottom: '8px' }}
-                    />
+                    <Tooltip content={<ForecastTooltip />} />
+
+                    {/* Historical price area */}
                     <Area
                       type="monotone"
                       dataKey="price"
                       stroke={theme.copper}
                       fill="url(#priceGradient)"
                       strokeWidth={2}
+                      connectNulls={false}
                     />
-                    {/* TFT T+1 confidence band lines */}
-                    {tftAnalysis && lastPoint && (
+
+                    {/* Outer confidence band Q02-Q98 (96%) */}
+                    <Area type="monotone" dataKey="outerLow" stackId="outer" fill="transparent" stroke="none" connectNulls={false} />
+                    <Area type="monotone" dataKey="outerWidth" stackId="outer" fill="rgba(139,92,246,0.08)" stroke="none" connectNulls={false} />
+
+                    {/* Inner confidence band Q10-Q90 (80%) */}
+                    <Area type="monotone" dataKey="innerLow" stackId="inner" fill="transparent" stroke="none" connectNulls={false} />
+                    <Area type="monotone" dataKey="innerWidth" stackId="inner" fill="rgba(139,92,246,0.18)" stroke="none" connectNulls={false} />
+
+                    {/* Forecast median line */}
+                    <Line
+                      type="monotone"
+                      dataKey="priceMedian"
+                      stroke="#8B5CF6"
+                      strokeWidth={2}
+                      strokeDasharray="6 3"
+                      dot={false}
+                      connectNulls={false}
+                    />
+
+                    {/* "Today" divider */}
+                    {lastHistDate && (
                       <ReferenceLine
-                        y={tftAnalysis.prediction.predicted_price_q10}
-                        stroke="#8B5CF6"
-                        strokeDasharray="3 4"
-                        strokeOpacity={0.45}
-                        label={{ value: `Q10 $${tftAnalysis.prediction.predicted_price_q10.toFixed(2)}`, position: 'left', fill: '#8B5CF6', fontSize: 9, fontFamily: 'JetBrains Mono' }}
+                        x={lastHistDate}
+                        stroke="rgba(255,255,255,0.15)"
+                        strokeDasharray="3 3"
+                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'JetBrains Mono' }}
                       />
                     )}
-                    {tftAnalysis && lastPoint && (
-                      <ReferenceLine
-                        y={tftAnalysis.prediction.predicted_price_q90}
-                        stroke="#8B5CF6"
-                        strokeDasharray="3 4"
-                        strokeOpacity={0.45}
-                        label={{ value: `Q90 $${tftAnalysis.prediction.predicted_price_q90.toFixed(2)}`, position: 'left', fill: '#8B5CF6', fontSize: 9, fontFamily: 'JetBrains Mono' }}
-                      />
-                    )}
+
                     {/* XGBoost T+1 prediction dot */}
-                    {analysis && lastPoint && (
+                    {analysis && lastHistDate && (
                       <ReferenceDot
-                        x={lastPoint.date}
+                        x={lastHistDate}
                         y={analysis.predicted_price}
                         r={5}
                         fill={isBullish ? theme.bull : theme.bear}
@@ -483,19 +577,7 @@ function App() {
                         label={{ value: `XGB $${analysis.predicted_price.toFixed(2)}`, position: 'right', fill: isBullish ? theme.bull : theme.bear, fontSize: 9, fontFamily: 'JetBrains Mono' }}
                       />
                     )}
-                    {/* TFT median prediction dot */}
-                    {tftAnalysis && lastPoint && (
-                      <ReferenceDot
-                        x={lastPoint.date}
-                        y={tftAnalysis.prediction.predicted_price_median}
-                        r={5}
-                        fill="#8B5CF6"
-                        stroke="#0b1120"
-                        strokeWidth={2}
-                        label={{ value: `TFT $${tftAnalysis.prediction.predicted_price_median.toFixed(2)}`, position: 'right', fill: '#8B5CF6', fontSize: 9, fontFamily: 'JetBrains Mono' }}
-                      />
-                    )}
-                  </AreaChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             ) : (
@@ -532,17 +614,13 @@ function App() {
             {tftMetrics ? (() => {
               const da = (tftMetrics.directional_accuracy ?? 0) * 100;
               const sharpe = tftMetrics.sharpe_ratio ?? 0;
-              const vr = (tftMetrics.variance_ratio ?? 0) * 100;
-              const predStd = (tftMetrics.pred_std ?? 0) * 100;
-              const actualStd = (tftMetrics.actual_std ?? 0) * 100;
 
               const daGood = da >= 52;
               const sharpeGood = sharpe >= 0;
-              const vrGood = vr >= 50;
 
-              const overallGood = (daGood ? 1 : 0) + (sharpeGood ? 1 : 0) + (vrGood ? 1 : 0);
-              const overallLabel = overallGood === 3 ? 'HEALTHY' : overallGood === 2 ? 'FAIR' : overallGood === 1 ? 'CALIBRATING' : 'TRAINING';
-              const overallColor = overallGood === 3 ? 'text-emerald-400' : overallGood >= 2 ? 'text-amber-400' : 'text-rose-400';
+              const overallGood = (daGood ? 1 : 0) + (sharpeGood ? 1 : 0);
+              const overallLabel = overallGood === 2 ? 'HEALTHY' : overallGood === 1 ? 'FAIR' : 'CALIBRATING';
+              const overallColor = overallGood === 2 ? 'text-emerald-400' : overallGood === 1 ? 'text-amber-400' : 'text-rose-400';
 
               return (
                 <div className="space-y-4">
@@ -581,23 +659,6 @@ function App() {
                     <ProgressBar value={Math.min(Math.abs(sharpe) * 50, 100)} max={100} color={sharpeGood ? "bg-emerald-500" : "bg-rose-500"} />
                     <p className="text-[10px] text-gray-600">
                       {sharpe > 1 ? "Strong risk-adjusted returns" : sharpe > 0 ? "Positive expected return" : "Negative — do not trade"}
-                    </p>
-                  </div>
-
-                  {/* Forecast range */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {vrGood ? <CheckCircle2 size={13} className="text-emerald-400" /> : <AlertTriangle size={13} className="text-amber-400" />}
-                        <span className="text-xs text-gray-400">Forecast Range</span>
-                      </div>
-                      <span className={clsx("text-xs font-mono font-medium", vrGood ? "text-emerald-400" : "text-amber-400")}>
-                        ±{predStd.toFixed(2)}% vs ±{actualStd.toFixed(2)}%
-                      </span>
-                    </div>
-                    <ProgressBar value={Math.min(vr, 100)} max={100} color={vrGood ? "bg-emerald-500" : "bg-amber-500"} />
-                    <p className="text-[10px] text-gray-600">
-                      {vr >= 80 ? "Moves match real market" : vr >= 50 ? "Reasonable amplitude" : "Predictions too conservative"}
                     </p>
                   </div>
                 </div>
