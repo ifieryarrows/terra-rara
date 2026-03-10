@@ -250,21 +250,28 @@ def format_prediction(
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
 
+    # Hard clamp: prevents overconfident models (VR >> 1) from producing
+    # absurd compound prices.  Copper's actual daily σ ≈ 0.024; capping at
+    # ~1.25σ keeps the 5-day compound under ≈16 %.  The clamp is inactive
+    # once the model is retrained with a healthy VR (0.5–1.5).
+    _MAX_DAILY_RET = 0.03
+
     # T+1 quantile spreads (return-space distance from median).
     # Used as the base width for confidence bands; scaled by sqrt(d) for
     # later days so uncertainty grows realistically instead of compounding
     # tail quantiles exponentially (which would produce absurd bands).
-    med_0 = float(pred[0, median_idx])
-    spread_q10 = (float(pred[0, 1]) - med_0) if len(quantiles) > 2 else 0.0
-    spread_q90 = (float(pred[0, -2]) - med_0) if len(quantiles) > 2 else 0.0
-    spread_q02 = float(pred[0, 0]) - med_0
-    spread_q98 = float(pred[0, -1]) - med_0
+    med_0 = float(np.clip(pred[0, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
+    _raw_med_0 = float(pred[0, median_idx])
+    spread_q10 = np.clip(float(pred[0, 1]) - _raw_med_0, -_MAX_DAILY_RET, 0) if len(quantiles) > 2 else 0.0
+    spread_q90 = np.clip(float(pred[0, -2]) - _raw_med_0, 0, _MAX_DAILY_RET) if len(quantiles) > 2 else 0.0
+    spread_q02 = np.clip(float(pred[0, 0]) - _raw_med_0, -_MAX_DAILY_RET * 1.5, 0)
+    spread_q98 = np.clip(float(pred[0, -1]) - _raw_med_0, 0, _MAX_DAILY_RET * 1.5)
 
     daily_forecasts = []
     cum_price_med = baseline_price
 
     for d in range(n_days):
-        med = float(pred[d, median_idx])
+        med = float(np.clip(pred[d, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
         cum_price_med *= (1 + med)
         cum_return = (cum_price_med / baseline_price) - 1.0
 
@@ -288,8 +295,8 @@ def format_prediction(
 
     return {
         "predicted_return_median": first["daily_return"],
-        "predicted_return_q10": float(pred[0, 1]) if len(quantiles) > 2 else first["daily_return"],
-        "predicted_return_q90": float(pred[0, -2]) if len(quantiles) > 2 else first["daily_return"],
+        "predicted_return_q10": float(np.clip(pred[0, 1], -_MAX_DAILY_RET * 2, _MAX_DAILY_RET * 2)) if len(quantiles) > 2 else first["daily_return"],
+        "predicted_return_q90": float(np.clip(pred[0, -2], -_MAX_DAILY_RET * 2, _MAX_DAILY_RET * 2)) if len(quantiles) > 2 else first["daily_return"],
         "predicted_price_median": first["price_median"],
         "predicted_price_q10": first["price_q10"],
         "predicted_price_q90": first["price_q90"],
