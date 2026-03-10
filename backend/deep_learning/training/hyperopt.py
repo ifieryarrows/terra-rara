@@ -102,11 +102,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     Composite objective (lower is better):
         score = val_loss + variance_penalty
 
-    The variance penalty pushes Optuna away from "flat but directionally correct"
-    configs that game the Sharpe component with near-zero pred_std.  Penalty
-    coefficient is 2.0 (strong) — VR<0.5 configs are heavily penalised because
-    the loss function changes (TANH_SCALE, amplitude_loss) now make the model
-    *capable* of higher VR; low VR indicates a bad config, not a fundamental limit.
+    Two-sided variance penalty keeps predictions in a healthy amplitude zone:
+      VR < 0.5 → strong penalty (2.0×) — flat predictions are useless
+      0.5–1.5  → no penalty — wide healthy zone, not a narrow band
+      VR > 1.5 → gentle penalty (0.5×) — overconfident but still has signal
     """
     try:
         import lightning.pytorch as pl
@@ -189,12 +188,17 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         actual_std = float(y_actual[:n].std())
         vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
 
-        # Penalty activates when VR < 0.5 (predictions cover less than half
-        # the real volatility). Scaled so VR=0 → penalty=2.0, VR=0.5 → 0.
-        # Strong coefficient (2.0) ensures flat configs cannot win even with
-        # very good val_loss, since typical val_loss range is [-0.15, +0.3].
+        # Two-sided penalty with a wide healthy zone [0.5, 1.5]:
+        #   VR < 0.5 → strong penalty (flat predictions, the original problem)
+        #   0.5–1.5  → no penalty (3× wide zone, not a narrow band)
+        #   VR > 1.5 → gentle penalty (overconfident, predictions louder than market)
+        #
+        # Asymmetric: too-flat is worse than too-loud (flat predictions are
+        # useless; loud predictions at least carry directional signal).
         if vr < 0.5:
             variance_penalty = 2.0 * (1.0 - vr / 0.5)
+        elif vr > 1.5:
+            variance_penalty = 0.5 * (vr - 1.5)
 
         trial.set_user_attr("variance_ratio", round(vr, 4))
         trial.set_user_attr("pred_std", round(pred_std, 6))
