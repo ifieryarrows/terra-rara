@@ -612,6 +612,10 @@ async def get_commentary(
 # Root redirect (optional convenience)
 # =============================================================================
 
+_tft_cache: dict = {}
+_TFT_CACHE_TTL_S = 300  # 5 minutes
+
+
 @app.get(
     "/api/analysis/tft/{symbol}",
     summary="Get TFT-ASRO deep learning analysis",
@@ -626,15 +630,16 @@ async def get_tft_analysis(symbol: str = "HG=F"):
     """
     Get TFT-ASRO analysis for the given symbol.
 
-    Returns multi-quantile probabilistic forecasts including:
-    - Median predicted return and price
-    - 80% and 96% confidence bands
-    - Volatility estimate
-    - Model metadata and variable importance
-
-    This endpoint runs in parallel with the existing XGBoost-based
-    /api/analysis endpoint for A/B comparison.
+    Results are cached for 5 minutes to avoid rebuilding the full feature
+    store on every frontend auto-refresh (~60 s polling).
     """
+    now = datetime.now(timezone.utc)
+    cached = _tft_cache.get(symbol)
+    if cached:
+        age = (now - cached["ts"]).total_seconds()
+        if age < _TFT_CACHE_TTL_S:
+            return cached["data"]
+
     try:
         from deep_learning.inference.predictor import generate_tft_analysis
 
@@ -644,6 +649,7 @@ async def get_tft_analysis(symbol: str = "HG=F"):
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
 
+        _tft_cache[symbol] = {"data": result, "ts": now}
         return result
 
     except FileNotFoundError:
