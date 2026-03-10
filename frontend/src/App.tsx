@@ -119,9 +119,9 @@ const ForecastTooltip = ({ active, payload, label }: any) => {
       {d?.isForecast && d?.priceMedian != null && (
         <>
           <p className="text-violet-400">Forecast: ${d.priceMedian.toFixed(2)}</p>
-          {d?.innerLow != null && (
+          {d?.priceQ10 != null && (
             <p className="text-violet-400/60">
-              80% Range: ${d.innerLow.toFixed(2)} — ${(d.innerLow + d.innerWidth).toFixed(2)}
+              80% Range: ${d.priceQ10.toFixed(2)} — ${d.priceQ90.toFixed(2)}
             </p>
           )}
         </>
@@ -230,10 +230,8 @@ function App() {
       price: last.price,
       ...(hasForecast && {
         priceMedian: last.price,
-        outerLow: last.price,
-        outerWidth: 0,
-        innerLow: last.price,
-        innerWidth: 0,
+        priceQ10: last.price,
+        priceQ90: last.price,
       }),
     };
 
@@ -243,10 +241,8 @@ function App() {
           return {
             date: d.toISOString().split('T')[0],
             priceMedian: fc.price_median,
-            outerLow: fc.price_q02,
-            outerWidth: fc.price_q98 - fc.price_q02,
-            innerLow: fc.price_q10,
-            innerWidth: fc.price_q90 - fc.price_q10,
+            priceQ10: fc.price_q10,
+            priceQ90: fc.price_q90,
             isForecast: true as const,
           };
         })
@@ -257,13 +253,14 @@ function App() {
     let min = Infinity, max = -Infinity;
     for (const p of data) {
       if (p.price != null) { min = Math.min(min, p.price); max = Math.max(max, p.price); }
-      if (p.outerLow != null) {
-        min = Math.min(min, p.outerLow);
-        max = Math.max(max, p.outerLow + (p.outerWidth || 0));
+      if ('priceQ10' in p && p.priceQ10 != null) { min = Math.min(min, p.priceQ10); }
+      if ('priceQ90' in p && p.priceQ90 != null) { max = Math.max(max, p.priceQ90); }
+      if ('priceMedian' in p && p.priceMedian != null) {
+        min = Math.min(min, p.priceMedian);
+        max = Math.max(max, p.priceMedian);
       }
-      if (p.priceMedian != null) { min = Math.min(min, p.priceMedian); max = Math.max(max, p.priceMedian); }
     }
-    const pad = (max - min) * 0.04;
+    const pad = (max - min) * 0.05;
 
     return {
       forecastChartData: data,
@@ -536,13 +533,10 @@ function App() {
                       connectNulls={false}
                     />
 
-                    {/* Outer confidence band Q02-Q98 (96%) */}
-                    <Area type="monotone" dataKey="outerLow" stackId="outer" fill="transparent" stroke="none" connectNulls={false} />
-                    <Area type="monotone" dataKey="outerWidth" stackId="outer" fill="rgba(139,92,246,0.08)" stroke="none" connectNulls={false} />
-
-                    {/* Inner confidence band Q10-Q90 (80%) */}
-                    <Area type="monotone" dataKey="innerLow" stackId="inner" fill="transparent" stroke="none" connectNulls={false} />
-                    <Area type="monotone" dataKey="innerWidth" stackId="inner" fill="rgba(139,92,246,0.18)" stroke="none" connectNulls={false} />
+                    {/* Q10-Q90 confidence band (80%) — lower edge */}
+                    <Line type="monotone" dataKey="priceQ10" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
+                    {/* Q10-Q90 confidence band (80%) — upper edge */}
+                    <Line type="monotone" dataKey="priceQ90" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
 
                     {/* Forecast median line */}
                     <Line
