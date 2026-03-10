@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceDot, ReferenceLine
+  ReferenceLine
 } from 'recharts';
 import { motion } from 'framer-motion';
 import {
@@ -236,16 +236,17 @@ function App() {
     };
 
     const forecasts = hasForecast
-      ? tftAnalysis!.prediction.daily_forecasts.map(fc => {
+      ? (() => {
+          const fc = tftAnalysis!.prediction.daily_forecasts[0];
           const d = addBusinessDays(new Date(last.date), fc.day);
-          return {
+          return [{
             date: d.toISOString().split('T')[0],
             priceMedian: fc.price_median,
             priceQ10: fc.price_q10,
             priceQ90: fc.price_q90,
             isForecast: true as const,
-          };
-        })
+          }];
+        })()
       : [];
 
     const data = [...hist, bridge, ...forecasts];
@@ -556,19 +557,6 @@ function App() {
                         stroke="rgba(255,255,255,0.15)"
                         strokeDasharray="3 3"
                         label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'JetBrains Mono' }}
-                      />
-                    )}
-
-                    {/* XGBoost T+1 prediction dot */}
-                    {analysis && lastHistDate && (
-                      <ReferenceDot
-                        x={lastHistDate}
-                        y={analysis.predicted_price}
-                        r={5}
-                        fill={isBullish ? theme.bull : theme.bear}
-                        stroke="#0b1120"
-                        strokeWidth={2}
-                        label={{ value: `XGB $${analysis.predicted_price.toFixed(2)}`, position: 'right', fill: isBullish ? theme.bull : theme.bear, fontSize: 9, fontFamily: 'JetBrains Mono' }}
                       />
                     )}
                   </ComposedChart>
