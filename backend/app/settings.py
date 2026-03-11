@@ -79,14 +79,15 @@ class Settings(BaseSettings):
     # Deprecated - kept for backward compatibility
     openrouter_model: str = "arcee-ai/trinity-large-preview:free"
     # Scoring models:
-    #   fast   → google/gemma-3-4b-it:free   (131K ctx, JSON mode, system prompt OK)
-    #            Note: gemma-3-4b ≠ gemma-3n-e4b; the nano variant blocks system prompts.
+    #   fast   → stepfun/step-3.5-flash:free  (196B MoE, 256K ctx, system prompt + JSON OK)
     #   reliable → mistralai/mistral-small-3.1-24b-instruct:free (128K ctx, 24B, reliable JSON)
-    #   commentary → same as reliable for higher quality prose
-    openrouter_model_scoring: str = "google/gemma-3-4b-it:free"
+    #   commentary → same as fast for balanced quality/speed
+    # NOTE: google/gemma-3-4b-it:free fails on Google AI Studio (system prompt blocked).
+    #        google/gemma-3n-e4b-it:free (nano) also blocks system prompts — do NOT use.
+    openrouter_model_scoring: str = "stepfun/step-3.5-flash:free"
     openrouter_model_scoring_fast: Optional[str] = None
     openrouter_model_scoring_reliable: Optional[str] = "mistralai/mistral-small-3.1-24b-instruct:free"
-    openrouter_model_commentary: str = "mistralai/mistral-small-3.1-24b-instruct:free"
+    openrouter_model_commentary: str = "stepfun/step-3.5-flash:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
     # Free tier: 50 req/day. At 12 articles/chunk, 100 articles = ~9 chunks = ~9-18 req.
