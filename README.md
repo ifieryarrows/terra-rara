@@ -1,6 +1,6 @@
 # Terra Rara
 
-AI-powered copper futures price prediction platform combining XGBoost ML, LLM-based sentiment analysis, and cross-asset market data.
+AI-powered copper futures price prediction platform combining XGBoost ML, TFT-ASRO deep learning, LLM-based sentiment analysis, and cross-asset market data.
 
 [![Live Demo](https://img.shields.io/badge/demo-terra--rara.vercel.app-0969da)](https://terra-rara.vercel.app)
 [![API Docs](https://img.shields.io/badge/api-docs-10b981)](https://ifieryarrows-copper-mind.hf.space/api/docs)
@@ -14,6 +14,8 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 - [Directory Structure](#directory-structure)
 - [Symbol Sets](#symbol-sets)
 - [Model Details](#model-details)
+  - [XGBoost](#xgboost-parameters)
+  - [TFT-ASRO Deep Learning](#tft-asro-deep-learning)
 - [Getting Started](#getting-started)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -27,9 +29,11 @@ AI-powered copper futures price prediction platform combining XGBoost ML, LLM-ba
 
 ## Overview
 
-Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XGBoost regression model. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (Arcee Trinity Large Preview via OpenRouter), and combines this with 250+ technical features computed from 17 correlated assets. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates, and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using an LLM (Arcee Trinity Large Preview via OpenRouter), extracts 768-dimensional FinBERT embeddings reduced to 32 dimensions via PCA, and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
 
-**Model target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
+**XGBoost target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
+
+**TFT-ASRO target**: 5-day daily return forecasts with 7-quantile probabilistic output (q0.02 through q0.98)
 
 **Target users**: Traders, analysts, and developers building commodity forecasting tools.
 
@@ -38,12 +42,17 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 ## Features
 
 - Predict next-day copper futures returns using XGBoost regression trained on 250+ features
+- Forecast 5-day returns with probabilistic confidence bands using TFT-ASRO deep learning
 - Score news sentiment using LLM (Arcee Trinity Large Preview) with FinBERT fallback when API is unavailable
+- Extract FinBERT CLS embeddings (768-dim → 32-dim PCA) for deep semantic encoding
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
+- Compute advanced sentiment features: momentum, surprise (Z-score), volume-weighted scores
+- Ingest LME warehouse stock data and futures curve signals for physical-market context
 - Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
 - Display real-time prices for dashboard symbols via yfinance
-- Visualize historical price and sentiment data over 180 days
+- Visualize historical price, sentiment, and TFT forecast bands over 180 days
+- Optimize TFT hyperparameters via Optuna TPE search with variance ratio penalty
 - Trigger manual pipeline execution via authenticated API endpoint
 - Monitor pipeline health via `pipeline_run_metrics` table
 
@@ -54,8 +63,10 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 │  FRONTEND (Vercel)                                                      │
 │  React 18 + TypeScript + Vite + TailwindCSS                             │
 │  ├── TradingView widget (lazy loaded)                                   │
-│  ├── Price & Sentiment chart (Recharts)                                 │
-│  ├── Model Forecast Card with AI Commentary                             │
+│  ├── Price & Sentiment chart with TFT forecast bands (Recharts)         │
+│  ├── Deep Learning Forecast card (T+1 return, risk, weekly trend)       │
+│  ├── Deep Learning Metrics card (DA, Sharpe, variance ratio)            │
+│  ├── XGBoost Forecast card with AI Commentary                           │
 │  ├── XGBoost feature importance display                                 │
 │  └── Market grid showing 14 dashboard symbols                           │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -66,35 +77,50 @@ Terra Rara predicts next-day COMEX copper futures (HG=F) **returns** using an XG
 │  FastAPI + Python 3.11 + Uvicorn + APScheduler                          │
 │                                                                         │
 │  REST API                                                               │
-│  ├── GET /api/analysis      → XGBoost prediction + metrics              │
-│  ├── GET /api/history       → Historical price & sentiment (180d)       │
-│  ├── GET /api/market-prices → Real-time quotes (14 symbols)             │
-│  ├── GET /api/commentary    → AI market analysis                        │
-│  ├── GET /api/health        → Health check                              │
+│  ├── GET /api/analysis          → XGBoost prediction + metrics          │
+│  ├── GET /api/analysis/tft/{s}  → TFT-ASRO quantile forecast (5m TTL)  │
+│  ├── GET /api/history           → Historical price & sentiment (180d)   │
+│  ├── GET /api/market-prices     → Real-time quotes (14 symbols)         │
+│  ├── GET /api/commentary        → AI market analysis                    │
+│  ├── GET /api/health            → Health check                          │
 │  └── POST /api/pipeline/trigger → Manual pipeline execution             │
 │                                                                         │
 │  ML PIPELINE (Daily @ 02:00 Istanbul)                                   │
 │  ├── 16 strategic queries → Google News RSS                             │
 │  ├── LLM sentiment scoring with FinBERT fallback                        │
+│  ├── FinBERT CLS embedding extraction + PCA (768→32 dim)               │
 │  ├── 250+ feature engineering across 17 training symbols                │
 │  ├── XGBoost training with early stopping (when train_model=True)       │
+│  ├── TFT-ASRO inference (quantile forecasts from HF Hub checkpoint)    │
 │  ├── AI commentary generation                                           │
 │  └── Pipeline metrics saved to database                                 │
+│                                                                         │
+│  DEEP LEARNING (Separate Training)                                      │
+│  ├── Feature store: price + sentiment + embeddings + LME + calendar    │
+│  ├── TFT-ASRO model (pytorch-forecasting + Lightning)                  │
+│  ├── ASRO loss: Sharpe + quantile calibration + volatility matching    │
+│  ├── Optuna hyperparameter search with variance ratio penalty          │
+│  └── Checkpoint persistence via HuggingFace Hub                        │
 └─────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  DATA LAYER                                                             │
 │  ├── Supabase PostgreSQL                                                │
-│  │   ├── news_articles         (raw news)                               │
-│  │   ├── news_sentiments       (LLM scores)                             │
-│  │   ├── daily_sentiments      (aggregated index)                       │
-│  │   ├── price_bars            (OHLCV data)                             │
-│  │   ├── analysis_snapshots    (cached predictions)                     │
-│  │   ├── ai_commentaries       (market commentary)                      │
-│  │   ├── model_metadata        (XGBoost artifacts)                      │
-│  │   └── pipeline_run_metrics  (monitoring)                             │
+│  │   ├── news_raw / news_processed  (reproducible news pipeline)        │
+│  │   ├── news_sentiments_v2         (commodity-aware LLM scores)        │
+│  │   ├── news_embeddings            (FinBERT CLS + PCA vectors)        │
+│  │   ├── daily_sentiments_v2        (aggregated index)                  │
+│  │   ├── price_bars                 (OHLCV data)                        │
+│  │   ├── lme_warehouse_data         (LME copper stock levels)           │
+│  │   ├── analysis_snapshots         (cached predictions)                │
+│  │   ├── ai_commentaries            (market commentary)                 │
+│  │   ├── model_metadata             (XGBoost artifacts)                 │
+│  │   ├── tft_model_metadata         (TFT-ASRO artifacts)               │
+│  │   └── pipeline_run_metrics       (monitoring)                        │
+│  ├── HuggingFace Hub (TFT checkpoint + PCA model persistence)           │
 │  ├── yfinance (OHLCV price data)                                        │
+│  ├── Nasdaq Data Link (LME warehouse stocks, optional)                  │
 │  ├── TwelveData (backup live copper price)                              │
 │  └── Google News RSS (news source)                                      │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -220,11 +246,114 @@ These settings are **conservative** - the model avoids large predictions.
 
 ### Feature Count
 
-Approximately 250 features are generated:
+Approximately 250 features are generated for XGBoost:
 - Technical indicators per symbol (RSI, SMA, volatility, returns)
 - Lag features (1-5 day lags)
 - Cross-asset correlations
 - Sentiment features (index, news count)
+
+### TFT-ASRO Deep Learning
+
+The TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) operates as a parallel model producing 5-day probabilistic forecasts. It runs independently from the XGBoost pipeline and uses a richer feature set.
+
+#### Model Architecture
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `hidden_size` | 32 | Reduced from 64 to prevent VSN overfitting on ~313 samples |
+| `attention_head_size` | 2 | Fewer heads for single-series dataset |
+| `dropout` | 0.3 | Heavy regularization for small sample size |
+| `hidden_continuous_size` | 16 | Paired reduction with hidden_size |
+| `learning_rate` | 3e-4 | Conservative to avoid overshooting narrow loss landscape |
+| `max_encoder_length` | 60 | 60 trading days of lookback |
+| `max_prediction_length` | 5 | 5-day forecast horizon |
+| `gradient_clip_val` | 1.0 | Relaxed from 0.5; tanh-based Sharpe gradients are bounded |
+| `batch_size` | 16 | ~19 batches/epoch for stable gradient estimates |
+
+#### Quantile Output
+
+The model produces 7 quantiles instead of a single point estimate:
+
+- q0.02, q0.10, q0.25, **q0.50 (median)**, q0.75, q0.90, q0.98
+
+This directly models 96% and 80% confidence intervals and captures tail risk.
+
+#### ASRO Loss Function
+
+The custom loss combines three objectives:
+
+```
+L = w_quantile × (quantile_loss + λ_vol × vol_calibration)
+  + w_sharpe × (-tanh_sharpe)
+  + amplitude_loss
+```
+
+| Component | Weight | Purpose |
+|-----------|--------|---------|
+| Quantile calibration | λ_quantile = 0.4 | Keeps TFT probabilistic |
+| Sharpe component | w_sharpe = 0.6 | Drives directional learning |
+| Volatility calibration | λ_vol = 0.35 | Q90-Q10 spread tracks 2× actual σ |
+
+The normalized sum-to-1 formulation prevents either component from silently dominating.
+
+#### TFT Feature Categories
+
+The TFT ingests ~340 features across three categories:
+
+**Time-varying unknown (observed in past, unknown in future)**:
+- Copper prices, returns, technical indicators (from all 17 training symbols)
+- FinBERT PCA embedding vectors (32 dimensions)
+- Sentiment momentum (5/10/30-day SMA/EMA), surprise Z-score, volume-weighted sentiment
+- Event-type intensity (supply_disruption, inventory_draw, etc.)
+- LME warehouse stock changes, depletion rate, cancelled warrant ratio
+- Futures curve spread, contango/backwardation flags
+
+**Time-varying known (known in future)**:
+- Day of week (one-hot), month (sinusoidal encoding)
+- US/China holiday calendars
+
+**Static**:
+- Group identifier (single series: "copper")
+
+#### Training and Optimization
+
+TFT training is separate from the daily pipeline. It runs on-demand or via scheduled retraining:
+
+```bash
+cd backend
+
+# Train TFT-ASRO model
+python -m deep_learning.training.trainer --symbol HG=F
+
+# Run Optuna hyperparameter search (50 trials)
+python -m deep_learning.training.hyperopt --n-trials 50
+
+# Backfill FinBERT embeddings for existing articles
+python -m deep_learning.data.embeddings --backfill --days 180
+```
+
+Optuna search uses a composite objective with variance ratio penalty: trials producing flat predictions (VR < 0.5) or overconfident predictions (VR > 1.5) are penalized.
+
+#### Financial Metrics
+
+| Metric | Description |
+|--------|-------------|
+| Sharpe Ratio | Annualized risk-adjusted return of long/short strategy |
+| Sortino Ratio | Sharpe variant penalizing only downside volatility |
+| Directional Accuracy | Fraction of days with correct sign prediction |
+| Tail Capture Rate | DA on days where \|return\| > 1.5% |
+| Variance Ratio | pred_std / actual_std (healthy range: 0.5–1.5) |
+| PI80/PI96 Coverage | Empirical coverage of 80% and 96% prediction intervals |
+
+#### Model Persistence
+
+TFT artifacts are stored on HuggingFace Hub to survive ephemeral container restarts:
+
+| Artifact | Description |
+|----------|-------------|
+| `best_tft_asro.ckpt` | Lightning checkpoint |
+| `pca_finbert.joblib` | Fitted IncrementalPCA model |
+| `optuna_results.json` | Best hyperparameters from search |
 
 ## Directory Structure
 
@@ -234,7 +363,7 @@ terra-rara/
 │   ├── app/
 │   │   ├── main.py           # FastAPI app, endpoints, scheduler
 │   │   ├── ai_engine.py      # XGBoost training, LLM sentiment
-│   │   ├── inference.py      # Live prediction
+│   │   ├── inference.py      # XGBoost live prediction
 │   │   ├── features.py       # Technical indicator computation
 │   │   ├── data_manager.py   # News ingestion, price fetching
 │   │   ├── commentary.py     # AI commentary generation
@@ -242,23 +371,52 @@ terra-rara/
 │   │   ├── models.py         # SQLAlchemy ORM models
 │   │   ├── db.py             # Database connection
 │   │   └── settings.py       # Pydantic settings
+│   ├── deep_learning/        # TFT-ASRO deep learning module
+│   │   ├── config.py         # All TFT hyperparameters and training config
+│   │   ├── data/
+│   │   │   ├── embeddings.py         # FinBERT CLS extraction + PCA
+│   │   │   ├── sentiment_features.py # Momentum, surprise, volume-weighted
+│   │   │   ├── lme_warehouse.py      # LME warehouse stock data + features
+│   │   │   ├── futures_curve.py      # Contango/backwardation signals
+│   │   │   ├── feature_store.py      # Centralized data fusion for TFT
+│   │   │   └── dataset.py            # TimeSeriesDataSet builder
+│   │   ├── models/
+│   │   │   ├── tft_copper.py         # TFT model + ASROPFLoss
+│   │   │   ├── losses.py             # ASRO + CombinedQuantileLoss
+│   │   │   └── hub.py                # HuggingFace Hub upload/download
+│   │   ├── training/
+│   │   │   ├── trainer.py            # PyTorch Lightning training loop
+│   │   │   ├── hyperopt.py           # Optuna TPE hyperparameter search
+│   │   │   └── metrics.py            # Sharpe, Sortino, DA, tail capture
+│   │   └── inference/
+│   │       └── predictor.py          # TFT live prediction pipeline
 │   ├── config/
 │   │   └── symbol_sets/      # Training symbol configurations
 │   │       ├── active.json   # Current training symbols
 │   │       ├── champion.json # Best performing set
 │   │       └── challenger.json
+│   ├── pipelines/            # Faz 2 reproducible data processing
+│   │   ├── ingestion/        # RSS/API → news_raw
+│   │   ├── processing/       # news_raw → news_processed
+│   │   └── cutoff.py         # Market cut-off calculation
 │   ├── screener/             # Universe Builder + Feature Screener
 │   │   ├── core/             # Config, fingerprint, cache
 │   │   ├── contracts/        # Pydantic output models
 │   │   ├── universe_builder/ # Seed loading, probing, categorization
 │   │   └── feature_screener/ # Correlation analysis
+│   ├── worker/               # arq + Redis async task worker
+│   │   └── tasks.py          # Pipeline orchestration tasks
+│   ├── backtest/             # Walk-forward backtesting
+│   │   └── runner.py         # XGBoost + TFT backtest runner
 │   ├── tests/                # pytest tests
+│   │   ├── deep_learning/    # TFT-ASRO unit tests (7 files)
+│   │   └── screener/         # Screener unit tests
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx           # Main dashboard
-│   │   ├── api.ts            # API client
+│   │   ├── api.ts            # API client (XGBoost + TFT)
 │   │   ├── types.ts          # TypeScript interfaces
 │   │   └── components/       # React components
 │   ├── index.html
@@ -268,7 +426,8 @@ terra-rara/
 │   └── models/               # Local model artifacts (gitignored)
 ├── .github/
 │   └── workflows/
-│       └── hf-sync.yml       # GitHub → HuggingFace sync
+│       ├── hf-sync.yml       # GitHub → HuggingFace sync
+│       └── screener-schedule.yml
 ├── docker-compose.yml
 ├── env.example
 └── README.md
@@ -392,6 +551,9 @@ Copy `env.example` to `backend/.env` and configure:
 | `YFINANCE_SYMBOLS` | No | (14 symbols) | Dashboard symbols (comma-separated) |
 | `NEWS_LOOKBACK_DAYS` | No | `30` | Days of news to fetch |
 | `SENTIMENT_DECAY_HALF_LIFE` | No | `7.0` | Sentiment decay half-life (days) |
+| `HF_TOKEN` | No | - | HuggingFace token for TFT model upload/download |
+| `NASDAQ_DATA_LINK_API_KEY` | No | - | Nasdaq Data Link API key for LME warehouse data |
+| `MODEL_DIR` | No | `/data/models` | Base directory for model artifacts (XGBoost + TFT) |
 | `HF_HUB_DISABLE_PROGRESS_BARS` | No | `1` | Disable Hugging Face progress bars |
 | `TRANSFORMERS_VERBOSITY` | No | `error` | Reduce Transformers log noise |
 | `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No | `1` | Disable advisory warnings from Transformers |
@@ -404,18 +566,23 @@ The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Genera
 
 Access the live dashboard at [terra-rara.vercel.app](https://terra-rara.vercel.app):
 
-1. **Forecast Card** displays the predicted next-day copper price, predicted return percentage, and AI stance
-2. **Price & Sentiment Chart** shows 180 days of historical copper prices overlaid with the daily sentiment index
-3. **Market Drivers** lists the top XGBoost feature importances
-4. **Market Grid** shows real-time prices for all 14 dashboard symbols
+1. **Deep Learning Forecast** displays the TFT-ASRO T+1 predicted return, direction (BULLISH/BEARISH/NEUTRAL), risk level, and 5-day weekly trend
+2. **Deep Learning Metrics** shows directional accuracy, Sharpe ratio, variance ratio, and tail capture rate
+3. **XGBoost Forecast Card** displays the predicted next-day copper price, predicted return percentage, and AI stance
+4. **Price Forecast Chart** shows 180 days of historical copper prices with T+1 TFT forecast dot and Q10-Q90 confidence band
+5. **Market Drivers** lists the top XGBoost feature importances
+6. **Market Grid** shows real-time prices for all 14 dashboard symbols
 
 ### API Endpoints
 
 Interactive API documentation: [ifieryarrows-copper-mind.hf.space/api/docs](https://ifieryarrows-copper-mind.hf.space/api/docs)
 
 ```bash
-# Get current prediction
+# Get current XGBoost prediction
 curl https://ifieryarrows-copper-mind.hf.space/api/analysis
+
+# Get TFT-ASRO deep learning forecast
+curl https://ifieryarrows-copper-mind.hf.space/api/analysis/tft/HG=F
 
 # Get AI commentary
 curl https://ifieryarrows-copper-mind.hf.space/api/commentary
@@ -497,6 +664,38 @@ Returns 180 days of historical price and sentiment data.
 
 Returns health status including database connectivity.
 
+### GET /api/analysis/tft/{symbol}
+
+Returns TFT-ASRO deep learning forecast with quantile predictions. Results are cached for 5 minutes.
+
+```json
+{
+  "symbol": "HG=F",
+  "direction": "BULLISH",
+  "risk_level": "MEDIUM",
+  "weekly_trend": "BULLISH",
+  "prediction": {
+    "predicted_return_median": 0.0035,
+    "predicted_return_q10": -0.0080,
+    "predicted_return_q90": 0.0150,
+    "predicted_price_median": 4.2650,
+    "volatility_estimate": 0.0115,
+    "daily_forecasts": [
+      {"day": 1, "return_median": 0.0035, "return_q10": -0.0080, "return_q90": 0.0150}
+    ]
+  },
+  "model_metadata": {
+    "trained_at": "2026-03-10T02:30:00Z",
+    "metrics": {
+      "directional_accuracy": 0.58,
+      "sharpe_ratio": 1.12,
+      "variance_ratio": 0.85,
+      "tail_capture_rate": 0.62
+    }
+  }
+}
+```
+
 ### POST /api/pipeline/trigger (Privileged)
 
 Manually triggers the ML pipeline. This is a privileged endpoint that consumes significant resources (LLM API calls, database writes, model training).
@@ -528,7 +727,15 @@ Manually triggers the ML pipeline. This is a privileged endpoint that consumes s
 
 ```bash
 cd backend
+
+# All tests
 pytest tests/ -v
+
+# Deep learning tests only
+pytest tests/deep_learning/ -v
+
+# Screener tests only
+pytest tests/screener/ -v
 ```
 
 ### Linting
@@ -548,13 +755,18 @@ ruff check .
 The pipeline is triggered daily by external scheduler automation (GitHub Actions cron). Local scheduler mode (`SCHEDULER_ENABLED=true`) is for development only:
 
 1. Fetch news from 16 strategic Google News RSS queries
-2. Fetch price data for 17 training symbols via yfinance
-3. Score sentiment via LLM in batches of 20 articles
-4. Aggregate daily sentiment with time-weighted decay (half-life: 7 days)
-5. Generate prediction using existing model (no retraining by default)
-6. Generate AI commentary via OpenRouter
-7. Cache prediction snapshot
-8. Save pipeline metrics to `pipeline_run_metrics` table
+2. Process news through reproducible pipeline (news_raw → news_processed)
+3. Fetch price data for 17 training symbols via yfinance
+4. Score sentiment via LLM in batches of 20 articles
+5. Compute FinBERT CLS embeddings and store PCA-reduced vectors
+6. Aggregate daily sentiment with time-weighted decay (half-life: 7 days)
+7. Generate XGBoost prediction using existing model (no retraining by default)
+8. Generate TFT-ASRO inference from HF Hub checkpoint (quantile forecasts)
+9. Generate AI commentary via OpenRouter
+10. Cache prediction snapshots
+11. Save pipeline metrics to `pipeline_run_metrics` table
+
+TFT model training is separate from the daily pipeline and runs on-demand.
 
 ### Pipeline Monitoring
 
@@ -562,7 +774,8 @@ Each pipeline run records metrics to the database:
 
 ```sql
 SELECT run_id, run_started_at, duration_seconds, 
-       symbols_failed, status, symbol_set_name
+       symbols_failed, status, symbol_set_name,
+       tft_trained, tft_sharpe, tft_directional_accuracy
 FROM pipeline_run_metrics 
 ORDER BY run_started_at DESC 
 LIMIT 10;
@@ -571,8 +784,11 @@ LIMIT 10;
 Tracked metrics:
 - `duration_seconds`: Total pipeline runtime
 - `symbols_requested` / `symbols_fetched_ok` / `symbols_failed`: Data fetch stats
-- `news_imported` / `news_duplicates`: News ingestion stats
-- `snapshot_generated` / `commentary_generated`: Output flags
+- `news_raw_inserted` / `news_raw_duplicates`: News ingestion stats
+- `news_processed_inserted` / `articles_scored_v2`: Processing stats
+- `tft_embeddings_computed`: FinBERT embeddings generated
+- `tft_trained` / `tft_val_loss` / `tft_sharpe` / `tft_directional_accuracy`: TFT metrics
+- `snapshot_generated` / `commentary_generated` / `tft_snapshot_generated`: Output flags
 - `status`: success/failed
 - `error_message`: Error details if failed
 
@@ -626,6 +842,22 @@ Tracked metrics:
 
 **Fix**: Ensure both training and inference use the same symbol set. The system automatically aligns features via `reindex(columns=expected, fill_value=0)`.
 
+### TFT model unavailable or returns null
+
+**Symptom**: `/api/analysis/tft/HG=F` returns null or `{"status": "unavailable"}`
+
+**Cause**: No trained TFT checkpoint exists locally or on HuggingFace Hub.
+
+**Fix**: Train the TFT model via `python -m deep_learning.training.trainer --symbol HG=F`. Ensure `HF_TOKEN` is set if using HF Hub persistence. The predictor will automatically download the checkpoint from Hub on first inference if available.
+
+### TFT predictions are flat or near-zero
+
+**Symptom**: All quantile predictions cluster around zero with minimal spread.
+
+**Cause**: Variance ratio collapse (VR < 0.5). The model learned to minimize loss by predicting near-constant values.
+
+**Fix**: Run Optuna hyperparameter search with `python -m deep_learning.training.hyperopt --n-trials 50`. The search space includes variance ratio penalty to prevent this failure mode. Check that `lambda_vol >= 0.25` and `learning_rate <= 1e-3`.
+
 ## Contributing
 
 1. Fork the repository
@@ -649,7 +881,7 @@ The system masks sensitive credentials in logs:
 
 ### Privileged Endpoint: POST /api/pipeline/trigger
 
-This endpoint triggers the full ML pipeline, which fetches news, calls the LLM API for sentiment scoring, retrains the XGBoost model, and generates AI commentary. Unauthenticated access to this endpoint creates the following risks:
+This endpoint triggers the full ML pipeline, which fetches news, calls the LLM API for sentiment scoring, computes FinBERT embeddings, retrains the XGBoost model, runs TFT-ASRO inference, and generates AI commentary. Unauthenticated access to this endpoint creates the following risks:
 
 - **Request flooding**: Repeated triggers can degrade service availability.
 - **Quota and cost burn**: Each pipeline run consumes OpenRouter API quota. Uncontrolled access can exhaust free-tier limits or incur costs.
