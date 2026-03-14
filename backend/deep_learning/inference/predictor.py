@@ -289,7 +289,19 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
     else:
         risk_level = "LOW"
 
-    return {
+    import math
+    def _sanitize_floats(obj: Any) -> Any:
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
+        elif isinstance(obj, dict):
+            return {k: _sanitize_floats(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return type(obj)(_sanitize_floats(v) for v in obj)
+        return obj
+
+    raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
         "direction": direction,
@@ -299,3 +311,5 @@ def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
         "model_metadata": metadata,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    
+    return _sanitize_floats(raw_result)
