@@ -422,7 +422,7 @@ function App() {
                         <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                           {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
                         </span>
-                        <span className="text-sm text-gray-400 font-mono">${t1?.price_median.toFixed(2)}</span>
+                        <span className="text-sm text-gray-400 font-mono">${t1?.price_median?.toFixed(2) ?? '--'}</span>
                       </div>
                     </div>
 
@@ -432,14 +432,14 @@ function App() {
                       <div className="flex items-center justify-between">
                         <div className="text-center">
                           <p className="text-[10px] text-gray-600 mb-0.5">Low</p>
-                          <span className="text-sm font-mono text-rose-400/80">${t1?.price_q10.toFixed(2)}</span>
+                          <span className="text-sm font-mono text-rose-400/80">${t1?.price_q10?.toFixed(2) ?? '--'}</span>
                         </div>
                         <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/5 relative overflow-hidden">
                           <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 via-gray-500/20 to-emerald-500/40 rounded-full" />
                         </div>
                         <div className="text-center">
                           <p className="text-[10px] text-gray-600 mb-0.5">High</p>
-                          <span className="text-sm font-mono text-emerald-400/80">${t1?.price_q90.toFixed(2)}</span>
+                          <span className="text-sm font-mono text-emerald-400/80">${t1?.price_q90?.toFixed(2) ?? '--'}</span>
                         </div>
                       </div>
                     </div>
