@@ -120,6 +120,7 @@ class TFTPredictor:
         master_df, tv_unknown, tv_known, target_cols = build_tft_dataframe(session, self.cfg)
 
         last_known_price = self._get_last_price(session, symbol)
+        logger.info("TFT predict: baseline_price=%.4f for %s", last_known_price, symbol)
 
         encoder_length = self.cfg.model.max_encoder_length
         prediction_length = self.cfg.model.max_prediction_length
@@ -202,6 +203,7 @@ class TFTPredictor:
 
     def _get_last_price(self, session, symbol: str) -> float:
         """Fetch the latest close price from the database."""
+        import math
         from app.models import PriceBar
 
         row = (
@@ -210,7 +212,19 @@ class TFTPredictor:
             .order_by(PriceBar.date.desc())
             .first()
         )
-        return float(row.close) if row else 1.0
+        if row is None:
+            logger.warning("No PriceBar found for %s, using fallback price 1.0", symbol)
+            return 1.0
+
+        price = float(row.close)
+        if math.isnan(price) or math.isinf(price) or price <= 0:
+            logger.warning(
+                "Invalid close price for %s: %s, using fallback 1.0",
+                symbol, price,
+            )
+            return 1.0
+
+        return price
 
     def get_model_metadata(self, session) -> Optional[Dict]:
         """Load persisted TFT model metadata from DB."""

@@ -246,9 +246,19 @@ def format_prediction(
         Dict with per-day forecasts, confidence bands, and volatility estimate.
         Top-level fields use the *final* day (end of horizon) for backward compat.
     """
+    import math as _math
+
     pred = raw_prediction.cpu().numpy() if isinstance(raw_prediction, torch.Tensor) else raw_prediction
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
+
+    # Guard: ensure baseline_price is a valid positive number
+    if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
+        logger.warning(
+            "format_prediction: invalid baseline_price=%s, falling back to 1.0",
+            baseline_price,
+        )
+        baseline_price = 1.0
 
     # Hard clamp: prevents overconfident models (VR >> 1) from producing
     # absurd compound prices.  Copper's actual daily σ ≈ 0.024; capping at
