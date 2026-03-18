@@ -362,7 +362,8 @@ def build_tft_dataframe(
         len([c for c in master.columns if c.startswith("emb_pca_")]),
     )
 
-    # Also return the last close price for baseline_price calculation
-    last_close = float(close.iloc[-1]) if len(close) > 0 else float('nan')
+    # Also return the last valid close price for baseline_price calculation
+    valid_close = close.dropna()
+    last_close = float(valid_close.iloc[-1]) if len(valid_close) > 0 else float('nan')
 
     return master, time_varying_unknown, time_varying_known, target_cols, last_close
