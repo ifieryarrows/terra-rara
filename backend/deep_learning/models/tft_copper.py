@@ -252,13 +252,13 @@ def format_prediction(
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
 
-    # Guard: ensure baseline_price is a valid positive number
+    # Guard: log if baseline_price is invalid (NaN prices will be sanitised
+    # to null by the API layer's _sanitize_floats, keeping the chart clean).
     if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
         logger.warning(
-            "format_prediction: invalid baseline_price=%s, falling back to 1.0",
+            "format_prediction: invalid baseline_price=%s — price fields will be null",
             baseline_price,
         )
-        baseline_price = 1.0
 
     # Hard clamp: prevents overconfident models (VR >> 1) from producing
     # absurd compound prices.  Copper's actual daily σ ≈ 0.024; capping at

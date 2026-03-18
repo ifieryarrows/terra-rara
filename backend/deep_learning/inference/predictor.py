@@ -213,16 +213,16 @@ class TFTPredictor:
             .first()
         )
         if row is None:
-            logger.warning("No PriceBar found for %s, using fallback price 1.0", symbol)
-            return 1.0
+            logger.warning("No PriceBar found for %s — prices will be null", symbol)
+            return float('nan')
 
         price = float(row.close)
         if math.isnan(price) or math.isinf(price) or price <= 0:
             logger.warning(
-                "Invalid close price for %s: %s, using fallback 1.0",
+                "Invalid close price for %s: %s — prices will be null",
                 symbol, price,
             )
-            return 1.0
+            return float('nan')
 
         return price
 
