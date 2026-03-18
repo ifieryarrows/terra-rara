@@ -10,7 +10,7 @@ on:
             challenger_path:
                 description: "Path to challenger selected_symbols.json"
                 required: true
-                default: "backend/artifacts/runs/latest/selected_symbols.json"
+                default: "backend/config/symbol_sets/challenger.json"
             oos_start:
                 description: "OOS start date (YYYY-MM-DD)"
                 required: false
