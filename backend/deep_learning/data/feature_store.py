@@ -213,7 +213,7 @@ def _build_daily_embedding_features(
 def build_tft_dataframe(
     session,
     cfg: Optional[TFTASROConfig] = None,
-) -> tuple[pd.DataFrame, list[str], list[str], list[str]]:
+) -> tuple[pd.DataFrame, list[str], list[str], list[str], float]:
     """
     Build the master DataFrame for TFT training / inference.
 
@@ -362,4 +362,7 @@ def build_tft_dataframe(
         len([c for c in master.columns if c.startswith("emb_pca_")]),
     )
 
-    return master, time_varying_unknown, time_varying_known, target_cols
+    # Also return the last close price for baseline_price calculation
+    last_close = float(close.iloc[-1]) if len(close) > 0 else float('nan')
+
+    return master, time_varying_unknown, time_varying_known, target_cols, last_close

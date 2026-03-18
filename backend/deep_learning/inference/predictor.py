@@ -117,9 +117,8 @@ class TFTPredictor:
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
 
-        master_df, tv_unknown, tv_known, target_cols = build_tft_dataframe(session, self.cfg)
+        master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(session, self.cfg)
 
-        last_known_price = self._get_last_price(session, symbol)
         logger.info("TFT predict: baseline_price=%.4f for %s", last_known_price, symbol)
 
         encoder_length = self.cfg.model.max_encoder_length
@@ -200,31 +199,6 @@ class TFTPredictor:
         result["symbol"] = symbol
 
         return result
-
-    def _get_last_price(self, session, symbol: str) -> float:
-        """Fetch the latest close price from the database."""
-        import math
-        from app.models import PriceBar
-
-        row = (
-            session.query(PriceBar.close)
-            .filter(PriceBar.symbol == symbol)
-            .order_by(PriceBar.date.desc())
-            .first()
-        )
-        if row is None:
-            logger.warning("No PriceBar found for %s — prices will be null", symbol)
-            return float('nan')
-
-        price = float(row.close)
-        if math.isnan(price) or math.isinf(price) or price <= 0:
-            logger.warning(
-                "Invalid close price for %s: %s — prices will be null",
-                symbol, price,
-            )
-            return float('nan')
-
-        return price
 
     def get_model_metadata(self, session) -> Optional[Dict]:
         """Load persisted TFT model metadata from DB."""
