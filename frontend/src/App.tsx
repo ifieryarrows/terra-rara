@@ -218,7 +218,12 @@ function App() {
     const all = history?.data || [];
     if (all.length === 0) return { forecastChartData: [] as any[], yDomain: [0, 10] as [number, number], lastHistDate: '' };
 
-    const recent = all.slice(-30);
+    // Filter out unclosed/invalid bars (e.g. today's incomplete bar with null price)
+    // to prevent gaps in the chart and ensure the bridge point has a valid number.
+    const validHistory = all.filter((p: any) => p.price != null && !isNaN(p.price));
+    if (validHistory.length === 0) return { forecastChartData: [] as any[], yDomain: [0, 10] as [number, number], lastHistDate: '' };
+
+    const recent = validHistory.slice(-30);
     const last = recent[recent.length - 1];
 
     const hist = recent.slice(0, -1).map(p => ({ date: p.date, price: p.price }));
