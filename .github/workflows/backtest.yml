@@ -6,7 +6,7 @@ on:
             champion_path:
                 description: "Path to champion symbol set JSON"
                 required: true
-                default: "backend/config/symbol_sets/champion.json"
+                default: "backend/config/symbol_sets/active.json"
             challenger_path:
                 description: "Path to challenger selected_symbols.json"
                 required: true
@@ -14,15 +14,15 @@ on:
             oos_start:
                 description: "OOS start date (YYYY-MM-DD)"
                 required: false
-                default: "2024-01-01"
+                default: "2025-04-01"
             oos_end:
                 description: "OOS end date (YYYY-MM-DD)"
                 required: false
-                default: "2025-01-17"
+                default: "2026-03-18"
             include_tft:
                 description: "Include TFT-ASRO vs XGBoost comparison"
                 required: false
-                default: "false"
+                default: "true"
                 type: choice
                 options:
                     - "false"
