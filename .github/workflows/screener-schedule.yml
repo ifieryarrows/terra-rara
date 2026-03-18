@@ -86,3 +86,31 @@ jobs:
             backend/artifacts/runs/
           retention-days: 90
           if-no-files-found: warn
+
+      - name: Update challenger.json from screener output
+        if: ${{ github.event.inputs.run_screener != 'false' }}
+        working-directory: backend
+        run: |
+          SELECTED=$(find artifacts/runs -name "selected_symbols.json" -path "*/latest/*" 2>/dev/null | head -1)
+          if [ -z "$SELECTED" ]; then
+            SELECTED=$(find artifacts/runs -name "selected_symbols.json" | sort | tail -1)
+          fi
+          if [ -n "$SELECTED" ] && [ -f "$SELECTED" ]; then
+            echo "Updating challenger.json from: $SELECTED"
+            cp "$SELECTED" config/symbol_sets/challenger.json
+          else
+            echo "No selected_symbols.json found, skipping challenger update"
+          fi
+
+      - name: Commit updated challenger.json
+        if: ${{ github.event.inputs.run_screener != 'false' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backend/config/symbol_sets/challenger.json
+          if git diff --cached --quiet; then
+            echo "No changes to challenger.json"
+          else
+            git commit -m "chore(screener): update challenger.json from screener run $(date +%Y%m%d)"
+            git push
+          fi
