@@ -236,17 +236,16 @@ function App() {
     };
 
     const forecasts = hasForecast
-      ? (() => {
-          const fc = tftAnalysis!.prediction.daily_forecasts[0];
+      ? tftAnalysis!.prediction.daily_forecasts.map(fc => {
           const d = addBusinessDays(new Date(last.date), fc.day);
-          return [{
+          return {
             date: d.toISOString().split('T')[0],
             priceMedian: fc.price_median,
             priceQ10: fc.price_q10,
             priceQ90: fc.price_q90,
             isForecast: true as const,
-          }];
-        })()
+          };
+        })
       : [];
 
     const data = [...hist, bridge, ...forecasts];
