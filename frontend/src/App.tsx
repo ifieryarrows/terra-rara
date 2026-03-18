@@ -236,7 +236,7 @@ function App() {
     };
 
     const forecasts = hasForecast
-      ? tftAnalysis!.prediction.daily_forecasts.map(fc => {
+      ? tftAnalysis!.prediction.daily_forecasts.slice(0, 1).map(fc => {
           const d = addBusinessDays(new Date(last.date), fc.day);
           return {
             date: d.toISOString().split('T')[0],
@@ -534,13 +534,13 @@ function App() {
                     />
 
                     {/* Q10-Q90 confidence band (80%) — lower edge */}
-                    <Line type="monotone" dataKey="priceQ10" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
+                    <Line type="linear" dataKey="priceQ10" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
                     {/* Q10-Q90 confidence band (80%) — upper edge */}
-                    <Line type="monotone" dataKey="priceQ90" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
+                    <Line type="linear" dataKey="priceQ90" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
 
                     {/* Forecast median line */}
                     <Line
-                      type="monotone"
+                      type="linear"
                       dataKey="priceMedian"
                       stroke="#8B5CF6"
                       strokeWidth={2}
