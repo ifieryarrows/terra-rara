@@ -146,13 +146,14 @@ Output: A ranked list of symbols with stable, significant correlations.
 
 Symbol sets are managed via JSON files in `backend/config/symbol_sets/`:
 
-| File | Purpose |
-|------|---------|
-| `active.json` | **Production set** - Currently used for training. This is the "winner". |
-| `champion.json` | **Previous best** - Backup of last known good set before changes. |
-| `challenger.json` | **Candidate set** - New symbols being tested. Not used in production. |
+| File                | Purpose                                                                       |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `active.json`     | **Production set** - Currently used for training. This is the "winner". |
+| `champion.json`   | **Previous best** - Backup of last known good set before changes.       |
+| `challenger.json` | **Candidate set** - New symbols being tested. Not used in production.   |
 
 **Flow**:
+
 1. Run screener → produces candidate symbols
 2. Add candidates to `challenger.json`
 3. Train model with `SYMBOL_SET=challenger`, compare MAE/RMSE to active
@@ -165,25 +166,25 @@ This allows risk-free experimentation without breaking production.
 
 Used for XGBoost feature engineering. Loaded from `backend/config/symbol_sets/active.json`.
 
-| Category | Symbols | Rationale |
-|----------|---------|-----------|
-| Target | HG=F | COMEX Copper Futures - prediction target |
-| Macro | DX-Y.NYB, CL=F | USD strength inversely correlated; oil = industrial demand proxy |
-| Precious | GC=F, SI=F, PL=F | Safe-haven flows; silver/platinum share industrial use |
-| ETFs | FXI, COPX | China demand (FXI); copper miner basket (COPX) |
-| Majors | BHP, FCX, SCCO, RIO, TECK | Large-cap producers with copper exposure |
-| Regional | IVN.TO, LUN.TO, FM.TO, 2899.HK | Mid-cap miners; Zijin (2899) = China stockpiling signal |
+| Category | Symbols                        | Rationale                                                        |
+| -------- | ------------------------------ | ---------------------------------------------------------------- |
+| Target   | HG=F                           | COMEX Copper Futures - prediction target                         |
+| Macro    | DX-Y.NYB, CL=F                 | USD strength inversely correlated; oil = industrial demand proxy |
+| Precious | GC=F, SI=F, PL=F               | Safe-haven flows; silver/platinum share industrial use           |
+| ETFs     | FXI, COPX                      | China demand (FXI); copper miner basket (COPX)                   |
+| Majors   | BHP, FCX, SCCO, RIO, TECK      | Large-cap producers with copper exposure                         |
+| Regional | IVN.TO, LUN.TO, FM.TO, 2899.HK | Mid-cap miners; Zijin (2899) = China stockpiling signal          |
 
 ### Dashboard Symbols (14) - Separate List
 
 Used for real-time price display only. Configured via `YFINANCE_SYMBOLS` env var. Does not affect model training.
 
-| Category | Symbols |
-|----------|---------|
-| Target | HG=F |
-| Macro | DX-Y.NYB, CL=F |
-| ETFs | FXI, COPX, COPJ |
-| Miners | BHP, FCX, SCCO, RIO, TECK, IVN.TO, LUN.TO, 2899.HK |
+| Category | Symbols                                            |
+| -------- | -------------------------------------------------- |
+| Target   | HG=F                                               |
+| Macro    | DX-Y.NYB, CL=F                                     |
+| ETFs     | FXI, COPX, COPJ                                    |
+| Miners   | BHP, FCX, SCCO, RIO, TECK, IVN.TO, LUN.TO, 2899.HK |
 
 ### Switching Symbol Sets
 
@@ -202,6 +203,7 @@ cp config/symbol_sets/challenger.json config/symbol_sets/active.json
 ### Audit Trail
 
 Each model training run records:
+
 - `symbol_set_name`: Which set was used (active/champion/challenger)
 - `training_symbols`: Full list of symbols
 - `training_symbols_hash`: SHA256 hash for reproducibility
@@ -217,6 +219,7 @@ target = (close[t+1] / close[t]) - 1
 ```
 
 This is recorded in model metadata as:
+
 - `target_type`: `"simple_return"`
 - `target_shift_days`: `1`
 - `target_definition`: `"simple_return(close,1).shift(-1)"`
@@ -232,21 +235,22 @@ Where `baseline_price` is the latest HG=F close from the database.
 
 ### XGBoost Parameters
 
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| `max_depth` | 4 | Shallow trees, prevents overfitting |
-| `learning_rate` | 0.05 | Slow learning, better generalization |
-| `subsample` | 0.8 | 80% of data per tree |
-| `colsample_bytree` | 0.6 | 60% of features per tree |
-| `reg_alpha` (L1) | 0.5 | Sparsity regularization |
-| `reg_lambda` (L2) | 2.0 | Weight decay |
-| `min_child_weight` | 5 | Minimum samples per leaf |
+| Parameter            | Value | Purpose                              |
+| -------------------- | ----- | ------------------------------------ |
+| `max_depth`        | 4     | Shallow trees, prevents overfitting  |
+| `learning_rate`    | 0.05  | Slow learning, better generalization |
+| `subsample`        | 0.8   | 80% of data per tree                 |
+| `colsample_bytree` | 0.6   | 60% of features per tree             |
+| `reg_alpha` (L1)   | 0.5   | Sparsity regularization              |
+| `reg_lambda` (L2)  | 2.0   | Weight decay                         |
+| `min_child_weight` | 5     | Minimum samples per leaf             |
 
 These settings are **conservative** - the model avoids large predictions.
 
 ### Feature Count
 
 Approximately 250 features are generated for XGBoost:
+
 - Technical indicators per symbol (RSI, SMA, volatility, returns)
 - Lag features (1-5 day lags)
 - Cross-asset correlations
@@ -258,17 +262,17 @@ The TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimizatio
 
 #### Model Architecture
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| `hidden_size` | 32 | Reduced from 64 to prevent VSN overfitting on ~313 samples |
-| `attention_head_size` | 2 | Fewer heads for single-series dataset |
-| `dropout` | 0.3 | Heavy regularization for small sample size |
-| `hidden_continuous_size` | 16 | Paired reduction with hidden_size |
-| `learning_rate` | 3e-4 | Conservative to avoid overshooting narrow loss landscape |
-| `max_encoder_length` | 60 | 60 trading days of lookback |
-| `max_prediction_length` | 5 | 5-day forecast horizon |
-| `gradient_clip_val` | 1.0 | Relaxed from 0.5; tanh-based Sharpe gradients are bounded |
-| `batch_size` | 16 | ~19 batches/epoch for stable gradient estimates |
+| Parameter                  | Value | Notes                                                      |
+| -------------------------- | ----- | ---------------------------------------------------------- |
+| `hidden_size`            | 32    | Reduced from 64 to prevent VSN overfitting on ~313 samples |
+| `attention_head_size`    | 2     | Fewer heads for single-series dataset                      |
+| `dropout`                | 0.3   | Heavy regularization for small sample size                 |
+| `hidden_continuous_size` | 16    | Paired reduction with hidden_size                          |
+| `learning_rate`          | 3e-4  | Conservative to avoid overshooting narrow loss landscape   |
+| `max_encoder_length`     | 60    | 60 trading days of lookback                                |
+| `max_prediction_length`  | 5     | 5-day forecast horizon                                     |
+| `gradient_clip_val`      | 1.0   | Relaxed from 0.5; tanh-based Sharpe gradients are bounded  |
+| `batch_size`             | 16    | ~19 batches/epoch for stable gradient estimates            |
 
 #### Quantile Output
 
@@ -288,11 +292,11 @@ L = w_quantile × (quantile_loss + λ_vol × vol_calibration)
   + amplitude_loss
 ```
 
-| Component | Weight | Purpose |
-|-----------|--------|---------|
-| Quantile calibration | λ_quantile = 0.4 | Keeps TFT probabilistic |
-| Sharpe component | w_sharpe = 0.6 | Drives directional learning |
-| Volatility calibration | λ_vol = 0.35 | Q90-Q10 spread tracks 2× actual σ |
+| Component              | Weight            | Purpose                             |
+| ---------------------- | ----------------- | ----------------------------------- |
+| Quantile calibration   | λ_quantile = 0.4 | Keeps TFT probabilistic             |
+| Sharpe component       | w_sharpe = 0.6    | Drives directional learning         |
+| Volatility calibration | λ_vol = 0.35     | Q90-Q10 spread tracks 2× actual σ |
 
 The normalized sum-to-1 formulation prevents either component from silently dominating.
 
@@ -301,6 +305,7 @@ The normalized sum-to-1 formulation prevents either component from silently domi
 The TFT ingests ~340 features across three categories:
 
 **Time-varying unknown (observed in past, unknown in future)**:
+
 - Copper prices, returns, technical indicators (from all 17 training symbols)
 - FinBERT PCA embedding vectors (32 dimensions)
 - Sentiment momentum (5/10/30-day SMA/EMA), surprise Z-score, volume-weighted sentiment
@@ -309,10 +314,12 @@ The TFT ingests ~340 features across three categories:
 - Futures curve spread, contango/backwardation flags
 
 **Time-varying known (known in future)**:
+
 - Day of week (one-hot), month (sinusoidal encoding)
 - US/China holiday calendars
 
 **Static**:
+
 - Group identifier (single series: "copper")
 
 #### Training and Optimization
@@ -336,23 +343,23 @@ Optuna search uses a composite objective with variance ratio penalty: trials pro
 
 #### Financial Metrics
 
-| Metric | Description |
-|--------|-------------|
-| Sharpe Ratio | Annualized risk-adjusted return of long/short strategy |
-| Sortino Ratio | Sharpe variant penalizing only downside volatility |
-| Directional Accuracy | Fraction of days with correct sign prediction |
-| Tail Capture Rate | DA on days where \|return\| > 1.5% |
-| Variance Ratio | pred_std / actual_std (healthy range: 0.5–1.5) |
-| PI80/PI96 Coverage | Empirical coverage of 80% and 96% prediction intervals |
+| Metric               | Description                                            |
+| -------------------- | ------------------------------------------------------ |
+| Sharpe Ratio         | Annualized risk-adjusted return of long/short strategy |
+| Sortino Ratio        | Sharpe variant penalizing only downside volatility     |
+| Directional Accuracy | Fraction of days with correct sign prediction          |
+| Tail Capture Rate    | DA on days where\|return\| > 1.5%                      |
+| Variance Ratio       | pred_std / actual_std (healthy range: 0.5–1.5)        |
+| PI80/PI96 Coverage   | Empirical coverage of 80% and 96% prediction intervals |
 
 #### Model Persistence
 
 TFT artifacts are stored on HuggingFace Hub to survive ephemeral container restarts:
 
-| Artifact | Description |
-|----------|-------------|
-| `best_tft_asro.ckpt` | Lightning checkpoint |
-| `pca_finbert.joblib` | Fitted IncrementalPCA model |
+| Artifact                | Description                      |
+| ----------------------- | -------------------------------- |
+| `best_tft_asro.ckpt`  | Lightning checkpoint             |
+| `pca_finbert.joblib`  | Fitted IncrementalPCA model      |
 | `optuna_results.json` | Best hyperparameters from search |
 
 ## Directory Structure
@@ -454,20 +461,18 @@ python -m screener feature_screener --universe artifacts/universes/latest/univer
 The screener uses two fingerprints to ensure both reproducibility and auditability:
 
 - **`content_fingerprint`**: Deterministic hash of analysis content only. Same inputs + same config = same hash. Excludes timestamps and run IDs.
-
 - **`output_fingerprint`**: Hash of full output envelope including metadata. Changes with each run.
 
 ### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| Weekly via 1d + resample | Downloads daily data, resamples to W-FRI for consistency |
-| Pairwise dropna | Correlation uses per-pair intersection, not global dropna |
-| Frozen lead-lag | Best lag discovered in IS, frozen for OOS evaluation |
-| Partial correlation | Residual correlation with ^GSPC/UUP controls |
-| Multi-source provenance | Each ticker tracks all sources it appeared in |
-| Collision-proof cache | FetchParams fingerprint prevents cache key collisions |
-
+| Feature                  | Description                                               |
+| ------------------------ | --------------------------------------------------------- |
+| Weekly via 1d + resample | Downloads daily data, resamples to W-FRI for consistency  |
+| Pairwise dropna          | Correlation uses per-pair intersection, not global dropna |
+| Frozen lead-lag          | Best lag discovered in IS, frozen for OOS evaluation      |
+| Partial correlation      | Residual correlation with ^GSPC/UUP controls              |
+| Multi-source provenance  | Each ticker tracks all sources it appeared in             |
+| Collision-proof cache    | FetchParams fingerprint prevents cache key collisions     |
 
 ## Getting Started
 
@@ -530,33 +535,33 @@ docker-compose up --build
 
 Copy `env.example` to `backend/.env` and configure:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | - | PostgreSQL connection string |
-| `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM |
-| `PIPELINE_TRIGGER_SECRET` | Yes | - | Secret token for POST /api/pipeline/trigger (32+ random chars) |
-| `SYMBOL_SET` | No | `active` | Which symbol set to use (active/champion/challenger) |
-| `OPENROUTER_MODEL_SCORING` | No | `arcee-ai/trinity-large-preview:free` | Primary model for sentiment scoring |
-| `OPENROUTER_MODEL_COMMENTARY` | No | `arcee-ai/trinity-large-preview:free` | Primary model for commentary generation |
-| `OPENROUTER_RPM` | No | `18` | Soft throttle target for OpenRouter calls |
-| `OPENROUTER_MAX_RETRIES` | No | `3` | Max retry attempts for 429/5xx OpenRouter errors |
-| `MAX_LLM_ARTICLES_PER_RUN` | No | `200` | Per-run LLM scoring budget before FinBERT overflow |
-| `OPENROUTER_FALLBACK_MODELS` | No | empty | Optional comma-separated fallback model list |
-| `OPENROUTER_MODEL` | No | - | Deprecated fallback model env (backward compatibility) |
-| `LLM_SENTIMENT_MODEL` | No | - | Deprecated fallback scoring model env |
-| `TWELVEDATA_API_KEY` | No | - | Backup live price source |
-| `SCHEDULER_ENABLED` | No | `false` | Local-only scheduler flag (production uses external trigger) |
-| `SCHEDULE_TIME` | No | `02:00` | Daily pipeline time (HH:MM) |
-| `TZ` | No | `Europe/Istanbul` | Scheduler timezone |
-| `YFINANCE_SYMBOLS` | No | (14 symbols) | Dashboard symbols (comma-separated) |
-| `NEWS_LOOKBACK_DAYS` | No | `30` | Days of news to fetch |
-| `SENTIMENT_DECAY_HALF_LIFE` | No | `7.0` | Sentiment decay half-life (days) |
-| `HF_TOKEN` | No | - | HuggingFace token for TFT model upload/download |
-| `NASDAQ_DATA_LINK_API_KEY` | No | - | Nasdaq Data Link API key for LME warehouse data |
-| `MODEL_DIR` | No | `/data/models` | Base directory for model artifacts (XGBoost + TFT) |
-| `HF_HUB_DISABLE_PROGRESS_BARS` | No | `1` | Disable Hugging Face progress bars |
-| `TRANSFORMERS_VERBOSITY` | No | `error` | Reduce Transformers log noise |
-| `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No | `1` | Disable advisory warnings from Transformers |
+| Variable                              | Required | Default                                 | Description                                                    |
+| ------------------------------------- | -------- | --------------------------------------- | -------------------------------------------------------------- |
+| `DATABASE_URL`                      | Yes      | -                                       | PostgreSQL connection string                                   |
+| `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM                                     |
+| `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
+| `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (active/champion/challenger)           |
+| `OPENROUTER_MODEL_SCORING`          | No       | `arcee-ai/trinity-large-preview:free` | Primary model for sentiment scoring                            |
+| `OPENROUTER_MODEL_COMMENTARY`       | No       | `arcee-ai/trinity-large-preview:free` | Primary model for commentary generation                        |
+| `OPENROUTER_RPM`                    | No       | `18`                                  | Soft throttle target for OpenRouter calls                      |
+| `OPENROUTER_MAX_RETRIES`            | No       | `3`                                   | Max retry attempts for 429/5xx OpenRouter errors               |
+| `MAX_LLM_ARTICLES_PER_RUN`          | No       | `200`                                 | Per-run LLM scoring budget before FinBERT overflow             |
+| `OPENROUTER_FALLBACK_MODELS`        | No       | empty                                   | Optional comma-separated fallback model list                   |
+| `OPENROUTER_MODEL`                  | No       | -                                       | Deprecated fallback model env (backward compatibility)         |
+| `LLM_SENTIMENT_MODEL`               | No       | -                                       | Deprecated fallback scoring model env                          |
+| `TWELVEDATA_API_KEY`                | No       | -                                       | Backup live price source                                       |
+| `SCHEDULER_ENABLED`                 | No       | `false`                               | Local-only scheduler flag (production uses external trigger)   |
+| `SCHEDULE_TIME`                     | No       | `02:00`                               | Daily pipeline time (HH:MM)                                    |
+| `TZ`                                | No       | `Europe/Istanbul`                     | Scheduler timezone                                             |
+| `YFINANCE_SYMBOLS`                  | No       | (14 symbols)                            | Dashboard symbols (comma-separated)                            |
+| `NEWS_LOOKBACK_DAYS`                | No       | `30`                                  | Days of news to fetch                                          |
+| `SENTIMENT_DECAY_HALF_LIFE`         | No       | `7.0`                                 | Sentiment decay half-life (days)                               |
+| `HF_TOKEN`                          | No       | -                                       | HuggingFace token for TFT model upload/download                |
+| `NASDAQ_DATA_LINK_API_KEY`          | No       | -                                       | Nasdaq Data Link API key for LME warehouse data                |
+| `MODEL_DIR`                         | No       | `/data/models`                        | Base directory for model artifacts (XGBoost + TFT)             |
+| `HF_HUB_DISABLE_PROGRESS_BARS`      | No       | `1`                                   | Disable Hugging Face progress bars                             |
+| `TRANSFORMERS_VERBOSITY`            | No       | `error`                               | Reduce Transformers log noise                                  |
+| `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No       | `1`                                   | Disable advisory warnings from Transformers                    |
 
 The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Generate a random secret before deploying.
 
@@ -664,7 +669,7 @@ Returns 180 days of historical price and sentiment data.
 
 Returns health status including database connectivity.
 
-### GET /api/analysis/tft/{symbol}
+### GET /api/analysis/tft/
 
 Returns TFT-ASRO deep learning forecast with quantile predictions. Results are cached for 5 minutes.
 
@@ -704,20 +709,21 @@ Manually triggers the ML pipeline. This is a privileged endpoint that consumes s
 
 **Expected responses**:
 
-| Status | Condition |
-|--------|-----------|
-| 200 | Pipeline triggered successfully |
+| Status           | Condition                                   |
+| ---------------- | ------------------------------------------- |
+| 200              | Pipeline triggered successfully             |
 | 401 Unauthorized | Missing or invalid `Authorization` header |
-| 409 Conflict | Pipeline already running |
+| 409 Conflict     | Pipeline already running                    |
 
 **Parameters**:
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `fetch_data` | boolean | `true` | Fetch new news and prices |
-| `train_model` | boolean | `true` | Retrain XGBoost model |
+| Parameter       | Type    | Default  | Description               |
+| --------------- | ------- | -------- | ------------------------- |
+| `fetch_data`  | boolean | `true` | Fetch new news and prices |
+| `train_model` | boolean | `true` | Retrain XGBoost model     |
 
 **Daily vs Manual Pipeline**:
+
 - Daily scheduler runs with `train_model=False` (uses existing model, refreshes sentiment only)
 - Manual trigger defaults to `train_model=True` (retrains model)
 
@@ -782,6 +788,7 @@ LIMIT 10;
 ```
 
 Tracked metrics:
+
 - `duration_seconds`: Total pipeline runtime
 - `symbols_requested` / `symbols_fetched_ok` / `symbols_failed`: Data fetch stats
 - `news_raw_inserted` / `news_raw_duplicates`: News ingestion stats
@@ -875,6 +882,7 @@ Issues and feature requests are welcome via GitHub Issues.
 ### Credential Masking
 
 The system masks sensitive credentials in logs:
+
 - Database passwords are replaced with `***:***` in connection URLs
 - API keys in httpx request logs are suppressed
 - Error messages containing credentials are sanitized
@@ -892,7 +900,6 @@ This endpoint triggers the full ML pipeline, which fetches news, calls the LLM A
 ### Configuration
 
 1. **Set `PIPELINE_TRIGGER_SECRET`** in your `.env` file. Use a random string of 32 or more characters. Store this as a secret in your deployment platform.
-
 2. **Rotate the secret immediately** if it is ever exposed in logs, commits, or third-party systems.
 
 ### Abuse Prevention (Recommended Controls)
