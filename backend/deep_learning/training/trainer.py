@@ -103,7 +103,7 @@ def train_tft_model(
     # ---- 1. Feature store ----
     logger.info("Building feature store ...")
     with SessionLocal() as session:
-        master_df, tv_unknown, tv_known, target_cols = build_tft_dataframe(session, cfg)
+        master_df, tv_unknown, tv_known, target_cols, _ = build_tft_dataframe(session, cfg)
 
     logger.info("Master DataFrame: %d rows x %d cols", *master_df.shape)
 

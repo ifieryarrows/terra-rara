@@ -124,7 +124,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     from deep_learning.models.tft_copper import create_tft_model
 
     trial_cfg = create_trial_config(trial, base_cfg)
-    master_df, tv_unknown, tv_known, target_cols = master_data
+    master_df, tv_unknown, tv_known, target_cols, _ = master_data
 
     try:
         training_ds, validation_ds, test_ds = build_datasets(
