@@ -635,6 +635,19 @@ def generate_analysis_report(
         "sentiment_multiplier": _sanitize_float(sentiment_multiplier, 4),
         "sentiment_adjustment_applied": bool(adjustment_applied),
         "predicted_return_capped": bool(predicted_return_capped),
+        "predicted_return_pct": _sanitize_float(predicted_return * 100, 2) if predicted_return is not None else None,
+        "predicted_price": _sanitize_float(predicted_price, 4),
+        "target_type": target_type,
+        "price_source": price_source,
+        "confidence_lower": _sanitize_float(conf_lower, 4),
+        "confidence_upper": _sanitize_float(conf_upper, 4),
+        "sentiment_index": _sanitize_float(current_sentiment, 4),
+        "sentiment_label": get_sentiment_label(current_sentiment),
+        "top_influencers": top_influencers,
+        "data_quality": data_quality,
+        "training_symbols_hash": settings.training_symbols_hash,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
     
     return report
 
