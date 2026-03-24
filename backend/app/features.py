@@ -15,6 +15,12 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+# Suppress silent downcasting FutureWarnings globally for this module
+try:
+    pd.set_option('future.no_silent_downcasting', True)
+except Exception:
+    pass
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -130,7 +136,7 @@ def load_sentiment_data(
 
 def compute_returns(prices: pd.Series, periods: int = 1) -> pd.Series:
     """Compute percentage returns."""
-    return prices.pct_change(periods)
+    return prices.pct_change(periods, fill_method=None)
 
 
 def compute_sma(prices: pd.Series, window: int) -> pd.Series:

@@ -31,10 +31,24 @@ warnings.filterwarnings(
     category=UserWarning,
     module="sklearn",
 )
+warnings.filterwarnings(
+    "ignore",
+    message=".*is an instance of `nn.Module` and is already saved during checkpointing.*",
+    category=UserWarning,
+    module="lightning.pytorch.utilities",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module="lightning.pytorch.utilities",
+)
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 
 logger = logging.getLogger(__name__)
+
+# Suppress PyTorch Lightning promotional tips ("litlogger", "litmodels")
+logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
 
 
 class TFTPredictor:

@@ -163,7 +163,7 @@ def compute_lme_features(
     for w in windows:
         change = stock.diff(w)
         features[f"lme_stock_change_{w}d"] = change
-        pct = stock.pct_change(w)
+        pct = stock.pct_change(w, fill_method=None)
         features[f"lme_stock_pct_change_{w}d"] = pct
 
     features["lme_depletion_rate"] = stock.diff(depletion_window) / depletion_window
@@ -207,7 +207,7 @@ def compute_proxy_lme_features(
 
     features["proxy_vol_zscore"] = (vol - vol_ma20) / vol_std20
     features["proxy_vol_spike"] = (features["proxy_vol_zscore"] > 2.0).astype(np.float32)
-    features["proxy_vol_price_interaction"] = features["proxy_vol_zscore"] * close.pct_change()
+    features["proxy_vol_price_interaction"] = features["proxy_vol_zscore"] * close.pct_change(fill_method=None)
 
     spread_5_20 = close.rolling(5).mean() - close.rolling(20).mean()
     features["proxy_momentum_spread"] = spread_5_20 / close.rolling(20).std().replace(0, np.nan)

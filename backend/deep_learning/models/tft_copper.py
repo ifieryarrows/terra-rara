@@ -150,6 +150,8 @@ def create_tft_model(
         log_val_interval=1,
     )
 
+    model.save_hyperparameters(ignore=['loss', 'logging_metrics'])
+
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("TFT model created: %d total params, %d trainable", n_params, n_trainable)

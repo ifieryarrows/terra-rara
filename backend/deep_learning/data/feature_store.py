@@ -311,7 +311,7 @@ def build_tft_dataframe(
 
     # ---- 6. Target: next-day simple return ----
     close = price_df["close"]
-    target_ret = close.pct_change().shift(-1)
+    target_ret = close.pct_change(fill_method=None).shift(-1)
     target_ret.name = "target"
 
     # ---- Assemble master DataFrame ----
