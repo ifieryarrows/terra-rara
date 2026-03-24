@@ -222,19 +222,18 @@ async def _generate_commentary_and_stance(
         ]
     )
 
-    user_prompt = f"""Generate commentary and stance using only the provided data.
-Return strict JSON with keys: stance, commentary.
+    user_prompt = f"""Generate your expert commentary and market stance using exclusively the provided data inputs. Return output as strict JSON format with exactly two keys: stance and commentary.
 
-Rules:
-- stance must be one of: BULLISH, BEARISH, NEUTRAL
-- commentary must include exactly:
-  1) 3 risk bullets
-  2) 3 opportunity bullets
-  3) 1 summary sentence
-  4) 1 bias warning sentence
-  5) final line: This is NOT financial advice.
+Mandatory Rules:
+- stance value must be precisely one of: BULLISH, BEARISH, NEUTRAL
+- commentary must be structured with the following components in exact order:
+  1) Three distinct risk factors as bullet points, each analyzing downside scenarios or cautionary elements
+  2) Three distinct opportunity factors as bullet points, each highlighting potential upside catalysts or favorable conditions
+  3) One comprehensive summary sentence synthesizing your overall market view and integrating the key variables
+  4) One explicit bias warning sentence acknowledging model limitations, data dependencies, or uncertainty factors
+  5) Final disclaimer line stating exactly: This is NOT financial advice.
 
-Data:
+Input Data Schema:
 - Current Price: {current_price:.4f}
 - Predicted Price: {predicted_price:.4f}
 - Predicted Return: {predicted_return:.6f}
@@ -243,6 +242,9 @@ Data:
 - News Count: {news_count}
 - Top Influencers:
 {influencers_text}
+
+Analytical Approach:
+Interpret predicted return magnitude and direction as your primary signal. Cross-reference sentiment index polarity and label classification to validate or challenge the price forecast. Evaluate news volume as a measure of market attention and information flow intensity. Assess top influencer consensus or divergence as a gauge of expert positioning. Synthesize all variables into a cohesive stance determination. Ensure your commentary reflects multi-dimensional reasoning, integrates quantitative thresholds with qualitative sentiment context, and maintains the analytical rigor expected from a world-class commodities strategist.
 """
 
     base_request_kwargs = {
