@@ -613,30 +613,28 @@ def generate_analysis_report(
             "description": desc,
         })
     
+    import math
+    
+    def _sanitize_float(val: any, decimals: int = 4) -> Optional[float]:
+        try:
+            val_float = float(val)
+            if math.isnan(val_float) or math.isinf(val_float):
+                return None
+            return round(val_float, decimals)
+        except (TypeError, ValueError):
+            return None
+
     # Build report with explicit baseline_price and target_type
     report = {
         "symbol": target_symbol,
-        "current_price": round(current_price, 4),
-        "baseline_price": round(baseline_price, 4),
+        "current_price": _sanitize_float(current_price, 4),
+        "baseline_price": _sanitize_float(baseline_price, 4),
         "baseline_price_date": baseline_price_date,
-        "predicted_return": round(predicted_return, 6),
-        "raw_predicted_return": round(raw_predicted_return, 6),
-        "sentiment_multiplier": round(sentiment_multiplier, 4),
+        "predicted_return": _sanitize_float(predicted_return, 6),
+        "raw_predicted_return": _sanitize_float(raw_predicted_return, 6),
+        "sentiment_multiplier": _sanitize_float(sentiment_multiplier, 4),
         "sentiment_adjustment_applied": bool(adjustment_applied),
         "predicted_return_capped": bool(predicted_return_capped),
-        "predicted_return_pct": round(predicted_return * 100, 2),
-        "predicted_price": round(predicted_price, 4),
-        "target_type": target_type,
-        "price_source": price_source,
-        "confidence_lower": round(conf_lower, 4),
-        "confidence_upper": round(conf_upper, 4),
-        "sentiment_index": round(current_sentiment, 4),
-        "sentiment_label": get_sentiment_label(current_sentiment),
-        "top_influencers": top_influencers,
-        "data_quality": data_quality,
-        "training_symbols_hash": settings.training_symbols_hash,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
     
     return report
 
