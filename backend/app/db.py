@@ -50,6 +50,7 @@ def get_engine():
             engine_kwargs["pool_size"] = 5
             engine_kwargs["max_overflow"] = 10
             engine_kwargs["pool_timeout"] = 30
+            engine_kwargs["pool_recycle"] = 300
         
         _engine = create_engine(database_url, **engine_kwargs)
         
