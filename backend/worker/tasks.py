@@ -577,6 +577,12 @@ async def _execute_pipeline_stages_v2(
                 update_run_metrics(session, run_id, tft_snapshot_generated=True)
                 session.commit()
                 logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
+                
+                # --- NEW PIPELINE BRIDGE ---
+                # Fallback to TFT data for commentary if XGBoost failed or wasn't generated
+                if not snapshot_report:
+                    snapshot_report = tft_report
+                # ---------------------------
             else:
                 result["tft_snapshot_generated"] = False
                 logger.warning(f"[run_id={run_id}] TFT prediction error: {tft_report.get('error')}")
