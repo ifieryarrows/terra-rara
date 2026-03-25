@@ -609,16 +609,56 @@ async def _execute_pipeline_stages_v2(
             from app.commentary import generate_and_save_commentary
 
             report = snapshot_report or {}
+            
+            # Default XGBoost Variable Extraction
+            current_price = report.get("current_price", 0.0)
+            predicted_price = report.get("predicted_price", 0.0)
+            predicted_return = report.get("predicted_return", 0.0)
+            sentiment_index = report.get("sentiment_index", 0.0)
+            sentiment_label = report.get("sentiment_label", "Neutral")
+            top_influencers = report.get("top_influencers", [])
+            news_count = report.get("data_quality", {}).get("news_count_7d", 0)
+
+            # --- NEW: TFT Fallback Scheme ---
+            is_tft = report.get("model_type") == "TFT-ASRO"
+            if is_tft:
+                prediction = report.get("prediction", {})
+                predicted_price = prediction.get("predicted_price_median", 0.0)
+                predicted_return = prediction.get("predicted_return_median", 0.0)
+                
+                try:
+                    from app.inference import get_current_price
+                    from app.models import AnalysisSnapshot
+                    
+                    # Guarantee current price isn't zero
+                    fetched_price = get_current_price(session, "HG=F")
+                    if fetched_price:
+                        current_price = fetched_price
+                    
+                    # Graft missing context from the most recent successful XGBoost run
+                    last_xgb = session.query(AnalysisSnapshot).filter(
+                        AnalysisSnapshot.symbol == "HG=F"
+                    ).order_by(AnalysisSnapshot.generated_at.desc()).first()
+                    
+                    if last_xgb:
+                        sentiment_index = last_xgb.sentiment_index
+                        sentiment_label = last_xgb.sentiment_label
+                        top_influencers = last_xgb.top_influencers
+                        news_count = last_xgb.data_quality.get("news_count_7d", 0) if isinstance(last_xgb.data_quality, dict) else 0
+                except Exception as fallback_exc:
+                    logger.warning(f"Error mapping TFT values in Stage 6: {fallback_exc}")
+            # --------------------------------
+
             await generate_and_save_commentary(
                 session=session,
                 symbol="HG=F",
-                current_price=report.get("current_price", 0.0),
-                predicted_price=report.get("predicted_price", 0.0),
-                predicted_return=report.get("predicted_return", 0.0),
-                sentiment_index=report.get("sentiment_index", 0.0),
-                sentiment_label=report.get("sentiment_label", "Neutral"),
-                top_influencers=report.get("top_influencers", []),
-                news_count=report.get("data_quality", {}).get("news_count_7d", 0),
+                current_price=current_price,
+                predicted_price=predicted_price,
+                predicted_return=predicted_return,
+                sentiment_index=sentiment_index,
+                sentiment_label=sentiment_label,
+                top_influencers=top_influencers,
+                news_count=news_count,
             )
             session.commit()
 
