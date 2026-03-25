@@ -674,7 +674,7 @@ function App() {
             </div>
             <div className="h-[140px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
               {commentary ? (
-                <p className="font-light">{commentary.commentary || ''}</p>
+                <p className="font-light whitespace-pre-wrap">{commentary.commentary || ''}</p>
               ) : (
                 <span className="text-gray-500 animate-pulse">Processing market signals...</span>
               )}

@@ -222,29 +222,72 @@ async def _generate_commentary_and_stance(
         ]
     )
 
-    user_prompt = f"""Generate your expert commentary and market stance using exclusively the provided data inputs. Return output as strict JSON format with exactly two keys: stance and commentary.
+    user_prompt = f"""You are now executing your analytical mandate. Based exclusively on the data provided below, produce a professional-grade market commentary and directional stance on copper.
 
-Mandatory Rules:
-- stance value must be precisely one of: BULLISH, BEARISH, NEUTRAL
-- commentary must be structured with the following components in exact order:
-  1) Three distinct risk factors as bullet points, each analyzing downside scenarios or cautionary elements
-  2) Three distinct opportunity factors as bullet points, each highlighting potential upside catalysts or favorable conditions
-  3) One comprehensive summary sentence synthesizing your overall market view and integrating the key variables
-  4) One explicit bias warning sentence acknowledging model limitations, data dependencies, or uncertainty factors
-  5) Final disclaimer line stating exactly: This is NOT financial advice.
-
-Input Data Schema:
+DATA INPUTS:
 - Current Price: {current_price:.4f}
 - Predicted Price: {predicted_price:.4f}
 - Predicted Return: {predicted_return:.6f}
 - Sentiment Index: {sentiment_index:.6f}
 - Sentiment Label: {sentiment_label}
 - News Count: {news_count}
-- Top Influencers:
+- Top Influencers & Their Signals:
 {influencers_text}
 
-Analytical Approach:
-Interpret predicted return magnitude and direction as your primary signal. Cross-reference sentiment index polarity and label classification to validate or challenge the price forecast. Evaluate news volume as a measure of market attention and information flow intensity. Assess top influencer consensus or divergence as a gauge of expert positioning. Synthesize all variables into a cohesive stance determination. Ensure your commentary reflects multi-dimensional reasoning, integrates quantitative thresholds with qualitative sentiment context, and maintains the analytical rigor expected from a world-class commodities strategist.
+ANALYTICAL FRAMEWORK:
+
+1. Primary Signal Interpretation:
+   - Evaluate predicted return magnitude and direction as your core directional indicator
+   - Assess whether the move represents a minor fluctuation, meaningful trend shift, or major structural change
+   - Consider price levels relative to historical support/resistance zones if contextually relevant
+
+2. Sentiment Cross-Validation:
+   - Analyze sentiment index polarity (positive/negative scale) and intensity
+   - Compare sentiment label classification against predicted return to identify confirmation or divergence
+   - High sentiment-price alignment suggests conviction; divergence signals caution or contrarian opportunity
+
+3. Information Flow & Market Attention:
+   - Interpret news count as a proxy for market focus, volatility potential, and theme saturation
+   - Low news count during directional moves may indicate under-the-radar positioning; high count suggests crowded consensus
+
+4. Expert Positioning & Influencer Consensus:
+   - Decode top influencer signals for directional clustering or dispersion
+   - Identify whether smart money is aligned, hedged, or divided
+   - Weight influencer credibility and track record where symbols/data suggest conviction levels
+
+5. Multi-Timeframe Perspective:
+   - Distinguish between short-term tactical signals and medium-to-long-term structural trends
+   - Flag when immediate momentum conflicts with broader fundamental outlook
+
+OUTPUT REQUIREMENTS:
+
+Return valid JSON with exactly two keys: "stance" and "commentary"
+
+**stance**: Must be one of: BULLISH, BEARISH, NEUTRAL
+
+**commentary**: Structure as follows:
+
+RISKS (3 factors):
+• [Specific downside scenario or headwind derived from data]
+• [Technical, sentiment, or positioning risk visible in inputs]
+• [External dependency or model/data limitation affecting reliability]
+
+OPPORTUNITIES (3 factors):
+• [Specific upside catalyst or tailwind supported by data]
+• [Favorable technical, sentiment, or positioning signal]
+• [Asymmetric risk-reward or contrarian setup if present]
+
+SYNTHESIS:
+[2-3 sentence integrated summary weaving together predicted return, sentiment alignment, influencer positioning, and market attention into a cohesive directional thesis with short/medium-term context]
+
+BIAS ACKNOWLEDGMENT:
+[1 sentence transparently noting model assumptions, data constraints, or volatility factors that could invalidate the analysis]
+
+DISCLAIMER:
+This is NOT financial advice.
+
+EXECUTION STANDARD:
+Write as a seasoned commodities strategist would for institutional clients—precise, confident where data supports it, cautious where uncertainty exists, and always integrating multiple dimensions of analysis. Avoid generic statements; make every risk and opportunity specific to the data provided. Ensure your stance flows logically from the weight of evidence across all input variables.
 """
 
     base_request_kwargs = {
