@@ -641,9 +641,9 @@ async def _execute_pipeline_stages_v2(
                     ).order_by(AnalysisSnapshot.generated_at.desc()).first()
                     
                     if last_xgb:
-                        sentiment_index = last_xgb.sentiment_index
-                        sentiment_label = last_xgb.sentiment_label
-                        top_influencers = last_xgb.top_influencers
+                        sentiment_index = last_xgb.sentiment_index or 0.0
+                        sentiment_label = last_xgb.sentiment_label or "Neutral"
+                        top_influencers = last_xgb.top_influencers or []
                         news_count = last_xgb.data_quality.get("news_count_7d", 0) if isinstance(last_xgb.data_quality, dict) else 0
                 except Exception as fallback_exc:
                     logger.warning(f"Error mapping TFT values in Stage 6: {fallback_exc}")
