@@ -24,7 +24,16 @@ jobs:
         steps:
             - name: Trigger Pipeline
               run: |
-                  TRAIN_MODEL="${{ github.event.inputs.train_model || 'false' }}"
+                  # For manual triggers, use the provided input.
+                  # For cron triggers, auto-enable XGBoost retraining on Sundays.
+                  if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+                    TRAIN_MODEL="${{ github.event.inputs.train_model || 'false' }}"
+                  elif [ "$(date +%u)" == "7" ]; then
+                    TRAIN_MODEL="true"
+                    echo "Sunday detected — enabling XGBoost retraining"
+                  else
+                    TRAIN_MODEL="false"
+                  fi
 
                   echo "Triggering pipeline with train_model=$TRAIN_MODEL"
 
