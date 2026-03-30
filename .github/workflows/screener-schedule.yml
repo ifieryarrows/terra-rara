@@ -107,6 +107,7 @@ jobs:
           fi
 
       - name: Commit updated challenger.json
+        id: commit_challenger
         if: ${{ github.event.inputs.run_screener != 'false' }}
         run: |
           git config user.name "github-actions[bot]"
@@ -114,7 +115,25 @@ jobs:
           git add backend/config/symbol_sets/challenger.json
           if git diff --cached --quiet; then
             echo "No changes to challenger.json"
+            echo "challenger_updated=false" >> $GITHUB_OUTPUT
           else
             git commit -m "chore(screener): update challenger.json from screener run $(date +%Y%m%d)"
             git push
+            echo "challenger_updated=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Trigger Champion/Challenger Backtest
+        if: ${{ steps.commit_challenger.outputs.challenger_updated == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          echo "Challenger set updated — triggering backtest with oos_end=$TODAY"
+          gh workflow run backtest.yml \
+            --ref main \
+            --field champion_path="backend/config/symbol_sets/active.json" \
+            --field challenger_path="backend/config/symbol_sets/challenger.json" \
+            --field oos_start="2025-04-01" \
+            --field oos_end="$TODAY" \
+            --field include_tft="true"
+          echo "Backtest workflow dispatched successfully"
