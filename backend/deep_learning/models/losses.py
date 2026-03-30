@@ -219,7 +219,11 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         # median for having lower variance than actual returns.
         # relu(1 - VR) fires when pred_std < actual_std; zero otherwise.
         median_std = median_pred.std() + self.sharpe_eps
-        amplitude_loss = torch.relu(1.0 - median_std / actual_std)
+        vr = median_std / actual_std
+        amplitude_loss = (
+            torch.relu(1.0 - vr)              # under-variance: VR < 1 → strong penalty
+            + 0.25 * torch.relu(vr - 1.5)     # over-variance:  VR > 1.5 → gentle penalty
+        )
 
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)

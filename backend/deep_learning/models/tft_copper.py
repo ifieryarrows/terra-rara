@@ -82,7 +82,11 @@ try:
 
             # Median amplitude: penalise if median pred variance < actual variance
             median_std = median_pred.std() + self.sharpe_eps
-            amplitude_loss = torch.relu(1.0 - median_std / actual_std)
+            vr = median_std / actual_std
+            amplitude_loss = (
+                torch.relu(1.0 - vr)              # under-variance: VR < 1 → strong penalty
+                + 0.25 * torch.relu(vr - 1.5)     # over-variance:  VR > 1.5 → gentle penalty
+            )
 
             # Quantile (pinball) loss via parent — covers all 7 quantile bands
             q_loss = super().loss(y_pred, target)
