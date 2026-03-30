@@ -649,6 +649,16 @@ async def _execute_pipeline_stages_v2(
                     logger.warning(f"Error mapping TFT values in Stage 6: {fallback_exc}")
             # --------------------------------
 
+            # --- None-safety guard: f-string formatters crash on None ---
+            current_price = float(current_price or 0.0)
+            predicted_price = float(predicted_price or 0.0)
+            predicted_return = float(predicted_return or 0.0)
+            sentiment_index = float(sentiment_index or 0.0)
+            sentiment_label = sentiment_label or "Neutral"
+            top_influencers = top_influencers or []
+            news_count = int(news_count or 0)
+            # -------------------------------------------------------------
+
             await generate_and_save_commentary(
                 session=session,
                 symbol="HG=F",
