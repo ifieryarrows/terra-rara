@@ -262,17 +262,44 @@ def format_prediction(
             baseline_price,
         )
 
-    # Hard clamp: prevents overconfident models (VR >> 1) from producing
-    # absurd compound prices.  Copper's actual daily σ ≈ 0.024; capping at
-    # ~1.25σ keeps the 5-day compound under ≈16 %.  The clamp is inactive
-    # once the model is retrained with a healthy VR (0.5–1.5).
-    _MAX_DAILY_RET = 0.03
+    # Two-stage magnitude control:
+    # Stage 1 – Soft dampening: smoothly attenuates returns that exceed a
+    #   "comfort zone" (≈ 1 daily σ for copper).  Within the zone the raw
+    #   model output passes through unchanged, preserving the model's edge
+    #   on small moves.  Beyond the zone, excess magnitude is compressed with
+    #   a square-root taper so direction and rank order are maintained but
+    #   extreme outliers are pulled toward more realistic levels.
+    #   This is intentionally looser than XGBoost's direct clamp; TFT's
+    #   quantile structure already captures uncertainty.
+    # Stage 2 – Hard clamp: absolute backstop at ±3 % (≈1.25 × actual daily σ).
+    #   Only activates on genuinely runaway predictions (model VR >> 1).
+    _SOFT_ZONE   = 0.010   # pass-through zone: ±1 % unchanged
+    _SOFT_MAX    = 0.020   # compress between 1 % and 2 %; beyond → stage 2
+    _MAX_DAILY_RET = 0.030 # hard clamp backstop
 
-    # T+1 quantile spreads (return-space distance from median).
-    # Used as the base width for confidence bands; scaled by sqrt(d) for
-    # later days so uncertainty grows realistically instead of compounding
-    # tail quantiles exponentially (which would produce absurd bands).
-    med_0 = float(np.clip(pred[0, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
+    def _dampen(r: float) -> float:
+        """Soft-then-hard attenuation of daily return r."""
+        sign = 1.0 if r >= 0 else -1.0
+        abs_r = abs(r)
+        if abs_r <= _SOFT_ZONE:               # pass-through zone
+            return r
+        if abs_r <= _SOFT_MAX:               # soft zone: linear taper to 70 %
+            # interpolate attenuation from 100 % → 70 % as abs_r goes from
+            # _SOFT_ZONE to _SOFT_MAX
+            t = (abs_r - _SOFT_ZONE) / (_SOFT_MAX - _SOFT_ZONE)  # 0 → 1
+            scale = 1.0 - 0.30 * t
+            return sign * abs_r * scale
+        if abs_r <= _MAX_DAILY_RET:           # extended zone: sqrt compression
+            # At _SOFT_MAX the value is 70 % of _SOFT_MAX.
+            # Beyond that, sqrt-taper ensures diminishing returns.
+            base = _SOFT_MAX * 0.70
+            excess = abs_r - _SOFT_MAX
+            budget = _MAX_DAILY_RET - _SOFT_MAX
+            compressed = base + excess ** 0.5 * budget ** 0.5 * 0.5
+            return sign * min(compressed, _MAX_DAILY_RET)
+        return sign * _MAX_DAILY_RET          # hard clamp backstop
+
+    med_0 = _dampen(float(pred[0, median_idx]))
     _raw_med_0 = float(pred[0, median_idx])
     spread_q10 = np.clip(float(pred[0, 1]) - _raw_med_0, -_MAX_DAILY_RET, 0) if len(quantiles) > 2 else 0.0
     spread_q90 = np.clip(float(pred[0, -2]) - _raw_med_0, 0, _MAX_DAILY_RET) if len(quantiles) > 2 else 0.0
@@ -283,7 +310,7 @@ def format_prediction(
     cum_price_med = baseline_price
 
     for d in range(n_days):
-        med = float(np.clip(pred[d, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
+        med = _dampen(float(pred[d, median_idx]))
         cum_price_med *= (1 + med)
         cum_return = (cum_price_med / baseline_price) - 1.0
 
