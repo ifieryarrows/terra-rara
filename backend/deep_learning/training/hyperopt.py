@@ -47,10 +47,13 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         # compressing output distribution and preventing amplitude learning.
         hidden_size=trial.suggest_int("hidden_size", 32, 64, step=16),
         attention_head_size=trial.suggest_int("attention_head_size", 1, 4),
-        # Cap at 0.35: dropout=0.5 with small hidden_size collapses the output
-        # range — the model physically cannot produce large predictions.
-        dropout=trial.suggest_float("dropout", 0.1, 0.35, step=0.05),
-        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 32, step=8),
+        # Floor at 0.20: 313 samples with dropout<0.20 causes co-adaptation
+        # and memorization (REG-2026-001).  Cap at 0.35: dropout>0.35 with
+        # small hidden_size collapses the output range.
+        dropout=trial.suggest_float("dropout", 0.20, 0.35, step=0.05),
+        # Cap at 24: hidden_cont=32 doubled the VSN parameter surface and
+        # contributed to overfitting in the 31-Mar regression.
+        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 24, step=8),
         quantiles=base_cfg.model.quantiles,
         # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
         # LR > 1e-3 causes 1-epoch divergence. This band is the stable zone.
@@ -71,9 +74,9 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     training_cfg = TrainingConfig(
         max_epochs=50,
         early_stopping_patience=8,
-        # Include 16 which gives 19 batches/epoch (vs 4 at batch_size=64)
-        # — more gradient steps per epoch → more stable convergence.
-        batch_size=trial.suggest_categorical("batch_size", [16, 32, 64]),
+        # 16 gives 19 batches/epoch, 32 gives ~10.  64 produced only 4
+        # batches/epoch with noisy gradients — removed after REG-2026-001.
+        batch_size=trial.suggest_categorical("batch_size", [16, 32]),
         val_ratio=base_cfg.training.val_ratio,
         test_ratio=base_cfg.training.test_ratio,
         lookback_days=base_cfg.training.lookback_days,
@@ -202,13 +205,46 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
 
         trial.set_user_attr("variance_ratio", round(vr, 4))
         trial.set_user_attr("pred_std", round(pred_std, 6))
-    except Exception as exc:
-        logger.debug("Trial %d variance check failed: %s", trial.number, exc)
 
-    score = float(val_loss) + variance_penalty
+        # --- Directional accuracy & Sharpe guard (REG-2026-001) ---
+        # Prevents Optuna from selecting configs that overfit training data
+        # but fail to generalise directionally.
+        pred_sign = np.sign(y_pred[:n])
+        actual_sign = np.sign(y_actual[:n])
+        da = float(np.mean(pred_sign == actual_sign))
+        trial.set_user_attr("directional_accuracy", round(da, 4))
+
+        # Strategy Sharpe on validation set
+        strategy_returns = np.sign(y_pred[:n]) * y_actual[:n]
+        sr_mean = float(strategy_returns.mean())
+        sr_std = float(strategy_returns.std()) + 1e-9
+        val_sharpe = sr_mean / sr_std
+        trial.set_user_attr("val_sharpe", round(val_sharpe, 4))
+
+        # Hard prune: negative Sharpe = systematically wrong direction
+        if val_sharpe < 0.0:
+            logger.warning(
+                "Trial %d PRUNED: negative val_sharpe=%.4f (DA=%.2f%%)",
+                trial.number, val_sharpe, da * 100,
+            )
+            import optuna
+            raise optuna.exceptions.TrialPruned()
+
+        # Soft penalty: DA below coin-flip adds heavy cost
+        da_penalty = 0.0
+        if da < 0.50:
+            da_penalty = 2.0 * (0.50 - da)
+            logger.info("Trial %d: DA=%.2f%% < 50%% → da_penalty=%.4f",
+                        trial.number, da * 100, da_penalty)
+
+    except Exception as exc:
+        logger.debug("Trial %d variance/DA check failed: %s", trial.number, exc)
+        da_penalty = 0.0
+
+    score = float(val_loss) + variance_penalty + da_penalty
     logger.info(
-        "Trial %d: val_loss=%.4f vr_penalty=%.4f → score=%.4f",
-        trial.number, float(val_loss), variance_penalty, score,
+        "Trial %d: val_loss=%.4f vr_penalty=%.4f da_penalty=%.4f → score=%.4f",
+        trial.number, float(val_loss), variance_penalty, da_penalty, score,
     )
     return score
 

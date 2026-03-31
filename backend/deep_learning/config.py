@@ -73,8 +73,10 @@ class TFTModelConfig:
     hidden_size: int = 32
     # attention_head_size 4→2: fewer heads for a small, single-series dataset.
     attention_head_size: int = 2
-    # dropout 0.1→0.3: 313 samples / ~900K params still demands heavy regularisation.
-    dropout: float = 0.3
+    # dropout 0.1→0.20 (REG-2026-001): 313 samples with dropout<0.20 caused
+    # co-adaptation and memorization.  Kept ≤0.35 because higher values with
+    # small hidden_size collapse the output range.
+    dropout: float = 0.20
     hidden_continuous_size: int = 16   # was 32; paired reduction with hidden_size
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
     # lr 1e-3→3e-4: smaller batches produce noisier gradients; conservative LR
