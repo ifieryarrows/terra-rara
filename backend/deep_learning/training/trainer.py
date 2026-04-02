@@ -189,20 +189,62 @@ def train_tft_model(
     else:
         final_path = Path(cfg.training.best_model_path)
 
-    # ---- 7. Evaluate on test set ----
+    # ---- 7. Evaluate on test set (Snapshot Ensemble) ----
+    # Use the top-k checkpoints saved by ModelCheckpoint and take the
+    # element-wise median of their predictions.  This smooths stochastic
+    # outliers and improves directional robustness (REG-2026-001 P2-2).
     test_metrics = {}
     if test_dl is not None:
-        logger.info("Evaluating on test set ...")
-        predictions = model.predict(test_dl, return_x=True)
-        pred_tensor = predictions.output if hasattr(predictions, "output") else predictions
+        import torch
+        from deep_learning.models.tft_copper import load_tft_model
 
-        if hasattr(pred_tensor, "cpu"):
-            pred_np = pred_tensor.cpu().numpy()
+        # Collect actual values (same regardless of which model predicts)
+        y_actual_parts = []
+        for batch in test_dl:
+            y_actual_parts.append(
+                batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
+            )
+        y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
+
+        # Gather top-k checkpoint paths
+        best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
+        ckpt_paths = sorted(best_k.keys(), key=lambda p: best_k[p]) if best_k else []
+
+        # Always include the just-trained model as a baseline
+        all_pred_arrays = []
+
+        def _predict_to_np(mdl):
+            pred = mdl.predict(test_dl, return_x=True)
+            pt = pred.output if hasattr(pred, "output") else pred
+            return pt.cpu().numpy() if hasattr(pt, "cpu") else np.array(pt)
+
+        # Predictions from the best model (already in memory)
+        all_pred_arrays.append(_predict_to_np(model))
+
+        # Load additional checkpoints for ensemble
+        for cp in ckpt_paths:
+            if str(cp) == str(best_path):
+                continue  # already have this one
+            try:
+                ckpt_model = load_tft_model(str(cp))
+                all_pred_arrays.append(_predict_to_np(ckpt_model))
+                del ckpt_model
+            except Exception as exc:
+                logger.debug("Skipping ensemble checkpoint %s: %s", cp, exc)
+
+        ensemble_size = len(all_pred_arrays)
+        logger.info(
+            "Snapshot Ensemble: %d model(s) for test evaluation", ensemble_size,
+        )
+
+        # Element-wise median across all models
+        if ensemble_size >= 2:
+            pred_np = np.median(np.stack(all_pred_arrays, axis=0), axis=0)
         else:
-            pred_np = np.array(pred_tensor)
+            pred_np = all_pred_arrays[0]
 
+        median_idx = len(cfg.model.quantiles) // 2
         if pred_np.ndim == 3:
-            median_idx = len(cfg.model.quantiles) // 2
             y_pred_median = pred_np[:, 0, median_idx]
             y_pred_q10 = pred_np[:, 0, 1] if pred_np.shape[2] > 2 else None
             y_pred_q90 = pred_np[:, 0, -2] if pred_np.shape[2] > 2 else None
@@ -211,12 +253,6 @@ def train_tft_model(
         else:
             y_pred_median = pred_np.flatten()
             y_pred_q10 = y_pred_q90 = y_pred_q02 = y_pred_q98 = None
-
-        y_actual_parts = []
-        for batch in test_dl:
-            y_actual_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
-        import torch
-        y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
 
         n = min(len(y_actual), len(y_pred_median))
         test_metrics = compute_all_metrics(
@@ -227,6 +263,7 @@ def train_tft_model(
             y_pred_q02=y_pred_q02[:n] if y_pred_q02 is not None else None,
             y_pred_q98=y_pred_q98[:n] if y_pred_q98 is not None else None,
         )
+        test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
 
     # ---- 8. Variable importance ----

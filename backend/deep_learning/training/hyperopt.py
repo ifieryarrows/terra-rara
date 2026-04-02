@@ -72,8 +72,9 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     )
 
     training_cfg = TrainingConfig(
-        max_epochs=50,
-        early_stopping_patience=8,
+        # Reduced for CV: each fold is smaller, needs fewer epochs.
+        max_epochs=35,
+        early_stopping_patience=6,
         # 16 gives 19 batches/epoch, 32 gives ~10.  64 produced only 4
         # batches/epoch with noisy gradients — removed after REG-2026-001.
         batch_size=trial.suggest_categorical("batch_size", [16, 32]),
@@ -100,15 +101,21 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
 
 def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     """
-    Single Optuna trial: train a TFT variant and return a composite score.
+    Single Optuna trial with Walk-Forward k-Fold Temporal CV.
 
-    Composite objective (lower is better):
-        score = val_loss + variance_penalty
+    Each trial trains k models (one per fold) and returns the mean
+    composite score.  This prevents overfitting to a single validation
+    window — the core structural issue identified in REG-2026-001.
 
-    Two-sided variance penalty keeps predictions in a healthy amplitude zone:
-      VR < 0.5 → strong penalty (2.0×) — flat predictions are useless
-      0.5–1.5  → no penalty — wide healthy zone, not a narrow band
-      VR > 1.5 → gentle penalty (0.5×) — overconfident but still has signal
+    Composite score per fold (lower is better):
+        fold_score = val_loss + vr_penalty
+
+    Final score:
+        mean(fold_scores) + consistency_penalty + da_penalty
+
+    After each fold, an intermediate score is reported to Optuna so
+    the MedianPruner can kill clearly-bad trials early (after 1 fold
+    instead of waiting for all 3).
     """
     try:
         import lightning.pytorch as pl
@@ -116,137 +123,186 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     except ImportError:
         import pytorch_lightning as pl  # type: ignore[no-redef]
         from pytorch_lightning.callbacks import EarlyStopping  # type: ignore[no-redef]
-    try:
-        from optuna_integration.pytorch_lightning import PyTorchLightningPruningCallback
-    except ImportError:
-        from optuna.integration import PyTorchLightningPruningCallback  # type: ignore[no-redef]
 
+    import optuna
     import numpy as np
     import torch
-    from deep_learning.data.dataset import build_datasets, create_dataloaders
+    from deep_learning.data.dataset import build_cv_folds, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
 
     trial_cfg = create_trial_config(trial, base_cfg)
     master_df, tv_unknown, tv_known, target_cols, _ = master_data
+    n_folds = getattr(trial_cfg.training, "cv_n_folds", 3)
 
     try:
-        training_ds, validation_ds, test_ds = build_datasets(
-            master_df, tv_unknown, tv_known, target_cols, trial_cfg,
+        cv_folds = build_cv_folds(
+            master_df, tv_unknown, tv_known, target_cols,
+            trial_cfg, n_folds=n_folds,
         )
-        train_dl, val_dl, _ = create_dataloaders(training_ds, validation_ds, cfg=trial_cfg)
-        model = create_tft_model(training_ds, trial_cfg, use_asro=True)
     except Exception as exc:
-        logger.warning("Trial %d setup failed: %s", trial.number, exc)
+        logger.warning("Trial %d CV fold creation failed: %s", trial.number, exc)
         return float("inf")
 
-    callbacks = [
-        EarlyStopping(monitor="val_loss", patience=trial_cfg.training.early_stopping_patience, mode="min"),
-        PyTorchLightningPruningCallback(trial, monitor="val_loss"),
-    ]
+    fold_scores: list[float] = []
+    fold_da_list: list[float] = []
+    fold_sharpe_list: list[float] = []
+    fold_vr_list: list[float] = []
 
-    ckpt_dir = Path(trial_cfg.training.checkpoint_dir)
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    trainer = pl.Trainer(
-        max_epochs=trial_cfg.training.max_epochs,
-        accelerator="auto",
-        gradient_clip_val=trial_cfg.model.gradient_clip_val,
-        callbacks=callbacks,
-        enable_progress_bar=False,
-        enable_model_summary=False,
-        log_every_n_steps=20,
-    )
-
-    try:
-        trainer.fit(model, train_dataloaders=train_dl, val_dataloaders=val_dl)
-    except Exception as exc:
-        logger.warning("Trial %d training failed: %s", trial.number, exc)
-        return float("inf")
-
-    val_loss = trainer.callback_metrics.get("val_loss")
-    if val_loss is None:
-        return float("inf")
-
-    # --- Variance-ratio penalty on validation set ---
-    # Prevents Optuna from selecting configs that produce near-zero pred_std
-    # (which games Sharpe by being "flat but directionally correct").
-    variance_penalty = 0.0
-    try:
-        pred_tensor = model.predict(val_dl, mode="quantiles")
-        if hasattr(pred_tensor, "cpu"):
-            pred_np = pred_tensor.cpu().numpy()
-        else:
-            pred_np = np.array(pred_tensor)
-
-        median_idx = len(trial_cfg.model.quantiles) // 2
-        y_pred = pred_np[:, 0, median_idx] if pred_np.ndim == 3 else pred_np.flatten()
-
-        y_actual_parts = []
-        for batch in val_dl:
-            y_actual_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
-        y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
-
-        n = min(len(y_actual), len(y_pred))
-        pred_std = float(y_pred[:n].std())
-        actual_std = float(y_actual[:n].std())
-        vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
-
-        # Two-sided penalty with a wide healthy zone [0.5, 1.5]:
-        #   VR < 0.5 → strong penalty (flat predictions, the original problem)
-        #   0.5–1.5  → no penalty (3× wide zone, not a narrow band)
-        #   VR > 1.5 → gentle penalty (overconfident, predictions louder than market)
-        #
-        # Asymmetric: too-flat is worse than too-loud (flat predictions are
-        # useless; loud predictions at least carry directional signal).
-        if vr < 0.5:
-            variance_penalty = 2.0 * (1.0 - vr / 0.5)
-        elif vr > 1.5:
-            variance_penalty = 0.5 * (vr - 1.5)
-
-        trial.set_user_attr("variance_ratio", round(vr, 4))
-        trial.set_user_attr("pred_std", round(pred_std, 6))
-
-        # --- Directional accuracy & Sharpe guard (REG-2026-001) ---
-        # Prevents Optuna from selecting configs that overfit training data
-        # but fail to generalise directionally.
-        pred_sign = np.sign(y_pred[:n])
-        actual_sign = np.sign(y_actual[:n])
-        da = float(np.mean(pred_sign == actual_sign))
-        trial.set_user_attr("directional_accuracy", round(da, 4))
-
-        # Strategy Sharpe on validation set
-        strategy_returns = np.sign(y_pred[:n]) * y_actual[:n]
-        sr_mean = float(strategy_returns.mean())
-        sr_std = float(strategy_returns.std()) + 1e-9
-        val_sharpe = sr_mean / sr_std
-        trial.set_user_attr("val_sharpe", round(val_sharpe, 4))
-
-        # Hard prune: negative Sharpe = systematically wrong direction
-        if val_sharpe < 0.0:
-            logger.warning(
-                "Trial %d PRUNED: negative val_sharpe=%.4f (DA=%.2f%%)",
-                trial.number, val_sharpe, da * 100,
+    for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
+        # ---- setup ----
+        try:
+            fold_train_dl, fold_val_dl, _ = create_dataloaders(
+                fold_train_ds, fold_val_ds, cfg=trial_cfg,
             )
-            import optuna
+            model = create_tft_model(fold_train_ds, trial_cfg, use_asro=True)
+        except Exception as exc:
+            logger.warning(
+                "Trial %d fold %d setup failed: %s",
+                trial.number, fold_idx, exc,
+            )
+            return float("inf")
+
+        callbacks = [
+            EarlyStopping(
+                monitor="val_loss",
+                patience=trial_cfg.training.early_stopping_patience,
+                mode="min",
+            ),
+        ]
+
+        ckpt_dir = Path(trial_cfg.training.checkpoint_dir) / f"fold_{fold_idx}"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        trainer = pl.Trainer(
+            max_epochs=trial_cfg.training.max_epochs,
+            accelerator="auto",
+            gradient_clip_val=trial_cfg.model.gradient_clip_val,
+            callbacks=callbacks,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            log_every_n_steps=20,
+        )
+
+        # ---- train ----
+        try:
+            trainer.fit(model, train_dataloaders=fold_train_dl, val_dataloaders=fold_val_dl)
+        except Exception as exc:
+            logger.warning("Trial %d fold %d training failed: %s", trial.number, fold_idx, exc)
+            return float("inf")
+
+        val_loss = trainer.callback_metrics.get("val_loss")
+        if val_loss is None:
+            return float("inf")
+        fold_val_loss = float(val_loss)
+
+        # ---- per-fold metrics ----
+        fold_vr_penalty = 0.0
+        fold_da = 0.5
+        fold_sharpe = 0.0
+        fold_vr = 0.0
+
+        try:
+            pred_tensor = model.predict(fold_val_dl, mode="quantiles")
+            if hasattr(pred_tensor, "cpu"):
+                pred_np = pred_tensor.cpu().numpy()
+            else:
+                pred_np = np.array(pred_tensor)
+
+            median_idx = len(trial_cfg.model.quantiles) // 2
+            y_pred = pred_np[:, 0, median_idx] if pred_np.ndim == 3 else pred_np.flatten()
+
+            y_actual_parts = []
+            for batch in fold_val_dl:
+                y_actual_parts.append(
+                    batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
+                )
+            y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
+
+            fn = min(len(y_actual), len(y_pred))
+            pred_std = float(y_pred[:fn].std())
+            actual_std = float(y_actual[:fn].std())
+            fold_vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
+
+            if fold_vr < 0.5:
+                fold_vr_penalty = 2.0 * (1.0 - fold_vr / 0.5)
+            elif fold_vr > 1.5:
+                fold_vr_penalty = 0.5 * (fold_vr - 1.5)
+
+            pred_sign = np.sign(y_pred[:fn])
+            actual_sign = np.sign(y_actual[:fn])
+            fold_da = float(np.mean(pred_sign == actual_sign))
+
+            strategy_returns = np.sign(y_pred[:fn]) * y_actual[:fn]
+            sr_mean = float(strategy_returns.mean())
+            sr_std = float(strategy_returns.std()) + 1e-9
+            fold_sharpe = sr_mean / sr_std
+        except Exception as exc:
+            logger.debug(
+                "Trial %d fold %d metrics failed: %s", trial.number, fold_idx, exc
+            )
+
+        fold_vr_list.append(fold_vr)
+        fold_da_list.append(fold_da)
+        fold_sharpe_list.append(fold_sharpe)
+
+        fold_score = fold_val_loss + fold_vr_penalty
+        fold_scores.append(fold_score)
+
+        logger.debug(
+            "Trial %d fold %d/%d: val_loss=%.4f vr=%.3f da=%.1f%% sharpe=%.4f",
+            trial.number, fold_idx + 1, n_folds,
+            fold_val_loss, fold_vr, fold_da * 100, fold_sharpe,
+        )
+
+        # Report running average so MedianPruner can kill bad trials early
+        running_avg = float(np.mean(fold_scores))
+        trial.report(running_avg, fold_idx)
+        if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-        # Soft penalty: DA below coin-flip adds heavy cost
-        da_penalty = 0.0
-        if da < 0.50:
-            da_penalty = 2.0 * (0.50 - da)
-            logger.info("Trial %d: DA=%.2f%% < 50%% → da_penalty=%.4f",
-                        trial.number, da * 100, da_penalty)
+        # Free GPU memory between folds
+        del model, trainer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-    except Exception as exc:
-        logger.debug("Trial %d variance/DA check failed: %s", trial.number, exc)
-        da_penalty = 0.0
+    # ---- cross-fold aggregation ----
+    avg_score = float(np.mean(fold_scores))
+    avg_da = float(np.mean(fold_da_list)) if fold_da_list else 0.5
+    avg_sharpe = float(np.mean(fold_sharpe_list)) if fold_sharpe_list else 0.0
+    avg_vr = float(np.mean(fold_vr_list)) if fold_vr_list else 0.0
 
-    score = float(val_loss) + variance_penalty + da_penalty
-    logger.info(
-        "Trial %d: val_loss=%.4f vr_penalty=%.4f da_penalty=%.4f → score=%.4f",
-        trial.number, float(val_loss), variance_penalty, da_penalty, score,
+    # High fold-score variance = trial is unreliable (works in one regime, fails in another)
+    consistency_penalty = (
+        float(np.std(fold_scores)) * 0.5 if len(fold_scores) > 1 else 0.0
     )
-    return score
+
+    trial.set_user_attr("avg_variance_ratio", round(avg_vr, 4))
+    trial.set_user_attr("avg_directional_accuracy", round(avg_da, 4))
+    trial.set_user_attr("avg_val_sharpe", round(avg_sharpe, 4))
+    trial.set_user_attr(
+        "fold_score_std",
+        round(float(np.std(fold_scores)) if len(fold_scores) > 1 else 0.0, 4),
+    )
+
+    # Hard prune: avg Sharpe negative across folds = systematically wrong
+    if avg_sharpe < 0.0:
+        logger.warning(
+            "Trial %d PRUNED: avg_sharpe=%.4f < 0 across %d folds (DA=%.1f%%)",
+            trial.number, avg_sharpe, n_folds, avg_da * 100,
+        )
+        raise optuna.exceptions.TrialPruned()
+
+    # Soft penalty: avg DA below coin-flip
+    da_penalty = 2.0 * max(0.0, 0.50 - avg_da) if avg_da < 0.50 else 0.0
+
+    final_score = avg_score + consistency_penalty + da_penalty
+    logger.info(
+        "Trial %d [%d-fold CV]: avg_score=%.4f consistency=%.4f "
+        "da_penalty=%.4f → final=%.4f | DA=%.1f%% Sharpe=%.3f VR=%.3f",
+        trial.number, n_folds, avg_score, consistency_penalty, da_penalty,
+        final_score, avg_da * 100, avg_sharpe, avg_vr,
+    )
+    return final_score
 
 
 def run_hyperopt(

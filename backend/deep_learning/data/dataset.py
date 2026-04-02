@@ -108,6 +108,106 @@ def build_datasets(
     return training, validation, test
 
 
+def build_cv_folds(
+    master_df: pd.DataFrame,
+    time_varying_unknown_reals: list[str],
+    time_varying_known_reals: list[str],
+    target_cols: list[str],
+    cfg: Optional[TFTASROConfig] = None,
+    n_folds: int = 3,
+):
+    """
+    Walk-Forward Temporal CV with expanding training windows.
+
+    Test set (last ``test_ratio`` %) is excluded from the CV pool entirely.
+    The remaining data is split into ``n_folds`` expanding-window folds::
+
+        Fold 1: [===TRAIN 60%===][=VAL=][................]
+        Fold 2: [======TRAIN 73%======][=VAL=][.........]
+        Fold 3: [=========TRAIN 87%=========][=VAL=]
+
+    Each validation block covers a different market regime, so Optuna
+    cannot overfit to a single time window (REG-2026-001 root cause).
+
+    When ``n_folds=1``, returns a single fold equivalent to the old
+    single-split behaviour (backward-compatible fallback).
+
+    Returns:
+        List of ``(training_dataset, validation_dataset)`` tuples.
+    """
+    from pytorch_forecasting import TimeSeriesDataSet
+
+    if cfg is None:
+        cfg = get_tft_config()
+
+    n = len(master_df)
+    test_size = int(n * cfg.training.test_ratio)
+    cv_pool_size = n - test_size
+
+    min_seq = cfg.model.max_encoder_length + cfg.model.max_prediction_length
+
+    # Minimum training size: 60 % of CV pool (ensures enough history)
+    min_train_size = max(int(cv_pool_size * 0.60), min_seq + 10)
+    if min_train_size >= cv_pool_size:
+        raise ValueError(
+            f"Not enough data for {n_folds}-fold CV: "
+            f"cv_pool={cv_pool_size}, min_train={min_train_size}"
+        )
+
+    # Divide the remaining space into n_folds equal validation blocks
+    available = cv_pool_size - min_train_size
+    fold_step = max(1, available // n_folds)
+
+    target = target_cols[0] if target_cols else "target"
+    folds: list[tuple] = []
+
+    for fold_idx in range(n_folds):
+        train_end_pos = min(min_train_size + fold_idx * fold_step, cv_pool_size - fold_step)
+        val_end_pos = min(train_end_pos + fold_step, cv_pool_size)
+
+        train_cutoff = master_df["time_idx"].iloc[train_end_pos - 1]
+        val_cutoff = master_df["time_idx"].iloc[val_end_pos - 1]
+
+        train_data = master_df[master_df["time_idx"] <= train_cutoff]
+        val_data = master_df[
+            (master_df["time_idx"] > train_cutoff - cfg.model.max_encoder_length)
+            & (master_df["time_idx"] <= val_cutoff)
+        ]
+
+        training_ds = TimeSeriesDataSet(
+            train_data,
+            time_idx="time_idx",
+            target=target,
+            group_ids=["group_id"],
+            max_encoder_length=cfg.model.max_encoder_length,
+            max_prediction_length=cfg.model.max_prediction_length,
+            time_varying_unknown_reals=time_varying_unknown_reals,
+            time_varying_known_reals=time_varying_known_reals,
+            static_categoricals=["group_id"],
+            add_relative_time_idx=True,
+            add_target_scales=True,
+            add_encoder_length=True,
+            allow_missing_timesteps=True,
+        )
+
+        validation_ds = TimeSeriesDataSet.from_dataset(
+            training_ds,
+            val_data,
+            stop_randomization=True,
+        )
+
+        logger.info(
+            "CV Fold %d/%d: train=%d samples (idx<=%.0f), val=%d (idx<=%.0f)",
+            fold_idx + 1, n_folds,
+            len(training_ds), train_cutoff,
+            len(validation_ds), val_cutoff,
+        )
+
+        folds.append((training_ds, validation_ds))
+
+    return folds
+
+
 def _resolve_num_workers(configured: int) -> int:
     """
     Return a safe num_workers value for the current platform.

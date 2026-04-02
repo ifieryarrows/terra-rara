@@ -125,7 +125,11 @@ class TrainingConfig:
     lookback_days: int = 730
     seed: int = 42
     num_workers: int = 0
-    optuna_n_trials: int = 50
+    # 50→25: Walk-Forward CV trains 3 models per trial (25×3=75 ≈ old 50).
+    optuna_n_trials: int = 25
+    # Walk-Forward temporal CV folds for hyperopt (REG-2026-001 P2).
+    # Set to 1 to disable CV and fall back to single-split behaviour.
+    cv_n_folds: int = 3
     checkpoint_dir: str = ""
     best_model_path: str = ""
     hf_model_repo: str = "ifieryarrows/copper-mind-tft"
