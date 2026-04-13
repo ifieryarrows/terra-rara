@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write   # required for 'gh workflow run' to dispatch backtest.yml
 
     steps:
       - name: Checkout repository
