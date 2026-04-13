@@ -24,7 +24,7 @@ on:
                     - "true"
                     - "false"
             hyperopt_trials:
-                description: "Number of Optuna trials (if hyperopt enabled). 15 trials × 3 folds × 25 epochs ≈ 108 min on CPU."
+                description: "Number of Optuna trials. 15 trials × 3 folds × 25 epochs ≈ 108 min on CPU."
                 required: false
                 default: "15"
                 type: string
@@ -34,9 +34,14 @@ env:
     MODEL_DIR: /tmp/models
 
 jobs:
-    train-tft:
+    # ─────────────────────────────────────────────────────────────────────────
+    # JOB 1 — Hyperparameter search (~108 min, own 3 h budget)
+    # Skipped when run_hyperopt is explicitly set to "false".
+    # ─────────────────────────────────────────────────────────────────────────
+    hyperopt:
         runs-on: ubuntu-latest
-        timeout-minutes: 190  # ~155 min expected (108 hyperopt + 47 final) + 35 buffer
+        timeout-minutes: 175  # 108 min expected + 67 min buffer
+        if: ${{ github.event.inputs.run_hyperopt != 'false' }}
 
         steps:
             - name: Checkout repository
@@ -66,15 +71,67 @@ jobs:
               continue-on-error: true
 
             - name: Run Optuna hyperparameter search
-              if: ${{ github.event.inputs.run_hyperopt != 'false' }}
               working-directory: backend
               run: |
-                  N_TRIALS="${{ github.event.inputs.hyperopt_trials || '20' }}"
+                  N_TRIALS="${{ github.event.inputs.hyperopt_trials || '15' }}"
                   python -m deep_learning.training.hyperopt \
                     --n-trials "$N_TRIALS" \
                     --study-name tft_asro_optuna
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+            - name: Upload Optuna results artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  # trainer.py reads optuna_results.json from tft/ root via
+                  # _apply_optuna_results(). The train job restores it there.
+                  name: optuna-results-${{ github.run_id }}
+                  path: /tmp/models/tft/optuna_results.json
+                  retention-days: 7
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # JOB 2 — Final training (~50 min, own 3 h budget)
+    # Runs after hyperopt (if it ran) OR directly when hyperopt is skipped.
+    # ─────────────────────────────────────────────────────────────────────────
+    train:
+        runs-on: ubuntu-latest
+        timeout-minutes: 175  # ~50 min expected + 125 min buffer for large datasets
+        needs: [hyperopt]
+        # Run when:
+        #   a) hyperopt succeeded, OR
+        #   b) hyperopt was skipped (run_hyperopt == 'false')
+        if: |
+            always() &&
+            (needs.hyperopt.result == 'success' || needs.hyperopt.result == 'skipped')
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+                  cache: "pip"
+
+            - name: Install dependencies
+              working-directory: backend
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements.txt
+
+            - name: Create model directory
+              run: mkdir -p /tmp/models/tft/checkpoints
+
+            - name: Download Optuna results artifact
+              # Only attempt download when hyperopt actually ran and succeeded.
+              if: ${{ needs.hyperopt.result == 'success' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: optuna-results-${{ github.run_id }}
+                  # Restores optuna_results.json to tft/ root so that
+                  # _apply_optuna_results() in trainer.py picks it up.
+                  path: /tmp/models/tft/
 
             - name: Train TFT-ASRO model
               working-directory: backend
@@ -98,9 +155,9 @@ jobs:
             - name: Display training results
               run: |
                   echo "=== TFT-ASRO Training Complete ==="
-                  if [ -f "/tmp/models/tft/checkpoints/optuna_results.json" ]; then
-                    echo "--- Optuna Results ---"
-                    python -m json.tool /tmp/models/tft/checkpoints/optuna_results.json
+                  if [ -f "/tmp/models/tft/optuna_results.json" ]; then
+                    echo "--- Optuna Results Applied ---"
+                    python -m json.tool /tmp/models/tft/optuna_results.json
                   fi
                   ls -la /tmp/models/tft/ 2>/dev/null || echo "No model directory"
                   ls -la /tmp/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
