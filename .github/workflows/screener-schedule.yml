@@ -119,6 +119,7 @@ jobs:
             echo "challenger_updated=false" >> $GITHUB_OUTPUT
           else
             git commit -m "chore(screener): update challenger.json from screener run $(date +%Y%m%d)"
+            git pull --rebase origin main
             git push
             echo "challenger_updated=true" >> $GITHUB_OUTPUT
           fi
