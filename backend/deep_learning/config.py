@@ -125,8 +125,9 @@ class TrainingConfig:
     lookback_days: int = 730
     seed: int = 42
     num_workers: int = 0
-    # 50→25: Walk-Forward CV trains 3 models per trial (25×3=75 ≈ old 50).
-    optuna_n_trials: int = 25
+    # 25→15: CI budget fix. 15 trials × 3 folds × 25 epochs ≈ 108 min;
+    # final trainer adds ~40-50 min → total ~155 min < 180 min limit.
+    optuna_n_trials: int = 15
     # Walk-Forward temporal CV folds for hyperopt (REG-2026-001 P2).
     # Set to 1 to disable CV and fall back to single-split behaviour.
     cv_n_folds: int = 3

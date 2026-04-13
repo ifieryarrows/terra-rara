@@ -72,9 +72,11 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     )
 
     training_cfg = TrainingConfig(
-        # Reduced for CV: each fold is smaller, needs fewer epochs.
-        max_epochs=35,
-        early_stopping_patience=6,
+        # CI budget: 3h limit @ CPU-only.
+        # 15 trials × 3 folds × 25 epochs ≈ 108 min → leaves 70 min for final trainer.
+        # (Was 35/6, causing 3h+ timeout with 20 trials.)
+        max_epochs=25,
+        early_stopping_patience=4,
         # 16 gives 19 batches/epoch, 32 gives ~10.  64 produced only 4
         # batches/epoch with noisy gradients — removed after REG-2026-001.
         batch_size=trial.suggest_categorical("batch_size", [16, 32]),

@@ -24,9 +24,9 @@ on:
                     - "true"
                     - "false"
             hyperopt_trials:
-                description: "Number of Optuna trials (if hyperopt enabled)"
+                description: "Number of Optuna trials (if hyperopt enabled). 15 trials × 3 folds × 25 epochs ≈ 108 min on CPU."
                 required: false
-                default: "20"
+                default: "15"
                 type: string
 
 env:
@@ -36,7 +36,7 @@ env:
 jobs:
     train-tft:
         runs-on: ubuntu-latest
-        timeout-minutes: 180
+        timeout-minutes: 190  # ~155 min expected (108 hyperopt + 47 final) + 35 buffer
 
         steps:
             - name: Checkout repository
