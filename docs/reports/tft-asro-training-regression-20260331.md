@@ -1,14 +1,14 @@
 # TFT-ASRO Eğitim Regresyon Raporu
 
-| Alan | Değer |
-|---|---|
-| **Rapor Tarihi** | 31 Mart 2026 |
-| **Rapor No** | TFT-REG-2026-001 |
-| **Proje** | CopperMind — Bakır Vadeli İşlem Tahmin Platformu |
-| **Bileşen** | `deep_learning/` — TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) |
-| **Hazırlayan** | AI Engineering Team |
-| **Durum** | 🟡 Araştırma Devam Ediyor |
-| **Öncelik** | P1 — Üretim modeli kalitesi doğrudan etkileniyor |
+| Alan                   | Değer                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Rapor Tarihi** | 31 Mart 2026                                                                                         |
+| **Rapor No**     | TFT-REG-2026-001                                                                                     |
+| **Proje**        | CopperMind — Bakır Vadeli İşlem Tahmin Platformu                                                 |
+| **Bileşen**     | `deep_learning/` — TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) |
+| **Hazırlayan**  | AI Engineering Team                                                                                  |
+| **Durum**        | 🟡 Araştırma Devam Ediyor                                                                          |
+| **Öncelik**     | P1 — Üretim modeli kalitesi doğrudan etkileniyor                                                  |
 
 ---
 
@@ -22,12 +22,12 @@
 
 ### 2.1 İlk Tespit
 
-| Özellik | Detay |
-|---|---|
-| **Tespit Zamanı** | 31 Mart 2026, 13:44 UTC+3 |
-| **Ortam** | GitHub Actions — `tft-training.yml` haftalık cron workflow |
-| **Tetikleyici** | Haftalık otomatik TFT-ASRO yeniden eğitim döngüsü |
-| **Tespit Yöntemi** | Eğitim tamamlanma loglarındaki metrik karşılaştırması |
+| Özellik                  | Detay                                                         |
+| ------------------------- | ------------------------------------------------------------- |
+| **Tespit Zamanı**  | 31 Mart 2026, 13:44 UTC+3                                     |
+| **Ortam**           | GitHub Actions —`tft-training.yml` haftalık cron workflow |
+| **Tetikleyici**     | Haftalık otomatik TFT-ASRO yeniden eğitim döngüsü        |
+| **Tespit Yöntemi** | Eğitim tamamlanma loglarındaki metrik karşılaştırması  |
 
 ### 2.2 Etkilenen Bileşenler
 
@@ -46,27 +46,27 @@ CopperMind Platform
 
 ### 2.3 Etki Değerlendirmesi
 
-| Etki Alanı | Seviye | Açıklama |
-|---|---|---|
-| **Model Doğruluğu** | 🔴 Kritik | Directional accuracy %50 altına düştü — rastgele tahminden kötü |
-| **Risk-Ayarlı Getiri** | 🔴 Kritik | Sharpe Ratio negatif — sistematik olarak yanlış yön |
-| **Kullanıcı Güveni** | 🟡 Orta | TFT tahminleri XGBoost ile paralel sunuluyor; doğrudan zarar sınırlı |
-| **Altyapı** | 🟢 Düşük | Pipeline ve deployment etkilenmedi |
-| **Veri Bütünlüğü** | 🟢 Düşük | Eğitim verisi bozulmadı |
+| Etki Alanı                   | Seviye      | Açıklama                                                               |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------ |
+| **Model Doğruluğu**   | 🔴 Kritik   | Directional accuracy %50 altına düştü — rastgele tahminden kötü   |
+| **Risk-Ayarlı Getiri** | 🔴 Kritik   | Sharpe Ratio negatif — sistematik olarak yanlış yön                  |
+| **Kullanıcı Güveni** | 🟡 Orta     | TFT tahminleri XGBoost ile paralel sunuluyor; doğrudan zarar sınırlı |
+| **Altyapı**            | 🟢 Düşük | Pipeline ve deployment etkilenmedi                                       |
+| **Veri Bütünlüğü** | 🟢 Düşük | Eğitim verisi bozulmadı                                                |
 
 ### 2.4 Metrik Karşılaştırması
 
-| Metrik | 25 Mart (Referans) | 31 Mart (Regresyon) | Δ | Yorum |
-|---|---|---|---|---|
-| MAE | 0.0354 | 0.0398 | +12.4% | 🔴 Kötüleşme |
-| RMSE | 0.0409 | 0.0459 | +12.2% | 🔴 Kötüleşme |
-| Directional Accuracy | 0.5087 | 0.4826 | −5.1% | 🔴 Coin-flip altı |
-| Tail Capture Rate | 0.6055 | 0.3945 | −34.8% | 🔴 Kuyruk olayları kaçırılıyor |
-| Sharpe Ratio | 0.8439 | −0.8598 | −202% | 🔴 **Negatif — sistematik yanlış yön** |
-| Sortino Ratio | 1.4058 | −1.5710 | −212% | 🔴 Negatif |
-| pred_std | 0.0098 | 0.0159 | +62.2% | 🟢 Daha geniş tahmin bandı |
-| actual_std | 0.0204 | 0.0204 | — | Piyasa volatilitesi sabit |
-| **Variance Ratio** | **0.4803** | **0.7785** | **+62.1%** | **🟢 Anlamlı iyileşme** |
+| Metrik                   | 25 Mart (Referans) | 31 Mart (Regresyon) | Δ               | Yorum                                           |
+| ------------------------ | ------------------ | ------------------- | ---------------- | ----------------------------------------------- |
+| MAE                      | 0.0354             | 0.0398              | +12.4%           | 🔴 Kötüleşme                                 |
+| RMSE                     | 0.0409             | 0.0459              | +12.2%           | 🔴 Kötüleşme                                 |
+| Directional Accuracy     | 0.5087             | 0.4826              | −5.1%           | 🔴 Coin-flip altı                              |
+| Tail Capture Rate        | 0.6055             | 0.3945              | −34.8%          | 🔴 Kuyruk olayları kaçırılıyor             |
+| Sharpe Ratio             | 0.8439             | −0.8598            | −202%           | 🔴**Negatif — sistematik yanlış yön** |
+| Sortino Ratio            | 1.4058             | −1.5710            | −212%           | 🔴 Negatif                                      |
+| pred_std                 | 0.0098             | 0.0159              | +62.2%           | 🟢 Daha geniş tahmin bandı                    |
+| actual_std               | 0.0204             | 0.0204              | —               | Piyasa volatilitesi sabit                       |
+| **Variance Ratio** | **0.4803**   | **0.7785**    | **+62.1%** | **🟢 Anlamlı iyileşme**                 |
 
 ---
 
@@ -74,13 +74,13 @@ CopperMind Platform
 
 ### 3.1 Olası Neden Envanteri
 
-| # | Olası Neden | Durum | Gerekçe |
-|---|---|---|---|
-| 1 | Bilateral amplitude_loss değişikliği | ❌ Elendi | VR=0.78 < 1.5 eşiği → yeni terim `0.25 × relu(0.78 − 1.5) = 0` üretir, tamamen inaktif |
-| 2 | Eğitim verisi bozulması / kayıp | ❌ Elendi | `actual_std=0.0204` her iki dönemde aynı, veri tutarlı |
-| 3 | Piyasa rejim değişikliği | ❌ Elendi | 6 günlük fark, bakır piyasasında rejim kırılması yok |
-| 4 | Altyapı/GPU sorunu | ❌ Elendi | Eğitim tamamlandı, hata yok |
-| 5 | **Optuna parametre seçim regresyonu** | ✅ **Kök Neden** | Aşağıda detaylı analiz |
+| # | Olası Neden                                 | Durum                  | Gerekçe                                                                                       |
+| - | -------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
+| 1 | Bilateral amplitude_loss değişikliği      | ❌ Elendi              | VR=0.78 < 1.5 eşiği → yeni terim `0.25 × relu(0.78 − 1.5) = 0` üretir, tamamen inaktif |
+| 2 | Eğitim verisi bozulması / kayıp           | ❌ Elendi              | `actual_std=0.0204` her iki dönemde aynı, veri tutarlı                                    |
+| 3 | Piyasa rejim değişikliği                  | ❌ Elendi              | 6 günlük fark, bakır piyasasında rejim kırılması yok                                    |
+| 4 | Altyapı/GPU sorunu                          | ❌ Elendi              | Eğitim tamamlandı, hata yok                                                                  |
+| 5 | **Optuna parametre seçim regresyonu** | ✅**Kök Neden** | Aşağıda detaylı analiz                                                                     |
 
 ### 3.2 Kök Neden: Optuna Hiperparametre Regresyonu
 
@@ -137,16 +137,16 @@ Neden 5: Optuna neden overfitting'i tespit edemedi?
 
 #### Parametre-Parametre Detay Tablosu
 
-| Parametre | Referans (25 Mart) | Regresyon (31 Mart) | Etki Analizi |
-|---|---|---|---|
-| `dropout` | **0.25** | 0.10 | 🔴 ~313 eğitim örneği için %10 dropout yetersiz regularizasyon. Model ağırlıkları eğitim setindeki gürültüyü ezberliyor. |
-| `hidden_continuous_size` | **16** | 32 | 🔴 Continuous Variable Selection Network'ün parametre sayısını 2× artırıyor. Overfitting yüzeyini genişletiyor. |
-| `gradient_clip_val` | **0.5** | 1.5 | 🟡 Daha büyük gradient güncellemelerine izin veriyor. Tanh-tabanlı Sharpe gradientleri zaten sınırlı, ancak quantile gradientleri sınırsız büyüyebilir. |
-| `batch_size` | **16** | 32 | 🟡 Epoch başına 19→~10 gradient adımı. EarlyStopping'in convergence'ı yakalaması zorlaşıyor. |
-| `max_encoder_length` | **70** | 90 | 🟡 Daha uzun lookback penceresi. Küçük dataset'te daha az eğitim örneği üretir (sliding windows azalır). |
-| `attention_head_size` | **3** | 4 | 🟢 Marjinal etki. |
-| `lambda_vol` | **0.35** | 0.40 | 🟢 Vol calibration ağırlığı hafif artış — VR iyileşmesini açıklıyor. |
-| `lambda_quantile` | **0.20** | 0.30 | 🟡 Quantile ağırlığı artışı, Sharpe ağırlığını 0.80→0.70'e düşürdü. Directional learning baskılandı. |
+| Parametre                  | Referans (25 Mart) | Regresyon (31 Mart) | Etki Analizi                                                                                                                                                        |
+| -------------------------- | ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dropout`                | **0.25**     | 0.10                | 🔴 ~313 eğitim örneği için %10 dropout yetersiz regularizasyon. Model ağırlıkları eğitim setindeki gürültüyü ezberliyor.                               |
+| `hidden_continuous_size` | **16**       | 32                  | 🔴 Continuous Variable Selection Network'ün parametre sayısını 2× artırıyor. Overfitting yüzeyini genişletiyor.                                            |
+| `gradient_clip_val`      | **0.5**      | 1.5                 | 🟡 Daha büyük gradient güncellemelerine izin veriyor. Tanh-tabanlı Sharpe gradientleri zaten sınırlı, ancak quantile gradientleri sınırsız büyüyebilir. |
+| `batch_size`             | **16**       | 32                  | 🟡 Epoch başına 19→~10 gradient adımı. EarlyStopping'in convergence'ı yakalaması zorlaşıyor.                                                               |
+| `max_encoder_length`     | **70**       | 90                  | 🟡 Daha uzun lookback penceresi. Küçük dataset'te daha az eğitim örneği üretir (sliding windows azalır).                                                    |
+| `attention_head_size`    | **3**        | 4                   | 🟢 Marjinal etki.                                                                                                                                                   |
+| `lambda_vol`             | **0.35**     | 0.40                | 🟢 Vol calibration ağırlığı hafif artış — VR iyileşmesini açıklıyor.                                                                                    |
+| `lambda_quantile`        | **0.20**     | 0.30                | 🟡 Quantile ağırlığı artışı, Sharpe ağırlığını 0.80→0.70'e düşürdü. Directional learning baskılandı.                                           |
 
 ### 3.4 Bilateral Amplitude Loss Etkisi — Kanıtlama
 
@@ -174,14 +174,14 @@ Bu dönemin VR değeri = 0.7785:
 
 #### Senaryo 1: Post-Inference Soft Dampening (Reddedildi)
 
-| Alan | Detay |
-|---|---|
-| **Tarih** | 30 Mart 2026, 18:35 UTC+3 |
-| **Commit** | `acdbfc6` |
-| **Amaç** | Inference sırasında büyük tahminleri kademeli olarak sıkıştırmak |
-| **Dosya** | `deep_learning/models/tft_copper.py` → `format_prediction()` |
-| **Sonuç** | ❌ Reddedildi ve geri alındı |
-| **Revert Commit** | `bf370f9` |
+| Alan                    | Detay                                                                    |
+| ----------------------- | ------------------------------------------------------------------------ |
+| **Tarih**         | 30 Mart 2026, 18:35 UTC+3                                                |
+| **Commit**        | `acdbfc6`                                                              |
+| **Amaç**         | Inference sırasında büyük tahminleri kademeli olarak sıkıştırmak |
+| **Dosya**         | `deep_learning/models/tft_copper.py` → `format_prediction()`        |
+| **Sonuç**        | ❌ Reddedildi ve geri alındı                                           |
+| **Revert Commit** | `bf370f9`                                                              |
 
 **Uygulanan Değişiklik:**
 
@@ -217,11 +217,11 @@ def _dampen(r: float) -> float:
 
 #### Senaryo 2: Huber Quantile Loss (Araştırıldı, Uygulanmadı)
 
-| Alan | Detay |
-|---|---|
-| **Tarih** | 30 Mart 2026, araştırma aşaması |
-| **Amaç** | Büyük hataları L1 yerine L2 (karesel) cezalandırmak |
-| **Sonuç** | ❌ Reddedildi — risk analizi sonucu |
+| Alan             | Detay                                                   |
+| ---------------- | ------------------------------------------------------- |
+| **Tarih**  | 30 Mart 2026, araştırma aşaması                     |
+| **Amaç**  | Büyük hataları L1 yerine L2 (karesel) cezalandırmak |
+| **Sonuç** | ❌ Reddedildi — risk analizi sonucu                    |
 
 **Formülasyon:**
 
@@ -242,11 +242,11 @@ L_huber(q, u) =
 
 #### Senaryo 3: Post-Inference İzotonik Kalibrasyon (Araştırıldı, Uygulanmadı)
 
-| Alan | Detay |
-|---|---|
-| **Tarih** | 30 Mart 2026, araştırma aşaması |
-| **Amaç** | Eğitim sonrası monoton dönüşüm ile tahmin kalibrasyonu |
-| **Sonuç** | ❌ Reddedildi — veri yetersizliği |
+| Alan             | Detay                                                        |
+| ---------------- | ------------------------------------------------------------ |
+| **Tarih**  | 30 Mart 2026, araştırma aşaması                          |
+| **Amaç**  | Eğitim sonrası monoton dönüşüm ile tahmin kalibrasyonu |
+| **Sonuç** | ❌ Reddedildi — veri yetersizliği                          |
 
 **Neden Reddedildi:**
 
@@ -258,13 +258,13 @@ L_huber(q, u) =
 
 #### Senaryo 4: Bilateral Amplitude Loss (Uygulandı ✅)
 
-| Alan | Detay |
-|---|---|
-| **Tarih** | 30 Mart 2026, 18:48 UTC+3 |
-| **Commit** | `4c80824` |
-| **Amaç** | Eğitim sırasında VR>1.5 durumunda modele hafif overshoot ceza sinyali vermek |
-| **Dosyalar** | `losses.py` (L220–226), `tft_copper.py` (L83–89) |
-| **Sonuç** | ✅ Uygulandı, ancak mevcut eğitimde inaktif (VR=0.78 < 1.5) |
+| Alan               | Detay                                                                           |
+| ------------------ | ------------------------------------------------------------------------------- |
+| **Tarih**    | 30 Mart 2026, 18:48 UTC+3                                                       |
+| **Commit**   | `4c80824`                                                                     |
+| **Amaç**    | Eğitim sırasında VR>1.5 durumunda modele hafif overshoot ceza sinyali vermek |
+| **Dosyalar** | `losses.py` (L220–226), `tft_copper.py` (L83–89)                          |
+| **Sonuç**   | ✅ Uygulandı, ancak mevcut eğitimde inaktif (VR=0.78 < 1.5)                   |
 
 **Uygulanan Değişiklik:**
 
@@ -283,6 +283,7 @@ amplitude_loss = (
 ```
 
 **Mevcut Durum:**
+
 - `relu(1.0 − 0.78) = 0.22` → mevcut formülle aynı (under-variance cezası)
 - `0.25 × relu(0.78 − 1.5) = 0.0` → yeni terim aktifleşmedi
 - **Regresyonla ilişkisi yok** — tamamen diğer hiperparametre değişikliklerinden kaynaklanıyor
@@ -291,13 +292,13 @@ amplitude_loss = (
 
 ## 5. Güncel Durum
 
-| Madde | Durum |
-|---|---|
-| Regresyonun kök nedeni tespit edildi mi? | ✅ Evet — Optuna parametre seçim regresyonu |
-| Bilateral amplitude_loss suçlu mu? | ❌ Hayır — matematiksel olarak kanıtlandı (Bölüm 3.4) |
-| Üretim modeli etkilendi mi? | ⚠️ Yeni checkpoint HF Hub'a yüklendiyse evet |
-| Önceki checkpoint erişilebilir mi? | ✅ HF Hub versiyon geçmişinden geri alınabilir |
-| Kalıcı çözüm uygulandı mı? | ❌ Henüz — araştırma devam ediyor |
+| Madde                                     | Durum                                                       |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| Regresyonun kök nedeni tespit edildi mi? | ✅ Evet — Optuna parametre seçim regresyonu               |
+| Bilateral amplitude_loss suçlu mu?       | ❌ Hayır — matematiksel olarak kanıtlandı (Bölüm 3.4) |
+| Üretim modeli etkilendi mi?              | ⚠️ Yeni checkpoint HF Hub'a yüklendiyse evet             |
+| Önceki checkpoint erişilebilir mi?      | ✅ HF Hub versiyon geçmişinden geri alınabilir           |
+| Kalıcı çözüm uygulandı mı?         | ❌ Henüz — araştırma devam ediyor                       |
 
 ---
 
@@ -330,27 +331,27 @@ amplitude_loss = (
 ### 6.3 Orta Vadeli Araştırmalar (P2)
 
 - [ ] **Walk-forward validation:** Tek split yerine kayar pencere ile daha güvenilir metrikler
-  - Referans: [Tashman, L.J. (2000) "Out-of-sample tests of forecasting accuracy"](https://doi.org/10.1016/S0169-2070(00)00065-0)
+  - Referans: [Tashman, L.J. (2000) &#34;Out-of-sample tests of forecasting accuracy&#34;](https://doi.org/10.1016/S0169-2070(00)00065-0)
 - [ ] **Optuna pruner konfigürasyonu:** `MedianPruner(n_warmup_steps=5)` → daha agresif pruning ile overfitting trial'ları erken kes
 - [ ] **Ensemble-based confidence:** En iyi 3 Optuna trial'ının medyan tahminini kullan
 - [ ] **Regularization schedule:** Epoch ilerledikçe dropout artır (scheduled dropout)
 
 ### 6.4 İncelenmesi Gereken Kaynaklar
 
-| Kaynak | Konu | Neden |
-|---|---|---|
-| [Optuna docs: Pruning](https://optuna.readthedocs.io/en/stable/reference/pruners.html) | Agresif pruning stratejileri | Overfitting trial'ları erken kesmek |
-| [PyTorch Forecasting: TFT interpretability](https://pytorch-forecasting.readthedocs.io/en/stable/tutorials/stallion.html) | Variable importance analizi | Hangi feature'ların regresyona katkı yaptığını tespit |
-| [Lim et al. (2021) "Temporal Fusion Transformers"](https://doi.org/10.1016/j.ijforecast.2021.03.012) | Orijinal TFT paper | Quantile loss + attention head size etkileşimi |
-| [Bergstra & Bengio (2012) "Random Search for Hyper-Parameter Optimization"](https://jmlr.org/papers/v13/bergstra12a.html) | Hyperopt vs Random Search | TPE'nin küçük dataset'lerde sınırlamaları |
+| Kaynak                                                                                                                             | Konu                         | Neden                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------- |
+| [Optuna docs: Pruning](https://optuna.readthedocs.io/en/stable/reference/pruners.html)                                                | Agresif pruning stratejileri | Overfitting trial'ları erken kesmek                        |
+| [PyTorch Forecasting: TFT interpretability](https://pytorch-forecasting.readthedocs.io/en/stable/tutorials/stallion.html)             | Variable importance analizi  | Hangi feature'ların regresyona katkı yaptığını tespit |
+| [Lim et al. (2021) &#34;Temporal Fusion Transformers&#34;](https://doi.org/10.1016/j.ijforecast.2021.03.012)                          | Orijinal TFT paper           | Quantile loss + attention head size etkileşimi             |
+| [Bergstra &amp; Bengio (2012) &#34;Random Search for Hyper-Parameter Optimization&#34;](https://jmlr.org/papers/v13/bergstra12a.html) | Hyperopt vs Random Search    | TPE'nin küçük dataset'lerde sınırlamaları             |
 
 ### 6.5 Benzer Vakalar
 
-| Vaka | Benzerlik | Alınan Ders |
-|---|---|---|
-| CopperMind TFT v1.0 (Ocak 2026) VR=0.14 | pred_std çok düşük, model flat | `_TANH_SCALE` 100→20 ile çözüldü; Optuna arama alanı daraltıldı |
-| CopperMind XGBoost dar varyans sorunu | Model sürekli küçük tahminler | Sentiment multiplier eklendi; post-hoc düzeltme |
-| Genel: Optuna küçük dataset overfitting | 313 sample ile 50 trial aşırı | Trial sayısı azaltma veya cross-validation |
+| Vaka                                       | Benzerlik                          | Alınan Ders                                                              |
+| ------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------- |
+| CopperMind TFT v1.0 (Ocak 2026) VR=0.14    | pred_std çok düşük, model flat | `_TANH_SCALE` 100→20 ile çözüldü; Optuna arama alanı daraltıldı |
+| CopperMind XGBoost dar varyans sorunu      | Model sürekli küçük tahminler  | Sentiment multiplier eklendi; post-hoc düzeltme                          |
+| Genel: Optuna küçük dataset overfitting | 313 sample ile 50 trial aşırı   | Trial sayısı azaltma veya cross-validation                              |
 
 ---
 
@@ -359,31 +360,27 @@ amplitude_loss = (
 ### 7.1 Çıkarılan Dersler
 
 1. **Optuna güvenliği yetersiz:** Mevcut objective (`val_loss + VR_penalty`) yalnızca kalibrasyon kalitesini ölçüyor; directional accuracy ve Sharpe sign'ı doğrudan korumuyor. Bu, modelin eğitim verisini ezberleyip validation'da iyi loss almasına ama gerçek dünyada başarısız olmasına izin veriyor.
-
 2. **Regularizasyon alt sınırı kritik:** ~313 eğitim örneği ile `dropout=0.10` ve `hidden_continuous_size=32` kombinasyonu, modelin parametre sayısı/veri oranını tehlikeli bölgeye taşıyor. Arama uzayındaki alt sınırlar bir "güvenlik kemeri" işlevi görmelidir.
-
 3. **VR iyileşmesi yanıltıcı olabilir:** VR 0.48→0.78 harika görünüyor, ancak VR tek başına kalite göstergesi değil. Yanlış yönde geniş tahminler, doğru yönde dar tahminlerden daha kötüdür. VR iyileşmesi ile directional accuracy'nin **birlikte** izlenmesi gerekir.
-
 4. **Bilateral amplitude_loss doğru bir guard-rail'dir:** Bu dönemde aktifleşmemiş olması tasarımın doğruluğunu kanıtlıyor — sadece gerçek overshoot'ta devreye giriyor, normal operasyonu etkilemiyor. Gelecek eğitimlerde VR>1.5'e çıkarsa koruma sağlayacak.
 
 ### 7.2 Önleme Önerileri
 
-| # | Öneri | Etki | Efor |
-|---|---|---|---|
-| 1 | Hyperopt objective'e DA<0.50 penaltısı ekle | Yüksek — coin-flip altı modeller otomatik elenir | Düşük |
-| 2 | `dropout` minimum sınırını 0.20'ye yükselt | Yüksek — overfitting yüzeyini daralır | Düşük |
-| 3 | `hidden_continuous_size` maksimumunu 24'e düşür | Orta — parametre/veri oranını kontrol eder | Düşük |
-| 4 | Sharpe negatifse trial'ı prune et | Yüksek — sistematik yanlış yön trial'ları erken kesilir | Düşük |
-| 5 | Önceki en iyi parametreleri "warm-start" olarak Optuna'ya ver | Orta — arama uzayını önceki optima etrafında yoğunlaştırır | Orta |
-| 6 | Walk-forward CV uygula (3-fold temporal) | Yüksek — genelleme kalitesini doğrudan ölçer | Yüksek |
+| # | Öneri                                                         | Etki                                                                | Efor     |
+| - | -------------------------------------------------------------- | ------------------------------------------------------------------- | -------- |
+| 1 | Hyperopt objective'e DA<0.50 penaltısı ekle                  | Yüksek — coin-flip altı modeller otomatik elenir                 | Düşük |
+| 2 | `dropout` minimum sınırını 0.20'ye yükselt              | Yüksek — overfitting yüzeyini daralır                           | Düşük |
+| 3 | `hidden_continuous_size` maksimumunu 24'e düşür           | Orta — parametre/veri oranını kontrol eder                       | Düşük |
+| 4 | Sharpe negatifse trial'ı prune et                             | Yüksek — sistematik yanlış yön trial'ları erken kesilir       | Düşük |
+| 5 | Önceki en iyi parametreleri "warm-start" olarak Optuna'ya ver | Orta — arama uzayını önceki optima etrafında yoğunlaştırır | Orta     |
+| 6 | Walk-forward CV uygula (3-fold temporal)                       | Yüksek — genelleme kalitesini doğrudan ölçer                   | Yüksek  |
 
 ### 7.3 Açık Sorular
 
 1. **Model rollback kriterleri nedir?** Hangi metriklerin hangi seviyelerine düşmesi durumunda otomatik rollback tetiklenmeli?
+
    - Öneri: `directional_accuracy < 0.50 OR sharpe_ratio < 0.0` → önceki checkpoint'e geri dön
-
 2. **Optuna trial sayısı optimal mi?** 313 sample ile 50 trial yapılıyor. Her trial farklı bir train/val split üretmiyor (split sabit). Bu durumda 50 trial aynı validation set üzerinde 50 farklı konfigürasyon deniyor — bir nevi validation set'e overfit olma riski var.
-
 3. **Bilateral amplitude_loss'un 0.25 katsayısı ve 1.5 eşiği optimal mi?** Gelecek eğitimlerde VR>1.5'e çıkma durumunda bu parametrelerin etkisi gözlemlenip kalibre edilmeli.
 
 ---
