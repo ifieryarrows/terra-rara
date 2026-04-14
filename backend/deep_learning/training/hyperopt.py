@@ -67,7 +67,11 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         # Lower values let the model collapse to near-zero pred_std.
         lambda_vol=trial.suggest_float("lambda_vol", 0.25, 0.45, step=0.05),
         # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
-        lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.6, step=0.05),
+        # Capped at 0.40 to ensure Sharpe (directional) component always has
+        # ≥60% weight.  Higher values caused the "perfect calibration, coin-flip
+        # direction" pathology where the model optimised volatility at the
+        # expense of directional signal.
+        lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.4, step=0.05),
         risk_free_rate=0.0,
     )
 
@@ -247,7 +251,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_da_list.append(fold_da)
         fold_sharpe_list.append(fold_sharpe)
 
-        fold_score = fold_val_loss + fold_vr_penalty
+        # Incorporate DA directly into fold_score as a reward (not just penalty).
+        # DA > 50% (coin-flip) is rewarded, < 50% penalised.
+        # This ensures the hyperopt objective actively selects for directional
+        # accuracy, not just low calibration loss.
+        da_baseline = 0.50
+        da_adjustment = (fold_da - da_baseline) * 2.0  # reward when DA > 50%, penalty when < 50%
+        fold_score = fold_val_loss + fold_vr_penalty - da_adjustment
         fold_scores.append(fold_score)
 
         logger.debug(
@@ -255,6 +265,16 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.number, fold_idx + 1, n_folds,
             fold_val_loss, fold_vr, fold_da * 100, fold_sharpe,
         )
+
+        # Per-fold Sharpe pruning: if a fold has deeply negative Sharpe,
+        # the trial is systematically predicting the wrong direction for
+        # that market regime — no point continuing to subsequent folds.
+        if fold_sharpe < -0.5 and fold_idx >= 1:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: fold_sharpe=%.4f < -0.5",
+                trial.number, fold_idx + 1, fold_sharpe,
+            )
+            raise optuna.exceptions.TrialPruned()
 
         # Report running average so MedianPruner can kill bad trials early
         running_avg = float(np.mean(fold_scores))

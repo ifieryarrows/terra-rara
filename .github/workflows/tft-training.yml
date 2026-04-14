@@ -65,7 +65,7 @@ jobs:
             - name: Backfill FinBERT embeddings
               working-directory: backend
               run: |
-                  python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 32
+                  python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 8
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
               continue-on-error: true

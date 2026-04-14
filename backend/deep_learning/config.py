@@ -26,7 +26,7 @@ def _model_dir() -> str:
 class EmbeddingConfig:
     model_name: str = "ProsusAI/finbert"
     full_dim: int = 768
-    pca_dim: int = 32
+    # pca_dim 32→8: ~375 training samples cannot support 32 embedding\r\n    # dimensions without overfitting.  8 retains the dominant semantic axes\r\n    # while drastically improving the signal-to-noise ratio.\r\n    pca_dim: int = 8
     max_token_length: int = 512
     batch_size: int = 64
     pca_model_path: str = ""

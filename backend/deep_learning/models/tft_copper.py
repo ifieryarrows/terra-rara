@@ -66,12 +66,22 @@ try:
             median_pred = y_pred[..., self.median_idx]
 
             # Mirrors losses.AdaptiveSharpeRatioLoss exactly.
-            # scale=20 keeps gradients alive through the full return distribution;
-            # previous scale=100 saturated above pred=0.015, killing amplitude learning.
+            # Sample-level directional reward: each sample gets a clear gradient
+            # for its direction, breaking the "batch-average safe mode" trap.
             _TANH_SCALE = 20.0
             signal = torch.tanh(median_pred * _TANH_SCALE)
             strategy_returns = signal * y_actual.float() - self.rf
-            sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
+            directional_reward = (signal * y_actual.float()).mean()
+            risk_norm = strategy_returns.std() + self.sharpe_eps
+            sharpe_loss = -directional_reward / risk_norm
+
+            # Per-sample directional cross-entropy
+            actual_sign = torch.sigmoid(y_actual.float() * 100.0)
+            pred_prob = torch.sigmoid(median_pred * _TANH_SCALE)
+            direction_bce = torch.nn.functional.binary_cross_entropy(
+                pred_prob, actual_sign.detach(), reduction="mean",
+            )
+            sharpe_loss = sharpe_loss + 0.3 * direction_bce
 
             # Volatility calibration: match Q90-Q10 spread to 2× actual σ
             pred_spread = (

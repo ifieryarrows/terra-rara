@@ -188,23 +188,40 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         median_pred = y_pred[:, :, self.median_idx]
         y_actual_f = y_actual.float()
 
-        # --- Sharpe component: tanh soft-sign ---
-        # Scale chosen so gradients stay alive through the full return distribution.
-        # Copper daily return std ≈ 0.024; we need sech²(pred*scale) > 0.5 for
-        # predictions up to ~actual_std, which requires scale*0.024 < 0.66 → scale < 28.
+        # --- Directional Sharpe component: sample-level reward ---
+        # Previous batch-level Sharpe (mean/std over 160 shuffled values) produced
+        # noisy gradients that converged to zero-signal equilibrium.  The new
+        # formulation has two parts:
         #
-        # scale=20 gradient profile:
-        #   pred = 0.003 → tanh(0.06) = 0.06, grad = 0.996  (tiny signal → model must grow)
-        #   pred = 0.010 → tanh(0.20) = 0.20, grad = 0.961  (still linear zone)
-        #   pred = 0.024 → tanh(0.48) = 0.45, grad = 0.800  (actual_std level: strong grad)
-        #   pred = 0.050 → tanh(1.00) = 0.76, grad = 0.420  (only saturates at 2× actual)
+        # 1. directional_reward = mean(signal_i × actual_i)  [sample-level]
+        #    Each sample gets a clear gradient: "was your direction correct?"
         #
-        # Previous scale=100 killed gradients above pred=0.015 (sech²=0.18), letting
-        # the model earn full Sharpe reward from predictions 7× smaller than actual vol.
+        # 2. risk_normalisation = std(strategy_returns) + eps  [batch-level]
+        #    Prevents the model from inflating predictions to game the reward.
+        #
+        # Combined: sharpe_loss = -directional_reward / risk_normalisation
+        # This is mathematically equivalent to the Sharpe ratio but the gradient
+        # of mean(signal_i × actual_i) w.r.t. pred_j only depends on sample j,
+        # breaking the "batch-average safe mode" trap.
         _TANH_SCALE = 20.0
         signal = torch.tanh(median_pred * _TANH_SCALE)
         strategy_returns = signal * y_actual_f - self.rf
-        sharpe_loss = -(strategy_returns.mean() / (strategy_returns.std() + self.sharpe_eps))
+        directional_reward = (signal * y_actual_f).mean()
+        risk_norm = strategy_returns.std() + self.sharpe_eps
+        sharpe_loss = -directional_reward / risk_norm
+
+        # --- Per-sample directional cross-entropy ---
+        # Soft binary cross-entropy: did the model predict the correct sign?
+        # actual_sign ∈ {0, 1} via sigmoid; pred_prob ∈ (0, 1) via sigmoid(pred*scale).
+        # This gives each sample a direct "right/wrong direction" gradient that
+        # the Sharpe term alone cannot provide when std is noisy.
+        actual_sign = torch.sigmoid(y_actual_f * 100.0)  # hard sigmoid → near 0/1
+        pred_prob = torch.sigmoid(median_pred * _TANH_SCALE)
+        direction_bce = nn.functional.binary_cross_entropy(
+            pred_prob, actual_sign.detach(), reduction="mean",
+        )
+        # Weight: 0.3 of the directional component to avoid dominating Sharpe
+        sharpe_loss = sharpe_loss + 0.3 * direction_bce
 
         # --- Volatility calibration ---
         # Match Q90-Q10 spread to 2× actual σ so the prediction interval tracks
