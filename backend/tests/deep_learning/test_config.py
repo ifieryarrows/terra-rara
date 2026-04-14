@@ -14,7 +14,7 @@ def test_default_config_creates_valid_instance():
     cfg = get_tft_config()
     assert isinstance(cfg, TFTASROConfig)
     assert cfg.embedding.full_dim == 768
-    assert cfg.embedding.pca_dim == 32
+    assert cfg.embedding.pca_dim == 8
     assert cfg.model.hidden_size == 32
     assert len(cfg.model.quantiles) == 7
 
