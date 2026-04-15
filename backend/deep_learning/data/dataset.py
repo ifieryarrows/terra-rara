@@ -115,16 +115,20 @@ def build_cv_folds(
     target_cols: list[str],
     cfg: Optional[TFTASROConfig] = None,
     n_folds: int = 3,
+    purge_gap: int = 5,
 ):
     """
-    Walk-Forward Temporal CV with expanding training windows.
+    Purged Walk-Forward Temporal CV with expanding training windows.
 
     Test set (last ``test_ratio`` %) is excluded from the CV pool entirely.
     The remaining data is split into ``n_folds`` expanding-window folds::
 
-        Fold 1: [===TRAIN 60%===][=VAL=][................]
-        Fold 2: [======TRAIN 73%======][=VAL=][.........]
-        Fold 3: [=========TRAIN 87%=========][=VAL=]
+        Fold 1: [===TRAIN 60%===][GAP][=VAL=][................]
+        Fold 2: [======TRAIN 73%======][GAP][=VAL=][.........]
+        Fold 3: [=========TRAIN 87%=========][GAP][=VAL=]
+
+    The ``purge_gap`` removes N samples between train and validation to
+    prevent autocovariance-based data leakage (de Prado, 2018).
 
     Each validation block covers a different market regime, so Optuna
     cannot overfit to a single time window (REG-2026-001 root cause).
@@ -163,14 +167,20 @@ def build_cv_folds(
 
     for fold_idx in range(n_folds):
         train_end_pos = min(min_train_size + fold_idx * fold_step, cv_pool_size - fold_step)
-        val_end_pos = min(train_end_pos + fold_step, cv_pool_size)
+        val_start_pos = train_end_pos + purge_gap
+        val_end_pos = min(val_start_pos + fold_step, cv_pool_size)
+
+        if val_start_pos >= cv_pool_size or val_end_pos <= val_start_pos:
+            logger.warning("Fold %d skipped: purge gap exhausts remaining data", fold_idx)
+            continue
 
         train_cutoff = master_df["time_idx"].iloc[train_end_pos - 1]
+        val_start_idx = master_df["time_idx"].iloc[val_start_pos]
         val_cutoff = master_df["time_idx"].iloc[val_end_pos - 1]
 
         train_data = master_df[master_df["time_idx"] <= train_cutoff]
         val_data = master_df[
-            (master_df["time_idx"] > train_cutoff - cfg.model.max_encoder_length)
+            (master_df["time_idx"] >= val_start_idx - cfg.model.max_encoder_length)
             & (master_df["time_idx"] <= val_cutoff)
         ]
 
@@ -197,10 +207,12 @@ def build_cv_folds(
         )
 
         logger.info(
-            "CV Fold %d/%d: train=%d samples (idx<=%.0f), val=%d (idx<=%.0f)",
+            "CV Fold %d/%d: train=%d samples (idx<=%.0f), "
+            "purge_gap=%d, val=%d (idx %.0f–%.0f)",
             fold_idx + 1, n_folds,
             len(training_ds), train_cutoff,
-            len(validation_ds), val_cutoff,
+            purge_gap,
+            len(validation_ds), val_start_idx, val_cutoff,
         )
 
         folds.append((training_ds, validation_ds))

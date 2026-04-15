@@ -4,8 +4,14 @@ Custom Loss Functions for TFT-ASRO.
 Implements:
 - AdaptiveSharpeRatioLoss (ASRO): jointly optimises risk-adjusted return,
   volatility calibration, and quantile coverage.
+- MeanAbsoluteDirectionalLoss (MADL): directly optimises directional accuracy
+  weighted by move magnitude.
 - CombinedQuantileLoss: standard multi-quantile pinball loss used as a
   component of ASRO and as a standalone baseline.
+
+References:
+    - Kisiel & Gorse (2023) "Mean Absolute Directional Loss" (ScienceDirect)
+    - Kisiel & Gorse (2024) "Generalized MADL" (arXiv:2412.18405)
 """
 
 from __future__ import annotations
@@ -104,6 +110,45 @@ def debug_asro_loss_direction() -> dict:
     return {"passed": passed, "results": results, "diagnostics": diagnostics}
 
 
+class MeanAbsoluteDirectionalLoss(nn.Module):
+    """
+    MADL: Mean Absolute Directional Loss.
+
+    Directly optimises for directional accuracy weighted by |actual_return|.
+    Correct-direction predictions receive negative loss (reward); incorrect
+    predictions receive positive loss (penalty), scaled by move magnitude.
+
+    MADL = mean(-sign(pred × actual) × |actual|)
+
+    Properties:
+        - Large moves dominate the gradient (they're predictable and impactful)
+        - Small/noisy moves contribute almost nothing (correctly ignored)
+        - No binary labels needed (unlike BCE which failed due to ambiguous
+          sigmoid targets for copper's ±0.5% daily returns)
+        - Differentiable via tanh soft-sign approximation
+    """
+
+    def __init__(self, tanh_scale: float = 20.0, eps: float = 1e-7):
+        super().__init__()
+        self.tanh_scale = tanh_scale
+        self.eps = eps
+
+    def forward(
+        self,
+        y_pred_median: torch.Tensor,
+        y_actual: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            y_pred_median: (batch, prediction_length) — median predictions
+            y_actual:      (batch, prediction_length) — actual returns
+        """
+        soft_sign = torch.tanh(y_pred_median * self.tanh_scale)
+        direction_match = soft_sign * y_actual
+        madl = (-direction_match * y_actual.abs()).mean()
+        return madl
+
+
 class CombinedQuantileLoss(nn.Module):
     """
     Multi-quantile pinball loss.
@@ -158,6 +203,7 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
         lambda_vol: float = 0.3,
         lambda_quantile: float = 0.2,
+        lambda_madl: float = 0.25,
         risk_free_rate: float = 0.0,
         sharpe_eps: float = 1e-6,
         median_idx: Optional[int] = None,
@@ -165,11 +211,13 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         super().__init__()
         self.lambda_vol = lambda_vol
         self.lambda_quantile = lambda_quantile
+        self.lambda_madl = lambda_madl
         self.rf = risk_free_rate
         self.sharpe_eps = sharpe_eps
         self.median_idx = median_idx if median_idx is not None else len(quantiles) // 2
 
         self.quantile_loss = CombinedQuantileLoss(quantiles)
+        self.madl = MeanAbsoluteDirectionalLoss()
 
         q = list(quantiles)
         self._q10_idx = q.index(0.10) if 0.10 in q else 1
@@ -246,12 +294,17 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
 
+        # --- MADL: direct directional accuracy optimisation ---
+        madl_loss = self.madl(median_pred, y_actual_f)
+
         # --- Weighted combination ---
         # calibration = quantile bands + band width + median amplitude
-        # w_quantile + w_sharpe = 1.0
-        w_sharpe = 1.0 - self.lambda_quantile
+        # directional = Sharpe (risk-normalised) + MADL (magnitude-weighted)
+        # w_quantile + w_directional = 1.0
+        w_directional = 1.0 - self.lambda_quantile
         calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
-        total = self.lambda_quantile * calibration + w_sharpe * sharpe_loss
+        directional = sharpe_loss + self.lambda_madl * madl_loss
+        total = self.lambda_quantile * calibration + w_directional * directional
         return total
 
     @classmethod
@@ -260,5 +313,6 @@ class AdaptiveSharpeRatioLoss(nn.Module):
             quantiles=quantiles,
             lambda_vol=cfg.lambda_vol,
             lambda_quantile=cfg.lambda_quantile,
+            lambda_madl=cfg.lambda_madl,
             risk_free_rate=cfg.risk_free_rate,
         )

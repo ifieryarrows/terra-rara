@@ -99,6 +99,35 @@ def load_screener_selected_symbols(
 
 
 # ---------------------------------------------------------------------------
+# Sentiment quality control
+# ---------------------------------------------------------------------------
+
+def _sentiment_qc(sentiment: pd.Series, close: pd.Series) -> None:
+    """Log lagged correlation between sentiment and next-day returns."""
+    try:
+        returns = close.pct_change(fill_method=None).shift(-1)
+        aligned = pd.DataFrame({"sentiment": sentiment, "return": returns}).dropna()
+        if len(aligned) < 30:
+            return
+
+        corr_0 = aligned["sentiment"].corr(aligned["return"])
+        corr_1 = aligned["sentiment"].shift(1).corr(aligned["return"])
+
+        logger.info(
+            "Sentiment QC: corr(sent, ret_t+1)=%.4f  corr(sent_t-1, ret_t+1)=%.4f  n=%d",
+            corr_0, corr_1, len(aligned),
+        )
+
+        if abs(corr_0) < 0.02 and abs(corr_1) < 0.02:
+            logger.warning(
+                "Sentiment QC: very low correlation with returns — "
+                "sentiment features may not add predictive value"
+            )
+    except Exception as exc:
+        logger.debug("Sentiment QC check failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Calendar / known-future features
 # ---------------------------------------------------------------------------
 
@@ -286,6 +315,10 @@ def build_tft_dataframe(
         )
         advanced_sent = pd.DataFrame(index=target_index)
 
+    # ---- Sentiment QC: check lagged correlation with target ----
+    if not sent_aligned.empty and "sentiment_index" in sent_aligned.columns:
+        _sentiment_qc(sent_aligned["sentiment_index"], price_df["close"])
+
     # ---- 3. Embedding features ----
     emb_features = _build_daily_embedding_features(session, target_index, pca_dim=cfg.embedding.pca_dim)
 
@@ -355,12 +388,23 @@ def build_tft_dataframe(
     time_varying_unknown = [c for c in all_feature_cols if c not in time_varying_known]
 
     logger.info(
-        "Feature store built: %d rows, %d unknown features, %d known features, %d embedding dims",
+        "Feature store raw: %d rows, %d unknown features, %d known features, %d embedding dims",
         len(master),
         len(time_varying_unknown),
         len(time_varying_known),
         len([c for c in master.columns if c.startswith("emb_pca_")]),
     )
+
+    # ---- 7. MRMR feature selection (reduce dimensionality) ----
+    if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > cfg.feature_store.mrmr_top_k:
+        from deep_learning.data.feature_selection import select_features
+
+        master, time_varying_unknown, time_varying_known = select_features(
+            master,
+            target_col="target",
+            mrmr_top_k=cfg.feature_store.mrmr_top_k,
+            known_features=time_varying_known,
+        )
 
     # Also return the last valid close price for baseline_price calculation
     valid_close = close.dropna()

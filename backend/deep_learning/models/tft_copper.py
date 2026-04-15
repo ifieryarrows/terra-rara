@@ -43,12 +43,14 @@ try:
             quantiles: list,
             lambda_vol: float = 0.3,
             lambda_quantile: float = 0.2,
+            lambda_madl: float = 0.25,
             risk_free_rate: float = 0.0,
             sharpe_eps: float = 1e-6,
         ):
             super().__init__(quantiles=quantiles)
             self.lambda_vol = lambda_vol
             self.lambda_quantile = lambda_quantile
+            self.lambda_madl = lambda_madl
             self.rf = risk_free_rate
             self.sharpe_eps = sharpe_eps
             self.median_idx = len(quantiles) // 2
@@ -100,9 +102,15 @@ try:
             # Quantile (pinball) loss via parent — covers all 7 quantile bands
             q_loss = super().loss(y_pred, target)
 
-            w_sharpe = 1.0 - self.lambda_quantile
+            # MADL: direct directional accuracy via magnitude-weighted sign match
+            soft_sign_madl = torch.tanh(median_pred * 20.0)
+            direction_match = soft_sign_madl * y_actual.float()
+            madl_loss = (-direction_match * y_actual.float().abs()).mean()
+
+            w_directional = 1.0 - self.lambda_quantile
             calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
-            return self.lambda_quantile * calibration + w_sharpe * sharpe_loss
+            directional = sharpe_loss + self.lambda_madl * madl_loss
+            return self.lambda_quantile * calibration + w_directional * directional
 
 except ImportError:
     ASROPFLoss = None  # type: ignore[assignment,misc]
@@ -137,6 +145,7 @@ def create_tft_model(
             quantiles=quantiles,
             lambda_vol=cfg.asro.lambda_vol,
             lambda_quantile=cfg.asro.lambda_quantile,
+            lambda_madl=cfg.asro.lambda_madl,
             risk_free_rate=cfg.asro.risk_free_rate,
         )
         logger.info(
@@ -159,6 +168,7 @@ def create_tft_model(
         output_size=len(quantiles),
         loss=loss,
         reduce_on_plateau_patience=cfg.model.reduce_on_plateau_patience,
+        optimizer_kwargs={"weight_decay": cfg.model.weight_decay},
         log_interval=10,
         log_val_interval=1,
     )

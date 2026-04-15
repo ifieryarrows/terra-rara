@@ -89,6 +89,8 @@ class TFTModelConfig:
     # clip 0.5→1.0: tanh-based Sharpe gradients are inherently bounded;
     # relaxing the clip lets the model escape flat regions more aggressively.
     gradient_clip_val: float = 1.0
+    # L2 regularisation via AdamW; prevents large weight growth on small datasets.
+    weight_decay: float = 1e-4
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,10 @@ class ASROConfig:
     # Two independent Optuna runs (20 trials each) both converged on 0.35 —
     # updating default to match confirmed optimal value.
     lambda_vol: float = 0.35
+    # MADL (Mean Absolute Directional Loss) weight.
+    # Directly rewards correct directional predictions scaled by |actual_return|.
+    # Ref: Kisiel & Gorse (2023) "Mean Absolute Directional Loss"
+    lambda_madl: float = 0.25
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
 
@@ -125,7 +131,11 @@ class TrainingConfig:
     batch_size: int = 16
     val_ratio: float = 0.15
     test_ratio: float = 0.10
-    lookback_days: int = 730
+    # 730→1095: 3 years of history yields ~500 training samples (up from ~313).
+    # Improves the feature-to-sample ratio from ~200:313 to ~60:500 (after
+    # MRMR pruning).  Walk-forward CV ensures older regime shifts don't
+    # pollute validation metrics.
+    lookback_days: int = 1095
     seed: int = 42
     num_workers: int = 0
     # 25→15: CI budget fix. 15 trials × 3 folds × 25 epochs ≈ 108 min;
@@ -145,6 +155,9 @@ class FeatureStoreConfig:
     max_ffill: int = 3
     calendar_features: bool = True
     macro_event_features: bool = True
+    # MRMR pre-filter: reduce unknown features to top-K by mutual information
+    # relevance minus pairwise redundancy.  Set to 0 to disable.
+    mrmr_top_k: int = 80
 
 
 @dataclass

@@ -1,10 +1,14 @@
-"""Tests for ASRO and quantile loss functions."""
+"""Tests for ASRO, MADL, and quantile loss functions."""
 
 import pytest
 import torch
 import numpy as np
 
-from deep_learning.models.losses import CombinedQuantileLoss, AdaptiveSharpeRatioLoss
+from deep_learning.models.losses import (
+    CombinedQuantileLoss,
+    AdaptiveSharpeRatioLoss,
+    MeanAbsoluteDirectionalLoss,
+)
 
 
 @pytest.fixture
@@ -55,8 +59,67 @@ def test_asro_loss_lambda_sensitivity():
 
 def test_asro_from_config():
     from deep_learning.config import ASROConfig
-    cfg = ASROConfig(lambda_vol=0.4, lambda_quantile=0.3)
+    cfg = ASROConfig(lambda_vol=0.4, lambda_quantile=0.3, lambda_madl=0.2)
     quantiles = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
     loss_fn = AdaptiveSharpeRatioLoss.from_config(cfg, quantiles)
     assert loss_fn.lambda_vol == 0.4
     assert loss_fn.lambda_quantile == 0.3
+    assert loss_fn.lambda_madl == 0.2
+
+
+# ---------------------------------------------------------------------------
+# MADL tests
+# ---------------------------------------------------------------------------
+
+def test_madl_correct_direction_is_negative():
+    """When prediction direction matches actual, MADL should be negative (reward)."""
+    y_pred = torch.tensor([[0.01, 0.02]])
+    y_actual = torch.tensor([[0.015, 0.025]])
+    loss_fn = MeanAbsoluteDirectionalLoss()
+    loss = loss_fn(y_pred, y_actual)
+    assert loss.item() < 0, "MADL should reward correct direction"
+
+
+def test_madl_wrong_direction_is_positive():
+    """When prediction opposes actual, MADL should be positive (penalty)."""
+    y_pred = torch.tensor([[0.01, 0.02]])
+    y_actual = torch.tensor([[-0.015, -0.025]])
+    loss_fn = MeanAbsoluteDirectionalLoss()
+    loss = loss_fn(y_pred, y_actual)
+    assert loss.item() > 0, "MADL should penalise wrong direction"
+
+
+def test_madl_large_moves_dominate():
+    """MADL should be more affected by large moves than small ones."""
+    loss_fn = MeanAbsoluteDirectionalLoss()
+    y_pred = torch.tensor([[0.01]])
+
+    loss_small = loss_fn(y_pred, torch.tensor([[0.001]]))
+    loss_large = loss_fn(y_pred, torch.tensor([[0.05]]))
+
+    assert abs(loss_large.item()) > abs(loss_small.item())
+
+
+def test_madl_has_gradients():
+    """MADL should produce non-zero gradients (differentiable via tanh)."""
+    y_pred = torch.tensor([[0.01, -0.02]], requires_grad=True)
+    y_actual = torch.tensor([[0.015, 0.025]])
+    loss_fn = MeanAbsoluteDirectionalLoss()
+    loss = loss_fn(y_pred, y_actual)
+    loss.backward()
+    assert y_pred.grad is not None
+    assert y_pred.grad.norm().item() > 1e-8
+
+
+def test_asro_includes_madl_component():
+    """ASRO with lambda_madl>0 should differ from lambda_madl=0."""
+    torch.manual_seed(42)
+    y_pred = torch.randn(32, 1, 7).sort(dim=-1).values
+    y_actual = torch.randn(32, 1)
+
+    loss_no_madl = AdaptiveSharpeRatioLoss(lambda_madl=0.0)
+    loss_with_madl = AdaptiveSharpeRatioLoss(lambda_madl=0.5)
+
+    l1 = loss_no_madl(y_pred, y_actual).item()
+    l2 = loss_with_madl(y_pred, y_actual).item()
+    assert l1 != l2, "MADL component should change the total loss"

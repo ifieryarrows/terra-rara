@@ -43,23 +43,24 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     model_cfg = TFTModelConfig(
         max_encoder_length=trial.suggest_int("max_encoder_length", 30, 90, step=10),
         max_prediction_length=base_cfg.model.max_prediction_length,
-        # Floor at 32: hidden=16 with dropout>0.3 leaves ~8 active neurons,
-        # compressing output distribution and preventing amplitude learning.
-        hidden_size=trial.suggest_int("hidden_size", 32, 64, step=16),
-        attention_head_size=trial.suggest_int("attention_head_size", 1, 4),
+        # Post-MRMR pruning (~60-80 features), smaller models generalise better.
+        # 24 is viable now that feature count dropped from 200+ to ~60-80.
+        hidden_size=trial.suggest_int("hidden_size", 24, 48, step=8),
+        attention_head_size=trial.suggest_int("attention_head_size", 1, 2),
         # Floor at 0.20: 313 samples with dropout<0.20 causes co-adaptation
         # and memorization (REG-2026-001).  Cap at 0.35: dropout>0.35 with
         # small hidden_size collapses the output range.
         dropout=trial.suggest_float("dropout", 0.20, 0.35, step=0.05),
-        # Cap at 24: hidden_cont=32 doubled the VSN parameter surface and
-        # contributed to overfitting in the 31-Mar regression.
-        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 24, step=8),
+        # Paired reduction: with hidden=24-48 and ~60-80 features,
+        # 8-16 is the sweet spot for continuous variable processing.
+        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 16, step=8),
         quantiles=base_cfg.model.quantiles,
         # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
         # LR > 1e-3 causes 1-epoch divergence. This band is the stable zone.
         learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True),
         reduce_on_plateau_patience=4,
         gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.5, 2.0, step=0.5),
+        weight_decay=trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True),
     )
 
     asro_cfg = ASROConfig(
@@ -72,6 +73,8 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         # direction" pathology where the model optimised volatility at the
         # expense of directional signal.
         lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.4, step=0.05),
+        # MADL weight: how much the directional loss contributes relative to Sharpe.
+        lambda_madl=trial.suggest_float("lambda_madl", 0.1, 0.5, step=0.1),
         risk_free_rate=0.0,
     )
 

@@ -30,6 +30,22 @@ def test_asro_lambda_defaults():
     cfg = get_tft_config()
     assert 0 < cfg.asro.lambda_vol <= 1.0
     assert 0 < cfg.asro.lambda_quantile <= 1.0
+    assert 0 < cfg.asro.lambda_madl <= 1.0
+
+
+def test_lookback_days_is_3_years():
+    cfg = get_tft_config()
+    assert cfg.training.lookback_days == 1095
+
+
+def test_mrmr_top_k_positive():
+    cfg = get_tft_config()
+    assert cfg.feature_store.mrmr_top_k >= 0
+
+
+def test_weight_decay_positive():
+    cfg = get_tft_config()
+    assert cfg.model.weight_decay > 0
 
 
 def test_training_splits_sum_to_less_than_one():

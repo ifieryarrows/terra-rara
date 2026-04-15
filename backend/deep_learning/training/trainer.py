@@ -64,6 +64,7 @@ def train_tft_model(
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
     from deep_learning.training.metrics import compute_all_metrics
+    from deep_learning.training.callbacks import CurriculumLossScheduler, SWACallback
 
     if cfg is None:
         cfg = get_tft_config()
@@ -161,6 +162,17 @@ def train_tft_model(
             save_last=True,
         ),
     ]
+
+    if use_asro:
+        callbacks.append(CurriculumLossScheduler(
+            warmup_epochs=10,
+            initial_lambda_quantile=0.65,
+            target_lambda_quantile=cfg.asro.lambda_quantile,
+            initial_lambda_madl=0.05,
+            target_lambda_madl=cfg.asro.lambda_madl,
+        ))
+
+    callbacks.append(SWACallback(swa_start_pct=0.75))
 
     # log_every_n_steps must not exceed the number of training batches
     log_steps = max(1, min(5, n_batches))
@@ -293,6 +305,14 @@ def train_tft_model(
 
     _persist_tft_metadata(cfg.feature_store.target_symbol, result)
 
+    # Write metadata JSON to disk for CI quality gate
+    meta_json_path = Path(cfg.training.best_model_path).parent / "tft_metadata.json"
+    try:
+        meta_json_path.write_text(json.dumps(result, indent=2, default=str))
+        logger.info("Training metadata written to %s", meta_json_path)
+    except Exception as exc:
+        logger.warning("Could not write metadata JSON: %s", exc)
+
     # ---- 10. Upload to HF Hub (for persistence across HF Space rebuilds) ----
     try:
         from deep_learning.models.hub import upload_tft_artifacts
@@ -340,10 +360,11 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
                 "hidden_size", "attention_head_size", "dropout",
                 "hidden_continuous_size", "learning_rate",
                 "gradient_clip_val", "max_encoder_length",
+                "weight_decay",
             ) if k in params
         }
         asro_overrides = {
-            k: params[k] for k in ("lambda_vol", "lambda_quantile")
+            k: params[k] for k in ("lambda_vol", "lambda_quantile", "lambda_madl")
             if k in params
         }
         training_overrides = {

@@ -236,6 +236,78 @@ class TFTPredictor:
 
 
 # ---------------------------------------------------------------------------
+# Ensemble: XGBoost + TFT directional voting
+# ---------------------------------------------------------------------------
+
+def ensemble_directional_vote(
+    xgb_return: float,
+    tft_return: float,
+    xgb_bias_correction: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Combine XGBoost and TFT directional signals into a consensus.
+
+    Rules:
+        - Both agree on direction → strong signal, full size
+        - Disagree → low confidence, reduced position or wait
+        - One near-zero (< 0.2% threshold) → defer to the other
+
+    NOTE: XGBoost is known to have extreme negative bias (rarely predicts
+    negative returns, and when it does they're too small).  The
+    xgb_bias_correction parameter is subtracted from xgb_return to
+    compensate (set via historical calibration).
+
+    Args:
+        xgb_return:          XGBoost's predicted next-day return.
+        tft_return:          TFT-ASRO's predicted next-day median return.
+        xgb_bias_correction: Subtracted from xgb_return to debias.
+
+    Returns:
+        Dict with consensus direction, confidence, and component signals.
+    """
+    NEUTRAL_THRESHOLD = 0.002
+
+    xgb_adj = xgb_return - xgb_bias_correction
+    xgb_dir = 1 if xgb_adj > NEUTRAL_THRESHOLD else (-1 if xgb_adj < -NEUTRAL_THRESHOLD else 0)
+    tft_dir = 1 if tft_return > NEUTRAL_THRESHOLD else (-1 if tft_return < -NEUTRAL_THRESHOLD else 0)
+
+    if xgb_dir == tft_dir and xgb_dir != 0:
+        consensus = "BULLISH" if xgb_dir > 0 else "BEARISH"
+        confidence = "HIGH"
+        position_scale = 1.0
+    elif xgb_dir == 0 and tft_dir != 0:
+        consensus = "BULLISH" if tft_dir > 0 else "BEARISH"
+        confidence = "MEDIUM"
+        position_scale = 0.6
+    elif tft_dir == 0 and xgb_dir != 0:
+        consensus = "BULLISH" if xgb_dir > 0 else "BEARISH"
+        confidence = "MEDIUM"
+        position_scale = 0.5
+    elif xgb_dir != tft_dir:
+        consensus = "NEUTRAL"
+        confidence = "LOW"
+        position_scale = 0.0
+    else:
+        consensus = "NEUTRAL"
+        confidence = "LOW"
+        position_scale = 0.0
+
+    blended_return = 0.4 * xgb_adj + 0.6 * tft_return
+
+    return {
+        "consensus_direction": consensus,
+        "confidence": confidence,
+        "position_scale": position_scale,
+        "blended_return": blended_return,
+        "xgb_return_raw": xgb_return,
+        "xgb_return_adjusted": xgb_adj,
+        "tft_return": tft_return,
+        "xgb_direction": xgb_dir,
+        "tft_direction": tft_dir,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Module-level convenience
 # ---------------------------------------------------------------------------
 

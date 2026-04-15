@@ -152,6 +152,58 @@ jobs:
                   path: /tmp/models/tft/
                   retention-days: 90
 
+            - name: Quality gate — metric validation
+              id: quality_gate
+              working-directory: backend
+              run: |
+                  python -c "
+import json, sys, pathlib
+
+meta_path = pathlib.Path('/tmp/models/tft/tft_metadata.json')
+if not meta_path.exists():
+    print('No metadata file found — skipping quality gate')
+    sys.exit(0)
+
+data = json.loads(meta_path.read_text())
+metrics = data.get('test_metrics', {})
+da = metrics.get('directional_accuracy', 0.5)
+sharpe = metrics.get('sharpe_ratio', 0.0)
+vr = metrics.get('variance_ratio', 1.0)
+
+print(f'Quality gate metrics: DA={da:.4f} Sharpe={sharpe:.4f} VR={vr:.4f}')
+
+gate_pass = True
+reasons = []
+
+if da < 0.49:
+    reasons.append(f'DA={da:.4f} < 0.49')
+    gate_pass = False
+if sharpe < -0.30:
+    reasons.append(f'Sharpe={sharpe:.4f} < -0.30')
+    gate_pass = False
+if vr < 0.2 or vr > 2.5:
+    reasons.append(f'VR={vr:.4f} outside [0.2, 2.5]')
+    gate_pass = False
+
+if gate_pass:
+    print('QUALITY GATE: PASSED')
+else:
+    print(f'QUALITY GATE: FAILED — {reasons}')
+    print('Model checkpoint will NOT be promoted. Previous checkpoint retained.')
+    sys.exit(1)
+"
+              continue-on-error: true
+
+            - name: Rollback on quality gate failure
+              if: ${{ steps.quality_gate.outcome == 'failure' }}
+              run: |
+                  echo "⚠️  Quality gate FAILED — rolling back to previous checkpoint"
+                  echo "The HF Hub checkpoint was NOT updated (upload happens before gate)."
+                  echo "Manual intervention required: check training logs and metrics."
+                  echo ""
+                  echo "To recover, re-run with previous hyperopt results or use:"
+                  echo "  gh workflow run tft-training.yml -f run_hyperopt=false"
+
             - name: Display training results
               run: |
                   echo "=== TFT-ASRO Training Complete ==="
@@ -162,5 +214,9 @@ jobs:
                   ls -la /tmp/models/tft/ 2>/dev/null || echo "No model directory"
                   ls -la /tmp/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
                   echo ""
-                  echo "Model checkpoint has been automatically uploaded to HF Hub."
-                  echo "The HF Space will download it on next inference request."
+                  if [ "${{ steps.quality_gate.outcome }}" == "failure" ]; then
+                    echo "⚠️  QUALITY GATE FAILED — see above for details"
+                  else
+                    echo "✅ Model checkpoint has been automatically uploaded to HF Hub."
+                    echo "The HF Space will download it on next inference request."
+                  fi
