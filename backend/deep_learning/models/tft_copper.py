@@ -168,10 +168,32 @@ def create_tft_model(
         output_size=len(quantiles),
         loss=loss,
         reduce_on_plateau_patience=cfg.model.reduce_on_plateau_patience,
-        optimizer_kwargs={"weight_decay": cfg.model.weight_decay},
         log_interval=10,
         log_val_interval=1,
     )
+
+    # Apply weight decay post-construction by patching each param group.
+    # pytorch_forecasting's TFT does not expose optimizer_kwargs in from_dataset(),
+    # so we reach into the already-configured optimizer after the first
+    # configure_optimizers call, which Lightning triggers during fit().
+    _weight_decay = cfg.model.weight_decay
+    if _weight_decay > 0:
+        _orig_configure_optimizers = model.configure_optimizers
+
+        def _wd_configure_optimizers():
+            result = _orig_configure_optimizers()
+            # result may be a single optimizer or a Lightning dict/list
+            opts = result if isinstance(result, (list, tuple)) else [result]
+            for item in opts:
+                opt = item.get("optimizer", item) if isinstance(item, dict) else item
+                if hasattr(opt, "param_groups"):
+                    for pg in opt.param_groups:
+                        if pg.get("weight_decay", 0.0) == 0.0:
+                            pg["weight_decay"] = _weight_decay
+            return result
+
+        model.configure_optimizers = _wd_configure_optimizers
+        logger.info("Weight decay %.1e applied to optimizer param groups", _weight_decay)
 
     model.save_hyperparameters(ignore=['loss', 'logging_metrics'])
 
