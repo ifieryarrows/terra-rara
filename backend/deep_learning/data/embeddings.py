@@ -154,8 +154,26 @@ def embedding_to_bytes(vec: np.ndarray) -> bytes:
 
 
 def bytes_to_embedding(data: bytes, dim: int = _EMBEDDING_DIM) -> np.ndarray:
-    """Unpack binary blob back to float32 array."""
-    return np.frombuffer(data, dtype=np.float32).copy()
+    """
+    Unpack binary blob back to a float32 array of length ``dim``.
+
+    The DB may contain vectors stored with a different PCA dimension
+    (e.g. old 32-dim rows mixed with new 8-dim rows after a config
+    change).  We normalise every vector to ``dim`` elements:
+      - If the stored vector is longer  → truncate to the first ``dim`` values.
+      - If the stored vector is shorter → zero-pad to ``dim`` values.
+    This prevents ``np.stack`` from raising "all arrays must have the
+    same shape" when multiple vectors are aggregated for the same day.
+    """
+    arr = np.frombuffer(data, dtype=np.float32).copy()
+    if len(arr) == dim:
+        return arr
+    if len(arr) > dim:
+        return arr[:dim]
+    # shorter than expected — zero-pad
+    padded = np.zeros(dim, dtype=np.float32)
+    padded[: len(arr)] = arr
+    return padded
 
 
 # ---------------------------------------------------------------------------

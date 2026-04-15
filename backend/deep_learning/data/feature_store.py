@@ -218,10 +218,17 @@ def _build_daily_embedding_features(
     for r in rows:
         d = str(r.date)
         vec = bytes_to_embedding(r.embedding_pca, dim=pca_dim)
-        date_groups.setdefault(d, []).append(vec)
+        # bytes_to_embedding now always returns dim-length arrays, but
+        # guard against any future shape surprises to keep stack safe.
+        if vec.shape == (pca_dim,):
+            date_groups.setdefault(d, []).append(vec)
+        else:
+            logger.debug("Skipping embedding with unexpected shape %s on %s", vec.shape, d)
 
     records = []
     for d, vecs in date_groups.items():
+        if not vecs:
+            continue
         agg = aggregate_daily_embeddings(np.stack(vecs))
         record = {"date": pd.Timestamp(d)}
         for i, v in enumerate(agg):
