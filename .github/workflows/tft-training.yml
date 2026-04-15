@@ -155,43 +155,7 @@ jobs:
             - name: Quality gate — metric validation
               id: quality_gate
               working-directory: backend
-              run: |
-                  python -c "
-import json, sys, pathlib
-
-meta_path = pathlib.Path('/tmp/models/tft/tft_metadata.json')
-if not meta_path.exists():
-    print('No metadata file found — skipping quality gate')
-    sys.exit(0)
-
-data = json.loads(meta_path.read_text())
-metrics = data.get('test_metrics', {})
-da = metrics.get('directional_accuracy', 0.5)
-sharpe = metrics.get('sharpe_ratio', 0.0)
-vr = metrics.get('variance_ratio', 1.0)
-
-print(f'Quality gate metrics: DA={da:.4f} Sharpe={sharpe:.4f} VR={vr:.4f}')
-
-gate_pass = True
-reasons = []
-
-if da < 0.49:
-    reasons.append(f'DA={da:.4f} < 0.49')
-    gate_pass = False
-if sharpe < -0.30:
-    reasons.append(f'Sharpe={sharpe:.4f} < -0.30')
-    gate_pass = False
-if vr < 0.2 or vr > 2.5:
-    reasons.append(f'VR={vr:.4f} outside [0.2, 2.5]')
-    gate_pass = False
-
-if gate_pass:
-    print('QUALITY GATE: PASSED')
-else:
-    print(f'QUALITY GATE: FAILED — {reasons}')
-    print('Model checkpoint will NOT be promoted. Previous checkpoint retained.')
-    sys.exit(1)
-"
+              run: python scripts/tft_quality_gate.py
               continue-on-error: true
 
             - name: Rollback on quality gate failure
