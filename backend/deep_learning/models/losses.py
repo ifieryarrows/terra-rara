@@ -210,18 +210,18 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         risk_norm = strategy_returns.std() + self.sharpe_eps
         sharpe_loss = -directional_reward / risk_norm
 
-        # --- Per-sample directional cross-entropy ---
-        # Soft binary cross-entropy: did the model predict the correct sign?
-        # actual_sign ∈ {0, 1} via sigmoid; pred_prob ∈ (0, 1) via sigmoid(pred*scale).
-        # This gives each sample a direct "right/wrong direction" gradient that
-        # the Sharpe term alone cannot provide when std is noisy.
-        actual_sign = torch.sigmoid(y_actual_f * 100.0)  # hard sigmoid → near 0/1
-        pred_prob = torch.sigmoid(median_pred * _TANH_SCALE)
-        direction_bce = nn.functional.binary_cross_entropy(
-            pred_prob, actual_sign.detach(), reduction="mean",
-        )
-        # Weight: 0.3 of the directional component to avoid dominating Sharpe
-        sharpe_loss = sharpe_loss + 0.3 * direction_bce
+        # --- Magnitude-weighted directional bonus ---
+        # BCE on sign labels was counterproductive: sigmoid(±0.005 * 100) ≈ 0.62/0.38
+        # creates ambiguous targets for the majority of copper daily returns,
+        # causing the model to memorise noise and develop anti-correlation (DA=43.9%).
+        #
+        # Instead, weight each sample's directional contribution by |actual_return|.
+        # Large moves get strong "get the direction right" gradient;
+        # near-zero moves get almost no directional signal (they're unpredictable).
+        abs_actual = y_actual_f.abs()
+        magnitude_weight = abs_actual / (abs_actual.mean() + self.sharpe_eps)
+        weighted_directional = (signal * y_actual_f * magnitude_weight).mean()
+        sharpe_loss = sharpe_loss - 0.3 * weighted_directional
 
         # --- Volatility calibration ---
         # Match Q90-Q10 spread to 2× actual σ so the prediction interval tracks
@@ -239,7 +239,8 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         vr = median_std / actual_std
         amplitude_loss = (
             torch.relu(1.0 - vr)              # under-variance: VR < 1 → strong penalty
-            + 0.25 * torch.relu(vr - 1.5)     # over-variance:  VR > 1.5 → gentle penalty
+            + 1.0 * torch.relu(vr - 1.5)      # over-variance:  VR > 1.5 → symmetric penalty
+            # Was 0.25×; strengthened after VR=1.82 overshoot (pred_std=2× actual_std)
         )
 
         # --- Quantile (pinball) loss ---

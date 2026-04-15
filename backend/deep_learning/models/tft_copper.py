@@ -75,13 +75,12 @@ try:
             risk_norm = strategy_returns.std() + self.sharpe_eps
             sharpe_loss = -directional_reward / risk_norm
 
-            # Per-sample directional cross-entropy
-            actual_sign = torch.sigmoid(y_actual.float() * 100.0)
-            pred_prob = torch.sigmoid(median_pred * _TANH_SCALE)
-            direction_bce = torch.nn.functional.binary_cross_entropy(
-                pred_prob, actual_sign.detach(), reduction="mean",
-            )
-            sharpe_loss = sharpe_loss + 0.3 * direction_bce
+            # Magnitude-weighted directional bonus (replaces BCE which created
+            # noisy labels for small returns, causing anti-correlation)
+            abs_actual = y_actual.float().abs()
+            magnitude_weight = abs_actual / (abs_actual.mean() + self.sharpe_eps)
+            weighted_directional = (signal * y_actual.float() * magnitude_weight).mean()
+            sharpe_loss = sharpe_loss - 0.3 * weighted_directional
 
             # Volatility calibration: match Q90-Q10 spread to 2× actual σ
             pred_spread = (
@@ -95,7 +94,7 @@ try:
             vr = median_std / actual_std
             amplitude_loss = (
                 torch.relu(1.0 - vr)              # under-variance: VR < 1 → strong penalty
-                + 0.25 * torch.relu(vr - 1.5)     # over-variance:  VR > 1.5 → gentle penalty
+                + 1.0 * torch.relu(vr - 1.5)      # over-variance:  VR > 1.5 → symmetric penalty
             )
 
             # Quantile (pinball) loss via parent — covers all 7 quantile bands

@@ -1,0 +1,21 @@
+The PP (Autocast) System
+
+Hans Levenbach*
+
+Delphus Inc., 152 Speedwell Avenue, Morristown, NJ 07960, USA
+
+The method is the family of exponential smoothing methods associated with Everette Gardner's work: Damped Trend Exponential Smoothing for Seasonal and Nonseasonal Time Series having periodicities from 1 (Annual), through 26 (Biweekly). We used 1, 4 and 12 as the seasonal periods for the M3 data. There are practical situations when 13 periods per year are relevant. Single, Holt and Holt Winters are all special cases, since the damped trend models include no-trend, linear, and exponential. The particular model is data-driven, the algorithm searches automatically for the particular parameter set most relevant to the time series. Thus each of the M3 series has a unique set of parameters (which are part of the output file). The fitting criteria is MSE.
+
+These models are integrated into PEER Planner(r) for Windows which is an integrated forecasting system incorporating a GUI (Windows) interface, the AUTOCAST statistical forecasting engine, event-driven models, replenishment planning, Microsoft(r) access relational database and demand management facilities for manipulating overrides, evaluating forecasting performance and reporting results.
+
+SmartForecasts' Automatic Forecasting System
+
+Charles N. Smart*
+
+Smart Software Inc., Four Hill Road, Belmont, MA 02478, USA
+
+Smart Software's set of results submitted in the M3 Forecasting Competition was produced using the Automatic Forecasting expert system contained in _SmartForecasts(tm)_ for Windows 95/ 98/NT/2000. The Automatic Forecasting system conducts a forecasting tournament among the following extrapolative methods:
+
+* simple moving average
+
+* linear moving average

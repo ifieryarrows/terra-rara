@@ -1,0 +1,850 @@
+# The M3-Competition: results, conclusions and implications
+
+Spyros Makridakis
+
+Spyros.makridakis@insead.fr
+
+Michele Hibon
+
+michele.hibon@insead.fr INSEAD, Boulevard de Constance, 77305
+Fontainebleau, France
+
+###### Abstract
+
+This paper describes the M3-Competition, the latest of the
+M-Competitions. It explains the reasons for conducting the competition
+and summarizes its results and conclusions. In addition, the paper
+compares such results/conclusions with those of the previous two
+M-Competitions as well as with those of other major empirical studies.
+Finally, the implications of these results and conclusions are
+considered, their consequences for both the theory and practice of
+forecasting are explored and directions for future research are
+contemplated.
+
+Comparative methods -- time series: univariate; Forecasting
+competitions; M-Competition; Forecasting methods, Forecasting accuracy +
+Footnote †: journal: Journal of Forecasting
+
+0169-2070/00/S - see front matter
+
+PII: S0169-2070(00)00057-1
+
+## 1 Introduction
+
+Forecasting accuracy is a critical factor for, among other things,
+reducing costs and providing better customer service. Yet the knowledge
+and experience available for improving such accuracy for specific
+situations is not always utilized. The consequence is actual and/ or
+opportunity losses, sometimes of considerable magnitude. Empirical
+studies in the field of forecasting have compared the post-sample
+forecasting accuracy of various methods so that their performance can be
+determined in an objective, measurable manner. The M-Competitions are
+such empirical studies that have compared the performance of a large
+number of major time series methods using recognized experts who provide
+the forecasts for their method of expertise. Once the forecasts from
+each expert have been obtained they are evaluated and compared with
+those of the other experts as well as with some simple methods used as
+benchmarks. Forecasting competitions assure objectivity while also
+guaranteeing expert knowledge.
+
+This paper summarizes the results of the latest of the Makridakis, or
+M-Competitions, the M3. It presents the conclusions that can be drawn
+from such results and compares them with those of the two previous
+M-Competitions, as well as with those of other major empirical studies.
+In addition, the implications of these results and conclusions are
+discussed and theirconsequences for the theory and practice of
+forecasting are explored. The M-Competitions refer mainly to business
+and economic time series, although their results/conclusions may well be
+relevant to other disciplines. The paper ends with suggestions for
+future research and some concluding remarks. The M-Competitions refer
+mainly to business and economic time series, although their
+results/conclusions may well be relevant to other disciplines.
+
+## 2 The history of accuracy studies and competitions
+
+As far back as 1969, Reid (1969, 1975) and Newbold and Granger (1974)
+compared a large number of series to determine their post-sample
+forecasting accuracy. However, these early accuracy studies based their
+comparisons on a limited number of methods. Makridakis and Hibon (1979)
+was the first effort to compare a large number of major time series
+methods across multiple series. Altogether 111 time series were selected
+from a cross section of available data, covering a wide range of
+real-life situations (business firms, industry and macro data). The
+major conclusion of the Makridakis and Hibon study was that simple
+methods, such as exponential smoothing, outperformed sophisticated ones.
+Such a conclusion was in conflict with the accepted view (paradigm) of
+the time and was not received well by the great majority of
+commentators, mostly statisticians (see the commentary following the
+Makridakis & Hibon, 1979, study). To respond to the criticisms and to
+incorporate the suggestions of the various commentators for
+improvements, Makridakis continued the empirical comparisons of time
+series by launching the M-Competition (Makridakis et al., 1982).
+
+In the M-Competition the number of series utilized was increased to 1001
+and the number of methods to 15 (with another nine variations of these
+methods also included). Furthermore, more accuracy measures were
+employed while the data were subdivided into various categories (micro,
+macro, industry, etc.) in order to determine the reasons why some
+method(s) outperformed others. However, the most important innovation of
+the M-Competition (hence the name Competition) was that an expert was
+designated to run the 1001 series (or a sub-sample of 111 when the
+amount of work to implement a method was too much to use all 1001
+series) in his/her area of expertise. Each expert provided his/her
+forecasts that were compared, in a post-sample fashion, with actual
+values not used in developing the forecasting model. These forecast
+errors were then used to compute the various reported accuracy measures
+(see Makridakis et al., 1982).
+
+The results of the M-Competition were similar to those of the earlier
+Makridakis and Hibon study and can be summarized as follows:
+
+(a) Statistically sophisticated or complex methods do not necessarily
+    provide more accurate forecasts than simpler ones.
+
+(b) The relative ranking of the performance of the various methods
+    varies according to the accuracy measure being used.
+
+(c) The accuracy when various methods are being combined outperforms, on
+    average, the individual methods being combined and does very well in
+    comparison to other methods.
+
+(d) The accuracy of the various methods depends upon the length of the
+    forecasting horizon involved.
+
+Many researchers have replicated the conclusions of the M-Competition in
+four important ways. First, the calculations on which the study was
+based were re-verified and their appropriateness widely accepted.
+Second, new methods have been introduced and the results obtained have
+been found to agree with those of the M-Competition (Geurts & Kelly,
+1986; Clemen, 1989; Fildes, Hibon, Makridakis & Meade, 1998). Third,
+many researchers (Hill &Fildes, 1984; Lusk & Neves, 1984; Koehler &
+Murphree, 1988) have used the M-Competition data and have reached
+similar conclusions. Finally, additional studies using new data series
+have agreed with the above four conclusions (Armstrong & Collopy, 1992,
+1993; Makridakis et al., 1993; Fildes et al., 1998) and have
+demonstrated, above any reasonable doubt, the validity of these four
+conclusions. Yet, there are still emotional objections to empirical
+accuracy studies (see Newbold, 1983) and criticisms for all types of
+empirical work (see Fildes & Makridakis, 1995, for a full discussion of
+such objections/criticisms and the implications for the field of
+forecasting).
+
+The M-2 Competition (Makridakis et al., 1993) was a further attempt to
+provide an additional forum to study the accuracy of various forecasting
+methods and better understand the factors that affect forecasting
+accuracy. Again, as in the M-Competition, a call to participate in the
+M2-Competition was published in the *International Journal of
+Forecasting*, announcements were made during the International Symposium
+of Forecasting and a written invitation was extended to all known
+experts of the various time series methods. The M2-Competition was
+organized in collaboration with four companies and included six
+macro-economic series. It was designed and run on a *real-time* basis.
+This meant that the companies not only provided the participating
+experts with actual data, about the past and present, but they were also
+committed to answer their questions about such data, the factors that
+affected their business and the variables they were considering while
+forecasting the series that were given to the participants. The
+macro-economic data were from the USA, whose economic situation was
+known at the time to the participants. The competition was run for two
+years and the participating experts had to forecast for the next 15
+months, as is the case when predictions in business firms are being made
+for next year's budget, sometime in September or October. The first
+year, in addition to the data, the participants were also provided with
+supplementary information about the industry and the company involved.
+As the competition was run on a real-time basis the actual state of the
+economy was known to the participating experts, who could also find,
+from published sources, additional information about the industry each
+company was operating, if they wished so.
+
+A year later the actual values for the last 15 months were given to the
+participating experts so that they could check the accuracy of the
+forecasts they had made a year earlier. Furthermore, the experts were
+given additional information, concerning the forthcoming year, about the
+industry and the company. They could also write or call a contact person
+in each company if they desired helpful hints or clarifications about
+the industry/company and/or the data.
+
+The results of the M2-Competition were practically identical to those of
+the M-Competition. Statistically sophisticated or complex methods did
+not provide more accurate forecasts than simpler ones. The relative
+ranking of the performance of the various methods varied according to
+the accuracy measure being used. The accuracy of combining various
+methods outperformed, on average, the individual methods used. And, the
+accuracy of the different methods depended upon the length of the
+forecasting horizon involved.
+
+Although, the conclusions of the Makridakis and Hibon (1979) study could
+be questioned as they depended upon the forecasting skills of two
+individuals (Makridakis and Hibon), those of the M- and M2-Competitions
+were above such criticisms. In addition, every conceivable effort was
+being made to achieve as high a degree of objectivity as possible. Such
+efforts included finding knowledgeable participants to run each method
+expertly and to assure that their forecasting procedure was well
+documented so that it could be replicated by other researchers and be
+available for later scrutiny. Such replication and scrutiny has indeed
+taken place. The data of the M- and M2-Competitions have been made
+available to more than 600 researchers who have studied every single
+aspect of the methods (for example, see Lusk & Neves, 1984) and the
+computations (Simmons, 1986). Moreover, new and different data sets
+(Grambsch & Stahel, 1990; Fildes, 1992; Armstrong & Collopy, 1993)
+further confirm the conclusions of the M-Competition and increase our
+confidence for generalizing them to new data sets and different
+situations.
+
+The strong empirical evidence, however, has been ignored by theoretical
+statisticians (see Fildes & Makridakis, 1995) who have been hostile to
+empirical verifications (for example, see Newbold, 1983). Instead, they
+have concentrated their efforts in building more sophisticated models
+without regard to the ability of such models to more accurately predict
+real-life data. The M3-Competition is a final attempt by the authors to
+settle the accuracy issue of various time series methods. Its major aim
+has been to both replicate *and* extend the M- and the M2-Competitions.
+The extension involves the inclusion of more methods/researchers (in
+particular in the areas of neural networks and expert systems) and more
+series. The replication was intended to determine whether or not the
+major conclusions of the M-Competition would hold with the new, much
+enlarged, set of 3003 time series
+
+## 3 Organizing and conducting the M3-Competition
+
+The 3003 series of the M3-Competition were selected on a quota basis to
+include various types of time series data (micro, industry, macro, etc.)
+and different time intervals between successive observations (yearly,
+quarterly, etc.). In order to ensure that enough data were available to
+develop an adequate forecasting model it was decided to have a minimum
+number of observations for each type of data. This minimum was set as 14
+observations for yearly series (the median length for the 645 yearly
+series is 19 observations), 16 for quarterly (the median length for the
+756 quarterly series is 44 observations), 48 for monthly (the median
+length for the 1428 monthly series is 115 observations) and 60 for
+'other' series (the median length for the 174 'other' series is 63
+observations). Table 1 shows the classification of the 3003 series
+according to the two major groupings described above. All the time
+series data are strictly positive; a test has been done on all the
+forecasted values: in the case of a negative value, it was substituted
+by zero. This avoids any problem in the various MAPE measures.
+
+\begin{table}
+\begin{tabular}{l r r r r r r r} \hline Time interval & \multicolumn{3}{c}{Types of time series data} & & & \\ \cline{2-7} between successive & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ observations & & & & & & & \\ \hline Yearly & 146 & 102 & 83 & 58 & 245 & 11 & 645 \\ Quarterly & 204 & 83 & 336 & 76 & 57 & & 756 \\ Monthly & 474 & 334 & 312 & 145 & 111 & 52 & 1428 \\ Other & 4 & & & 29 & & 141 & 174 \\ Total & 828 & 519 & 731 & 308 & 413 & 204 & 3003 \\ \hline \end{tabular}
+\end{table}
+
+Table 1: The classification of the 3003 time series used in the
+M3-CompetitionAs in the M-Competition, the participating experts were
+asked to make the following numbers of forecasts beyond the available
+data they had been given: six for yearly, eight for quarterly, 18 for
+monthly and eight for the category 'other'. Their forecasts were,
+subsequently, compared by the authors (the actual values referred to
+such forecasts were not available to the participating experts when they
+were making their forecasts and were not, therefore, used in developing
+their forecasting model). A presentation of the accuracy of such
+forecasts together with a discussion of the major findings is provided
+in the next section.
+
+The M3-Competition was given a lot of publicity in the *International
+Journal of Forecasting*, during forecasting conferences, on the Internet
+and by mailing individualized letters to recognized experts in various
+time series forecasting methods. In doing so we sought to attract the
+maximum number of participants, in particular from the new areas of
+neural networks and expert systems where claims of superior forecasting
+performance were continuously being made. While announcing the
+M3-Competition we received many hundreds of requests for information and
+we sent the 3003 series to more than 100 potential participants.
+Moreover, many other researchers must have downloaded the 3003 series
+from the Internet site:
+<http://www.insead.fr/facultyresearch/forecasting> that contained the
+data. However, as the deadline was approaching the number of
+participants submitting forecasts could be counted on the fingers of two
+hands, despite multiple reminders and the extension of the deadline.
+What was most disappointing was the large number of experts in neural
+networks and expert systems who dropped out after they had received the
+M3-Competition data and had indicated their intention to participate in
+the M3-Competition.
+
+In the next section the results for 24 methods, subdivided into six
+categories, are presented. Such methods include both all those utilized
+in the M-Competition plus seven new ones from the areas of neural
+networks, expert systems and decomposition. Table 2 lists the 24 methods
+included in the M3-Competition, with a brief description for each, and
+the various sub-categories to which they belong.
+
+## 4 The results of the M3-Competition
+
+Five accuracy measures (symmetric MAPE, Average Ranking, Median
+symmetric APE, Percentage Better, and Median RAE) were used to analyze
+the performance of the various methods. For a short description of these
+accuracy measures see Appendix A, while for greater details see
+Makridakis et al. (1982) and Armstrong and Collopy (1992). Appendix B
+includes many tables with full results for each of some of these
+accuracy measures for all the 3003 series and for the different
+categories of data and the various time horizons. The Internet site:
+<http://www.insead.fr/facultyresearch/forecasting> contains the full
+details of these accuracy measures together with more extensive sets of
+tables and figures (corresponding to Appendices B and C). Although there
+is a great number of tables and too many numbers we believe that they
+provide researchers and practitioners with useful information to judge,
+for their specific situation, the relative accuracy of the various
+methods covered in the M3-Competition. In the remainder of this section
+we analyze and summarize the results of these tables and provide our own
+interpretation and conclusions concerning these results. The other
+papers included in this special issue present descriptions, by each of
+the participating experts, of the methods listed in Table 2 and their
+own interpretation of the results. In a future issue the *International
+Journal of Forecasting* will publish commentaries concerning the results
+and conclusions of the M3-Competition.
+
+\begin{table}
+\begin{tabular}{l l l} \hline Method & Competitors & Description \\ \hline _Naïve/simple_ & & Deseasonalized Naive (Random Walk) \\
+1. Naive2 & M. Hibon & Single Exponential Smoothing \\
+2. Single & M. Hibon & Automatic Holt’s Linear Exponential Smoothing \\ _Explicit trend models_ & & (two parameter model) \\
+3. Holt & M. Hibon & Non-parametric version of Holt’s linear model \\
+4. Robust-Trend & N. Meade & with median based estimate of trend \\
+5. Winter & M. Hibon & Holt–Winter’s linear and seasonal exponential \\
+6. Dampen & M. Hibon & Dampen Trend Exponential Smoothing \\
+7. PP-autocast\({}^{*}\) & H. Levenbach & Damped Trend Exponential Smoothing \\
+8. Theta-sm & V. Assimakopoulos & Successive smoothing plus a set of rules for dampening the trend \\
+9. Comb S-H-D & M. Hibon & Combining three methods: Single/Holt/Dampen \\ _Decomposition_ & & \\
+10. Theta & V. Assimakopoulos & Specific decomposition technique, projection \\ _ARIMA/ARARMA model_ & & and combination of the individual components \\
+11. B-J automatic & M. Hibon & Box–Jenkins methodology of ‘Business Forecast \\
+12. Autobox1\({}^{*}\) & D. Reilly & Robust ARIMA univariate Box–Jenkins \\
+13. Autobox2\({}^{*}\) & & with/without Intervention Detection \\
+14. Autobox3\({}^{*}\) & & Automatic ARIMA modelling with/without intervention analysis \\
+15. AAM1 & G. Melard, J.M. Pasteels & Automatic ARIMA modelling with/without intervention analysis \\
+16. AAM2 & N. Meade & Automated Parzen’s methodology with Auto \\
+17. ARARMA & & regressive filter \\ _Expert system_ & & \\
+18. ForecastPro\({}^{*}\) & R. Goodrich, & Selects from among several methods: Exponential Smoothing/Box Jenkins/Poisson and negative binomial models/Croston’s Method/Simple Moving Average \\
+19. SmartFcs\({}^{*}\) & C. Smart & Automatic Forecasting Expert System which conducts a forecasting tournament among four exponential smoothing and two moving average methods \\
+20. RBF & M. Adya, & Rule-based forecasting: using three methods -- random walk, linear regression and Holt’s, to estimate level and trend, involving corrections, simplification, automatic feature identification and re-calibration \\
+21. Flores/Pearce1 & B. Flores, & Expert system that chooses among four methods based on the characteristics of the data \\
+22. Flores/Pearce2 & S. Pearce & Run tests for seasonality and outliers and selects from among several methods: Exponential Smoothing, Box–Jenkins and Croston’s method \\
+23. ForecastX\({}^{*}\) & & Automated Artificial Neural Networks for forecasting purposes \\ \hline \end{tabular}
+\end{table}
+
+Table 2: The 24 methods included in the M3-Competition classified into
+six categories
+
+### The accuracy of various methods: comparisons to a benchmark
+
+The absolute accuracy of the various methods is not as important as how
+well these methods perform relative to some benchmark. The simplest
+benchmark is Naive2 (a random walk model that is applied to seasonally
+adjusted data by assuming that seasonality is known; see Appendix A for
+a brief description of Naive2). Another easy benchmark is Dampen Trend
+Exponential Smoothing (Gardner & McKenzie, 1985). Table 3 lists the
+difference in the forecasting performance of the six most accurate
+forecasting methods, with a symmetric MAPE (sMAPE) below 14%, as well as
+ARARMA (the most sophisticated time series method) in relation to
+Naive2. Table 3 shows sMAPE(Naive2) (-)sMAPE(selected method), averaged
+across series, using the results in Appendix B (Table 6).
+
+It is clear that the accuracy of practically all methods included in
+Table 3 is considerably better than that of Naive2 which *only* captures
+the seasonality in the data. This is a very encouraging contribution
+which illustrates that the six methods listed in Table 3 can accurately
+predict other time series patterns, in addition to seasonality.
+
+The comparisons of Table 4 are similar to those of Table 3 except,
+however, that Dampen Trend Exponential Smoothing is used as the
+benchmark (a negative sign signifies that the accuracy of the method
+listed is worse than that of Dampen). Table 4 shows sMAPE(Dampen)
+(-)sMAPE(selected method), averaged across series, using the results in
+Appendix B (Table 6).
+
+\begin{table}
+\begin{tabular}{l c c c c c} \hline  & \multicolumn{2}{c}{Forecasting horizon(s)} \\ \cline{2-6}  & 1 & Average: & Average: & Average: & Average: \\  & & 1–4 & 1–6 & 1–12 & 1–18 \\ \hline Theta & 0.4\% & 0.6\% & 0.5\% & 0.5\% & 0.6\% \\ ForecastPro & 0.2\% & 0.4\% & 0.4\% & 0.3\% & 0.4\% \\ ForecastX & 0.1\% & 0.2\% & 0.3\% & 0.2\% & 0.1\% \\ Comb S-H-D & \(-\)0.1\% & 0.0\% & 0.0\% & 0.0\% & 0.1\% \\ RBF & \(-\)1.1\% & \(-\)0.5\% & \(-\)0.2\% & \(-\)0.3\% & \(-\)0.1\% \\ ARARMA & \(-\)0.9\% & \(-\)0.8\% & \(-\)0.9\% & \(-\)1.1\% & \(-\)1.1\% \\ \hline \end{tabular}
+\end{table}
+
+Table 4: Comparison of various methods with Dampen as the benchmark
+
+\begin{table}
+\begin{tabular}{l c c c c c} \hline  & \multicolumn{2}{c}{Forecasting horizon(s)} \\ \cline{2-6}  & 1 & Average: & Average: & Average: & Average: \\  & & 1–4 & 1–6 & 1–12 & 1–18 \\ \hline Theta & 2.1\% & 2.2\% & 2.1\% & 2.3\% & 2.5\% \\ ForecastPro & 1.9\% & 2.0\% & 1.9\% & 2.1\% & 2.3\% \\ ForecastX & 1.8\% & 1.8\% & 1.8\% & 2.0\% & 2.0\% \\ Comb S-H-D & 1.6\% & 1.5\% & 1.5\% & 1.8\% & 2.0\% \\ Dampen & 1.7\% & 1.6\% & 1.5\% & 1.8\% & 1.8\% \\ RBF & 0.6\% & 1.1\% & 1.3\% & 1.5\% & 1.7\% \\ ARARMA & 0.8\% & 0.8\% & 0.7\% & 0.7\% & 0.7\% \\ \hline \end{tabular}
+\end{table}
+
+Table 3: Comparison of various methods with Naïve2 as the benchmarkIn
+Table 4 the differences in the forecasting performance (as far as
+symmetric MAPE is concerned) are small. The overall *extra* improvement
+(average of all 18 horizons) of the two most accurate methods is around
+0.5% (half of one percent). As the actual overall symmetric MAPE of
+these methods is around 13%, this 0.5% represents an improvement, in
+symmetric MAPE, of Theta and ForecastPro of around 4%. The equivalent
+improvement of ForecastX is less than 1% while for RBF and ARARMA it is
+negative, meaning that Dampen is, on average, more accurate than these
+two methods. The accuracy of the remaining methods used in the
+M3-Competition, as far as the average symmetric MAPE is concerned, is
+worse than that of Dampen in most forecasting horizons (see Table 6).
+
+If similar comparisons as those shown in Tables 3 and 4 are made with
+the remaining accuracy measures the results are, in most cases, similar
+to those shown in Tables 3 and 4. Although several forecasting methods
+outperform Dampen the differences involved are small and, in most cases,
+not statistically significant. This is particularly true for specific
+forecasting horizons and particular types of data.
+
+Figs. 1 to 9 in Appendix C (C1-C25 on the web site) show, in graphical
+form, the differences of Dampen from the most important methods of the
+M3-Competition for three or four different forecasting horizons. Such
+figures confirm the good performance of Dampen while at the same time
+demonstrate that several methods consistently outperform Dampen. The
+forecast user will have to decide if the extra improvement in accuracy
+justifies the additional effort or cost that may be required when using
+time series methods other than Dampen.
+
+### The four conclusions of the M-Competition
+
+This section examines the question of whether or not the four major
+conclusions of the M-Competition also apply to the 3003 data of the
+M3-Competition.
+
+(1) *Statistically sophisticated or complex methods do not necessarily
+    produce more accurate forecasts than simpler ones*. Tables 3 and 4
+    (see also the tables in Appendix B, the figures in Appendix C and
+    the tables and figures on the INSEAD website) illustrate, beyond the
+    slightest doubt, that statistically sophisticated methods *do not
+    necessarily* outperform simple ones. This does not mean that some
+    sophisticated methods do not do well or that it is always obvious
+    how a method can be classified as simple or sophisticated. However,
+    Tables 3 and 4 suggest that we cannot advance the statement that
+    sophisticated time series methods outperform, on average, simple
+    ones like Dampen trend.
+
+(2) *The rankings of the performance of the various methods vary
+    according to the accuracy measure being used*. Table 7 shows the
+    method that gives the 'best' results (when more than one method is
+    designated as 'best', their accuracy is the same within one
+    decimal). Table 7 suggests that the 'best' method varies according
+    to the accuracy measure being used and the type of data (micro,
+    industry, macro, etc.) involved. Such differentiation becomes
+    clearer in Tables 8 to 11 where the data are further subdivided into
+    yearly, quarterly, monthly and 'other'.
+
+(3) *The accuracy of the combination of various methods outperforms, on
+    average, the specific methods being combined and does well in
+    comparison with other methods*. In the various tables and figures,
+    the method 'Comb S-H-D' is the simple arithmetic average of three
+    methods: Single, Holt and Dampen Trend Exponential Smoothing. Table
+    5 shows the symmetric MAPE of Single, Holt and Dampen as well as
+    that of their combination. Clearly, the combination is more accurate
+    than the three individual methods being combined for practically all
+    forecasting horizons, although its difference from Dampen is small
+    (since Dampen does extremely well so does Comb S-H-D).
+
+(4) *The performance of the various methods depends upon the length of
+    the forecasting horizon*. Table 12 lists the best method, using
+    symmetric MAPE, for short, medium and long forecasting horizons.
+    This table indicates that the best method varies with the
+    forecasting horizon, in particular when subcategories of the data
+    are involved (the same conclusion can be seen from the other tables
+    and figures of Appendix B as well as from the tables/figures on the
+    INSEAD website). An exception is the forecasting performance of
+    Theta, a new method used for the first time in the M3-Competition,
+    which seems to perform consistently well across both forecasting
+    horizons *and* accuracy measures (see Tables 7-11).
+
+### M3-Competition: implications for the theory and practice of forecasting
+
+Better predictions remain the foundation of all science and the primary
+purpose of forecasting which must strive to achieve such an objective by
+all possible means. Pure theory and elaborate/sophisticated methods are
+of little practical value unless they can contribute to improving the
+accuracy of post-sample predictions. This study, the previous two
+M-Competitions and many other empirical studies have proven, beyond the
+slightest doubt, that elaborate theoretical constructs or more
+sophisticated methods do not necessarily improve post-sample forecasting
+accuracy, over simple methods, although they can better fit a
+statistical model to the available historical data. The authors of this
+paper believe that the time has come to accept this finding so that
+pragmatic ways can be found to improve, as much as possible, post-sample
+predictions. Such improvement can result in considerable benefits at the
+operational level of business firms, and other organizations (e.g.,
+smaller inventories, superior scheduling, more effective allocation of
+resources, etc.), and can be exploited to provide better customer
+service. Each percentage improvement in post-sample forecasting accuracy
+can result in savings of many millions of dollars, less wasted
+resources, and/or better service. In order to improve forecasting
+accuracy, both research statisticians and practical forecasters must
+work together to advance the field of forecasting, with the single
+objective in mind of how to ameliorate its practical value and
+usefulness (Fildes & Makridakis, 1995).
+
+### Suggestions for further research
+
+The reason for the anomalies between the theory and practice of
+forecasting is that real-life time series are not stationary while many
+of them also contain structural changes as fads, and fashions can change
+established patterns and affect existing relationships. Moreover, the
+randomness in such series is high as competitive
+
+\begin{table}
+\begin{tabular}{l c c c c c} \hline  & \multicolumn{2}{c}{Forecasting horizon(s)} \\ \cline{2-6}  & 1 & Average: & Average: & Average: & Average: \\  & & 1–4 & 1–6 & 1–12 & 1–18 \\ \hline Single & 9.5\% & 11.7\% & 12.7\% & 13.1\% & 14.3\% \\ Holt & 9.0\% & 11.7\% & 12.9\% & 13.4\% & 14.6\% \\ Dampen & 8.8\% & 11.1\% & 12.0\% & 12.4\% & 13.6\% \\ Comb S-H-D & 8.9\% & 11.1\% & 12.0\% & 12.4\% & 13.5\% \\ \hline \end{tabular}
+\end{table}
+
+Table 5: Symmetric MAPE of Single, Holt and Dampen, and their
+combination actions and reactions cannot be accurately predicted and as
+unforeseen events (e.g., extreme weather conditions) affecting the
+series involved can and do occur. Finally, many time series are
+influenced by strong cycles of varying duration and lengths whose
+turning points cannot be predicted, making them behave like a random
+walk. It is for these reasons that simple methods (e.g., Single
+exponential smoothing which does not extrapolate any trend) can
+outperform, in certain cases, statistically sophisticated ones that
+identify and extrapolate the trend (and other patterns) in the data.
+
+Fildes and Makridakis (1995) have identified the following areas for
+research so that the accuracy of time series methods can be improved by
+taking into account the real-life behavior of data:
+
+- Exploiting the robustness of simple methods that are less influenced
+  than advanced ones by structural changes in the data.
+- Modeling the trend in a more practical way by realizing that many
+  series are random walks and that established trends in the data can
+  and do change (a good example of such an approach is Dampen Trend
+  Exponential Smoothing).
+- As the forecasting performance of different methods is related to the
+  forecasting horizon it would be possible to develop methods that
+  combine the advantages of the methods that more accurately predict the
+  short term *and* those that are more effective in forecasting the long
+  term.
+- As model fit is not a good indicator of the post-sample forecasting
+  accuracy of the various methods it would be worthwhile to develop
+  methods/models where the selection is done using out of sample
+  criteria (see Chatfield, 1995).
+- It may be possible that the post-sample accuracy of time series
+  methods can be improved by incorporating multivariate information that
+  will affect the future behavior of such series so that predictions can
+  be improved.
+
+## 5 Conclusions
+
+This Competition has confirmed the original conclusions of M-Competition
+using a new and much enlarged set of data. In addition, it demonstrated,
+once more, that simple methods developed by practicing forecasters
+(e.g., Brown's Single and Gardner's Dampen Trend Exponential Smoothing)
+do as well, or in many cases better, than statistically sophisticated
+ones like ARIMA and ARARMA models. In addition, the M3-Competition has
+reached three additional conclusions that need further confirmation.
+First, a new method, Theta, seems to perform extremely well. Although
+this method seems simple to use (see article describing Theta for
+deciding the extent of simplicity/complexity of this method) and is not
+based on strong statistical theory, it performs remarkably well across
+different types of series, forecasting horizons and accuracy measures.
+Hopefully, new methods, similar to Theta, can be identified and brought
+to the attention of practicing forecasters. Second, ForecastPro, another
+new method not utilized in the M-Competition, also did well. In the
+spirit of Brown's attempts to obtain more accurate forecasts, this
+approach is empirically based and eclectic in nature. It identifies and
+uses the most appropriate method from a set of possible choices.
+Finally, this Competition, like Fildes et al. (1998), has shown that a
+specific method (i.e., Robust-Trend) can outperform all others when
+yearly data are involved. It may be possible that other methods can be
+found that can also outperform existing ones in specific situations and,
+therefore, be used exclusively for such situations only. Clearly, more
+research will be needed to establish the reason why, for instance,
+Robust-Trend is so well suited for yearly data. Is it some inherent
+aspect of such a method or rather its robust estimation procedure?
+Similar questions will need to be answered, through additional research,
+for other methods. Is, for instance, the reason for Theta's excellent
+performance its way of deseasonalizing the data, its estimation
+procedure, or its ability to deal with extreme values? These and similar
+questions, if answered, can contribute to improving forecasting accuracy
+a great deal and make the field of forecasting more useful and relevant.
+
+As with the previous two M-Competitions, the data for M3 are available
+to any researcher who wants to use them. This can be done by contacting
+Michele Hibon at michele.hibon@insead.fr, or by downloading the
+M3-Competition data from the site:
+<http://www.insead.fr/facultyresearch/forecasting>. We hope that this
+new data set of the 3003 series will become the basis for more empirical
+research in the field of forecasting and that its impact on the science
+and practice of forecasting will prove to be even more significant than
+that of the M-Competition data. We strongly believe that more empirical
+research is needed to advance the field of forecasting and make it more
+practical and relevant for business and other organizations requiring
+predictions. Ignoring empirical findings is contrary to rational
+thinking and scientific inquiry.
+
+We are convinced that those criticizing Competitions, and empirical
+studies in general, should stop doing so and instead concentrate their
+efforts on explaining the anomalies between theory and practice and on
+working to improve the accuracy of forecasting methods. Emotional
+criticisms are not appropriate for good science. Everyone in the field
+of forecasting ought to heed the advice of Kuhn (1962) that "Discovery
+commences with the awareness of anomaly.... It then continues with a
+more of less extended exploration of the area of anomaly. And it closes
+when the paradigm theory has been adjusted so that the anomalous has
+become the expected." Perhaps the time has come to follow the example of
+a recent conference on the 'Future of Economics' (see *The Economist*,
+March 4th, 2000, p. 90) and start debating, in a serious and scientific
+manner, the future of forecasting.
+
+## Appendix A
+
+*The five accuracy measures utilized in the M3-Competition*
+
+The five accuracy measures employed to describe the results of the
+M3-Competition are the following.
+
+- *Symmetric mean absolute percentage error* The symmetric MAPE (sMAPE)
+  is defined as
+  (`\sum`{=tex}`\frac{\left|X-F\right|}{(X+F)/2}`{=tex}\*100)
+
+where (X) is the real value and (F) is the forecast.The symmetric MAPE
+is the average across all forecasts made for a given horizon.
+
+By using the symmetric MAPE, we avoid the problem of large errors when
+the actual, (X), values are close to zero and the large difference
+between the absolute percentage errors when (X) is greater than (F) and
+vice versa (e.g., the absolute, non-symmetric, percentage error when
+(X=100) and (F=50) is (50%), while when (X=50) and (F=100) it is (100%).
+On the other hand, the symmetric MAPE in both cases is (66.67%)). In
+addition, the symmetric MAPE fluctuates between (-200%) and (200%) while
+the non-symmetric measure does not have limits.
+
+- *Average ranking* For each series, the average rankings are computed
+  by sorting, for each forecasting horizon, the symmetric absolute
+  percentage error of each method from the smallest (takingthe value
+  of 1) to the largest. Consequently, once the ranks for all series have
+  been determined, the mean rank is calculated for each forecasting
+  horizon, over all series. An overall average ranking is also
+  calculated by averaging the ranks over six, eight or 18 forecasts, for
+  each method.
+
+(`\bullet`{=tex})*Percentage better*
+
+The percentage better measure counts and reports the percentage of time
+that a given method has a smaller forecasting error than another method.
+Each forecast made is given equal weight. Our comparisons in Appendix B
+and in Fig. 7 (C7 to C11 on the website) use Dampen as the benchmark to
+present the percentage of time that this method does better than the
+others.
+
+(`\bullet`{=tex})*Median symmetric APE (median symmetric absolute
+percentage error)*
+
+The median symmetric absolute percentage error is found and reported for
+each method/ forecasting horizon. Such a measure is not influenced by
+extreme values and is more robust than the average absolute percentage
+error. In the case of the M3-Competition the differences between
+symmetric MAPEs and Median symmetric APEs were much smaller than the
+corresponding values in the M-Competition as care has been taken so that
+the level of the series not be close to zero while, at the same time,
+using symmetric percentage errors which reduce their fluctuations.
+
+(`\bullet`{=tex})*Median RAE (relative absolute error)*
+
+The RAE is the absolute error for the proposed model relative to the
+absolute error for the Naive2 (no-change model). It ranges from 0 (a
+perfect forecast) to 1.0 (equal to the random walk), to greater than 1
+(worse than the random walk). The RAE is similar to Theil's U2, except
+that it is a linear rather than a quadratic measure. It is designed to
+be easy to interpret and it lends itself easily to summarizing across
+horizons and across series as it controls for scale and for the
+difficulty of forecasting. The Median RAE (MdRAE) is recommended for
+comparing the accuracy of alternative models as it also controls for
+outliers (for information on the performance of this measure, see
+Armstrong & Collopy, 1992).
+
+#### Defining Naive2
+
+The forecasts of Naive2 are simply the last available data value
+(X\_{{}\_{t}}), assuming that seasonality is known. It is defined as
+follows:
+
+(F\_{{}*{t+i}}=X*{{}*{t}}\^{`\divide*`{=tex}}(S*{j}))
+
+where (X\_{{}*{t}}\^{`\divide*`{=tex}}) is the seasonally adjusted value
+of (X*{{}*{t}}), that is (X*{{}*{t}}/S*{j}), (S\_{j}) is the seasonal
+index, computed using the classical decomposition method, for the (j)
+period (quarter or month), and (i=1,2,`\ldots`{=tex},m) (where (m=6) for
+yearly data, 8 for quarterly and 'other' and 18 for monthly).
+
+In statistical terms Naive2 is a random walk model applied to seasonally
+adjusted data. As such Naive2 assumes that the trend in the data cannot
+be predicted and that the best forecast for the future is the most
+recent value, after the seasonality has been taken into consideration.
+
+\[MISSING_PAGE_EMPTY:13\]
+
+\begin{table}
+\begin{tabular}{l l l l l l l} \hline Accuracy & Micro & Industry & Macro & Finance & Demographic & Total \\ measure & (146) & (102) & (83) & (58) & (245) & (645) \\ \hline Symmetric & Robust-Trend & Theta & Robust-Trend & Autobox2 & ForecastX & RBF \\ MAPE & Flores/Pearce2 & Comb S-H-D & ARARMA & Single & RBF & ForecastX \\ SmartFcs & Autobox2 & & & Naïve2 & & Autobox2 \\  & Autobox2 & & & & Theta \\  & & & & & & Theta \\  & & & & & Robust-Trend \\ Average & Robust-Trend & Theta & Robust-Trend & Single & ForecastX & RBF/ForecastX \\ RANKING & Theta/ & Comb S-H-D/ & ARARMA & Naïve2/ & ForecastPro/ & Theta/ \\  & Autobox2 & Robust-Trend & RBF & Autobox2 & PP-autocast & Robust-Trend/ \\  & & RBF & & ForecastX/ & & Autobox2 \\  & & & & ForecastPro & & \\ Median APE & Robust-Trend & Robust-Trend & Robust-Trend & Single & ForecastX & RBF \\ SmartFcs & & & ForecastPro & Naïve2 & ForecastPro & Flores/Pearce1 \\  & & & & Autobox2 & RBF & PP-autocast \\  & & & & Theta/ & Dampen \\  & & & & Autobox2 & \\ Median RAE & Robust-Trend & Robust-Trend & Robust-Trend & RBF & RBF/ \\ SmartFcs/ & Theta-sm & ARARMA & Theta & Theta/ & Theta/ \\  & Theta/ & Theta & RBF & & Robust-Trend \\  & Autobox2 & & & & Comb S-H-D \\ \hline \end{tabular}
+\end{table}
+
+Table 8: Methods which give the best results: yearly data
+
+\begin{table}
+\begin{tabular}{l l l l l l l} \hline Accuracy & Micro & Industry & Macro & Finance & Demographic & Total \\ measure & (204) & (83) & (336) & (76) & (57) & (756) \\ \hline Symmetric & Theta & Comb S-H-D & Theta & Theta & Theta/ & Theta \\ MAPE & Comb S-H-D & RBF & Comb S-H-D & PP-autocast & SmartFcs & Comb S-H-D \\  & ForecastX & ForecastX & & ForecastPro & Dampen & Dampen \\  & & PP-autocast & & & PP-autocast \\ Average & Theta & Comb S-H-D & Theta & Theta & Theta/ & Theta \\ RANKING & Holt & PP-autocast & Comb S-H-D & ARARMA & Dampen & Comb S-H-D \\  & Comb S-H-D & ForecastX & Dampen & Comb S-H-D & ARARMA & \\ Median APE & ForecastX & ForecastX & Theta & Theta & ARARMA & Robust-Trend \\  & Comb S-H-D & Comb S-H-D & RBF & Winter & Robust-Trend \\  & Holt & Theta & Flores/Pearce1 & SmartFcs & & Comb S-H-D \\  & & Robust-Trend & & & & ForecastX/ \\  & & PP-autocast & & & & Dampen \\  & & & & & PP-autocast \\ Median RAE & Holt & Comb S-H-D/ & Theta/ & Theta/ & Theta & Theta \\  & Theta & Theta/ & Comb S-H-D & Winter & ARARMA & Comb S-H-D \\  & Comb S-H-D/ & Robust-Trend & & & Comb S-H-D & Robust-Trend \\  & Robust-Trend & Holt & & & & \\ \hline \end{tabular}
+\end{table}
+
+Table 9: Methods which give the best results: quarterly data
+
+\begin{table}
+\begin{tabular}{l l l l l l l l l} Accuracy & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ Measure & (474) & (334) & (312) & (145) & (111) & (52) & (1428) \\ \hline Symmetric & Theta & ForecastPro & ARARMA & AAM1 & ForecastX & Comb S-H-D & Theta \\ MAPE & ForecastPro & ForecastX & RBF & AAM2 & SmartFcs & B–J automatic & ForecastPro \\  & & & B–J automatic & & & Single & AAM1 & \\  & & & & & ForecastPro & & \\ Average & Theta & ForecastPro & Robust-Trend & AAM1 & Robust-Trend & Theta & Theta \\ RANKING & ForecastPro & ForecastX & Holt & AAM2 & & AAM1/ & ForecastPro \\  & Theta & Winter & & & & AAM2 & Comb S-H-D \\  & & & B–J automatic & ARARMA\(/\) & & & ARARMA\(/\) & \\  & & Comb S-H-D & AAM1 & & & Comb S-H-D & \\ Median APE & Theta & ForecastPro & Robust-Trend & AAM1\(/\) & Robust-Trend & ARARMA & ForecastPro \\  & ForecastPro & B–J automatic & Holt & AAM2 & ARARMA\(/\) & AAM2 & Theta \\  & & ForecastX & AAM1 & Autobox3 & RBF & & \\  & & Theta & & & Autobox1 & & \\ Median RAE & Theta & & AAM1\(/\) & AAM1\(/\) & Robust-Trend & ARARMA & \\  & Theta-sm & & Robust-Trend & AAM2 & ARARMA & AAM2 & \\  & ForecastPro\(/\) & Holt & & & & AAM1 & \\  & & Automat ANN & ARARMA & & & Theta & \\ \hline \end{tabular}
+\end{table}
+
+Table 10: Methods which give the best results: monthly data
+
+\begin{table}
+\begin{tabular}{l l l l l l l} Accuracy & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ measure & & & (29) & & (141) & (174) \\ \hline Symmetric & & & & Theta & ARARMA \\ MAPE & & & & & Autobox2 & Theta/ \\  & & & & Comb S-H-D/ & Autobox2 \\  & & & & Robust-Trend & & \\  & & & ARARMA & & \\ Average & & PP-autocast & ForecastX\(/\) & ForecastX\(/\) & ForecastX\(/\) \\ RANKING & & & Dampen & Autobox2 & Autobox2 \\  & & & Robust-Trend & Theta & ForecastPro/ \\  & & & Theta & & Robust-Trend \\ Median APE & & Automat ANN & ForecastX & ForecastX\(/\) & ForecastX\(/\) \\  & & & Autobox2 & Autobox2 \\  & & & Theta/ & & \\  & & & & ForecastPro\(/\) & Robust-Trend \\  & & & & & \\ \end{tabular}
+\end{table}
+
+Table 11: Methods which give the best results: other data
+
+\begin{table}
+\begin{tabular}{l l l l l l l l l l} \hline \hline Method & \multicolumn{3}{l}{Forecasting horizon} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} \\ \cline{2-10}  & 1 & 2 & 3 & 4 & 5 & 6 & 1 to 4 & 1 to 6 & \\ \hline Naïve2 & 8.5 & 13.2 & 17.8 & 19.9 & 23 & 24.9 & 14.85 & 17.88 & 645 \\ Single & 8.5 & 13.3 & 17.6 & 19.8 & 22.8 & 24.8 & 14.82 & 17.82 & 645 \\ Holt & 8.3 & 13.7 & 19 & 22 & 25.2 & 27.3 & 15.77 & 19.27 & 645 \\ Dampen & 8 & 12.4 & 17 & 19.3 & 22.3 & 24 & 14.19 & 17.18 & 645 \\ Winter & 8.3 & 13.7 & 19 & 22 & 25.2 & 27.3 & 15.77 & 19.27 & 645 \\ Comb S-H-D & 7.9 & 12.4 & 16.9 & 19.3 & 22.2 & 23.7 & 14.11 & 17.07 & 645 \\ B-J automatic & 8.6 & 13 & 17.5 & 20 & 22.8 & 24.5 & 14.78 & 17.73 & 645 \\ Autobox1 & 10.1 & 15.2 & 20.8 & 24.1 & 28.1 & 31.2 & 17.57 & 21.59 & 645 \\ Autobox2 & 8 & 12.2 & 16.2 & 18.2 & 21.2 & 23.3 & 13.65 & 16.52 & 645 \\ Autobox3 & 10.7 & 15.1 & 20 & 22.5 & 25.7 & 28.1 & 17.09 & 20.36 & 645 \\ Robust-Trend & 7.6 & 11.8 & 16.6 & 19 & 22.1 & 23.5 & 13.75 & 16.78 & 645 \\ ARARMA & 9 & 13.4 & 17.9 & 20.4 & 23.8 & 25.7 & 15.17 & 18.36 & 645 \\ Automat ANN & 9.2 & 13.2 & 17.5 & 20.3 & 23.2 & 25.4 & 15.04 & 18.13 & 645 \\ Flores/Pearce1 & 8.4 & 12.5 & 16.9 & 19.1 & 22.2 & 24.2 & 14.22 & 17.21 & 645 \\ Flores/Pearce2 & 10.3 & 13.6 & 17.6 & 19.7 & 21.9 & 23.9 & 15.31 & 17.84 & 645 \\ PP-autocast & 8 & 12.3 & 16.9 & 19.1 & 22.1 & 23.9 & 14.08 & 17.05 & 645 \\ ForecastPro & 8.3 & 12.2 & 16.8 & 19.3 & 22.2 & 24.1 & 14.15 & 17.14 & 645 \\ SmartFcs & 9.5 & 13 & 17.5 & 19.9 & 22.1 & 24.1 & 14.95 & 17.68 & 645 \\ Theta-sm & 8 & 12.6 & 17.5 & 20.2 & 23.4 & 25.4 & 14.6 & 17.87 & 645 \\ Theta & 8 & 12.2 & 16.7 & 19.2 & 21.7 & 23.6 & 14.02 & 16.9 & 645 \\ RBF & 8.2 & 12.1 & 16.4 & 18.3 & 20.8 & 22.7 & 13.75 & 16.42 & 645 \\ ForecastX & 8.6 & 12.4 & 16.1 & 18.2 & 21 & 22.7 & 13.8 & 16.48 & 645 \\ \hline \hline \end{tabular}
+\end{table}
+
+Table 13: Average symmetric MAPE: yearly data
+
+\begin{table}
+\begin{tabular}{l l l l l l l l} \hline \hline Average & \multicolumn{3}{l}{Types of time series data} & & & & \\ \cline{2-7} step & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ horizons & (474) & (334) & (312) & (145) & (111) & (52) & (1428) \\ \hline Short & SmartFcs & ForecastPro & Most of the & Autobox2/ & Most of the & Most of the & Theta \\
+1–3 & Theta & ForecastX & methods & Automat ANN & methods & ForecastPro \\  & ForecastPro & Dampen & & ForecastX & & SmartFcs \\  & Automat ANN & Comb S-H-D & & & & Automat ANN \\  & Theta & & & & & ForecastX \\ Medium & Theta & ForecastPro & Most of the & AAM1/ & Most of the & Comb S-H-D & ForecastPro \\
+4–12 & ForecastPro & ForecastX & methods & AAM2 & methods & B–J automatic & Theta \\  & Theta & Theta & Robust-Trend & AAM1/ & Single & AAM1 & Theta \\
+13–18 & ForecastPro & ForecastX/ RBF & AAM2 & Naïve2/ & ARARMA & ForecastPro \\  & & ForecastPro & ARARMA & SmartFcs & RBF/ & RBF \\  & & Dampen & AAM1 & & ForecastX/ & Comb S-H-D & \\  & & & & & & \\  & & & & & & & \\ Overall & Theta & ForecastPro & ARARMA & AAM1/ & ForecastX & Comb S-H-D & Theta \\
+1–18 & ForecastX & RBF & AAM2 & SmartFcs & B–J automatic & ForecastPro \\  & & & & & Single & AAM1 & \\  & & & & & & ForecastPro & \\ \hline \hline \end{tabular}
+\end{table}
+
+Table 12: Methods which give the best results: symmetric MAPE ---
+monthly data
+
+\begin{table}
+\begin{tabular}{l c c c c c c c c c c c c c c c} \hline Method & \multicolumn{6}{c}{Forecasting horizon} & \multicolumn{6}{c}{Average of forecasting horizons} & \# obs \\ \cline{2-13}  & 1 & 2 & 3 & 4 & 5 & 6 & 8 & 12 & 15 & 18 & 1 to 4 & 1 to 6 & 1 to 8 & 1 to 12 & 1 to 15 & 1 to 18 & \\ \hline Naive2 & 15 & 13.5 & 15.7 & 17 & 14.9 & 14.7 & 15.6 & 16 & 19.3 & 20.7 & 15.3 & 15.13 & 15.
+
+\begin{table}
+\begin{tabular}{l l l l l l l l l l l l} \hline \multicolumn{1}{l}{Method} & \multicolumn{3}{l}{Forecasting horizon} & \multicolumn{1}{c}{} & \multicolumn{3}{l}{Average} & \multicolumn{1}{c}{\# obs} \\ \cline{2-11}  & 1 & 2 & 3 & 4 & 5 & 6 & 8 & 1 to 4 & 1 to 6 & 1 to 8 & \\ \hline Naïve2 & 2.2 & 3.6 & 5.4 & 6.3 & 7.8 & 7.6 & 9.2 & 4.38 & 5.49 & 6.3 & 174 \\ Single & 2.1 & 3.6 & 5.4 & 6.3 & 7.8 & 7.6 & 9.2 & 4.36 & 5.48 & 6.29 & 174 \\ Holt & 1.9 & 2.9 & 3.9 & 4.7 & 5.8 & 5.6 & 7.2 & 3.32 & 4.13 & 4.81 & 174 \\ Dampen & 1.8 & 2.7 & 3.9 & 4.7 & 5.8 & 5.4 & 6.6 & 3.28 & 4.06 & 4.61 & 174 \\ Winter & 1.9 & 2.9 & 3.9 & 4.7 & 5.8 & 5.6 & 7.2 & 3.32 & 4.13 & 4.81 & 174 \\ Comb S-H-D & 1.8 & 2.8 & 4.1 & 4.7 & 5.8 & 5.3 & 6.2 & 3.36 & 4.09 & 4.56 & 174 \\ B–J automatic & 1.8 & 3 & 4.5 & 4.9 & 6.1 & 6.1 & 7.5 & 3.52 & 4.38 & 5.06 & 174 \\ Autobox1 & 2.4 & 3.3 & 4.4 & 4.9 & 5.8 & 5.4 & 6.9 & 3.76 & 4.38 & 4.93 & 174 \\ Autobox2 & 1.6 & 2.9 & 4 & 4.3 & 5.3 & 5.1 & 6.4 & 3.19 & 3.86 & 4.41 & 174 \\ Autobox3 & 1.9 & 3.2 & 4.1 & 4.4 & 5.5 & 5.5 & 7 & 3.39 & 4.09 & 4.71 & 174 \\ Robust-Trend & 1.9 & 2.8 & 3.9 & 4.7 & 5.7 & 5.4 & 6.4 & 3.32 & 4.07 & 4.58 & 174 \\ ARARMA & 1.7 & 2.7 & 4 & 4.4 & 5.5 & 5.1 & 6 & 3.17 & 3.87 & 4.38 & 174 \\ Automat ANN & 1.7 & 2.9 & 4 & 4.5 & 5.7 & 5.7 & 7.4 & 3.26 & 4.07 & 4.8 & 174 \\ Flores/Pearcel & 2.1 & 3.2 & 4.3 & 5.2 & 6.2 & 5.8 & 7.3 & 3.71 & 4.47 & 5.09 & 174 \\ Flores/Pearcel & 2.3 & 2.9 & 4.3 & 5.1 & 6.2 & 5.7 & 6.5 & 3.67 & 4.43 & 4.89 & 174 \\ PP-automcast & 1.8 & 2.7 & 4 & 4.7 & 5.8 & 5.4 & 6.6 & 3.29 & 4.07 & 4.62 & 174 \\ ForecastPro & 1.9 & 3 & 4 & 4.4 & 5.4 & 5.4 & 5.4 & 6.7 & 3.31 & 4 & 4.6 & 174 \\ SmartFcs & 2.5 & 3.3 & 4.3 & 4.7 & 5.8 & 5.5 & 6.7 & 3.68 & 4.33 & 4.86 & 174 \\ Theta-sm & 2.3 & 3.2 & 4.3 & 4.8 & 6 & 5.6 & 6.9 & 3.66 & 4.37 & 4.93 & 174 \\ Theta & 1.8 & 2.7 & 3.8 & 4.5 & 5.6 & 5.2 & 6.1 & 3.2 & 3.93 & 4.41 & 174 \\ RBF & 2.7 & 3.8 & 5.2 & 5.8 & 6.9 & 6.3 & 7.3 & 4.38 & 5.12 & 5.6 & 174 \\ ForecastX & 2.1 & 3.1 & 4.1 & 4.4 & 5.6 & 5.4 & 6.5 & 3.42 & 4.1 & 4.64 & 174 \\ \hline \end{tabular}
+\end{table}
+
+Table 16: Average symmetric MAPE: other data
+
+\begin{table}
+\begin{tabular}{l l l l l l l l} \hline \multicolumn{1}{l}{Time interval} & \multicolumn{3}{l}{Types of time series data} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} \\ \cline{2-11} \multicolumn{1}{l}{between} & \multicolumn{1}{c}{Micro} & \multicolumn{1}{c}{(828)} & \multicolumn{1}{c}{Industry} & \multicolumn{1}{c}{Macro} & \multicolumn{1}{c}{Finance} & \multicolumn{1}{c}{Demographic} & \multicolumn{1}{c}{Other} & \multicolumn{1}{c}{Total} \\ observations & \multicolumn{1}{c}{(828)} & \multicolumn{1}{c}{(519)} & \multicolumn{1}{c}{(731)} & \multicolumn{1}{c}{(308)} & \multicolumn{1}{c}{(413)} & \multicolumn{1}{c}{(204)} & \multicolumn{1}{c}{(3003)} \\ \hline Yearly & Robust-Trend & Theta & Robust-Trend & Autobox2 & ForecastX & \multicolumn{1}{c}{RBF} \\ (645) & Flores/Pearce2 & Comb S-H-D & ARARMA & Single & RBF & \multicolumn{1}{c}{ForecastX} \\  & SmartFcs & Autobox2 & & Naive2 & & & & & \\  & & & & & & & & & \\  & & & & & & & & & & \\ Quarterly & Theta & Comb S-H-D & Theta & Theta & Theta/ & Theta \\ (756) & Comb S-H-D & RBF & Comb S-H-D & PP-autocast & SmartFcs & \multicolumn{1}{c}{Comb S-H-D} \\  & ForecastX & ForecastPro & CorrectPro & \multicolumn{1}{c}{Dampen} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} & \multicolumn{1}{c}{} \\  & PP-autocast & & & & & & & & \\ Monthly & Theta & ForecastPro & ARARMA & AAM1/ & ForecastX & Comb S-H-D & Theta \\ (1428) & ForecastPro & ForecastX & RBF & AAM2 & SmartFcs & B–J automatic & ForecastPro \\  & & & & & & & & & \\  & & & & & & & & & \\  & & & & & & & & & & \\ Other & & & & & & & & & & \\ (174) & & & & & & & & & & \\  & & & & & & & & & & \\  & & & & & & & & & & & \\ Total & & & & & & & & & & & \\ (3003) & ForecastPro & ForecastPro & & \multicolumn{1}{c}{AAM1} & \multicolumn{1}{c}{ForecastX} & \multicolumn{1}{c}{Theta} \\  & & & & & & & & & & & & \\  & & & & & & & & & & & \\  & & & & & & & & & & & & \\  & & & & & & & & & & & & \\  & & & & & & & & & & & \\  & & & & & & & & & & & & \\ \end{tabular}
+\end{table}
+
+Table 17: Methods which give the best results: symmetric MAPE
+
+\begin{table}
+\begin{tabular}{l l l l l l l l} \hline Time interval & Types of time series data & & & & & \\ \cline{2-7} between successive & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ observations & (828) & (519) & (731) & (308) & (413) & (204) & (3003) \\ \hline Yearly & Robust-Trend & Theta & Robust-Trend & Single & ForecastX & & RBF/ \\ (645) & Autobox2 & Robust-Trend & ARARMA & Naïve2/ & PP-autocast & & ForecastX \\ Theta & Comb S-H-D & & Autobox2 & ForecastPro & & Theta/ \\  & & RBF & & ForecastPro/ & & Robust-Trend \\  & & & ForecastX & & & Autobox2 \\ Quarterly & Theta & Comb S-H-D & Theta & Theta & Theta/ & Theta \\ (756) & Holt & PP-autocast & Comb S-H-D & ARARMA & Dampen & Comb S-H-D \\  & Comb S-H-D & ForecastX & Dampen & Comb S-H-D & ARARMA & & \\ Monthly & Theta & ForecastPro & Robust-Trend & AAM1/ & Robust-Trend & Theta & Theta \\ (1428) & ForecastPro & ForecastX & Holt & AAM2 & & Comb S-H-D & ForecastPro \\  & & Theta & Winter & & ARARMA & Comb S-H-D \\  & & Comb S-H-D & ARARMA & & & AAM1/ & \\  & & & AAM1 & & & AAM2 & \\ Other & & & & PP-autocast & ForecastX/ & Autobox2 \\ (174) & & & & & Dampen & Autobox2 & ForecastX \\  & & & & & Robust-Trend & Theta & \\  & & & & & Theta & \\ \hline \end{tabular}
+\end{table}
+
+Table 18: Methods which give the best results: average RANKING
+
+\begin{table}
+\begin{tabular}{l l l l l l l l} \hline Time interval & Types of time series data & & & & & \\ \cline{2-7} between successive & Micro & Industry & Macro & Finance & Demographic & Other & Total \\ observations & (828) & (519) & (731) & (308) & (413) & (204) & (3003) \\ \hline Yearly & Robust-Trend & Robust-Trend & Robust-Trend & Single & ForecastX & & RBF \\ (645) & SmartFcs & & ForecastPro & Naïve2 & ForecastPro & & Flores/Pearce1 \\  & & & & Autobox2 & RBF & & PP-autocast \\  & & & & Theta & & & Theta \\  & & & & & & Autobox2 & \\ Quarterly & ForecastX & ForecastX & Theta & Theta & ARARMA & & Robust-Trend \\ (756) & Comb S-H-D & Comb S-H-D & RBF & Winter & Robust-Trend & Theta \\  & Holt & Theta & Flores/Pearce1 & SmartFcs & & & Comb S-H-D \\  & & & Robust-Trend & & & & ForecastX \\  & & & PP-autocast & & & & \\ Monthly & Theta & ForecastPro & Robust-Trend & AAM1/ & Robust-Trend & ARARMA & ForecastPro \\ (1428) & ForecastPro & B–J automatic & Holt & AAM2 & ARARMA/ & AAM2 & Theta \\  & & ForecastX & AAM1 & Autobox3 & RBF & & Holt \\  & & Theta & & Autobox1 & & & Comb S-H-D \\ Other & & & & Automat ANN & & ForecastX \\ (174) & & & & & & Autobox2 & Autobox2 \\  & & & & & & Theta \\  & & & & & & & \\  & & & & & & & \\ \hline \end{tabular}
+\end{table}
+
+Table 19: Methods which give the best results: median APE
+
+\begin{table}
+\begin{tabular}{l l l l l l l l} \hline Time interval & \multicolumn{3}{l}{Types of time series data} & & & & & \\ \cline{2-7}  & Micro & Industry & Macro & Finance & Demographic & Other & Total \\  & (828) & (519) & Macro & Finance & (308) & (413) & (204) & (3003) \\ \hline Yearly & Robust-Trend & Robust-Trend & Robust-Trend & & RBF & & \\ (645) & SmartFcs/ & Theta-sm & ARARMA & & Theta & & \\  & Theta/ & Theta & RBF & & & \\  & Autobox2 & & & & & & \\ Quarterly & Holt & Comb S-H-D/ & Theta/ & Theta/ & Theta & & \\ (756) & Theta & Theta/ & Comb S-H-D & Winter & ARARMA & & \\  & Comb S-H-D/ & Robust-Trend & & & Comb S-H-D & & \\  & Robust-Trend & Holt & & & & & \\ Monthly & Theta & & AAM1/ & AAM1/ & Robust-Trend & ARARMA & \\ (1428) & Theta-sm & & Robust-Trend & AAM2 & ARARMA & AAM2 & \\  & ForecastPro/ & Holt & & & & & AAM1 \\  & Automat ANN & ARARMA & & & & Theta \\ Other & & & & & & & \\ (174) & & & & & & & \\ \hline \end{tabular}
+\end{table}
+
+Table 20: Methods which give the best results: median RAE
+
+\begin{table}
+\begin{tabular}{l l l l l l l} \hline \hline  & \multicolumn{3}{l}{Types of time series data} & & & & \\ \cline{2-7}  & Micro & Industry & Macro & Finance & Demographic & Other & Total \\  & (828) & (519) & (731) & (308) & (413) & (204) & (3003) \\ \hline Seasonal & ForecastPro & & AAM1/ & & & & ForecastPro \\ (862) & Theta & & & AAM2 & & Theta/ \\  & Dampen & & ForecastPro & & & ForecastX/ \\  & Comb S-H-D & & ForecastX & & & Dampen \\  & SmartFcs & & & & & Comb S-H-D \\  & ForecastX & & & & & \\ Non-Seasonal & Theta & & AAM1/ & & Theta \\ (2141) & & & & AAM2 & & ForecastPro \\  & & & & & & ForecastX/ \\  & & & & & & \\  & & & & & & Comb S-H-D \\ \hline \hline \end{tabular}
+\end{table}
+
+Table 21: Methods which give the best results: seasonal/non-seasonal
+data
+
+\[MISSING_PAGE_EMPTY:21\]
+
+Figure 4: Average symmetric MAPE (Dampen-Method): monthly data.
+
+Figure 3: Average symmetric MAPE (Dampen-Method): quarterly data.
+
+Figure 5: Average symmetric MAPE (Dampen-Method): other data.
+
+Figure 6: Relative ranking (Dampen-Method): all data.
+
+Figure 8: Median APE (Dampen-Method): all data.
+
+Figure 7: Percentage of time Dampen is better than other methods: all
+data.
+
+## References
+
+- Armstrong & Collopy (1992) Armstrong, J.S., & Collopy, F. (1992).
+  Error measures for generalizing about forecasting methods: empirical
+  comparisons (with discussion). \_International Journal of
+  Forecasting\_\_8\_, 69-80, 99-111.
+- Armstrong & Collopy (1993) Armstrong, J. S., & Collopy, F. (1993).
+  Causal forces: structuring knowledge for time series extrapolation.
+  \_Journal of Forecasting\_\_12\_, 103-115.
+- Chatfield (1995) Chatfield, C. (1995). Positive or negative?
+  \_International Journal of Forecasting\_\_11\_, 501-502.
+- Clemen (1989) Clemen, R. (1989). Combining forecasts: a review and
+  annotated bibliography with discussion. \_International Journal of
+  Forecasting\_\_5\_, 559-608.
+- Fildes (1992) Fildes, R. (1992). The evaluation of extrapolative
+  forecasting methods (with discussion). \_International Journal of
+  Forecasting\_\_8\_, 81-111.
+- Fildes & Makridakis (1995) Fildes, R., & Makridakis, S. (1995). The
+  impact of empirical accuracy studies on time series analysis and
+  forecasting. \_International Statistical Review\_\_63\_, 289-308.
+- Fildes et al. (1998) Fildes, R., Hibon, M., Makridakis, S., &
+  Meade, N. (1998). Generalising about univariate forecasting methods:
+  further empirical evidence. \_International Journal of
+  Forecasting\_\_14\_, 339-358.
+- Gardner & McKenzie (1985) Gardner, E. S., & McKenzie, E. (1985).
+  Forecasting trends in time series. \_Management Science\_\_31\_,
+  1237-1246.
+- Geurts & Kelly (1986) Geurts, M. D., & Kelly, J. P. (1986).
+  Forecasting demand for special services. \_International Journal of
+  Forecasting\_\_2\_, 261-272.
+- Grambsch & Stahel (1990) Grambsch, P., & Stahel, W. A. (1990).
+  Forecasting demand for special telephone services. \_International
+  Journal of Forecasting\_\_6\_, 53-64.
+- Hill & Fildes (1984) Hill, G., & Fildes, R. (1984). The accuracy of
+  extrapolation methods: an automatic Box-Jenkins package SIFT.
+  \_Journal of Forecasting\_\_3\_, 319-323.
+- Koehler & Murphree (1988) Koehler, A. B., & Murphree, E. S. (1988). A
+  comparison of results from state space forecasting with forecasts from
+  the Makridakis competition. \_International Journal of
+  Forecasting\_\_4\_, 45-55.
+- Kuhn (1962) Kuhn, T. S. (1962). *The structure of scientific
+  revolution*, University of Chicago Press, Chicago.
+- Lusk & Neves (1984) Lusk, E. J., & Neves, J. S. (1984). A comparative
+  ARIMA analysis of the 111 series of the Makridakis competition.
+  \_Journal of Forecasting\_\_3\_, 329-332.
+- Makridakis & Hibon (1979) Makridakis, S., & Hibon, M. (1979). Accuracy
+  of forecasting: an empirical investigation (with discussion).
+  \_Journal of the Royal Statistical Society A\_\_142\_, 97-145.
+- Makridakis et al. (2000) Makridakis, S., Andersen, A., Carbone, R.,
+  Fildes, R., Hibon, M., Lewandowski, R., Newton, J., Parzen, E., &
+
+Figure 9: Median RAE (Dampen-Method): all data.
+
+Winkler, R. (1982). The accuracy of extrapolation (time series) methods:
+results of a forecasting competition. \_Journal of Forecasting\_\_1\_,
+111-153. \* Makridakis et al. (1993) Makridakis, S., Chatfield, C.,
+Hibon, M., Lawrence, M., Mills, T., Ord, K., & Simmons, L. F. (1993).
+The M-2 Competition: a real-time judgmentally based forecasting study.
+\_International Journal of Forecasting\_\_9\_, 5-23. \* Newbold (1983)
+Newbold, P. (1983). The competition to end all competitions. \_Journal
+of Forecasting\_\_2\_, 276-279. \* Newbold & Granger (1974) Newbold, P.,
+& Granger, C. W. J. (1974). Experience with forecasting univariate time
+series and the combination of forecasts (with discussion). \_Journal of
+Royal Statistical Society A\_\_137\_, 131-165. \* Reid (1969) Reid, D.J.
+(1969). *A comparative study of time series prediction techniques on
+economic data*. PhD Thesis, Department of Mathematics, University of
+Nottingham. \* Reid (1975) Reid, D. J. (1975). A review of short term
+projection techniques. In: Gordon, H. D. (Ed.), *Practical aspects of
+forecasting*, Operational Research Society, London, pp. 8-25. \* Simmons
+(1986) Simmons, L. F. (1986). M-Competition -- A closer look at Naive2
+and median APE: a note. \_International Journal of Forecasting\_\_4\_,
+457-460.
+
+**Biographies:** Spyros MAKRIDAKIS is a Research Professor at INSEAD,
+Fontainebleau, France. His Ph.D is from New York University. He has
+consulted worldwide in the area of forecasting and has held teaching
+positions with several European and American institutions; as a research
+fellow at IIM in Berlin, an ICAME fellow at Stanford University and a
+Visiting Scholar at MIT and Harvard. Professor Makridakis is the author
+of approximately 100 articles and papers in various publications and has
+also authored or coauthored 18 books including *Forecasting, Planning
+and Strategy for the 21st Century* (Free Press, 1990).
+
+Michele HIBON is a Senior Research Fellow at INSEAD. She graduated from
+the University of Paris, holds a degree in Science and a diploma in
+advanced studies in physics. For the last several years she has been
+working on various studies dealing with forecasting accuracy of time
+series methods (particularly M-, M2- and M3-Competitions) and more
+recently in the area of Group Decision Support Systems.
