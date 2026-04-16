@@ -285,11 +285,14 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         # relu(1 - VR) fires when pred_std < actual_std; zero otherwise.
         median_std = median_pred.std() + self.sharpe_eps
         vr = median_std / actual_std
-        amplitude_loss = (
-            torch.relu(1.0 - vr)              # under-variance: VR < 1 → strong penalty
-            + 1.0 * torch.relu(vr - 1.5)      # over-variance:  VR > 1.5 → symmetric penalty
-            # Was 0.25×; strengthened after VR=1.82 overshoot (pred_std=2× actual_std)
-        )
+        # Two-tier under-variance penalty:
+        #   VR < 0.5  → severe (×2.0): model is in flat-prediction mode (VR=0.39 observed)
+        #   VR < 1.0  → moderate (×1.0): pred_std is below actual_std but not collapsed
+        # Over-variance penalty unchanged at 1.0× for VR > 1.5.
+        under_severe   = 2.0 * torch.relu(0.5 - vr)   # fires hard when VR < 0.5
+        under_moderate = torch.relu(1.0 - vr)          # fires when VR < 1.0
+        over_variance  = 1.0 * torch.relu(vr - 1.5)
+        amplitude_loss = under_severe + under_moderate + over_variance
 
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
