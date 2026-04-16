@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
@@ -33,6 +33,9 @@ from app.schemas import (
     HistoryDataPoint,
     HealthResponse,
     ErrorResponse,
+    ConsensusSignal,
+    TFTModelSummaryResponse,
+    BacktestReportResponse,
 )
 
 # Configure logging
@@ -436,6 +439,66 @@ async def get_market_prices():
 
 
 # =============================================================================
+# Market Heatmap Endpoint
+# =============================================================================
+
+@app.get(
+    "/api/market-heatmap",
+    summary="Get 15-min delayed market heatmap",
+    description="Returns a hierarchical treemap payload for the Finviz-style heatmap UI. Uses stale-while-revalidate caching."
+)
+async def get_market_heatmap(background_tasks: BackgroundTasks):
+    from app.models import HeatmapCache
+    from app.heatmap import refresh_market_heatmap
+    
+    with SessionLocal() as session:
+        cache = session.query(HeatmapCache).first()
+        now = datetime.now(timezone.utc)
+        
+        # If no cache or completely empty payload
+        if not cache or not cache.payload_json:
+            # We don't have stale data to return. We must block or trigger background and return a 503/empty state.
+            # To be safe for frontend, return an empty hierarchy and start refresh
+            background_tasks.add_task(refresh_market_heatmap)
+            return {
+                "name": "Market",
+                "children": [],
+                "_meta": {
+                    "is_stale": True,
+                    "refresh_in_progress": True,
+                    "last_updated_at": None,
+                    "next_refresh_at": None,
+                    "source_delay_minutes": 15
+                }
+            }
+            
+        # Check if stale
+        is_stale = now > cache.expires_at
+        refresh_in_progress = cache.refresh_started_at is not None
+        
+        if is_stale and not refresh_in_progress:
+            # Trigger background refresh
+            background_tasks.add_task(refresh_market_heatmap)
+            # Mark it as refreshing immediately so we don't trigger multiple times
+            cache.refresh_started_at = now
+            session.commit()
+            refresh_in_progress = True
+            
+        payload = cache.payload_json
+        if isinstance(payload, dict):
+            payload["_meta"] = {
+                "is_stale": is_stale,
+                "refresh_in_progress": refresh_in_progress,
+                "last_updated_at": cache.cached_at.isoformat() if cache.cached_at else None,
+                "next_refresh_at": cache.expires_at.isoformat() if cache.expires_at else None,
+                "source_delay_minutes": 15
+            }
+            
+        return payload
+
+
+
+# =============================================================================
 # Live Price Endpoint (Twelve Data - Real-time)
 # =============================================================================
 
@@ -796,4 +859,152 @@ async def trigger_pipeline(
             status_code=503,
             detail=f"Failed to enqueue job. Redis may be unavailable: {str(e)}"
         )
+
+
+# =============================================================================
+# New User-Facing Endpoints
+# =============================================================================
+
+@app.get(
+    "/api/analysis/consensus",
+    response_model=ConsensusSignal,
+    summary="Get consensus signal",
+    description="Combines XGBoost and TFT-ASRO signals into a directional consensus."
+)
+async def get_consensus(
+    symbol: str = Query(default="HG=F", description="Trading symbol")
+):
+    from deep_learning.inference.predictor import ensemble_directional_vote, generate_tft_analysis
+    
+    # 1. Get TFT analysis
+    try:
+        with SessionLocal() as session:
+            tft_result = generate_tft_analysis(session, symbol)
+            
+        if "error" in tft_result:
+            raise HTTPException(status_code=500, detail=tft_result["error"])
+            
+        tft_return = tft_result.get("prediction", {}).get("predicted_return_median", 0.0)
+    except Exception as e:
+        logger.error(f"Failed to get TFT analysis for consensus: {e}")
+        tft_return = 0.0
+
+    # 2. Get XGBoost analysis (latest snapshot)
+    xgb_return = 0.0
+    try:
+        with SessionLocal() as session:
+            snapshot = session.query(AnalysisSnapshot).filter(
+                AnalysisSnapshot.symbol == symbol
+            ).order_by(AnalysisSnapshot.generated_at.desc()).first()
+            if snapshot and snapshot.report_json:
+                xgb_return = snapshot.report_json.get("predicted_return", 0.0)
+    except Exception as e:
+        logger.error(f"Failed to get XGBoost analysis for consensus: {e}")
+
+    # 3. Calculate consensus
+    xgb_bias_correction = 0.001 # Hardcoded small bias correction for now
+    result = ensemble_directional_vote(xgb_return, tft_return, xgb_bias_correction)
+    return result
+
+
+@app.get(
+    "/api/models/tft/summary",
+    response_model=TFTModelSummaryResponse,
+    summary="Get TFT model training summary",
+    description="Returns training metrics, quality gate results, and feature importance."
+)
+async def get_tft_summary(
+    symbol: str = Query(default="HG=F", description="Target symbol")
+):
+    from app.models import TFTModelMetadata
+    from scripts.tft_quality_gate import evaluate_quality_gate
+    import json
+    
+    with SessionLocal() as session:
+        meta = session.query(TFTModelMetadata).filter(
+            TFTModelMetadata.symbol == symbol
+        ).order_by(TFTModelMetadata.trained_at.desc()).first()
+        
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"No TFT model metadata found for {symbol}")
+
+        config = json.loads(meta.config_json) if meta.config_json else {}
+        metrics = json.loads(meta.metrics_json) if meta.metrics_json else {}
+        
+        # Variable importance not directly in TFTModelMetadata yet, extract from latest artifacts if available
+        # But we can try to find it in the artifacts folder
+        variable_importance = []
+        try:
+            import pathlib
+            # Use the artifact dir from config if present, or guess
+            artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
+            mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
+            if mrmr_path.exists():
+                mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
+                for feat, imp in mrmr_data.get("scores", {}).items():
+                    variable_importance.append({"feature": feat, "importance": float(imp)})
+                # Sort and take top 20
+                variable_importance.sort(key=lambda x: x["importance"], reverse=True)
+                variable_importance = variable_importance[:20]
+        except Exception as e:
+            logger.warning(f"Could not load variable importance: {e}")
+
+        da = metrics.get("directional_accuracy", 0.5)
+        sharpe = metrics.get("sharpe_ratio", 0.0)
+        vr = metrics.get("variance_ratio", 1.0)
+        
+        passed, reasons = evaluate_quality_gate(da, sharpe, vr)
+        
+        return {
+            "symbol": symbol,
+            "trained_at": meta.trained_at.isoformat() if meta.trained_at else None,
+            "checkpoint_path": meta.checkpoint_path,
+            "config": config,
+            "metrics": metrics,
+            "variable_importance": variable_importance,
+            "quality_gate": {
+                "passed": passed,
+                "reasons": reasons,
+                "metrics": {"da": da, "sharpe": sharpe, "vr": vr}
+            }
+        }
+
+
+@app.get(
+    "/api/models/tft/backtest/latest",
+    response_model=BacktestReportResponse,
+    summary="Get latest backtest report",
+    description="Returns the latest walk-forward backtest results and Theta comparison."
+)
+async def get_latest_backtest():
+    import pathlib
+    import json
+    
+    backtest_dir = pathlib.Path("artifacts/backtest")
+    if not backtest_dir.exists():
+        raise HTTPException(status_code=404, detail="No backtest reports found")
+        
+    reports = list(backtest_dir.glob("backtest_*.json"))
+    if not reports:
+        raise HTTPException(status_code=404, detail="No backtest reports found")
+        
+    latest_report_path = max(reports, key=lambda p: p.stat().st_mtime)
+    
+    try:
+        data = json.loads(latest_report_path.read_text(encoding="utf-8"))
+        
+        tft_bt = data.get("tft_backtest", {})
+        comp = data.get("baseline_comparison", {})
+        
+        return {
+            "report_date": data.get("timestamp", ""),
+            "summary_metrics": tft_bt.get("summary", {}),
+            "window_metrics": tft_bt.get("windows", []),
+            "theta_comparison": comp,
+            "verdict": comp.get("verdict")
+        }
+    except Exception as e:
+        logger.error(f"Error reading backtest report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to parse backtest report")
+
 

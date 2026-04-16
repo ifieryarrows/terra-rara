@@ -116,3 +116,39 @@ export interface TFTAnalysisResponse {
   model_metadata: TFTModelMetadata | null;
   generated_at: string;
 }
+
+export interface ConsensusSignal {
+  consensus_direction: string;
+  confidence: string;
+  position_scale: number;
+  blended_return: number;
+  xgb_return_raw: number;
+  xgb_return_adjusted: number;
+  tft_return: number;
+  xgb_direction: number;
+  tft_direction: number;
+}
+
+export interface QualityGateResponse {
+  passed: boolean;
+  reasons: string[];
+  metrics: Record<string, number>;
+}
+
+export interface TFTModelSummaryResponse {
+  symbol: string;
+  trained_at: string | null;
+  checkpoint_path: string;
+  config: Record<string, any>;
+  metrics: Record<string, number>;
+  variable_importance: Influencer[];
+  quality_gate: QualityGateResponse | null;
+}
+
+export interface BacktestReportResponse {
+  report_date: string;
+  summary_metrics: Record<string, any>;
+  window_metrics: Array<Record<string, any>>;
+  theta_comparison: Record<string, any> | null;
+  verdict: string | null;
+}

@@ -4,7 +4,7 @@ These schemas define the contract between backend and frontend.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
 
@@ -163,4 +163,50 @@ class ErrorResponse(BaseModel):
                 "error_code": "MODEL_NOT_FOUND"
             }
         }
+
+
+class ConsensusSignal(BaseModel):
+    """Consensus signal combining XGBoost and TFT."""
+    consensus_direction: str = Field(..., description="BULLISH, BEARISH, or NEUTRAL")
+    confidence: str = Field(..., description="HIGH, MEDIUM, or LOW")
+    position_scale: float = Field(..., description="0.0 to 1.0 scaling factor for position sizing")
+    blended_return: float = Field(..., description="Blended expected return from both models")
+    xgb_return_raw: float = Field(..., description="Raw XGBoost predicted return")
+    xgb_return_adjusted: float = Field(..., description="Debiased XGBoost predicted return")
+    tft_return: float = Field(..., description="TFT-ASRO median predicted return")
+    xgb_direction: int = Field(..., description="-1, 0, or 1")
+    tft_direction: int = Field(..., description="-1, 0, or 1")
+
+
+class QualityGateResponse(BaseModel):
+    """Quality gate results for TFT-ASRO."""
+    passed: bool = Field(..., description="Whether the model passed the quality gate")
+    reasons: List[str] = Field(default_factory=list, description="Reasons for failure, if any")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Key metrics evaluated (DA, Sharpe, VR)")
+
+
+class VariableImportance(BaseModel):
+    """TFT variable importance."""
+    feature: str = Field(..., description="Feature name")
+    importance: float = Field(..., description="Normalized importance score")
+
+
+class TFTModelSummaryResponse(BaseModel):
+    """TFT model training and evaluation summary."""
+    symbol: str = Field(..., description="Target symbol")
+    trained_at: Optional[str] = Field(None, description="ISO timestamp of training completion")
+    checkpoint_path: str = Field(..., description="Path to the best model checkpoint")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Model configuration parameters")
+    metrics: Dict[str, float] = Field(default_factory=dict, description="Test metrics from training")
+    variable_importance: List[VariableImportance] = Field(default_factory=list, description="Top feature importance scores")
+    quality_gate: Optional[QualityGateResponse] = Field(None, description="Quality gate evaluation results")
+
+
+class BacktestReportResponse(BaseModel):
+    """Latest backtest report results."""
+    report_date: str = Field(..., description="ISO timestamp of report generation")
+    summary_metrics: Dict[str, Any] = Field(default_factory=dict, description="Overall backtest metrics")
+    window_metrics: List[Dict[str, Any]] = Field(default_factory=list, description="Metrics per rolling window")
+    theta_comparison: Optional[Dict[str, Any]] = Field(None, description="Comparison with Theta baseline")
+    verdict: Optional[str] = Field(None, description="TFT_SUPERIOR, THETA_SUPERIOR, or MIXED")
 

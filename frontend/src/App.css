@@ -13,11 +13,11 @@
 
 @layer utilities {
   .glass-panel {
-    @apply bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl;
+    @apply bg-[#0f172a] border border-slate-800 rounded-lg shadow-sm;
   }
 
   .glass-card {
-    @apply bg-white/5 backdrop-blur-sm border border-white/5 rounded-xl hover:bg-white/10 transition-colors duration-300;
+    @apply bg-[#0f172a] border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors duration-200;
   }
 
   .custom-scrollbar::-webkit-scrollbar {

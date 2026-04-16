@@ -594,3 +594,26 @@ class TFTModelMetadata(Base):
 
     def __repr__(self):
         return f"<TFTModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
+
+
+class HeatmapCache(Base):
+    """
+    Cached Yahoo Finance market heatmap payload.
+    Supports stale-while-revalidate pattern.
+    Only one active record should exist.
+    """
+    __tablename__ = "heatmap_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # JSON payload holding the hierarchical treemap data
+    payload_json = Column(JSON, nullable=False)
+
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    refresh_started_at = Column(DateTime(timezone=True), nullable=True)
+    refresh_error = Column(Text, nullable=True)
+
+    def __repr__(self):
+        return f"<HeatmapCache(cached_at={self.cached_at}, expires_at={self.expires_at})>"

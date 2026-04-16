@@ -137,3 +137,35 @@ export async function fetchLivePrice(): Promise<LivePriceResponse> {
   return response.data;
 }
 
+/**
+ * Fetch Consensus Signal
+ */
+export async function fetchConsensusSignal(symbol: string = 'HG=F'): Promise<any> {
+  const response = await api.get('/analysis/consensus', { params: { symbol } });
+  return response.data;
+}
+
+/**
+ * Fetch TFT Model Summary
+ */
+export async function fetchTftModelSummary(symbol: string = 'HG=F'): Promise<any> {
+  const response = await api.get('/models/tft/summary', { params: { symbol } });
+  return response.data;
+}
+
+/**
+ * Fetch Latest Backtest Report
+ */
+export async function fetchLatestBacktest(): Promise<any> {
+  const response = await api.get('/models/tft/backtest/latest');
+  return response.data;
+}
+
+/**
+ * Fetch Market Heatmap
+ */
+export async function fetchMarketHeatmap(): Promise<any> {
+  const response = await api.get('/market-heatmap');
+  return response.data;
+}
+
