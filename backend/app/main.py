@@ -444,24 +444,26 @@ async def get_market_prices():
 
 @app.get(
     "/api/market-heatmap",
-    summary="Get 15-min delayed market heatmap",
-    description="Returns a hierarchical treemap payload for the Finviz-style heatmap UI. Uses stale-while-revalidate caching."
+    summary="Get CopperMind universe heatmap (15-min cache)",
+    description=(
+        "Returns a group->subgroup->symbol treemap payload sourced exclusively from the "
+        "CopperMind project universe (broad_universe.csv). Uses stale-while-revalidate "
+        "caching with a 15-minute TTL. No general market indices are included."
+    )
 )
 async def get_market_heatmap(background_tasks: BackgroundTasks):
     from app.models import HeatmapCache
     from app.heatmap import refresh_market_heatmap
-    
+
     with SessionLocal() as session:
         cache = session.query(HeatmapCache).first()
         now = datetime.now(timezone.utc)
-        
-        # If no cache or completely empty payload
+
+        # If no cache or completely empty payload — trigger background refresh
         if not cache or not cache.payload_json:
-            # We don't have stale data to return. We must block or trigger background and return a 503/empty state.
-            # To be safe for frontend, return an empty hierarchy and start refresh
             background_tasks.add_task(refresh_market_heatmap)
             return {
-                "name": "Market",
+                "name": "CopperMind Universe",
                 "children": [],
                 "_meta": {
                     "is_stale": True,

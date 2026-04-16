@@ -598,9 +598,10 @@ class TFTModelMetadata(Base):
 
 class HeatmapCache(Base):
     """
-    Cached Yahoo Finance market heatmap payload.
-    Supports stale-while-revalidate pattern.
-    Only one active record should exist.
+    Cached CopperMind universe heatmap payload (group->subgroup->symbol hierarchy).
+    Source: broad_universe.csv with project taxonomy.
+    Supports stale-while-revalidate pattern with 15-minute TTL.
+    Only one active record should exist at a time.
     """
     __tablename__ = "heatmap_cache"
 

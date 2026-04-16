@@ -680,7 +680,7 @@ export const OverviewPage = () => {
             </div>
           </GlassCard>
 
-          {/* Market Map - Lazy loaded */}
+          {/* CopperMind Universe Map - Lazy loaded */}
           <div className="col-span-12">
             <Suspense fallback={<MapSkeleton />}>
               <HeatmapPanel />

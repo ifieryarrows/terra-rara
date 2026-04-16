@@ -5,11 +5,18 @@ export interface HeatmapData {
   shortName?: string;
   price?: number;
   changePercent?: number;
-  marketCap?: number;
-  sector?: string;
-  industry?: string;
-  isSP500?: boolean;
-  isNasdaq100?: boolean;
+  /** Sizing weight: Market Cap, Dollar Volume, or Equal Weight (1.0) */
+  weight?: number;
+  /** Human-readable label for the weight metric used */
+  weightLabel?: string;
+  /** Top-level project group (e.g. "Copper Miners", "Battery Metals") */
+  group?: string;
+  /** Second-level project subgroup (e.g. "Major Producers", "Lithium") */
+  subgroup?: string;
+  /** Raw CSV category (e.g. "miner_major") */
+  category?: string;
+  /** Raw CSV source_tag (e.g. "copper_core") */
+  sourceTag?: string;
 }
 
 export interface HeatmapNode {
@@ -24,33 +31,28 @@ export interface HeatmapNode {
   };
 }
 
-export interface TreemapLayoutNode extends HierarchyRectangularNode<HeatmapNode | HeatmapData> {
-  // Add any custom layout properties if needed
-}
+export interface TreemapLayoutNode extends HierarchyRectangularNode<HeatmapNode | HeatmapData> {}
 
 export function buildTreemapLayout(
   data: HeatmapNode,
   width: number,
   height: number
 ): HierarchyRectangularNode<HeatmapNode | HeatmapData> {
-  // Create D3 hierarchy
   const root = hierarchy<HeatmapNode | HeatmapData>(data)
     .sum((d: any) => {
-      // Only leaf nodes should have marketCap to sum
-      return d.children ? 0 : (d.marketCap || 0);
+      // Only leaf nodes carry a weight value for squarification
+      return d.children ? 0 : (d.weight || 1);
     })
     .sort((a, b) => (b.value || 0) - (a.value || 0));
 
-  // Configure treemap layout
   const layout = treemap<HeatmapNode | HeatmapData>()
     .size([width, height])
-    .paddingInner(1) // Thin cell spacing
+    .paddingInner(1)
     .paddingOuter(1)
-    .paddingTop(24)  // Space for sector/industry headers
+    .paddingTop(24)
     .round(true)
-    .tile(treemapSquarify.ratio(1)); // Squarified with standard ratio
+    .tile(treemapSquarify.ratio(1));
 
-  // Generate layout
   layout(root);
 
   return root as HierarchyRectangularNode<HeatmapNode | HeatmapData>;

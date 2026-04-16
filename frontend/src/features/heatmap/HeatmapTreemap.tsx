@@ -44,12 +44,11 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({ data, width, height }) 
     <div style={{ width, height, position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a' }}>
       {/* Background container */}
       
-      {/* Parent Labels (Sectors/Industries) */}
+      {/* Parent Labels (group / subgroup levels) */}
       {parentNodes.map((p, i) => {
         const nodeWidth = p.x1 - p.x0;
-        // Don't render tiny parents
         if (nodeWidth < 40 || p.y1 - p.y0 < 20) return null;
-        
+
         return (
           <div
             key={`parent-${i}`}
@@ -60,12 +59,18 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({ data, width, height }) 
               width: nodeWidth,
               height: p.y1 - p.y0,
               border: '1px solid #1e293b',
-              pointerEvents: 'none'
+              pointerEvents: 'none',
             }}
           >
-            {/* Show title for Sector (depth 1) or Industry (depth 2) if enough space */}
-            {p.depth <= 2 && (
-              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-1 pt-1 truncate bg-[#0f172a] bg-opacity-80">
+            {/* depth 1 = group, depth 2 = subgroup — show label if enough room */}
+            {p.depth <= 2 && nodeWidth > 50 && (
+              <div
+                className={`px-1 pt-1 truncate bg-[#0f172a] bg-opacity-90 ${
+                  p.depth === 1
+                    ? 'text-[11px] font-semibold text-slate-300 uppercase tracking-widest'
+                    : 'text-[9px] font-medium text-slate-500 uppercase tracking-wider'
+                }`}
+              >
                 {(p.data as any).name}
               </div>
             )}

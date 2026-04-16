@@ -225,11 +225,30 @@ def init_db():
     """
     # Import models to register them with Base
     from app import models  # noqa: F401
-    
+
     engine = get_engine()
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified")
-    
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified")
+    except Exception as ddl_err:
+        # On PostgreSQL with concurrent startup (API process + worker), two
+        # processes may race to run CREATE TABLE simultaneously.  Even though
+        # SQLAlchemy uses CREATE TABLE IF NOT EXISTS, the internal pg_type
+        # catalog update is not fully atomic and can raise a UniqueViolation
+        # on the pg_type_typname_nsp_index constraint.
+        # If the error is that kind of DDL race we simply log a warning and
+        # continue — the table was created by the other process.
+        err_str = str(ddl_err)
+        if "pg_type_typname_nsp_index" in err_str or (
+            "UniqueViolation" in err_str and "already exists" in err_str.lower()
+        ):
+            logger.warning(
+                "DDL race condition detected during startup (concurrent process "
+                "already created the table). Continuing with existing schema."
+            )
+        else:
+            raise
+
     # Run migrations for existing tables
     _run_migrations(engine)
 
