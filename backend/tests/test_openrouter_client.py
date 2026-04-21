@@ -38,7 +38,13 @@ def _patch_async_client(monkeypatch, responses, calls):
     monkeypatch.setattr(orc.httpx, "AsyncClient", DummyAsyncClient)
 
 
-def test_retry_after_header_used_for_backoff(monkeypatch):
+def test_retry_after_small_429_is_floored_to_30s(monkeypatch):
+    """
+    Free-tier OpenRouter 429s include a tiny (often 1s) Retry-After that would
+    normally be honored verbatim. That tight retry burns remaining attempts and
+    surfaces noisy "rate limited" errors to the user. We enforce a 30s floor
+    specifically for 429s so daily-quota limits don't cascade.
+    """
     responses = [
         _make_response(429, text_body="rate limit", headers={"Retry-After": "1"}),
         _make_response(200, json_body={"choices": [{"message": {"content": "ok"}}]}),
@@ -50,6 +56,7 @@ def test_retry_after_header_used_for_backoff(monkeypatch):
         sleeps.append(delay)
 
     monkeypatch.setattr(orc.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(orc.random, "uniform", lambda _a, _b: 0.0)
     monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
     _patch_async_client(monkeypatch, responses, calls)
 
@@ -66,7 +73,39 @@ def test_retry_after_header_used_for_backoff(monkeypatch):
 
     assert result["choices"][0]["message"]["content"] == "ok"
     assert len(calls) == 2
-    assert sleeps and sleeps[0] == pytest.approx(1.0)
+    assert sleeps and sleeps[0] >= 30.0
+    # Upper bound to guard against an accidental runaway 5xx backoff path.
+    assert sleeps[0] <= 300.0
+
+
+def test_retry_after_large_429_respects_header(monkeypatch):
+    """When the server asks for a longer wait than the floor we honor it."""
+    responses = [
+        _make_response(429, text_body="rate limit", headers={"Retry-After": "120"}),
+        _make_response(200, json_body={"choices": [{"message": {"content": "ok"}}]}),
+    ]
+    calls = []
+    sleeps = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(orc.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(orc.random, "uniform", lambda _a, _b: 0.0)
+    monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
+    _patch_async_client(monkeypatch, responses, calls)
+
+    async def run_call():
+        return await orc.create_chat_completion(
+            api_key="test-key",
+            model="primary-model",
+            messages=[{"role": "user", "content": "hello"}],
+            rpm=0,
+            max_retries=3,
+        )
+
+    asyncio.run(run_call())
+    assert sleeps and sleeps[0] == pytest.approx(120.0)
 
 
 def test_rate_limit_error_after_max_retries(monkeypatch):

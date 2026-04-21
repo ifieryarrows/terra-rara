@@ -1055,3 +1055,97 @@ class TestSentimentV2Helpers:
         assert fallback["event_type"] == "non_copper"
         assert fallback["label"] == "NEUTRAL"
         assert fallback["relevance"] <= 0.2
+
+
+class TestLlmContentNormalization:
+    """Regression tests for `_clean_json_content` edge cases hit in production."""
+
+    def test_unwraps_results_object(self):
+        import json
+        from app.ai_engine import _clean_json_content
+
+        raw = json.dumps({"results": [{"id": 1, "label": "BULLISH"}]})
+        cleaned = _clean_json_content(raw)
+        parsed = json.loads(cleaned)
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == 1
+
+    def test_unwraps_markdown_code_fence(self):
+        import json
+        from app.ai_engine import _clean_json_content
+
+        raw = "```json\n[{\"id\": 2, \"label\": \"BEARISH\"}]\n```"
+        cleaned = _clean_json_content(raw)
+        parsed = json.loads(cleaned)
+        assert parsed[0]["id"] == 2
+
+    def test_extracts_array_from_preamble(self):
+        import json
+        from app.ai_engine import _clean_json_content
+
+        raw = "Here is the classification you asked for:\n[{\"id\": 3, \"label\": \"NEUTRAL\"}]"
+        cleaned = _clean_json_content(raw)
+        parsed = json.loads(cleaned)
+        assert parsed[0]["id"] == 3
+
+    def test_wraps_single_object_in_list(self):
+        import json
+        from app.ai_engine import _clean_json_content
+
+        raw = json.dumps({"id": 4, "label": "BULLISH"})
+        cleaned = _clean_json_content(raw)
+        parsed = json.loads(cleaned)
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == 4
+
+
+class TestV2ScoringBundleShape:
+    """Ensure the bundle exposes per-model rate-limit flags used by callers."""
+
+    def test_score_batch_bundle_exposes_rate_limit_flags(self, monkeypatch):
+        """`score_batch_with_llm_v2` must report per-model rate-limit state."""
+        from app import ai_engine
+
+        async def fake_subset(*, settings, model_name, articles, horizon_days):
+            del settings, articles, horizon_days
+            # Simulate fast model hitting daily limit; reliable still healthy.
+            if model_name == "fast-model":
+                return {}, [11], 0, True
+            return (
+                {11: {
+                    "id": 11,
+                    "label": "BULLISH",
+                    "impact_score": 0.3,
+                    "confidence": 0.6,
+                    "relevance": 0.7,
+                    "event_type": "supply_disruption",
+                    "reasoning": "test",
+                }},
+                [],
+                0,
+                False,
+            )
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="sk-test",
+            resolved_scoring_fast_model="fast-model",
+            resolved_scoring_reliable_model="reliable-model",
+            sentiment_escalate_conflict_threshold=0.55,
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(ai_engine, "_score_subset_with_model_v2", fake_subset)
+
+        bundle = asyncio.run(
+            ai_engine.score_batch_with_llm_v2(
+                [{"id": 11, "title": "t", "description": "d", "text": "x" * 100}],
+                horizon_days=5,
+            )
+        )
+
+        assert bundle["rate_limited_fast"] is True
+        # Reliable was never called (fast rate-limited guard skips escalation),
+        # so the reliable flag stays False.
+        assert bundle["rate_limited_reliable"] is False
+        # Backward-compat aggregate: only true when BOTH are exhausted.
+        assert bundle["rate_limited"] is False
+

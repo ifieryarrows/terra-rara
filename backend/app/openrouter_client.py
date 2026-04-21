@@ -31,6 +31,37 @@ class OpenRouterRateLimitError(OpenRouterError):
     """Raised when OpenRouter rate limiting persists after retries."""
 
 
+def _log_rate_limit_headers(
+    response: httpx.Response,
+    model: str,
+    *,
+    level: int = logging.DEBUG,
+) -> None:
+    """Surface OpenRouter/provider rate-limit headers so we can monitor quota."""
+    remaining = (
+        response.headers.get("X-Ratelimit-Remaining")
+        or response.headers.get("x-ratelimit-remaining")
+        or response.headers.get("X-RateLimit-Remaining")
+    )
+    limit = (
+        response.headers.get("X-Ratelimit-Limit")
+        or response.headers.get("x-ratelimit-limit")
+        or response.headers.get("X-RateLimit-Limit")
+    )
+    reset = (
+        response.headers.get("X-Ratelimit-Reset")
+        or response.headers.get("x-ratelimit-reset")
+        or response.headers.get("X-RateLimit-Reset")
+    )
+    if remaining is None and limit is None and reset is None:
+        return
+    logger.log(
+        level,
+        "OpenRouter quota [model=%s] remaining=%s limit=%s reset=%s",
+        model, remaining, limit, reset,
+    )
+
+
 def _parse_retry_after_seconds(response: httpx.Response) -> Optional[float]:
     """Parse Retry-After header in seconds if provided."""
     value = response.headers.get("Retry-After")
@@ -167,6 +198,7 @@ async def create_chat_completion(
                 continue
 
             if response.status_code == 200:
+                _log_rate_limit_headers(response, model)
                 try:
                     return response.json()
                 except ValueError as exc:
@@ -176,7 +208,19 @@ async def create_chat_completion(
             if retryable and attempt < max_retries:
                 retry_num = attempt + 1
                 retry_after = _parse_retry_after_seconds(response)
-                delay = retry_after if retry_after is not None else float(2 ** retry_num) + random.uniform(0.0, 0.5)
+                if response.status_code == 429:
+                    # Free-tier daily limits rarely recover in seconds; enforce a
+                    # floor so we don't burn remaining retries with tight retries.
+                    base = retry_after if retry_after is not None else 30.0
+                    delay = max(base, 30.0) + random.uniform(0.0, 5.0)
+                    delay = min(delay, 300.0)
+                    _log_rate_limit_headers(response, model, level=logging.WARNING)
+                else:
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else float(2 ** retry_num) + random.uniform(0.0, 0.5)
+                    )
                 logger.warning(
                     "OpenRouter retryable error status=%s (attempt %s/%s). Retrying in %.2fs",
                     response.status_code,

@@ -19,6 +19,9 @@ import '../App.css';
 
 // Lazy load heavy components
 const HeatmapPanel = lazy(() => import('../features/heatmap/HeatmapPanel').then(m => ({ default: m.HeatmapPanel })));
+const NewsIntelligencePanel = lazy(() =>
+  import('../features/news/NewsIntelligencePanel').then(m => ({ default: m.NewsIntelligencePanel })),
+);
 
 // --- Skeleton Components for perceived performance ---
 const SkeletonPulse = ({ className = '' }: { className?: string }) => (
@@ -369,7 +372,9 @@ export const OverviewPage = () => {
           </div>
         </header>
 
-        {/* Dashboard Grid */}
+        {/* Dashboard Grid + persistent News sidebar (desktop) */}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* Main dashboard column */}
         <div className="grid grid-cols-12 gap-6">
 
           {/* XGBoost Prediction Card */}
@@ -798,6 +803,21 @@ export const OverviewPage = () => {
             </Suspense>
           </div>
 
+        </div>
+        {/* Right sticky News Intelligence sidebar (desktop) / stacks under on mobile */}
+        <aside className="lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-120px)] min-h-[480px]">
+          <Suspense
+            fallback={
+              <div className="glass-panel h-full min-h-[480px] flex items-center justify-center">
+                <span className="text-xs text-gray-500 font-mono tracking-widest uppercase">
+                  Loading news…
+                </span>
+              </div>
+            }
+          >
+            <NewsIntelligencePanel />
+          </Suspense>
+        </aside>
         </div>
       </div>
     </div>

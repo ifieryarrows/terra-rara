@@ -36,6 +36,11 @@ from app.schemas import (
     ConsensusSignal,
     TFTModelSummaryResponse,
     BacktestReportResponse,
+    NewsItem,
+    NewsListResponse,
+    NewsStatsResponse,
+    NewsFinbertProbs,
+    NewsSentimentBlock,
 )
 
 # Configure logging
@@ -1467,4 +1472,346 @@ async def get_sentiment_summary(
             },
             "generated_at": now.isoformat(),
         }
+
+
+# =============================================================================
+# News intelligence endpoints
+# =============================================================================
+#
+# Serves the Overview right-sidebar news feed. Reads from the news_raw/
+# news_processed/news_sentiments_v2 pipeline the daily worker already fills —
+# no LLM is invoked on the hot path.
+#
+# Source taxonomy:
+#   * channel   = ingestion channel (NewsRaw.source): "google_news" | "newsapi"
+#   * publisher = original publisher (raw_payload.source): Reuters, Mining.com…
+# =============================================================================
+
+_news_list_cache: dict[tuple, tuple[float, dict]] = {}
+_news_stats_cache: dict[int, tuple[float, dict]] = {}
+_NEWS_LIST_TTL_S = 60.0
+_NEWS_STATS_TTL_S = 120.0
+_VALID_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
+
+
+def _extract_publisher(raw_payload) -> Optional[str]:
+    """Pull the original publisher name out of a NewsRaw.raw_payload blob."""
+    if not raw_payload:
+        return None
+    if isinstance(raw_payload, str):
+        try:
+            import json as _json
+            raw_payload = _json.loads(raw_payload)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(raw_payload, dict):
+        return None
+    src = raw_payload.get("source")
+    if isinstance(src, dict):
+        name = src.get("name") or src.get("title")
+        return str(name) if name else None
+    if isinstance(src, str) and src.strip():
+        return src.strip()
+    name = raw_payload.get("publisher") or raw_payload.get("author")
+    return str(name) if name else None
+
+
+def _build_news_sentiment_block(sent: Optional[NewsSentimentV2]) -> Optional[NewsSentimentBlock]:
+    if sent is None:
+        return None
+    return NewsSentimentBlock(
+        label=sent.label,
+        final_score=float(sent.final_score) if sent.final_score is not None else None,
+        impact_score_llm=float(sent.impact_score_llm) if sent.impact_score_llm is not None else None,
+        confidence=float(sent.confidence_calibrated) if sent.confidence_calibrated is not None else None,
+        relevance=float(sent.relevance_score) if sent.relevance_score is not None else None,
+        event_type=sent.event_type,
+        finbert=NewsFinbertProbs(
+            pos=float(sent.finbert_pos or 0.0),
+            neu=float(sent.finbert_neu or 0.0),
+            neg=float(sent.finbert_neg or 0.0),
+        ),
+        reasoning=_extract_reasoning_text(sent.reasoning_json),
+        scored_at=sent.scored_at.isoformat() if sent.scored_at else None,
+    )
+
+
+def _extract_reasoning_text(reasoning_json: Optional[str]) -> Optional[str]:
+    """Pull a short human-readable rationale out of the cached JSON blob."""
+    if not reasoning_json:
+        return None
+    try:
+        import json as _json
+        blob = _json.loads(reasoning_json)
+    except (ValueError, TypeError):
+        return str(reasoning_json)[:500] if reasoning_json else None
+    if isinstance(blob, dict):
+        for key in ("reasoning", "rationale", "summary", "explanation"):
+            val = blob.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:500]
+        return None
+    if isinstance(blob, str):
+        return blob[:500]
+    return None
+
+
+@app.get(
+    "/api/news",
+    response_model=NewsListResponse,
+    summary="Paginated news feed with sentiment annotations",
+)
+async def get_news_feed(
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    since_hours: int = Query(default=48, ge=1, le=168),
+    label: str = Query(default="all"),
+    event_type: str = Query(default="all"),
+    min_relevance: float = Query(default=0.0, ge=0.0, le=1.0),
+    channel: str = Query(default="all"),
+    publisher: Optional[str] = Query(default=None, max_length=200),
+    search: Optional[str] = Query(default=None, max_length=200),
+):
+    from sqlalchemy import desc as _desc
+
+    filters_echo = {
+        "limit": limit,
+        "offset": offset,
+        "since_hours": since_hours,
+        "label": label,
+        "event_type": event_type,
+        "min_relevance": min_relevance,
+        "channel": channel,
+        "publisher": publisher,
+        "search": search,
+    }
+    cache_key = tuple(sorted(filters_echo.items()))
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cached = _news_list_cache.get(cache_key)
+    if cached and (now_ts - cached[0]) < _NEWS_LIST_TTL_S:
+        return cached[1]
+
+    label_upper = label.upper()
+    if label_upper != "ALL" and label_upper not in _VALID_LABELS:
+        raise HTTPException(status_code=400, detail=f"Invalid label '{label}'")
+
+    with SessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=since_hours)
+
+        q = (
+            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
+            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+            .outerjoin(
+                NewsSentimentV2,
+                NewsSentimentV2.news_processed_id == NewsProcessed.id,
+            )
+            .filter(NewsRaw.published_at >= cutoff)
+        )
+
+        if channel.lower() != "all":
+            q = q.filter(NewsRaw.source == channel)
+        if event_type.lower() != "all":
+            q = q.filter(NewsSentimentV2.event_type == event_type)
+        if label_upper != "ALL":
+            q = q.filter(NewsSentimentV2.label == label_upper)
+        if min_relevance > 0:
+            q = q.filter(NewsSentimentV2.relevance_score >= min_relevance)
+        if search:
+            q = q.filter(NewsRaw.title.ilike(f"%{search}%"))
+
+        q = q.order_by(_desc(NewsRaw.published_at))
+
+        publisher_needle = publisher.strip().lower() if publisher and publisher.strip() else None
+
+        if publisher_needle:
+            # Publisher filter requires JSON extraction; do it in Python to
+            # remain backend-agnostic (sqlite/postgres) and keep the endpoint
+            # simple. Scope is bounded by the time window filter above.
+            rows = q.limit(500).all()
+            filtered = [
+                triple for triple in rows
+                if (
+                    _extract_publisher(triple[0].raw_payload) or ""
+                ).lower().find(publisher_needle) >= 0
+            ]
+            total = len(filtered)
+            page_rows = filtered[offset: offset + limit]
+        else:
+            total = q.count()
+            page_rows = q.offset(offset).limit(limit).all()
+
+        items: list[NewsItem] = []
+        for raw, processed, sentiment in page_rows:
+            items.append(
+                NewsItem(
+                    id=int(processed.id),
+                    raw_id=int(raw.id),
+                    title=str(raw.title or ""),
+                    description=str(raw.description or "") or None,
+                    url=str(raw.url or "") or None,
+                    channel=str(raw.source or "unknown"),
+                    publisher=_extract_publisher(raw.raw_payload),
+                    source_feed=str(raw.source_feed or "") or None,
+                    published_at=raw.published_at.isoformat() if raw.published_at else None,
+                    fetched_at=raw.fetched_at.isoformat() if raw.fetched_at else None,
+                    language=str(processed.language or "") or None,
+                    sentiment=_build_news_sentiment_block(sentiment),
+                )
+            )
+
+        response = NewsListResponse(
+            items=items,
+            total=int(total),
+            limit=limit,
+            offset=offset,
+            has_more=(offset + limit) < int(total),
+            generated_at=now.isoformat(),
+            filters=filters_echo,
+        )
+
+    payload = response.model_dump()
+    _news_list_cache[cache_key] = (now_ts, payload)
+    # Trim cache to avoid unbounded growth.
+    if len(_news_list_cache) > 128:
+        oldest = sorted(_news_list_cache.items(), key=lambda kv: kv[1][0])[: len(_news_list_cache) - 128]
+        for k, _ in oldest:
+            _news_list_cache.pop(k, None)
+    return payload
+
+
+@app.get(
+    "/api/news/stats",
+    response_model=NewsStatsResponse,
+    summary="Aggregate stats for the news sidebar header",
+)
+async def get_news_stats(
+    since_hours: int = Query(default=24, ge=1, le=168),
+):
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cached = _news_stats_cache.get(since_hours)
+    if cached and (now_ts - cached[0]) < _NEWS_STATS_TTL_S:
+        return cached[1]
+
+    with SessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=since_hours)
+
+        rows = (
+            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
+            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+            .outerjoin(
+                NewsSentimentV2,
+                NewsSentimentV2.news_processed_id == NewsProcessed.id,
+            )
+            .filter(NewsRaw.published_at >= cutoff)
+            .all()
+        )
+
+        label_dist: dict[str, int] = {"BULLISH": 0, "BEARISH": 0, "NEUTRAL": 0}
+        event_dist: dict[str, int] = {}
+        channel_dist: dict[str, int] = {}
+        publisher_acc: dict[str, dict[str, float]] = {}
+        score_sum = 0.0
+        conf_sum = 0.0
+        rel_sum = 0.0
+        scored_count = 0
+        total = len(rows)
+
+        for raw, _processed, sent in rows:
+            ch = str(raw.source or "unknown")
+            channel_dist[ch] = channel_dist.get(ch, 0) + 1
+            pub = _extract_publisher(raw.raw_payload)
+            if pub:
+                acc = publisher_acc.setdefault(pub, {"count": 0, "score_sum": 0.0})
+                acc["count"] += 1
+                if sent is not None and sent.final_score is not None:
+                    acc["score_sum"] += float(sent.final_score)
+            if sent is None:
+                continue
+            scored_count += 1
+            if sent.label in label_dist:
+                label_dist[sent.label] += 1
+            else:
+                label_dist[sent.label] = label_dist.get(sent.label, 0) + 1
+            etype = sent.event_type or "unknown"
+            event_dist[etype] = event_dist.get(etype, 0) + 1
+            if sent.final_score is not None:
+                score_sum += float(sent.final_score)
+            if sent.confidence_calibrated is not None:
+                conf_sum += float(sent.confidence_calibrated)
+            if sent.relevance_score is not None:
+                rel_sum += float(sent.relevance_score)
+
+        top_publishers = sorted(
+            (
+                {
+                    "publisher": name,
+                    "count": int(data["count"]),
+                    "avg_final_score": (
+                        round(float(data["score_sum"]) / float(data["count"]), 4)
+                        if data["count"] > 0
+                        else 0.0
+                    ),
+                }
+                for name, data in publisher_acc.items()
+            ),
+            key=lambda item: item["count"],
+            reverse=True,
+        )[:5]
+
+        response = NewsStatsResponse(
+            window_hours=since_hours,
+            total_articles=total,
+            scored_articles=scored_count,
+            label_distribution=label_dist,
+            event_type_distribution=event_dist,
+            channel_distribution=channel_dist,
+            top_publishers=top_publishers,
+            avg_final_score=(score_sum / scored_count) if scored_count else None,
+            avg_confidence=(conf_sum / scored_count) if scored_count else None,
+            avg_relevance=(rel_sum / scored_count) if scored_count else None,
+            generated_at=now.isoformat(),
+        )
+
+    payload = response.model_dump()
+    _news_stats_cache[since_hours] = (now_ts, payload)
+    return payload
+
+
+@app.get(
+    "/api/news/{processed_id}",
+    response_model=NewsItem,
+    summary="Full detail for a single news article",
+)
+async def get_news_item(processed_id: int):
+    with SessionLocal() as session:
+        row = (
+            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
+            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+            .outerjoin(
+                NewsSentimentV2,
+                NewsSentimentV2.news_processed_id == NewsProcessed.id,
+            )
+            .filter(NewsProcessed.id == processed_id)
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Article not found")
+        raw, processed, sentiment = row
+        return NewsItem(
+            id=int(processed.id),
+            raw_id=int(raw.id),
+            title=str(raw.title or ""),
+            description=str(raw.description or "") or None,
+            url=str(raw.url or "") or None,
+            channel=str(raw.source or "unknown"),
+            publisher=_extract_publisher(raw.raw_payload),
+            source_feed=str(raw.source_feed or "") or None,
+            published_at=raw.published_at.isoformat() if raw.published_at else None,
+            fetched_at=raw.fetched_at.isoformat() if raw.fetched_at else None,
+            language=str(processed.language or "") or None,
+            sentiment=_build_news_sentiment_block(sentiment),
+        )
+
 

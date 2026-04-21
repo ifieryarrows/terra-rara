@@ -297,3 +297,112 @@ class TestDataQuality:
         
         assert dq_low.coverage_pct == 0
         assert dq_high.coverage_pct == 100
+
+
+class TestNewsSchemas:
+    """Shape contracts for the /api/news* endpoints."""
+
+    def test_news_item_round_trip(self):
+        from app.schemas import NewsItem, NewsSentimentBlock, NewsFinbertProbs
+
+        item = NewsItem(
+            id=1,
+            raw_id=42,
+            title="Copper supply shock lifts futures",
+            description="Chile mine outage reduces near-term availability.",
+            url="https://example.com/copper",
+            channel="google_news",
+            publisher="Reuters",
+            source_feed="google_news:copper supply deficit",
+            published_at="2026-04-21T10:00:00+00:00",
+            fetched_at="2026-04-21T10:05:00+00:00",
+            language="en",
+            sentiment=NewsSentimentBlock(
+                label="BULLISH",
+                final_score=0.42,
+                impact_score_llm=0.55,
+                confidence=0.78,
+                relevance=0.66,
+                event_type="supply_disruption",
+                finbert=NewsFinbertProbs(pos=0.7, neu=0.25, neg=0.05),
+                reasoning="Mine disruption tightens supply.",
+                scored_at="2026-04-21T10:06:00+00:00",
+            ),
+        )
+        dumped = item.model_dump()
+        assert dumped["publisher"] == "Reuters"
+        assert dumped["channel"] == "google_news"
+        assert dumped["sentiment"]["finbert"]["pos"] == 0.7
+        assert dumped["sentiment"]["label"] == "BULLISH"
+
+    def test_news_list_response_defaults(self):
+        from app.schemas import NewsListResponse
+
+        payload = NewsListResponse(
+            items=[],
+            total=0,
+            limit=20,
+            offset=0,
+            has_more=False,
+            generated_at="2026-04-21T10:00:00+00:00",
+        )
+        assert payload.items == []
+        assert payload.has_more is False
+
+    def test_news_stats_response_shape(self):
+        from app.schemas import NewsStatsResponse
+
+        stats = NewsStatsResponse(
+            window_hours=24,
+            total_articles=10,
+            scored_articles=8,
+            label_distribution={"BULLISH": 3, "BEARISH": 2, "NEUTRAL": 3},
+            event_type_distribution={"supply_disruption": 3, "demand_increase": 2},
+            channel_distribution={"google_news": 8, "newsapi": 2},
+            top_publishers=[{"publisher": "Reuters", "count": 4, "avg_final_score": 0.31}],
+            avg_final_score=0.12,
+            avg_confidence=0.55,
+            avg_relevance=0.48,
+            generated_at="2026-04-21T10:00:00+00:00",
+        )
+        assert stats.total_articles == 10
+        assert stats.top_publishers[0]["publisher"] == "Reuters"
+
+
+class TestNewsHelpers:
+    """Unit tests for the helpers that back /api/news."""
+
+    def test_extract_publisher_from_dict_source(self):
+        from app.main import _extract_publisher
+
+        assert _extract_publisher({"source": "Reuters"}) == "Reuters"
+
+    def test_extract_publisher_from_nested_source(self):
+        from app.main import _extract_publisher
+
+        assert _extract_publisher({"source": {"name": "Bloomberg"}}) == "Bloomberg"
+
+    def test_extract_publisher_from_string_json(self):
+        from app.main import _extract_publisher
+
+        raw = '{"source": "Mining.com"}'
+        assert _extract_publisher(raw) == "Mining.com"
+
+    def test_extract_publisher_handles_missing(self):
+        from app.main import _extract_publisher
+
+        assert _extract_publisher(None) is None
+        assert _extract_publisher({"unrelated": 1}) is None
+
+    def test_extract_reasoning_unwraps_dict(self):
+        from app.main import _extract_reasoning_text
+
+        blob = '{"reasoning": "Supply shock.", "event_type": "supply_disruption"}'
+        assert _extract_reasoning_text(blob) == "Supply shock."
+
+    def test_extract_reasoning_handles_invalid_json(self):
+        from app.main import _extract_reasoning_text
+
+        assert _extract_reasoning_text("") is None
+        assert _extract_reasoning_text("not json") == "not json"
+

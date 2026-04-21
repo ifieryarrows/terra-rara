@@ -257,3 +257,84 @@ class BacktestReportResponse(BaseModel):
     theta_comparison: Optional[Dict[str, Any]] = Field(None, description="Comparison with Theta baseline")
     verdict: Optional[str] = Field(None, description="TFT_SUPERIOR, THETA_SUPERIOR, or MIXED")
 
+
+# =============================================================================
+# News Intelligence schemas
+# =============================================================================
+
+
+class NewsFinbertProbs(BaseModel):
+    """FinBERT class probability triplet for a news article."""
+    pos: float = Field(..., ge=0, le=1)
+    neu: float = Field(..., ge=0, le=1)
+    neg: float = Field(..., ge=0, le=1)
+
+
+class NewsSentimentBlock(BaseModel):
+    """Per-article sentiment payload shipped to the frontend feed."""
+    label: Optional[str] = Field(None, description="BULLISH | BEARISH | NEUTRAL")
+    final_score: Optional[float] = Field(None, description="Ensemble score in [-1, 1]")
+    impact_score_llm: Optional[float] = Field(None, description="LLM-only impact in [-1, 1]")
+    confidence: Optional[float] = Field(None, description="Calibrated confidence in [0, 1]")
+    relevance: Optional[float] = Field(None, description="Relevance to copper market in [0, 1]")
+    event_type: Optional[str] = Field(None, description="LLM event type bucket")
+    finbert: Optional[NewsFinbertProbs] = Field(None, description="FinBERT probability triplet")
+    reasoning: Optional[str] = Field(None, description="Short textual rationale from the LLM")
+    scored_at: Optional[str] = Field(None, description="ISO timestamp when the score was written")
+
+
+class NewsItem(BaseModel):
+    """Single article row in the news feed."""
+    id: int = Field(..., description="news_processed id (stable frontend key)")
+    raw_id: Optional[int] = Field(None, description="news_raw id for debugging")
+    title: str
+    description: Optional[str] = None
+    url: Optional[str] = None
+    channel: str = Field(
+        ..., description="Ingestion channel (google_news, newsapi, ...)"
+    )
+    publisher: Optional[str] = Field(
+        None, description="Original publisher extracted from raw_payload.source"
+    )
+    source_feed: Optional[str] = Field(None, description="RSS query / feed identifier")
+    published_at: Optional[str] = Field(None, description="ISO timestamp")
+    fetched_at: Optional[str] = Field(None, description="ISO timestamp")
+    language: Optional[str] = None
+    sentiment: Optional[NewsSentimentBlock] = None
+
+
+class NewsListResponse(BaseModel):
+    """Paginated news feed response."""
+    items: List[NewsItem] = Field(default_factory=list)
+    total: int = Field(..., description="Total rows matching filters (for pagination)")
+    limit: int = Field(...)
+    offset: int = Field(...)
+    has_more: bool = Field(...)
+    generated_at: str = Field(..., description="ISO timestamp the response was built")
+    filters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Echo of the filter args applied server-side",
+    )
+
+
+class NewsStatsResponse(BaseModel):
+    """Aggregate stats for the news intelligence sidebar header."""
+    window_hours: int = Field(..., description="Rolling window used for aggregation")
+    total_articles: int = Field(..., ge=0)
+    scored_articles: int = Field(..., ge=0)
+    label_distribution: Dict[str, int] = Field(
+        default_factory=dict, description="BULLISH/BEARISH/NEUTRAL counts"
+    )
+    event_type_distribution: Dict[str, int] = Field(default_factory=dict)
+    channel_distribution: Dict[str, int] = Field(
+        default_factory=dict, description="google_news / newsapi counts"
+    )
+    top_publishers: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="[{publisher, count, avg_final_score}]",
+    )
+    avg_final_score: Optional[float] = None
+    avg_confidence: Optional[float] = None
+    avg_relevance: Optional[float] = None
+    generated_at: str = Field(...)
+

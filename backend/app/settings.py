@@ -81,22 +81,26 @@ class Settings(BaseSettings):
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
     # Deprecated - kept for backward compatibility
-    openrouter_model: str = "arcee-ai/trinity-large-preview:free"
+    openrouter_model: str = "minimax/minimax-m2.5:free"
     # Scoring models:
     #   fast   → stepfun/step-3.5-flash:free  (196B MoE, 256K ctx, system prompt + JSON OK)
     #   reliable → mistralai/mistral-small-3.1-24b-instruct:free (128K ctx, 24B, reliable JSON)
     #   commentary → same as fast for balanced quality/speed
     # NOTE: google/gemma-3-4b-it:free fails on Google AI Studio (system prompt blocked).
     #        google/gemma-3n-e4b-it:free (nano) also blocks system prompts — do NOT use.
-    openrouter_model_scoring: str = "stepfun/step-3.5-flash:free"
+    openrouter_model_scoring: str = "minimax/minimax-m2.5:free"
     openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = "mistralai/mistral-small-3.1-24b-instruct:free"
-    openrouter_model_commentary: str = "stepfun/step-3.5-flash:free"
+    openrouter_model_scoring_reliable: Optional[str] = "minimax/minimax-m2.5:free"
+    openrouter_model_commentary: str = "minimax/minimax-m2.5:free"
     openrouter_rpm: int = 18
     openrouter_max_retries: int = 3
-    # Free tier: 50 req/day. At 12 articles/chunk, 100 articles = ~9 chunks = ~9-18 req.
-    # Keep well under the daily limit to avoid rate-limit cascades mid-run.
-    max_llm_articles_per_run: int = 100
+    # Free tier: ~50 req/day per model. At chunk_size=12 a run of 60 articles
+    # costs ~5 chunks (=5–10 requests incl. escalation) which leaves headroom
+    # for multiple runs per day before hitting the ceiling. Raise cautiously.
+    max_llm_articles_per_run: int = 60
+    # Comma-separated list of additional OpenRouter model slugs used by the
+    # client as transport-level fallbacks when the primary model 429s/5xx's.
+    # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
     openrouter_fallback_models: Optional[str] = None
     tokenizers_parallelism: str = "false"
     
@@ -114,7 +118,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "arcee-ai/trinity-large-preview:free"
+    llm_sentiment_model: str = "minimax/minimax-m2.5:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None

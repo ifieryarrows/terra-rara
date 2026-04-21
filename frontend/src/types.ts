@@ -187,3 +187,86 @@ export interface BacktestReportResponse {
   theta_comparison: Record<string, any> | null;
   verdict: string | null;
 }
+
+// =============================================================================
+// News Intelligence types (mirror backend/app/schemas.py)
+// =============================================================================
+
+export type NewsLabel = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+export interface NewsFinbertProbs {
+  pos: number;
+  neu: number;
+  neg: number;
+}
+
+export interface NewsSentimentBlock {
+  label: NewsLabel | string | null;
+  final_score: number | null;
+  impact_score_llm: number | null;
+  confidence: number | null;
+  relevance: number | null;
+  event_type: string | null;
+  finbert: NewsFinbertProbs | null;
+  reasoning: string | null;
+  scored_at: string | null;
+}
+
+export interface NewsItem {
+  id: number;
+  raw_id: number | null;
+  title: string;
+  description: string | null;
+  url: string | null;
+  /** Ingestion channel: "google_news" | "newsapi" */
+  channel: string;
+  /** Original publisher (Reuters, Mining.com, ...) extracted from raw payload. */
+  publisher: string | null;
+  source_feed: string | null;
+  published_at: string | null;
+  fetched_at: string | null;
+  language: string | null;
+  sentiment: NewsSentimentBlock | null;
+}
+
+export interface NewsFeedFilters {
+  limit?: number;
+  offset?: number;
+  since_hours?: number;
+  label?: 'all' | NewsLabel;
+  event_type?: string;
+  min_relevance?: number;
+  channel?: 'all' | 'google_news' | 'newsapi' | string;
+  publisher?: string;
+  search?: string;
+}
+
+export interface NewsListResponse {
+  items: NewsItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  generated_at: string;
+  filters: Record<string, unknown>;
+}
+
+export interface NewsTopPublisher {
+  publisher: string;
+  count: number;
+  avg_final_score: number;
+}
+
+export interface NewsStatsResponse {
+  window_hours: number;
+  total_articles: number;
+  scored_articles: number;
+  label_distribution: Record<string, number>;
+  event_type_distribution: Record<string, number>;
+  channel_distribution: Record<string, number>;
+  top_publishers: NewsTopPublisher[];
+  avg_final_score: number | null;
+  avg_confidence: number | null;
+  avg_relevance: number | null;
+  generated_at: string;
+}

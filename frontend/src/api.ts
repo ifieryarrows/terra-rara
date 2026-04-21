@@ -1,5 +1,15 @@
 import axios from 'axios';
-import type { AnalysisReport, HistoryResponse, HealthResponse, CommentaryResponse, TFTAnalysisResponse } from './types';
+import type {
+  AnalysisReport,
+  HistoryResponse,
+  HealthResponse,
+  CommentaryResponse,
+  TFTAnalysisResponse,
+  NewsFeedFilters,
+  NewsItem,
+  NewsListResponse,
+  NewsStatsResponse,
+} from './types';
 
 // Base URL for API calls
 // In production (Vercel), use VITE_API_URL env var pointing to Hugging Face backend
@@ -223,6 +233,55 @@ export interface SentimentSummary {
 export async function fetchSentimentSummary(days = 7, recentLimit = 6): Promise<SentimentSummary> {
   const response = await api.get<SentimentSummary>('/sentiment/summary', {
     params: { days, recent_limit: recentLimit },
+  });
+  return response.data;
+}
+
+// =============================================================================
+// News Intelligence feed (mirrors /api/news endpoints)
+// =============================================================================
+
+function toNewsParams(filters: NewsFeedFilters = {}): Record<string, string | number> {
+  const params: Record<string, string | number> = {
+    limit: filters.limit ?? 20,
+    offset: filters.offset ?? 0,
+    since_hours: filters.since_hours ?? 48,
+    label: filters.label ?? 'all',
+    event_type: filters.event_type ?? 'all',
+    min_relevance: filters.min_relevance ?? 0,
+    channel: filters.channel ?? 'all',
+  };
+  if (filters.publisher && filters.publisher.trim()) {
+    params.publisher = filters.publisher.trim();
+  }
+  if (filters.search && filters.search.trim()) {
+    params.search = filters.search.trim();
+  }
+  return params;
+}
+
+/**
+ * Fetch the paginated news feed. Backend caches at 60s TTL.
+ */
+export async function fetchNews(filters: NewsFeedFilters = {}): Promise<NewsListResponse> {
+  const response = await api.get<NewsListResponse>('/news', { params: toNewsParams(filters) });
+  return response.data;
+}
+
+/**
+ * Fetch a single article with full sentiment detail.
+ */
+export async function fetchNewsById(processedId: number): Promise<NewsItem> {
+  const response = await api.get<NewsItem>(`/news/${processedId}`);
+  return response.data;
+}
+
+/**
+ * Fetch aggregate stats used by the NewsIntelligencePanel header.
+ */
+export async function fetchNewsStats(sinceHours = 24): Promise<NewsStatsResponse> {
+  const response = await api.get<NewsStatsResponse>('/news/stats', {
+    params: { since_hours: sinceHours },
   });
   return response.data;
 }

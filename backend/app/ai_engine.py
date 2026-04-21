@@ -138,9 +138,13 @@ Label mapping:
 - impact_score <= -0.15 => BEARISH
 - otherwise => NEUTRAL
 """
-LLM_SCORING_RESPONSE_FORMAT_V2 = {
-    "type": "json_object",
-}
+# NOTE: Intentionally omit OpenAI-style `response_format` for V2 scoring.
+# Some free-tier OpenRouter providers (stepfun, mistral free variants) either
+# reject `{"type": "json_object"}` or wrap the expected JSON array inside an
+# object/unexpected structure when that hint is set. The prompt explicitly asks
+# for a JSON array, and `_clean_json_content` already handles markdown fences,
+# wrapped objects, and preambles, so we rely on prompt+post-processing instead.
+LLM_SCORING_RESPONSE_FORMAT_V2: dict[str, Any] | None = None
 SCORING_V2_VERSION = "commodity_v2"
 
 
@@ -1068,9 +1072,10 @@ async def _score_subset_with_model_v2(
             "fallback_models": settings.openrouter_fallback_models_list,
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis V2",
-            "response_format": LLM_SCORING_RESPONSE_FORMAT_V2,
             "extra_payload": {"reasoning": {"exclude": True}},
         }
+        if LLM_SCORING_RESPONSE_FORMAT_V2 is not None:
+            request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT_V2
         return await create_chat_completion(**request_kwargs)
 
     parse_fail_count = 0
@@ -1187,13 +1192,14 @@ async def score_batch_with_llm_v2(
     escalation_ids = sorted(set(fast_failed).union(conflict_ids))
     escalation_count = len(escalation_ids)
 
+    reliable_rate_limited = False
     if escalation_ids and not fast_rate_limited:
         reliable_subset = [
             article_by_id[article_id]
             for article_id in escalation_ids
             if article_id in article_by_id
         ]
-        reliable_valid, _reliable_failed, parse_fail_reliable, _rl = await _score_subset_with_model_v2(
+        reliable_valid, _reliable_failed, parse_fail_reliable, reliable_rate_limited = await _score_subset_with_model_v2(
             settings=settings,
             model_name=reliable_model,
             articles=reliable_subset,
@@ -1219,6 +1225,10 @@ async def score_batch_with_llm_v2(
         "fallback_count": fallback_count,
         "model_fast": fast_model,
         "model_reliable": reliable_model,
+        "rate_limited_fast": bool(fast_rate_limited),
+        "rate_limited_reliable": bool(reliable_rate_limited),
+        # Backward-compat: true only when BOTH models hit their daily ceiling.
+        "rate_limited": bool(fast_rate_limited and reliable_rate_limited),
     }
 
 
@@ -1347,6 +1357,7 @@ def score_unscored_processed_articles(
             NewsProcessed.id.label("processed_id"),
             NewsProcessed.canonical_title,
             NewsProcessed.cleaned_text,
+            NewsProcessed.language.label("language"),
             NewsRaw.title.label("raw_title"),
             NewsRaw.description.label("raw_description"),
             NewsRaw.published_at,
@@ -1387,22 +1398,37 @@ def score_unscored_processed_articles(
     fast_model = settings.resolved_scoring_fast_model
     reliable_model = settings.resolved_scoring_reliable_model
 
+    # Articles that are non-English or too short do not benefit from LLM
+    # classification (prompt is English, quotas are scarce) — we route them
+    # straight to FinBERT+rule fallback. These thresholds are intentionally
+    # conservative so we only skip when we're confident the LLM call would
+    # be wasted.
+    MIN_TEXT_CHARS_FOR_LLM = 80
+
     for chunk_idx in range(0, len(rows), chunk_size):
         chunk_rows = rows[chunk_idx:chunk_idx + chunk_size]
         chunk_items: list[dict] = []
+        llm_eligible_ids: set[int] = set()
         for row in chunk_rows:
             title = str(row.raw_title or row.canonical_title or "")[:500]
             description = str(row.raw_description or "")[:1000]
             text = str(row.cleaned_text or f"{title} {description}")[:2000]
+            language = (getattr(row, "language", None) or "").strip().lower()
+            processed_id = int(row.processed_id)
             chunk_items.append(
                 {
-                    "id": int(row.processed_id),
+                    "id": processed_id,
                     "title": title,
                     "description": description,
                     "text": text,
                     "published_at": row.published_at,
+                    "language": language or None,
                 }
             )
+            is_english = (not language) or language.startswith("en")
+            long_enough = len(text) >= MIN_TEXT_CHARS_FOR_LLM
+            if is_english and long_enough:
+                llm_eligible_ids.add(processed_id)
 
         finbert_by_id = score_batch_with_finbert_v2(chunk_items)
         finbert_used += len(finbert_by_id)
@@ -1410,14 +1436,29 @@ def score_unscored_processed_articles(
         llm_results_by_id: dict[int, dict] = {}
         llm_candidates: list[dict] = []
 
-        # Rate-limit flag is keyed to today's UTC date so it resets automatically at midnight.
+        # Per-model rate-limit tracking (keyed by UTC date). A specific model
+        # is considered exhausted for today if its entry equals today's date.
+        # LLM scoring is skipped for the chunk only when BOTH fast and reliable
+        # models have been flagged today — otherwise we still attempt (fallback
+        # chain inside `score_batch_with_llm_v2` handles partial exhaustion).
         today_utc = datetime.now(timezone.utc).date().isoformat()
-        rate_limited_date = getattr(score_unscored_processed_articles, "_rate_limited_date", None)
-        global_rate_limited = rate_limited_date == today_utc
+        rate_limited_by_model: dict[str, str] = getattr(
+            score_unscored_processed_articles, "_rate_limited_by_model", {}
+        ) or {}
+        fast_exhausted = rate_limited_by_model.get(fast_model) == today_utc
+        reliable_exhausted = rate_limited_by_model.get(reliable_model) == today_utc
+        both_exhausted = fast_exhausted and reliable_exhausted
 
-        if settings.openrouter_api_key and llm_budget_remaining > 0 and not global_rate_limited:
-            llm_take = min(len(chunk_items), llm_budget_remaining)
-            llm_candidates = chunk_items[:llm_take]
+        if settings.openrouter_api_key and llm_budget_remaining > 0 and not both_exhausted:
+            eligible_items = [item for item in chunk_items if item["id"] in llm_eligible_ids]
+            skipped = len(chunk_items) - len(eligible_items)
+            if skipped > 0:
+                logger.info(
+                    "V2 skipping %d non-English/short-text articles; routing directly to FinBERT+rule fallback",
+                    skipped,
+                )
+            llm_take = min(len(eligible_items), llm_budget_remaining)
+            llm_candidates = eligible_items[:llm_take]
             llm_budget_remaining -= llm_take
 
         if llm_candidates:
@@ -1434,13 +1475,31 @@ def score_unscored_processed_articles(
                 fast_model = str(llm_bundle.get("model_fast", fast_model))
                 reliable_model = str(llm_bundle.get("model_reliable", reliable_model))
 
-                # If LLM returned 100% fail and flagged rate limit, mark for today's UTC date.
-                # Flag resets automatically the next UTC day when the daily limit refreshes.
-                if llm_bundle.get("rate_limited", False):
-                    score_unscored_processed_articles._rate_limited_date = datetime.now(timezone.utc).date().isoformat()
+                # Record per-model rate-limit state so individual model exhaustion
+                # doesn't block the other one. Only emits the "disabled for day"
+                # warning when both are flagged.
+                updated = False
+                if llm_bundle.get("rate_limited_fast"):
+                    rate_limited_by_model[fast_model] = today_utc
+                    updated = True
                     logger.warning(
-                        "V2 batch hit OpenRouter daily rate limit - LLM scoring disabled for the rest of UTC day %s.",
-                        score_unscored_processed_articles._rate_limited_date,
+                        "V2 fast model %s hit daily rate limit; will be skipped for rest of UTC day %s.",
+                        fast_model, today_utc,
+                    )
+                if llm_bundle.get("rate_limited_reliable"):
+                    rate_limited_by_model[reliable_model] = today_utc
+                    updated = True
+                    logger.warning(
+                        "V2 reliable model %s hit daily rate limit; will be skipped for rest of UTC day %s.",
+                        reliable_model, today_utc,
+                    )
+                if updated:
+                    score_unscored_processed_articles._rate_limited_by_model = rate_limited_by_model
+                if llm_bundle.get("rate_limited"):
+                    logger.warning(
+                        "V2 both models (%s, %s) rate-limited; LLM scoring paused until UTC %s.",
+                        fast_model, reliable_model,
+                        (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat(),
                     )
 
             except Exception as exc:
