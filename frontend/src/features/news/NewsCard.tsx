@@ -75,12 +75,14 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
   const handleSelect = () => onSelect(item);
 
+  const reasoning = sentiment?.reasoning?.trim() || null;
+
   return (
     <motion.button
       type="button"
       onClick={handleSelect}
       className={clsx(
-        'w-full text-left rounded-xl border p-3 transition-all duration-200',
+        'w-full text-left rounded-lg border px-2.5 py-2 transition-all duration-200',
         'bg-midnight/50 hover:bg-midnight/80',
         'border-white/5 hover:border-copper-400/40',
         'focus:outline-none focus:ring-2 focus:ring-copper-400/50',
@@ -90,54 +92,63 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <div className="flex items-center justify-between gap-2 mb-1.5 text-[10px] font-mono text-gray-500">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Globe size={11} className="text-copper-400/80 shrink-0" />
+      <div className="flex items-center justify-between gap-1.5 mb-1 text-[10px] font-mono text-gray-500">
+        <div className="flex items-center gap-1 min-w-0">
+          <Globe size={10} className="text-copper-400/80 shrink-0" />
           <span className="truncate text-gray-400" title={item.publisher ?? item.channel}>
             {item.publisher ?? 'Unknown publisher'}
           </span>
           {channelCode && (
             <span
-              className="ml-1 px-1.5 py-0.5 rounded bg-white/5 text-[9px] tracking-wider text-gray-500 shrink-0"
+              className="px-1 py-0.5 rounded bg-white/5 text-[9px] tracking-wider text-gray-500 shrink-0"
               title={`Ingestion channel: ${item.channel}`}
             >
               {channelCode}
             </span>
           )}
         </div>
-        <span className="shrink-0">{formatRelativeTime(item.published_at)}</span>
+        <span className="shrink-0 whitespace-nowrap">{formatRelativeTime(item.published_at)}</span>
       </div>
 
-      <div className="flex items-start gap-2 mb-2">
-        <Newspaper size={14} className="text-copper-400/70 mt-0.5 shrink-0" />
-        <p className="text-sm text-gray-100 leading-snug line-clamp-2">{item.title}</p>
+      <div className="flex items-start gap-1.5 mb-1.5">
+        <Newspaper size={13} className="text-copper-400/70 mt-0.5 shrink-0" />
+        <p className="text-[13px] text-gray-100 leading-snug line-clamp-2 break-words">{item.title}</p>
       </div>
 
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      {reasoning && (
+        <p
+          className="text-[11px] text-gray-400/90 italic leading-snug line-clamp-2 mb-1.5 pl-[18px] break-words"
+          title={reasoning}
+        >
+          {reasoning}
+        </p>
+      )}
+
+      <div className="flex items-center gap-1.5 flex-wrap">
         <span
           className={clsx(
-            'inline-flex items-center gap-1 text-[10px] font-mono tracking-wider uppercase',
-            'px-2 py-0.5 rounded-full border',
+            'inline-flex items-center gap-0.5 text-[9px] font-mono tracking-wider uppercase',
+            'px-1.5 py-0.5 rounded-full border',
             style.chip,
           )}
         >
-          <Icon size={10} />
+          <Icon size={9} />
           {style.text}
         </span>
 
         {sentiment?.event_type && (
           <span
-            className="text-[10px] font-mono text-gray-400 bg-white/5 px-2 py-0.5 rounded-full"
+            className="text-[9px] font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
             title={sentiment.event_type}
           >
             {formatEventType(sentiment.event_type)}
           </span>
         )}
 
-        <div className="flex items-center gap-3 ml-auto text-[10px] font-mono text-gray-500">
+        <div className="flex items-center gap-2 ml-auto text-[9px] font-mono text-gray-500 shrink-0">
           <div className="flex items-center gap-1" title={`Relevance ${relevancePct}%`}>
             <span className="text-gray-600">R</span>
-            <div className="w-10 h-1 bg-white/5 rounded-full overflow-hidden">
+            <div className="w-8 h-[3px] bg-white/5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-copper-400/80"
                 style={{ width: `${relevancePct}%` }}

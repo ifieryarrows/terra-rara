@@ -372,8 +372,10 @@ export const OverviewPage = () => {
           </div>
         </header>
 
-        {/* Dashboard Grid + persistent News sidebar (desktop) */}
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* Dashboard Grid + persistent News sidebar (desktop).
+            On mobile/tablet the news panel stacks under the dashboard.
+            Width grows with the viewport so chips/filters have room to breathe. */}
+        <div className="grid gap-4 lg:gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
         {/* Main dashboard column */}
         <div className="grid grid-cols-12 gap-6">
 
