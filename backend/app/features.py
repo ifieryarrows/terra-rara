@@ -429,6 +429,7 @@ _SYMBOL_LABEL_MAP: dict[str, str] = {
     "GDX":        "Gold Miners ETF",
     "USO":        "US Oil Fund",
     "UUP":        "US Dollar Bull ETF",
+    "FXA":        "Australian Dollar ETF",
     "TIP":        "TIPS Bond ETF",
     "EEM":        "Emerging Markets ETF",
     "FXI":        "China Large-Cap ETF",
@@ -517,8 +518,15 @@ def describe_feature(feature: str) -> dict[str, str]:
             break
 
     if not symbol:
-        # Fallback: any prefix before the first underscore *might* be a symbol
-        # but we cannot rely on that — treat as bare indicator.
+        # Fallback heuristic: features are often serialized as
+        # "<TICKER>_<INDICATOR...>". If the prefix looks like a ticker we
+        # treat it as the subject even when it's not in _SYMBOL_LABEL_MAP yet.
+        import re
+        if "_" in feature:
+            maybe_sym, rest = feature.split("_", 1)
+            if re.fullmatch(r"[A-Z0-9^=.\-]{1,20}", maybe_sym or ""):
+                symbol = maybe_sym
+                token = rest
         indicator_label = _label_indicator(token)
     else:
         indicator_label = _label_indicator(token)

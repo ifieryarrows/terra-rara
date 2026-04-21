@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildTreemapLayout, HeatmapNode, HeatmapData } from './heatmap-layout';
 import HeatmapTooltip from './HeatmapTooltip';
 
@@ -42,6 +42,15 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
     null,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingZoomFocusRef = useRef<{
+    prevZoom: number;
+    /** Pointer position in viewport coordinates relative to scroll container */
+    viewportX: number;
+    viewportY: number;
+    /** Pointer position in content coordinates (includes current scroll offsets) */
+    contentX: number;
+    contentY: number;
+  } | null>(null);
 
   // Non-passive wheel listener: only hijack the wheel when the pointer
   // is actually over the heatmap AND Ctrl is NOT pressed (Ctrl+wheel
@@ -55,11 +64,42 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
       if (e.ctrlKey) return;
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const r = el.getBoundingClientRect();
+      const viewportX = e.clientX - r.left;
+      const viewportY = e.clientY - r.top;
+      // Convert to content coordinates (so we can keep the same content point
+      // under the cursor after the parent updates zoom and the layout resizes).
+      const contentX = viewportX + el.scrollLeft;
+      const contentY = viewportY + el.scrollTop;
+      pendingZoomFocusRef.current = { prevZoom: zoom, viewportX, viewportY, contentX, contentY };
       onZoomDelta(delta);
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [onZoomDelta]);
+  }, [onZoomDelta, zoom]);
+
+  // Cursor-focused zoom: after zoom changes (which resizes the layout),
+  // adjust scroll offsets so the content point under the cursor stays put.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const pending = pendingZoomFocusRef.current;
+    if (!el || !pending) return;
+    if (pending.prevZoom === zoom) return;
+
+    const ratio = zoom / pending.prevZoom;
+    const nextContentX = pending.contentX * ratio;
+    const nextContentY = pending.contentY * ratio;
+    const nextScrollLeft = nextContentX - pending.viewportX;
+    const nextScrollTop = nextContentY - pending.viewportY;
+
+    // Clamp scroll to valid range (layout might be smaller than viewport at zoom=1).
+    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollLeft = Math.max(0, Math.min(maxScrollLeft, nextScrollLeft));
+    el.scrollTop = Math.max(0, Math.min(maxScrollTop, nextScrollTop));
+
+    pendingZoomFocusRef.current = null;
+  }, [zoom]);
 
   const scaledWidth = Math.max(1, Math.round(width * zoom));
   const scaledHeight = Math.max(1, Math.round(height * zoom));
