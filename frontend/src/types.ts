@@ -5,7 +5,10 @@
 export interface Influencer {
   feature: string;
   importance: number;
+  label?: string;
   description?: string;
+  category?: string;
+  time_horizon?: string;
 }
 
 export interface DataQuality {
@@ -64,6 +67,7 @@ export interface CommentaryResponse {
 export interface TFTDailyForecast {
   day: number;
   daily_return: number;
+  raw_daily_return?: number;
   cumulative_return: number;
   price_median: number;
   price_q10: number;
@@ -86,6 +90,12 @@ export interface TFTPrediction {
   weekly_price: number;
   prediction_horizon_days: number;
   daily_forecasts: TFTDailyForecast[];
+  /** Explicit contract: the close used as the basis for all returns/prices */
+  reference_price?: number;
+  reference_price_date?: string | null;
+  return_basis?: string;
+  raw_predicted_return_median?: number;
+  anomaly_detected?: boolean;
 }
 
 export interface TFTModelMetadata {

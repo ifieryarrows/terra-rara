@@ -280,18 +280,25 @@ def format_prediction(
     raw_prediction: torch.Tensor,
     quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     baseline_price: float = 1.0,
+    reference_price_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Convert raw TFT quantile output to a structured prediction dict.
 
-    Args:
-        raw_prediction: tensor of shape (prediction_length, n_quantiles)
-        quantiles: quantile levels
-        baseline_price: current price for return-to-price conversion
+    The model emits next-day *simple returns* in return-space (target was
+    ``close.pct_change().shift(-1)``). We therefore treat every quantile as a
+    daily return and compound to price using ``baseline_price`` as the
+    reference. The returned dict is the single source of truth: both the
+    headline percentage (``predicted_return_median``) and the T+1 price
+    (``daily_forecasts[0].price_median``) are derived from the same value.
 
-    Returns:
-        Dict with per-day forecasts, confidence bands, and volatility estimate.
-        Top-level fields use the *final* day (end of horizon) for backward compat.
+    Hard return clamps used to be set to 3% which was the root cause of the
+    "stuck at 3%" display bug: any time the raw median exceeded 3% it was
+    silently snapped to exactly 3% and the UI rendered the clamp value. We
+    now use a calibrated sanity-check anomaly bound (``ANOMALY_DAILY_RET``)
+    which only triggers on genuinely implausible moves (> ~5× copper's daily
+    σ) and logs loudly when it does. Within a reasonable range the raw
+    model output is passed through untouched.
     """
     import math as _math
 
@@ -299,44 +306,62 @@ def format_prediction(
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
 
-    # Guard: log if baseline_price is invalid (NaN prices will be sanitised
-    # to null by the API layer's _sanitize_floats, keeping the chart clean).
     if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
         logger.warning(
             "format_prediction: invalid baseline_price=%s — price fields will be null",
             baseline_price,
         )
 
-    # Hard clamp: prevents overconfident models (VR >> 1) from producing
-    # absurd compound prices.  Copper's actual daily σ ≈ 0.024; capping at
-    # ~1.25σ keeps the 5-day compound under ≈16 %.  The clamp is inactive
-    # once the model is retrained with a healthy VR (0.5–1.5).
-    _MAX_DAILY_RET = 0.03
+    # ------------------------------------------------------------------
+    # Calibrated anomaly bound (NOT a "display cap").
+    # Copper daily σ ≈ 0.024 (2.4%). A 5σ daily move (~12%) is a genuine
+    # regime-break event; if the model outputs that, it is almost
+    # certainly a bug in preprocessing / scaling, not a real forecast.
+    # Below this level we trust the model output as-is.
+    # ------------------------------------------------------------------
+    ANOMALY_DAILY_RET = 0.12
+    raw_median_0 = float(pred[0, median_idx])
+    anomaly_detected = abs(raw_median_0) > ANOMALY_DAILY_RET
+    if anomaly_detected:
+        logger.error(
+            "format_prediction: anomalous raw return detected at T+1: %.4f "
+            "(|r| > %.3f). Likely a scaling / target-space bug — the value "
+            "will be bounded at ±%.2f and flagged in the response.",
+            raw_median_0, ANOMALY_DAILY_RET, ANOMALY_DAILY_RET,
+        )
 
-    # T+1 quantile spreads (return-space distance from median).
-    # Used as the base width for confidence bands; scaled by sqrt(d) for
-    # later days so uncertainty grows realistically instead of compounding
-    # tail quantiles exponentially (which would produce absurd bands).
-    med_0 = float(np.clip(pred[0, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
-    _raw_med_0 = float(pred[0, median_idx])
-    spread_q10 = np.clip(float(pred[0, 1]) - _raw_med_0, -_MAX_DAILY_RET, 0) if len(quantiles) > 2 else 0.0
-    spread_q90 = np.clip(float(pred[0, -2]) - _raw_med_0, 0, _MAX_DAILY_RET) if len(quantiles) > 2 else 0.0
-    spread_q02 = np.clip(float(pred[0, 0]) - _raw_med_0, -_MAX_DAILY_RET * 1.5, 0)
-    spread_q98 = np.clip(float(pred[0, -1]) - _raw_med_0, 0, _MAX_DAILY_RET * 1.5)
+    def _bound(x: float) -> float:
+        """Only clip if outside the anomaly bound; otherwise pass through."""
+        if abs(x) > ANOMALY_DAILY_RET:
+            return float(np.sign(x) * ANOMALY_DAILY_RET)
+        return float(x)
+
+    # Quantile spreads (distance of each quantile from the median, in
+    # return-space). We do NOT clip *spreads* — models with a healthy
+    # variance ratio produce spreads of ~2σ and that is fine.
+    raw_med_0 = raw_median_0
+    spread_q10 = float(pred[0, 1]) - raw_med_0 if len(quantiles) > 2 else 0.0
+    spread_q90 = float(pred[0, -2]) - raw_med_0 if len(quantiles) > 2 else 0.0
+    spread_q02 = float(pred[0, 0]) - raw_med_0
+    spread_q98 = float(pred[0, -1]) - raw_med_0
 
     daily_forecasts = []
     cum_price_med = baseline_price
 
     for d in range(n_days):
-        med = float(np.clip(pred[d, median_idx], -_MAX_DAILY_RET, _MAX_DAILY_RET))
+        raw_med = float(pred[d, median_idx])
+        med = _bound(raw_med)
         cum_price_med *= (1 + med)
         cum_return = (cum_price_med / baseline_price) - 1.0
 
+        # √t spread expansion keeps multi-day uncertainty realistic instead
+        # of exponentially compounding tail quantiles.
         scale = (d + 1) ** 0.5
 
         daily_forecasts.append({
             "day": d + 1,
             "daily_return": med,
+            "raw_daily_return": raw_med,
             "cumulative_return": cum_return,
             "price_median": cum_price_med,
             "price_q10": cum_price_med * (1 + spread_q10 * scale),
@@ -345,15 +370,16 @@ def format_prediction(
             "price_q98": cum_price_med * (1 + spread_q98 * scale),
         })
 
-    # T+1 is the primary signal (most reliable, highest signal-to-noise).
     first = daily_forecasts[0]
     last = daily_forecasts[-1]
     vol_estimate = (first["price_q90"] - first["price_q10"]) / (2.0 * baseline_price)
 
     return {
+        # Single source of truth for the UI — headline percentage and T+1
+        # price are now derived from the *same* value.
         "predicted_return_median": first["daily_return"],
-        "predicted_return_q10": float(np.clip(pred[0, 1], -_MAX_DAILY_RET * 2, _MAX_DAILY_RET * 2)) if len(quantiles) > 2 else first["daily_return"],
-        "predicted_return_q90": float(np.clip(pred[0, -2], -_MAX_DAILY_RET * 2, _MAX_DAILY_RET * 2)) if len(quantiles) > 2 else first["daily_return"],
+        "predicted_return_q10": float(pred[0, 1]) if len(quantiles) > 2 else first["daily_return"],
+        "predicted_return_q90": float(pred[0, -2]) if len(quantiles) > 2 else first["daily_return"],
         "predicted_price_median": first["price_median"],
         "predicted_price_q10": first["price_q10"],
         "predicted_price_q90": first["price_q90"],
@@ -364,4 +390,11 @@ def format_prediction(
         "weekly_price": last["price_median"],
         "prediction_horizon_days": n_days,
         "daily_forecasts": daily_forecasts,
+        # Explicit contract for the frontend — no more guessing which price
+        # the percentages are relative to.
+        "reference_price": float(baseline_price),
+        "reference_price_date": reference_price_date,
+        "return_basis": "simple_next_day_return",
+        "raw_predicted_return_median": raw_median_0,
+        "anomaly_detected": bool(anomaly_detected),
     }

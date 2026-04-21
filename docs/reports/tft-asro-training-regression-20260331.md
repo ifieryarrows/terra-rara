@@ -1,14 +1,15 @@
 # TFT-ASRO Eğitim Regresyon Raporu
 
-| Alan                   | Değer                                                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Rapor Tarihi** | 31 Mart 2026                                                                                         |
-| **Rapor No**     | TFT-REG-2026-001                                                                                     |
-| **Proje**        | CopperMind — Bakır Vadeli İşlem Tahmin Platformu                                                 |
-| **Bileşen**     | `deep_learning/` — TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) |
-| **Hazırlayan**  | AI Engineering Team                                                                                  |
-| **Durum**        | 🟡 Araştırma Devam Ediyor                                                                          |
-| **Öncelik**     | P1 — Üretim modeli kalitesi doğrudan etkileniyor                                                  |
+| Alan                       | Değer                                                                                                                                                                                              |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rapor Tarihi**     | 31 Mart 2026                                                                                                                                                                                        |
+| **Rapor No**         | TFT-REG-2026-001                                                                                                                                                                                    |
+| **Proje**            | CopperMind — Bakır Vadeli İşlem Tahmin Platformu                                                                                                                                                |
+| **Bileşen**         | `deep_learning/` — TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization)                                                                                                |
+| **Hazırlayan**      | AI Engineering Team                                                                                                                                                                                 |
+| **Durum**            | ✅ Kapatıldı (16 Nis 2026) — Takip P0/P1 → P2 → Sprint 1 İt.4 ile nihai çözüldü                                                                                                           |
+| **Öncelik**         | P1 — Üretim modeli kalitesi doğrudan etkileniyor                                                                                                                                                 |
+| **Takip Raporları** | [P0/P1→P2 Geçiş](./tft-reg-2026-001-p0p1-analysis-p2-transition.md) · [REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md) · [Sprint 1](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md) |
 
 ---
 
@@ -436,4 +437,34 @@ acdbfc6 feat(tft): replace hard clamp with two-stage soft dampening (GERİ ALIND
 
 ---
 
-*Bu rapor, sorun tamamen çözülene kadar güncellenecektir.*
+---
+
+## Kapanış Notu (20 Nisan 2026)
+
+Bu rapor 31 Mart 2026'da P1 önceliğiyle açıldı. 16 gün süren üç aşamalı çalışma ile çözüldü:
+
+| Aşama                     | Çözüm                                                                  | Tarih        | Etki                                                                    |
+| -------------------------- | ------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------- |
+| **P0/P1**            | Rollback, amplitude_loss, arama uzayı daraltma                           | 31 Mart      | ➡️[P0/P1→P2 raporu](./tft-reg-2026-001-p0p1-analysis-p2-transition.md)  |
+| **P2**               | Walk-Forward CV, Snapshot Ensemble, magnitude-weighted directional reward | 13–15 Nisan | ➡️[REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md)        |
+| **Sprint 1 / İt.4** | MRMR + MADL + iki kademeli amplitude cezası + SWA + consensus voting     | 20 Nisan     | ➡️[Sprint 1 raporu](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md) |
+
+### Bu Raporun Açılış Metrikleri vs. Nihai Sonuç (İt.4)
+
+| Metrik       | 31 Mart (P0) | **16 Nisan (İt.4)** | Δ                                     |
+| ------------ | ------------ | -------------------------- | -------------------------------------- |
+| MAE          | 0.0398       | **0.0462**           | +16% (±kabul bandında)               |
+| RMSE         | 0.0459       | **0.0505**           | +10% (±kabul bandında)               |
+| DA           | 0.4826       | **0.5231**           | +4.05pp ✅                             |
+| Sharpe       | −0.8598     | **+0.5285**          | **+1.39** ✅                     |
+| Sortino      | −1.5710     | **+0.9425**          | **+2.51** ✅                     |
+| Tail Capture | 0.3945       | **0.5169**           | +12.24pp ✅                            |
+| VR           | 0.7785       | **0.6725**           | −0.106 (her ikisi de kabul bandında) |
+| pred_std     | 0.0159       | **0.0127**           | −20% (amplitude daha sağlıklı)     |
+
+**Sonuç:** Bu rapor açılırken "Sharpe −0.86, DA %48" durumundaydı; nihai modelde "Sharpe +0.53, DA %52" elde edildi. Rapor **resmen kapatılmıştır**.
+
+---
+
+*Rapor oluşturma: 31 Mart 2026*
+*Rapor kapatma: 16 Nisan 2026 (Sprint 1 İt.4 sonrası)*

@@ -1,12 +1,13 @@
 # TFT-REG-2026-001: P0/P1 Müdahale Analizi ve P2 Geçiş Planı
 
-| Alan | Değer |
-|---|---|
-| **Rapor Tarihi** | 2 Nisan 2026 |
-| **Rapor No** | TFT-REG-2026-001-v3 |
-| **Proje** | CopperMind — Bakır Vadeli İşlem Tahmin Platformu |
-| **Bağlamlar** | [Regresyon Raporu](./tft-asro-training-regression-20260331.md) · [Araştırma Sonuçları](./tft-astro-training-regression-arastirma-sonuclari-202060331.md) |
-| **Durum** | 🟡 P0/P1 Tamamlandı — P2 Geçişe Hazır |
+| Alan                       | Değer                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rapor Tarihi**     | 2 Nisan 2026                                                                                                                                            |
+| **Rapor No**         | TFT-REG-2026-001-v3                                                                                                                                     |
+| **Proje**            | CopperMind — Bakır Vadeli İşlem Tahmin Platformu                                                                                                    |
+| **Bağlamlar**       | [Regresyon Raporu](./tft-asro-training-regression-20260331.md) · [Araştırma Sonuçları](./tft-astro-training-regression-arastirma-sonuclari-202060331.md) |
+| **Durum**            | ✅ Kapatıldı — P2 çalışması[REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md) ile, nihai çözüm Sprint 1 İt.4 ile sağlandı        |
+| **Takip Raporları** | [REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md) · [TFT-IMP-2026-001 Sprint 1](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md)           |
 
 ---
 
@@ -14,50 +15,50 @@
 
 ### A.1 Kronolojik Müdahale Zinciri
 
-| # | Tarih | Müdahale | Commit | Seviye |
-|---|---|---|---|---|
-| 0 | 25 Mart | Referans eğitim (Baseline) | — | — |
-| 1 | 30 Mart | Bilateral amplitude_loss (VR>1.5 ceza) | `4c80824` | P0 |
-| 2 | 31 Mart (A) | Hyperopt arama uzayı daraltma + DA/Sharpe guard | `40432a3` | P1 |
-| 3 | 31 Mart (B) | P1 parametreleri ile yeniden eğitim | — | P1 |
+| # | Tarih       | Müdahale                                        | Commit      | Seviye |
+| - | ----------- | ------------------------------------------------ | ----------- | ------ |
+| 0 | 25 Mart     | Referans eğitim (Baseline)                      | —          | —     |
+| 1 | 30 Mart     | Bilateral amplitude_loss (VR>1.5 ceza)           | `4c80824` | P0     |
+| 2 | 31 Mart (A) | Hyperopt arama uzayı daraltma + DA/Sharpe guard | `40432a3` | P1     |
+| 3 | 31 Mart (B) | P1 parametreleri ile yeniden eğitim             | —          | P1     |
 
 ### A.2 Karşılaştırmalı Metrik Tablosu
 
-| Metrik | Baseline (25 Mar) | P0 Eğitimi (31 Mar-A) | Δ vs Baseline | P1 Eğitimi (31 Mar-B) | Δ vs Baseline | Hedef Eşik | Durumu |
-|---|---|---|---|---|---|---|---|
-| **MAE** | 0.0354 | 0.0398 | 🔴 +12.4% | 0.0379 | 🟡 +7.1% | ≤ 0.040 | ⚠️ Sınırda |
-| **RMSE** | 0.0409 | 0.0459 | 🔴 +12.2% | 0.0427 | 🟡 +4.4% | ≤ 0.045 | ⚠️ Sınırda |
-| **Directional Accuracy** | 0.5087 | 0.4826 | 🔴 −5.1% | 0.4870 | 🔴 −4.3% | ≥ 0.520 | ❌ Başarısız |
-| **Tail Capture Rate** | 0.6055 | 0.3945 | 🔴 −34.8% | 0.3670 | 🔴 −39.4% | ≥ 0.500 | ❌ Başarısız |
-| **Sharpe Ratio** | 0.8439 | −0.8598 | 🔴 −202% | −1.2408 | 🔴 −247% | ≥ 0.30 | ❌ Başarısız |
-| **Sortino Ratio** | 1.4058 | −1.5710 | 🔴 −212% | −2.3464 | 🔴 −267% | ≥ 0.50 | ❌ Başarısız |
-| **pred_std** | 0.0098 | 0.0159 | 🟢 +62.2% | 0.0127 | 🟢 +29.6% | 0.010–0.025 | ✅ Başarılı |
-| **Variance Ratio** | 0.4803 | 0.7785 | 🟢 +62.1% | 0.6218 | 🟢 +29.4% | 0.50–1.50 | ✅ Başarılı |
+| Metrik                         | Baseline (25 Mar) | P0 Eğitimi (31 Mar-A) | Δ vs Baseline | P1 Eğitimi (31 Mar-B) | Δ vs Baseline | Hedef Eşik  | Durumu          |
+| ------------------------------ | ----------------- | ---------------------- | -------------- | ---------------------- | -------------- | ------------ | --------------- |
+| **MAE**                  | 0.0354            | 0.0398                 | 🔴 +12.4%      | 0.0379                 | 🟡 +7.1%       | ≤ 0.040     | ⚠️ Sınırda  |
+| **RMSE**                 | 0.0409            | 0.0459                 | 🔴 +12.2%      | 0.0427                 | 🟡 +4.4%       | ≤ 0.045     | ⚠️ Sınırda  |
+| **Directional Accuracy** | 0.5087            | 0.4826                 | 🔴 −5.1%      | 0.4870                 | 🔴 −4.3%      | ≥ 0.520     | ❌ Başarısız |
+| **Tail Capture Rate**    | 0.6055            | 0.3945                 | 🔴 −34.8%     | 0.3670                 | 🔴 −39.4%     | ≥ 0.500     | ❌ Başarısız |
+| **Sharpe Ratio**         | 0.8439            | −0.8598               | 🔴 −202%      | −1.2408               | 🔴 −247%      | ≥ 0.30      | ❌ Başarısız |
+| **Sortino Ratio**        | 1.4058            | −1.5710               | 🔴 −212%      | −2.3464               | 🔴 −267%      | ≥ 0.50      | ❌ Başarısız |
+| **pred_std**             | 0.0098            | 0.0159                 | 🟢 +62.2%      | 0.0127                 | 🟢 +29.6%      | 0.010–0.025 | ✅ Başarılı  |
+| **Variance Ratio**       | 0.4803            | 0.7785                 | 🟢 +62.1%      | 0.6218                 | 🟢 +29.4%      | 0.50–1.50   | ✅ Başarılı  |
 
 ### A.3 Metrik-Bazlı Etki Analizi
 
 #### ✅ İyileşme Sağlanan Metrikler (2/8)
 
-| Metrik | Değişikliğin Nedeni | Yorum |
-|---|---|---|
+| Metrik                   | Değişikliğin Nedeni                                       | Yorum                                                                                                     |
+| ------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
 | **Variance Ratio** | Bilateral amplitude_loss + lambda_vol artışı (0.35→0.40) | VR sağlıklı bölgeye (0.50–1.50) girdi. Modelin tahmin genliği artık piyasa genliğine daha yakın. |
-| **pred_std** | Aynı mekanizma | Model daha geniş tahminler üretiyor. Önceki 0.0098 çok düşüktü (neredeyse flat-line). |
+| **pred_std**       | Aynı mekanizma                                              | Model daha geniş tahminler üretiyor. Önceki 0.0098 çok düşüktü (neredeyse flat-line).             |
 
 #### ❌ Hedef Eşiğe Ulaşılamayan Metrikler (4/8)
 
-| Metrik | Neden Başarısız | Yapısal mı? |
-|---|---|---|
-| **Directional Accuracy** | Her iki eğitimde de %50 altında — coin-flip'ten kötü | ✅ Yapısal |
-| **Tail Capture Rate** | %60→%37'ye düştü — kuyruk olaylarında model sistematik yanlış | ✅ Yapısal |
-| **Sharpe Ratio** | Negatif = yön tahminleri sistematik olarak ters | ✅ Yapısal |
-| **Sortino Ratio** | Sharpe ile paralel kötüleşme | ✅ Yapısal |
+| Metrik                         | Neden Başarısız                                                    | Yapısal mı? |
+| ------------------------------ | --------------------------------------------------------------------- | ------------- |
+| **Directional Accuracy** | Her iki eğitimde de %50 altında — coin-flip'ten kötü             | ✅ Yapısal   |
+| **Tail Capture Rate**    | %60→%37'ye düştü — kuyruk olaylarında model sistematik yanlış | ✅ Yapısal   |
+| **Sharpe Ratio**         | Negatif = yön tahminleri sistematik olarak ters                      | ✅ Yapısal   |
+| **Sortino Ratio**        | Sharpe ile paralel kötüleşme                                       | ✅ Yapısal   |
 
 #### ⚠️ Sınırda Kalan Metrikler (2/8)
 
-| Metrik | Durum |
-|---|---|
-| **MAE** | P1'de 0.0379 — hedefe (≤0.040) yakın ama kırılgan |
-| **RMSE** | P1'de 0.0427 — hedefe (≤0.045) yakın |
+| Metrik         | Durum                                                  |
+| -------------- | ------------------------------------------------------ |
+| **MAE**  | P1'de 0.0379 — hedefe (≤0.040) yakın ama kırılgan |
+| **RMSE** | P1'de 0.0427 — hedefe (≤0.045) yakın                |
 
 ### A.4 İlerleme Yörüngesi Görselleştirmesi
 
@@ -113,11 +114,13 @@ VR Trendi
 **Kanıt 1: Optuna Validation vs Test Ayrışması**
 
 Optuna Trial #7, validation setinde:
+
 - Val_DA > %50 (prune edilmedi)
 - Val_Sharpe > 0 (prune edilmedi)
 - Val_loss = −0.016 (en düşük)
 
 Ancak aynı parametrelerle Test setinde:
+
 - Test_DA = %48.7 (coin-flip altı)
 - Test_Sharpe = −1.24 (negatif)
 
@@ -128,11 +131,11 @@ Bu, validation setine spesifik overfitting'in kesin kanıtıdır.
 
 **Kanıt 2: Parametre Daraltmanın Etkisizliği**
 
-| Daraltılan Parametre | Beklenen Etki | Gerçek Etki |
-|---|---|---|
-| dropout 0.10→0.20 alt sınır | Daha az overfitting | Model dropout=0.20 seçti — ama yine overfit |
-| hidden_cont 32→24 üst sınır | Daha az parametre | Model 16 seçti — problem burada değildi |
-| batch_size 64 kaldırıldı | Daha stabil gradient | Model 32 seçti — etkisiz |
+| Daraltılan Parametre           | Beklenen Etki        | Gerçek Etki                                  |
+| ------------------------------- | -------------------- | --------------------------------------------- |
+| dropout 0.10→0.20 alt sınır  | Daha az overfitting  | Model dropout=0.20 seçti — ama yine overfit |
+| hidden_cont 32→24 üst sınır | Daha az parametre    | Model 16 seçti — problem burada değildi    |
+| batch_size 64 kaldırıldı     | Daha stabil gradient | Model 32 seçti — etkisiz                    |
 
 **Sonuç:** Parametre sınırlarını daraltmak daha iyi hiperparametre seçimi garanti etmiyor çünkü **tek bir validation split** üzerinden yapılan değerlendirme kendi başına güvenilir değil.
 
@@ -168,18 +171,18 @@ Tek bir %15 validation penceresi, piyasanın tek bir rejimini temsil ediyor
 
 ### C.1 P2 Çözüm Envanteri ve Önceliklendirme
 
-| Sıra | Çözüm | Hedef Metrik | Beklenen İyileşme | Efor | Bağımlılık |
-|---|---|---|---|---|---|
-| **P2-1** | Walk-Forward 3-Fold Temporal CV | DA, Sharpe, Sortino | DA: %48→%53+, Sharpe: −1.2→+0.3+ | Yüksek | Yok |
-| **P2-2** | Snapshot Ensemble (Top-3 Median) | DA, Tail Capture, VR | DA: +2-4%, Tail: +10-15% | Orta | P2-1 (isteğe bağlı) |
-| **P2-3** | Optuna Trial Sayısı Azaltma (50→25) | Süre optimizasyonu | CV ile 3× süre artışını dengelemek | Düşük | P2-1 ile birlikte |
+| Sıra          | Çözüm                               | Hedef Metrik         | Beklenen İyileşme                      | Efor     | Bağımlılık         |
+| -------------- | -------------------------------------- | -------------------- | ---------------------------------------- | -------- | ---------------------- |
+| **P2-1** | Walk-Forward 3-Fold Temporal CV        | DA, Sharpe, Sortino  | DA: %48→%53+, Sharpe: −1.2→+0.3+      | Yüksek  | Yok                    |
+| **P2-2** | Snapshot Ensemble (Top-3 Median)       | DA, Tail Capture, VR | DA: +2-4%, Tail: +10-15%                 | Orta     | P2-1 (isteğe bağlı) |
+| **P2-3** | Optuna Trial Sayısı Azaltma (50→25) | Süre optimizasyonu  | CV ile 3× süre artışını dengelemek | Düşük | P2-1 ile birlikte      |
 
 ### C.2 P2-1: Walk-Forward 3-Fold Temporal Cross-Validation
 
 #### Teknik Ön Koşullar
 
-- [x] `dataset.py` içinde `build_datasets()` fonksiyonu mevcut
-- [x] Kronolojik splitting mantığı zaten uygulanmış
+- [X] `dataset.py` içinde `build_datasets()` fonksiyonu mevcut
+- [X] Kronolojik splitting mantığı zaten uygulanmış
 - [ ] Yeni `build_cv_folds()` fonksiyonu yazılacak
 - [ ] `_objective()` fonksiyonu multi-fold döngüsüne alınacak
 
@@ -230,6 +233,7 @@ def build_cv_folds(
 ```
 
 Fold cutting mantığı:
+
 1. Test verisi (%10) en sondan ayrılır — **dokunulmaz**
 2. Kalan %90 CV havuzu olarak kullanılır
 3. Her fold için:
@@ -297,21 +301,21 @@ class TrainingConfig:
 
 #### Riskler ve Azaltma Stratejileri
 
-| Risk | Olasılık | Etki | Azaltma |
-|---|---|---|---|
-| Her fold için 28 validation sample yetersiz | Orta | Gürültülü fold skorları | `consistency_penalty` ile high-variance trial'ları cezalandır |
-| 3× eğitim süresi (CI timeout) | Yüksek | GitHub Actions 6h limiti | `n_trials` 50→25, `max_epochs` 50→35 |
-| Fold'lar arası veri sızıntısı | Düşük | Overfit yanılsaması | Kronolojik kesim + gap=0 (bakır günlük) |
-| Model en son pencereye bias | Orta | Son fold'a overfit | Fold scoring'de `mean()` kullan, `min()` değil |
+| Risk                                         | Olasılık | Etki                         | Azaltma                                                           |
+| -------------------------------------------- | ---------- | ---------------------------- | ----------------------------------------------------------------- |
+| Her fold için 28 validation sample yetersiz | Orta       | Gürültülü fold skorları | `consistency_penalty` ile high-variance trial'ları cezalandır |
+| 3× eğitim süresi (CI timeout)             | Yüksek    | GitHub Actions 6h limiti     | `n_trials` 50→25, `max_epochs` 50→35                        |
+| Fold'lar arası veri sızıntısı           | Düşük   | Overfit yanılsaması        | Kronolojik kesim + gap=0 (bakır günlük)                        |
+| Model en son pencereye bias                  | Orta       | Son fold'a overfit           | Fold scoring'de `mean()` kullan, `min()` değil               |
 
 #### Beklenen Etki
 
-| Metrik | Mevcut (P1 sonrası) | P2-1 Hedef | Gerekçe |
-|---|---|---|---|
-| **DA** | 0.4870 | ≥ 0.520 | 3 farklı rejimde tutarlı DA |
-| **Sharpe** | −1.2408 | ≥ +0.30 | Yanlış yön seçen trial'lar 3 fold'da maskelenemiyor |
-| **Tail Capture** | 0.3670 | ≥ 0.450 | Kuyruk olaylarını 3 farklı dönemde test |
-| **VR** | 0.6218 | 0.60–1.20 | Korunacak (zaten sağlıklı bölgede) |
+| Metrik                 | Mevcut (P1 sonrası) | P2-1 Hedef | Gerekçe                                                |
+| ---------------------- | -------------------- | ---------- | ------------------------------------------------------- |
+| **DA**           | 0.4870               | ≥ 0.520   | 3 farklı rejimde tutarlı DA                           |
+| **Sharpe**       | −1.2408             | ≥ +0.30   | Yanlış yön seçen trial'lar 3 fold'da maskelenemiyor |
+| **Tail Capture** | 0.3670               | ≥ 0.450   | Kuyruk olaylarını 3 farklı dönemde test             |
+| **VR**           | 0.6218               | 0.60–1.20 | Korunacak (zaten sağlıklı bölgede)                  |
 
 ---
 
@@ -319,7 +323,7 @@ class TrainingConfig:
 
 #### Teknik Ön Koşullar
 
-- [x] `ModelCheckpoint(save_top_k=3)` zaten aktif (`trainer.py` L160)
+- [X] `ModelCheckpoint(save_top_k=3)` zaten aktif (`trainer.py` L160)
 - [ ] Test değerlendirmesinde top-3 yükleme + medyan alma eklenecek
 - [ ] Pipeline inference'da (`tasks.py`) opsiyonel ensemble desteği
 
@@ -349,18 +353,18 @@ else:
 
 #### Riskler
 
-| Risk | Olasılık | Etki | Azaltma |
-|---|---|---|---|
-| 3× inference süresi | Düşük | Pipeline 2-3 saniye uzar | Kabul edilebilir |
-| Top-3 checkpoint hepsi aynı overfitting | Orta | Ensemble etkisiz | P2-1 ile birlikte uygulanır |
+| Risk                                     | Olasılık | Etki                     | Azaltma                      |
+| ---------------------------------------- | ---------- | ------------------------ | ---------------------------- |
+| 3× inference süresi                    | Düşük   | Pipeline 2-3 saniye uzar | Kabul edilebilir             |
+| Top-3 checkpoint hepsi aynı overfitting | Orta       | Ensemble etkisiz         | P2-1 ile birlikte uygulanır |
 
 #### Beklenen Etki
 
-| Metrik | P2-1 Sonrası Tahmin | P2-2 ile Ek İyileşme |
-|---|---|---|
-| **DA** | ≥ 0.520 | +2-3% (stokastik outlier'lar törpülenir) |
-| **Tail Capture** | ≥ 0.450 | +5-10% (ensemble kuyruk sinyallerini stabilize eder) |
-| **Sharpe** | ≥ +0.30 | +0.05-0.10 (daha az gürültülü sinyal) |
+| Metrik                 | P2-1 Sonrası Tahmin | P2-2 ile Ek İyileşme                               |
+| ---------------------- | -------------------- | ---------------------------------------------------- |
+| **DA**           | ≥ 0.520             | +2-3% (stokastik outlier'lar törpülenir)           |
+| **Tail Capture** | ≥ 0.450             | +5-10% (ensemble kuyruk sinyallerini stabilize eder) |
+| **Sharpe**       | ≥ +0.30             | +0.05-0.10 (daha az gürültülü sinyal)            |
 
 ---
 
@@ -368,11 +372,11 @@ else:
 
 CV ile her trial 3× daha uzun sürecek. Dengeleme:
 
-| Parametre | Mevcut | Yeni | Gerekçe |
-|---|---|---|---|
-| `optuna_n_trials` | 50 | **25** | 25 trial × 3 fold = 75 eğitim (önceki 50'ye yakın toplam iş) |
-| `max_epochs` per fold | 50 | **35** | Fold'lar daha küçük, daha az epoch yeterli |
-| `early_stopping_patience` | 8 | **6** | Daha agresif erken durdurma |
+| Parametre                   | Mevcut | Yeni         | Gerekçe                                                          |
+| --------------------------- | ------ | ------------ | ----------------------------------------------------------------- |
+| `optuna_n_trials`         | 50     | **25** | 25 trial × 3 fold = 75 eğitim (önceki 50'ye yakın toplam iş) |
+| `max_epochs` per fold     | 50     | **35** | Fold'lar daha küçük, daha az epoch yeterli                     |
+| `early_stopping_patience` | 8      | **6**  | Daha agresif erken durdurma                                       |
 
 ---
 
@@ -409,14 +413,14 @@ CV ile her trial 3× daha uzun sürecek. Dengeleme:
 
 ### E.1 P2 Sonrası Başarı Kriterleri
 
-| Metrik | Minimum Kabul | Hedef | Kritik Sınır (Geri Dönüş) |
-|---|---|---|---|
-| **Directional Accuracy** | ≥ 0.510 | ≥ 0.530 | < 0.490 → rollback |
-| **Sharpe Ratio** | ≥ 0.10 | ≥ 0.50 | < 0.00 → rollback |
-| **Sortino Ratio** | ≥ 0.20 | ≥ 0.80 | < 0.00 → rollback |
-| **Tail Capture Rate** | ≥ 0.400 | ≥ 0.500 | < 0.350 → rollback |
-| **Variance Ratio** | 0.50–1.50 | 0.70–1.20 | < 0.40 veya > 2.0 → rollback |
-| **MAE** | ≤ 0.042 | ≤ 0.038 | > 0.050 → rollback |
+| Metrik                         | Minimum Kabul | Hedef      | Kritik Sınır (Geri Dönüş) |
+| ------------------------------ | ------------- | ---------- | ------------------------------ |
+| **Directional Accuracy** | ≥ 0.510      | ≥ 0.530   | < 0.490 → rollback            |
+| **Sharpe Ratio**         | ≥ 0.10       | ≥ 0.50    | < 0.00 → rollback             |
+| **Sortino Ratio**        | ≥ 0.20       | ≥ 0.80    | < 0.00 → rollback             |
+| **Tail Capture Rate**    | ≥ 0.400      | ≥ 0.500   | < 0.350 → rollback            |
+| **Variance Ratio**       | 0.50–1.50    | 0.70–1.20 | < 0.40 veya > 2.0 → rollback  |
+| **MAE**                  | ≤ 0.042      | ≤ 0.038   | > 0.050 → rollback            |
 
 ### E.2 İzleme Protokolü
 
@@ -443,22 +447,22 @@ P2 uygulanıp ilk eğitim başarısız olursa:
 
 P2 çözümleri uygulandıktan sonra aşağıdaki koşullardan **herhangi biri** sağlanırsa P3'e geçiş tetiklenir:
 
-| # | Koşul | Tetikleyici Eşik | P3 Karşılığı |
-|---|---|---|---|
-| 1 | 3 ardışık eğitimde DA < 0.510 | DA ortalaması < 0.505 | Scheduled Dropout implementasyonu |
-| 2 | Fold skorları arasında yüksek varyans | std(fold_scores) > 0.5 | Veri artırma (data augmentation) veya daha çok veri toplama |
-| 3 | Ensemble ile bile Sharpe < 0.20 | 3 hafta üst üste | Loss fonksiyonu yeniden tasarımı (MADL entegrasyonu) |
-| 4 | VR tekrar < 0.40'a düşüş | İki ardışık eğitim | Amplitude loss eşiklerini yeniden kalibre |
-| 5 | CI süresi > 5 saat | Tutarlı olarak | GPU altyapısına geçiş veya fold sayısını 2'ye düşür |
+| # | Koşul                                   | Tetikleyici Eşik       | P3 Karşılığı                                             |
+| - | ---------------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| 1 | 3 ardışık eğitimde DA < 0.510        | DA ortalaması < 0.505  | Scheduled Dropout implementasyonu                             |
+| 2 | Fold skorları arasında yüksek varyans | std(fold_scores) > 0.5  | Veri artırma (data augmentation) veya daha çok veri toplama |
+| 3 | Ensemble ile bile Sharpe < 0.20          | 3 hafta üst üste      | Loss fonksiyonu yeniden tasarımı (MADL entegrasyonu)        |
+| 4 | VR tekrar < 0.40'a düşüş             | İki ardışık eğitim | Amplitude loss eşiklerini yeniden kalibre                    |
+| 5 | CI süresi > 5 saat                      | Tutarlı olarak         | GPU altyapısına geçiş veya fold sayısını 2'ye düşür |
 
 ### F.3 P3 Çözüm Adayları (Henüz Planlanmadı)
 
-| Çözüm | Efor | Etki | Koşul |
-|---|---|---|---|
-| Scheduled (Curriculum) Dropout | Orta | Geç-aşama overfitting önleme | Eskalasyon #1 |
-| MADL (Mean Absolute Directional Loss) | Yüksek | Doğrudan yön öğrenimi | Eskalasyon #3 |
-| Feature pruning (`interpret_output()`) | Orta | Gürültülü feature eliminasyonu | Eskalasyon #2 |
-| Daha uzun veri penceresi (730→1095 gün) | Düşük | Daha fazla eğitim örneği | Eskalasyon #2 |
+| Çözüm                                  | Efor     | Etki                               | Koşul        |
+| ----------------------------------------- | -------- | ---------------------------------- | ------------- |
+| Scheduled (Curriculum) Dropout            | Orta     | Geç-aşama overfitting önleme    | Eskalasyon #1 |
+| MADL (Mean Absolute Directional Loss)     | Yüksek  | Doğrudan yön öğrenimi          | Eskalasyon #3 |
+| Feature pruning (`interpret_output()`)  | Orta     | Gürültülü feature eliminasyonu | Eskalasyon #2 |
+| Daha uzun veri penceresi (730→1095 gün) | Düşük | Daha fazla eğitim örneği        | Eskalasyon #2 |
 
 ---
 
@@ -490,5 +494,28 @@ gantt
 
 ---
 
-*Bu rapor, P2 çözümleri uygulanıp doğrulandıktan sonra güncellenecektir.*
-*Son güncelleme: 2 Nisan 2026*
+---
+
+## Kapanış Notu (20 Nisan 2026)
+
+Bu rapor P2 geçiş planını belgelemek için hazırlanmıştı. Sonraki haftalarda:
+
+- **P2 çalışması** [REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md) raporunda uygulandı (Walk-Forward CV, Snapshot Ensemble, magnitude-weighted directional reward).
+- **Nihai çözüm** [Sprint 1](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md) kapsamında İt.4 ile sağlandı — MRMR feature selection, MADL, iki kademeli amplitude cezası, SWA ve XGBoost+TFT consensus voting.
+
+### Bu Raporun Başarı Kriterleri vs. İt.4 Sonuçları
+
+| Metrik       | Bu Raporda Belirlenen Hedef | İt.4 Sonuç (20 Nis 2026) | Durum                    |
+| ------------ | --------------------------- | --------------------------- | ------------------------ |
+| DA           | ≥ 0.520                    | **0.5231**            | ✅ Hedef geçildi        |
+| Sharpe       | ≥ 0.30                     | **+0.5285**           | ✅ Hedef 1.76× geçildi |
+| Sortino      | ≥ 0.50                     | **+0.9425**           | ✅ Hedef 1.89× geçildi |
+| VR           | 0.50–1.50                  | **0.6725**            | ✅ Bant içinde          |
+| Tail Capture | ≥ 0.500                    | **0.5169**            | ✅ Hedef geçildi        |
+
+**Sonuç:** Bu raporun P3 eskalasyon tetikleyicilerinden hiçbiri aktif değil; rapor resmen kapatılmıştır.
+
+---
+
+*Rapor oluşturma: 2 Nisan 2026*
+*Rapor kapatma: 16 Nisan 2026*

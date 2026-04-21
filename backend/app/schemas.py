@@ -10,9 +10,12 @@ from pydantic import BaseModel, Field
 
 class Influencer(BaseModel):
     """Top feature influencer in the model."""
-    feature: str = Field(..., description="Feature name")
+    feature: str = Field(..., description="Raw feature identifier (e.g. CL=F_lag_ret1_2)")
     importance: float = Field(..., ge=0, le=1, description="Normalized importance score")
-    description: Optional[str] = Field(None, description="Human-readable description")
+    label: Optional[str] = Field(None, description="Short, user-facing label")
+    description: Optional[str] = Field(None, description="Longer human-readable description")
+    category: Optional[str] = Field(None, description="High-level bucket (Momentum, Macro, ...)")
+    time_horizon: Optional[str] = Field(None, description="Lookback horizon, e.g. '14d'")
 
 
 class DataQuality(BaseModel):

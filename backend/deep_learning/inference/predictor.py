@@ -133,7 +133,20 @@ class TFTPredictor:
 
         master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(session, self.cfg)
 
-        logger.info("TFT predict: baseline_price=%.4f for %s", last_known_price, symbol)
+        # Extract the date of the baseline price so the frontend can show
+        # "% change relative to <date> close" unambiguously.
+        reference_price_date: Optional[str] = None
+        try:
+            if hasattr(master_df.index, "max"):
+                last_date = master_df.index.max()
+                reference_price_date = str(last_date)[:10] if last_date is not None else None
+        except Exception:
+            reference_price_date = None
+
+        logger.info(
+            "TFT predict: baseline_price=%.4f (date=%s) for %s",
+            last_known_price, reference_price_date, symbol,
+        )
 
         encoder_length = self.cfg.model.max_encoder_length
         prediction_length = self.cfg.model.max_prediction_length
@@ -198,6 +211,7 @@ class TFTPredictor:
             pred_for_format,
             quantiles=self.cfg.model.quantiles,
             baseline_price=last_known_price,
+            reference_price_date=reference_price_date,
         )
 
         result["model_info"] = {

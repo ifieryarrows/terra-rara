@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from app.db import init_db, SessionLocal, get_db_type
-from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot
+from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
 # NOTE: Faz 1 - API is snapshot-only, no report generation
@@ -455,12 +455,36 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
     from app.models import HeatmapCache
     from app.heatmap import refresh_market_heatmap
 
+    # Stuck refresh safety: if a refresh has been "in progress" for longer than
+    # this, assume the worker crashed and allow a fresh background refresh to
+    # be kicked off. yfinance batch fetch for the full universe finishes in
+    # under ~2 minutes under normal conditions.
+    STUCK_REFRESH_SECONDS = 180
+
     with SessionLocal() as session:
         cache = session.query(HeatmapCache).first()
         now = datetime.now(timezone.utc)
 
+        def _payload_count(payload) -> int:
+            if not isinstance(payload, dict):
+                return 0
+            total = 0
+            for grp in payload.get("children", []) or []:
+                for sub in grp.get("children", []) or []:
+                    total += len(sub.get("children", []) or [])
+            return total
+
         # If no cache or completely empty payload — trigger background refresh
-        if not cache or not cache.payload_json:
+        if not cache or not cache.payload_json or _payload_count(cache.payload_json) == 0:
+            # Clear any stale "in progress" flag so we don't deadlock.
+            if cache and cache.refresh_started_at is not None:
+                started = cache.refresh_started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                age = (now - started).total_seconds()
+                if age > STUCK_REFRESH_SECONDS:
+                    cache.refresh_started_at = None
+                    session.commit()
             background_tasks.add_task(refresh_market_heatmap)
             return {
                 "name": "CopperMind Universe",
@@ -470,32 +494,60 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
                     "refresh_in_progress": True,
                     "last_updated_at": None,
                     "next_refresh_at": None,
-                    "source_delay_minutes": 15
-                }
+                    "source_delay_minutes": 15,
+                    "payload_count": 0,
+                    "refresh_error": cache.refresh_error if cache else None,
+                    "cache_state": "empty",
+                },
             }
-            
+
         # Check if stale
-        is_stale = now > cache.expires_at
+        expires_at = cache.expires_at
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        is_stale = now > expires_at if expires_at else True
+
         refresh_in_progress = cache.refresh_started_at is not None
-        
+        # Recover from stuck "in progress" flags
+        if refresh_in_progress:
+            started = cache.refresh_started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            if (now - started).total_seconds() > STUCK_REFRESH_SECONDS:
+                logger.warning(
+                    "Heatmap refresh appears stuck (started %.0fs ago) — clearing flag",
+                    (now - started).total_seconds(),
+                )
+                cache.refresh_started_at = None
+                session.commit()
+                refresh_in_progress = False
+
         if is_stale and not refresh_in_progress:
-            # Trigger background refresh
             background_tasks.add_task(refresh_market_heatmap)
-            # Mark it as refreshing immediately so we don't trigger multiple times
             cache.refresh_started_at = now
             session.commit()
             refresh_in_progress = True
-            
+
         payload = cache.payload_json
+        payload_count = _payload_count(payload)
+        cache_state = "fresh"
+        if is_stale:
+            cache_state = "stale"
+        if refresh_in_progress:
+            cache_state = "refreshing"
+
         if isinstance(payload, dict):
             payload["_meta"] = {
                 "is_stale": is_stale,
                 "refresh_in_progress": refresh_in_progress,
                 "last_updated_at": cache.cached_at.isoformat() if cache.cached_at else None,
                 "next_refresh_at": cache.expires_at.isoformat() if cache.expires_at else None,
-                "source_delay_minutes": 15
+                "source_delay_minutes": 15,
+                "payload_count": payload_count,
+                "refresh_error": cache.refresh_error,
+                "cache_state": cache_state,
             }
-            
+
         return payload
 
 
@@ -938,14 +990,22 @@ async def get_tft_summary(
         variable_importance = []
         try:
             import pathlib
-            # Use the artifact dir from config if present, or guess
+            from .features import describe_feature
+
             artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
             mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
             if mrmr_path.exists():
                 mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
                 for feat, imp in mrmr_data.get("scores", {}).items():
-                    variable_importance.append({"feature": feat, "importance": float(imp)})
-                # Sort and take top 20
+                    meta_desc = describe_feature(feat)
+                    variable_importance.append({
+                        "feature": feat,
+                        "importance": float(imp),
+                        "label": meta_desc["label"],
+                        "description": meta_desc["description"],
+                        "category": meta_desc["category"],
+                        "time_horizon": meta_desc.get("time_horizon", ""),
+                    })
                 variable_importance.sort(key=lambda x: x["importance"], reverse=True)
                 variable_importance = variable_importance[:20]
         except Exception as e:
@@ -1009,4 +1069,173 @@ async def get_latest_backtest():
         logger.error(f"Error reading backtest report: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse backtest report")
 
+
+# =============================================================================
+# Sentiment Summary — Stable, DB-backed, NO LLM on the hot path.
+# =============================================================================
+#
+# Architecture contract (frontend should depend on this shape forever):
+#   - `index`:          blended daily sentiment in [-1, +1]
+#   - `label`:          Bullish / Neutral / Bearish (derived from `index`)
+#   - `source`:         which aggregate layer produced the value
+#                       ("daily_v2" | "rolling_v2" | "legacy_v1" | "none")
+#   - `components`:     breakdown of LLM vs FinBERT vs rule_sign contributions
+#   - `trend_7d`:       list of {date, index, news_count} for sparkline
+#   - `recent_articles`: a small sample of latest processed headlines
+#   - `data_freshness`: {oldest, newest, age_hours, article_count_24h}
+#
+# This endpoint NEVER calls an LLM. Commentary generation (which does use
+# OpenRouter) is pipeline-driven and cached in `AICommentary`.
+# =============================================================================
+
+@app.get(
+    "/api/sentiment/summary",
+    summary="Stable sentiment summary (DB-backed, no LLM on hot path)",
+    description=(
+        "Returns a hybrid sentiment summary that blends FinBERT, rule-based "
+        "commodity heuristics and cached LLM impact scores. Falls back "
+        "gracefully when individual sources are missing."
+    ),
+)
+async def get_sentiment_summary(
+    days: int = Query(default=7, ge=1, le=30, description="Trend window in days"),
+    recent_limit: int = Query(default=6, ge=1, le=20, description="Recent headlines to include"),
+):
+    from sqlalchemy import func, desc
+
+    def _label(idx: float) -> str:
+        if idx > 0.10:
+            return "Bullish"
+        if idx < -0.10:
+            return "Bearish"
+        return "Neutral"
+
+    with SessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=days)
+
+        # ---- 1) Preferred source: DailySentimentV2 (commodity-aware) ----
+        v2_rows = (
+            session.query(DailySentimentV2)
+            .filter(DailySentimentV2.date >= window_start)
+            .order_by(DailySentimentV2.date.asc())
+            .all()
+        )
+
+        # ---- 2) Component breakdown from NewsSentimentV2 (same window) ----
+        # Published date lives on NewsRaw, so we join processed → raw.
+        component_rows = (
+            session.query(
+                func.avg(NewsSentimentV2.impact_score_llm).label("avg_llm"),
+                func.avg(NewsSentimentV2.finbert_pos - NewsSentimentV2.finbert_neg).label("avg_finbert"),
+                func.avg(NewsSentimentV2.rule_sign).label("avg_rule"),
+                func.avg(NewsSentimentV2.confidence_calibrated).label("avg_conf"),
+                func.avg(NewsSentimentV2.relevance_score).label("avg_rel"),
+                func.count(NewsSentimentV2.id).label("n"),
+            )
+            .join(NewsProcessed, NewsProcessed.id == NewsSentimentV2.news_processed_id)
+            .join(NewsRaw, NewsRaw.id == NewsProcessed.raw_id)
+            .filter(NewsRaw.published_at >= window_start)
+            .one()
+        )
+
+        # ---- 3) Pick the freshest possible index ----
+        index_val: float = 0.0
+        source = "none"
+        avg_confidence: Optional[float] = None
+
+        if v2_rows:
+            latest_v2 = v2_rows[-1]
+            index_val = float(latest_v2.sentiment_index or 0.0)
+            avg_confidence = float(latest_v2.avg_confidence or 0.0) if latest_v2.avg_confidence is not None else None
+            source = "daily_v2"
+        elif component_rows and component_rows.n and component_rows.n > 0:
+            # No daily aggregate yet — fall back to rolling per-article avg
+            llm = float(component_rows.avg_llm or 0.0)
+            fb = float(component_rows.avg_finbert or 0.0)
+            rule = float(component_rows.avg_rule or 0.0)
+            index_val = 0.5 * llm + 0.3 * fb + 0.2 * rule
+            avg_confidence = float(component_rows.avg_conf or 0.0)
+            source = "rolling_v2"
+        else:
+            # Last-ditch fallback: legacy DailySentiment
+            legacy = (
+                session.query(DailySentiment)
+                .order_by(DailySentiment.date.desc())
+                .first()
+            )
+            if legacy is not None:
+                index_val = float(legacy.sentiment_index or 0.0)
+                source = "legacy_v1"
+
+        # ---- 4) Build trend series for sparkline ----
+        trend_7d = [
+            {
+                "date": r.date.isoformat() if r.date else None,
+                "index": float(r.sentiment_index or 0.0),
+                "news_count": int(r.news_count or 0),
+            }
+            for r in v2_rows
+        ]
+
+        # ---- 5) Recent articles (hybrid: raw news + processed + V2 score) ----
+        recent_q = (
+            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
+            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+            .outerjoin(
+                NewsSentimentV2,
+                NewsSentimentV2.news_processed_id == NewsProcessed.id,
+            )
+            .order_by(desc(NewsRaw.published_at))
+            .limit(recent_limit)
+            .all()
+        )
+        recent_articles = []
+        for raw, proc, score in recent_q:
+            recent_articles.append({
+                "title": getattr(raw, "title", None) or getattr(proc, "canonical_title", None) or "",
+                "source": getattr(raw, "source", None),
+                "url": getattr(raw, "url", None),
+                "published_at": raw.published_at.isoformat() if getattr(raw, "published_at", None) else None,
+                "sentiment": {
+                    "label": score.label if score else None,
+                    "final_score": float(score.final_score) if score else None,
+                    "relevance": float(score.relevance_score) if score else None,
+                    "confidence": float(score.confidence_calibrated) if score else None,
+                    "event_type": score.event_type if score else None,
+                } if score else None,
+            })
+
+        # ---- 6) Data freshness (lives on NewsRaw, not Processed) ----
+        freshness_q = session.query(
+            func.min(NewsRaw.published_at).label("oldest"),
+            func.max(NewsRaw.published_at).label("newest"),
+            func.count(NewsRaw.id).label("n_total"),
+        ).filter(NewsRaw.published_at >= (now - timedelta(hours=24))).one()
+
+        newest = freshness_q.newest
+        age_hours = ((now - newest).total_seconds() / 3600.0) if newest else None
+
+        return {
+            "index": round(float(index_val), 4),
+            "label": _label(index_val),
+            "source": source,
+            "components": {
+                "llm_impact_avg": float(component_rows.avg_llm) if component_rows.avg_llm is not None else None,
+                "finbert_pn_avg": float(component_rows.avg_finbert) if component_rows.avg_finbert is not None else None,
+                "rule_sign_avg": float(component_rows.avg_rule) if component_rows.avg_rule is not None else None,
+                "avg_confidence": avg_confidence,
+                "avg_relevance": float(component_rows.avg_rel) if component_rows.avg_rel is not None else None,
+                "sample_size": int(component_rows.n or 0),
+            },
+            "trend": trend_7d,
+            "recent_articles": recent_articles,
+            "data_freshness": {
+                "newest": newest.isoformat() if newest else None,
+                "oldest": freshness_q.oldest.isoformat() if freshness_q.oldest else None,
+                "age_hours": round(age_hours, 2) if age_hours is not None else None,
+                "article_count_24h": int(freshness_q.n_total or 0),
+            },
+            "generated_at": now.isoformat(),
+        }
 

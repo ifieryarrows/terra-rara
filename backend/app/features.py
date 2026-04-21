@@ -378,7 +378,7 @@ def build_feature_matrix(
 
 
 def get_feature_descriptions() -> dict[str, str]:
-    """Get human-readable descriptions for feature names."""
+    """Get human-readable descriptions for feature names (legacy dict)."""
     return {
         "sentiment__index": "Market Sentiment Index",
         "sentiment__news_count": "Daily News Volume",
@@ -396,5 +396,172 @@ def get_feature_descriptions() -> dict[str, str]:
         "RSI_14": "14-day RSI",
         "vol_10": "10-day Volatility",
         "price_sma_ratio": "Price/SMA Ratio",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Symbol and feature-pattern dictionaries used for user-facing labels.
+# Extend these whenever new proxies enter the feature universe.
+# ---------------------------------------------------------------------------
+_SYMBOL_LABEL_MAP: dict[str, str] = {
+    "HG=F":       "Copper Futures",
+    "CL=F":       "WTI Crude Oil",
+    "BZ=F":       "Brent Crude",
+    "GC=F":       "Gold Futures",
+    "SI=F":       "Silver Futures",
+    "PL=F":       "Platinum Futures",
+    "PA=F":       "Palladium Futures",
+    "NG=F":       "Natural Gas",
+    "DX-Y.NYB":   "US Dollar Index",
+    "^TNX":       "US 10Y Treasury Yield",
+    "^VIX":       "VIX Volatility",
+    "^GSPC":      "S&P 500 Index",
+    "^DJI":       "Dow Jones Index",
+    "^IXIC":      "Nasdaq Composite",
+    "COPX":       "Global Copper Miners ETF",
+    "PICK":       "Metals & Mining ETF",
+    "XME":        "Metals & Mining ETF",
+    "SCCO":       "Southern Copper",
+    "FCX":        "Freeport-McMoRan",
+    "BHP":        "BHP Group",
+    "RIO":        "Rio Tinto",
+    "VALE":       "Vale",
+    "GDX":        "Gold Miners ETF",
+    "USO":        "US Oil Fund",
+    "UUP":        "US Dollar Bull ETF",
+    "TIP":        "TIPS Bond ETF",
+    "EEM":        "Emerging Markets ETF",
+    "FXI":        "China Large-Cap ETF",
+    "DBA":        "Agricultural Commodity ETF",
+    "DBB":        "Base Metals ETF",
+    "DBC":        "Broad Commodity ETF",
+}
+
+
+def _humanize_symbol(sym: str) -> str:
+    """Convert ticker to a user-facing label."""
+    if not sym:
+        return ""
+    if sym in _SYMBOL_LABEL_MAP:
+        return _SYMBOL_LABEL_MAP[sym]
+    # Strip yfinance suffixes for a cleaner display
+    return sym.replace("=F", "").replace("^", "").replace("-Y.NYB", " Index")
+
+
+_INDICATOR_LABEL_MAP: dict[str, str] = {
+    "ret1":            "1-day return",
+    "ret2":            "2-day return",
+    "ret5":            "5-day return",
+    "ret10":           "10-day return",
+    "RSI_14":          "14-day RSI (momentum)",
+    "SMA_5":           "5-day moving average",
+    "SMA_10":          "10-day moving average",
+    "SMA_20":          "20-day moving average",
+    "EMA_5":           "5-day exponential MA",
+    "EMA_10":          "10-day exponential MA",
+    "EMA_20":          "20-day exponential MA",
+    "vol_5":           "5-day volatility",
+    "vol_10":          "10-day volatility",
+    "vol_20":          "20-day volatility",
+    "price_sma_ratio": "Price vs. 20-day MA",
+    "target":          "Model target (next-day return)",
+}
+
+
+def _label_indicator(token: str) -> str:
+    """Return a friendly label for a bare indicator token."""
+    if token in _INDICATOR_LABEL_MAP:
+        return _INDICATOR_LABEL_MAP[token]
+    # Lagged return — e.g. lag_ret1_2 → "return lag 2 days"
+    if token.startswith("lag_ret1_"):
+        n = token.replace("lag_ret1_", "")
+        return f"return lag {n} days"
+    if token.startswith("lag_ret2_"):
+        n = token.replace("lag_ret2_", "")
+        return f"2-day return lag {n}"
+    # Embedding features
+    if token.startswith("emb_") or token.startswith("news_emb_"):
+        return f"news embedding component {token.split('_')[-1]}"
+    # Sentiment features
+    if token.startswith("sentiment"):
+        if "news_count" in token:
+            return "daily news volume"
+        return "sentiment index"
+    # Fallback: prettify by replacing underscores and lower-casing
+    return token.replace("_", " ").lower()
+
+
+def describe_feature(feature: str) -> dict[str, str]:
+    """
+    Return a structured, user-facing description of a feature.
+
+    Output keys:
+        - label:       short, human-readable label (≈ 30 chars)
+        - description: longer description with subject and metric
+        - category:    high-level bucket (Price, Momentum, Volatility,
+                       Sentiment, Macro, Sector, Embedding, Other)
+        - time_horizon optional — lookback window in days when applicable
+    """
+    if not feature:
+        return {"label": "—", "description": "", "category": "Other"}
+
+    # Pattern: <SYMBOL>_<token> where token can itself contain underscores.
+    # We try the longest matching symbol prefix.
+    symbol = ""
+    token = feature
+    for known in sorted(_SYMBOL_LABEL_MAP.keys(), key=len, reverse=True):
+        prefix = f"{known}_"
+        if feature.startswith(prefix):
+            symbol = known
+            token = feature[len(prefix) :]
+            break
+
+    if not symbol:
+        # Fallback: any prefix before the first underscore *might* be a symbol
+        # but we cannot rely on that — treat as bare indicator.
+        indicator_label = _label_indicator(token)
+    else:
+        indicator_label = _label_indicator(token)
+
+    # Category classification
+    category = "Other"
+    t = token.lower()
+    if t.startswith("sentiment"):
+        category = "Sentiment"
+    elif t.startswith("emb_") or t.startswith("news_emb_"):
+        category = "Embedding"
+    elif t.startswith("rsi") or t.startswith("ret") or t.startswith("lag_ret"):
+        category = "Momentum"
+    elif t.startswith("vol"):
+        category = "Volatility"
+    elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t:
+        category = "Trend"
+    elif symbol and symbol != "HG=F":
+        category = "Macro" if symbol in {"DX-Y.NYB", "^TNX", "^VIX", "^GSPC", "^DJI", "^IXIC"} else "Sector"
+
+    # Time horizon extraction (e.g. RSI_14, vol_10)
+    time_horizon = ""
+    import re
+    m = re.search(r"_(\d+)$", token)
+    if m:
+        time_horizon = f"{m.group(1)}d"
+
+    if symbol:
+        subject = _humanize_symbol(symbol)
+        label = f"{subject} · {indicator_label}"
+        description = f"{subject} — {indicator_label}"
+    else:
+        label = indicator_label[:1].upper() + indicator_label[1:]
+        description = label
+
+    # Keep label concise
+    if len(label) > 48:
+        label = label[:45] + "…"
+
+    return {
+        "label": label,
+        "description": description,
+        "category": category,
+        "time_horizon": time_horizon,
     }
 

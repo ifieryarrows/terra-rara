@@ -42,7 +42,7 @@ from app.features import (
     load_sentiment_data,
     generate_symbol_features,
     align_to_target_calendar,
-    get_feature_descriptions,
+    get_feature_descriptions,  # legacy, still re-exported
 )
 from app.ai_engine import load_model, load_model_metadata
 
@@ -590,27 +590,21 @@ def generate_analysis_report(
         session, target_symbol, predicted_price
     )
     
-    # Build influencer descriptions
-    descriptions = get_feature_descriptions()
+    # Build influencer descriptions using the structured describe_feature helper
+    # so the frontend receives label / description / category for each driver.
+    from .features import describe_feature
     top_influencers = []
-    
+
     for item in importance[:10]:
         feat = item["feature"]
-        # Try to find description
-        desc = None
-        for key, value in descriptions.items():
-            if key in feat:
-                desc = value
-                break
-        
-        if desc is None:
-            # Build from feature name
-            desc = feat.replace("_", " ").replace("  ", " ").title()
-        
+        meta_desc = describe_feature(feat)
         top_influencers.append({
             "feature": feat,
             "importance": item["importance"],
-            "description": desc,
+            "label": meta_desc["label"],
+            "description": meta_desc["description"],
+            "category": meta_desc["category"],
+            "time_horizon": meta_desc.get("time_horizon", ""),
         })
     
     import math

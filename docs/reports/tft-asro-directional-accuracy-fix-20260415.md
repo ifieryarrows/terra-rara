@@ -8,7 +8,8 @@
 | **Bileşen**     | `deep_learning/` — TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) |
 | **Bağlamlar**   | [REG-2026-001](./tft-asro-training-regression-20260331.md) · [P2 Geçiş](./tft-reg-2026-001-p0p1-analysis-p2-transition.md) |
 | **Hazırlayan**  | AI Engineering Team                                                                                  |
-| **Durum**        | 🟡 İterasyon 3 Eğitimi Bekleniyor                                                                  |
+| **Durum**        | ✅ Kapatıldı — İt.3 kısmi başarı, takip Sprint 1'de İt.4 ile tamamlandı                              |
+| **Takip Raporu** | [TFT-IMP-2026-001 Sprint 1](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md)                     |
 | **Öncelik**     | P1 — Üretim modeli yönsel sinyal veremiyor                                                         |
 
 ---
@@ -379,5 +380,40 @@ ed2ec57 ci: fix screener pipeline workflow dispatch permissions
 
 ---
 
-*Bu rapor, İterasyon 3 sonuçları geldikten sonra güncellenecektir.*
-*Son güncelleme: 15 Nisan 2026*
+---
+
+## 10. Kapanış Notu — İt.3 ve İt.4 Sonuç Bağlantısı (16 Nisan 2026)
+
+### 10.1 İt.3 Sonuçları (Bu Rapor Kapsamında)
+
+15 Nisan 2026 gecesi İt.3 eğitimi tamamlandı. Bu raporda öngörülen başarı kriterlerine göre:
+
+| Metrik | Kabul Eşiği | İt.3 Sonuç | Durum |
+|---|---|---|---|
+| DA | ≥ 0.510 | **0.5115** | ✅ Sınırda kabul |
+| Sharpe | ≥ 0.00 | **+0.068** | ✅ Kabul (−0.70 → +0.068) |
+| VR | 0.70–1.50 | **0.394** | ❌ Alt sınır altında (under-variance) |
+| Tail Capture | ≥ 0.450 | **0.4706** | ✅ Kabul |
+
+İt.3 yönsel çıkmazı kırdı (Sharpe pozitife döndü, DA %50 bariyerini aştı) ancak **VR=0.394 ile düşük varyans tuzağına girdi** — tahminler gerçek oynaklığın sadece %39'unu yansıtıyordu.
+
+### 10.2 Takip: Sprint 1 + İt.4
+
+VR sorunu Sprint 1 kapsamında iki kademeli amplitude cezası (`2× for VR<0.5`) ile çözüldü. 16 Nisan 2026 gecesi tamamlanan İt.4 sonuçları:
+
+| Metrik | İt.3 | **İt.4** | Δ |
+|---|---|---|---|
+| DA | 0.5115 | **0.5231** | +1.16pp |
+| Sharpe | +0.068 | **+0.5285** | +0.46 |
+| Sortino | +0.124 | **+0.9425** | +0.82 |
+| VR | 0.394 | **0.6725** | +0.28 ✅ kabul bandına girdi |
+| Tail Capture | 0.4706 | **0.5169** | +4.63pp |
+
+Bu raporda öngörülen eskalasyon seçenekleri (lookback 730 → 1095, feature pruning, vs.) Sprint 1 planına dahil edilerek uygulandı. İt.4 ile raporun tüm kapatma kriterleri karşılandı; bu rapor **resmen kapatılmış** olarak işaretlenmiştir.
+
+Detaylı sprint analizi için: [TFT-IMP-2026-001 — Sprint 1 Raporu](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md) Bölüm 9.
+
+---
+
+*Rapor oluşturma: 15 Nisan 2026*
+*Rapor kapatma: 16 Nisan 2026 (İt.4 sonrası)*

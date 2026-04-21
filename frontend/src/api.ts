@@ -169,3 +169,61 @@ export async function fetchMarketHeatmap(): Promise<any> {
   return response.data;
 }
 
+/**
+ * Sentiment summary types — match the `/api/sentiment/summary` contract.
+ */
+export interface SentimentSummaryComponents {
+  llm_impact_avg: number | null;
+  finbert_pn_avg: number | null;
+  rule_sign_avg: number | null;
+  avg_confidence: number | null;
+  avg_relevance: number | null;
+  sample_size: number;
+}
+
+export interface SentimentTrendPoint {
+  date: string | null;
+  index: number;
+  news_count: number;
+}
+
+export interface SentimentRecentArticle {
+  title: string;
+  source: string | null;
+  url: string | null;
+  published_at: string | null;
+  sentiment: {
+    label: string | null;
+    final_score: number | null;
+    relevance: number | null;
+    confidence: number | null;
+    event_type: string | null;
+  } | null;
+}
+
+export interface SentimentSummary {
+  index: number;
+  label: 'Bullish' | 'Bearish' | 'Neutral';
+  source: 'daily_v2' | 'rolling_v2' | 'legacy_v1' | 'none';
+  components: SentimentSummaryComponents;
+  trend: SentimentTrendPoint[];
+  recent_articles: SentimentRecentArticle[];
+  data_freshness: {
+    newest: string | null;
+    oldest: string | null;
+    age_hours: number | null;
+    article_count_24h: number;
+  };
+  generated_at: string;
+}
+
+/**
+ * Fetch stable sentiment summary (no LLM on hot path).
+ */
+export async function fetchSentimentSummary(days = 7, recentLimit = 6): Promise<SentimentSummary> {
+  const response = await api.get<SentimentSummary>('/sentiment/summary', {
+    params: { days, recent_limit: recentLimit },
+  });
+  return response.data;
+}
+

@@ -8,7 +8,8 @@ import {
   fetchAnalysis,
   fetchHistory,
   fetchTFTAnalysis,
-  fetchCommentary
+  fetchCommentary,
+  fetchSentimentSummary,
 } from '../api';
 
 export function useSystemStatus() {
@@ -48,9 +49,38 @@ export function useMarketHeatmap() {
   return useQuery({
     queryKey: ['market-heatmap'],
     queryFn: fetchMarketHeatmap,
-    // Polling handled by React Query instead of setInterval
-    refetchInterval: 900000, // 15 minutes exact
+    // Adaptive polling: short interval while the cache is empty or a refresh
+    // is in flight; long interval once we have a healthy payload. This prevents
+    // the UI from getting stuck on "Loading…" when the first snapshot is
+    // still being built by the background task.
+    refetchInterval: (query) => {
+      const data: any = query.state.data;
+      const meta = data?._meta;
+      const count = meta?.payload_count ?? (data?.children?.length ? -1 : 0);
+      const refreshing = !!meta?.refresh_in_progress;
+      const hasContent = count > 0;
+
+      if (!hasContent) return 3_000;
+      if (refreshing) return 5_000;
+      return 900_000;
+    },
     refetchOnWindowFocus: false,
+    refetchOnMount: 'always',
+    staleTime: 0,
+  });
+}
+
+/**
+ * Stable hybrid sentiment summary (DB-backed, no LLM on the hot path).
+ * Refreshes every 2 minutes to match pipeline cadence without spamming.
+ */
+export function useSentimentSummary(days: number = 7, recentLimit: number = 6) {
+  return useQuery({
+    queryKey: ['sentiment-summary', days, recentLimit],
+    queryFn: () => fetchSentimentSummary(days, recentLimit),
+    refetchInterval: 120_000,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
   });
 }
 

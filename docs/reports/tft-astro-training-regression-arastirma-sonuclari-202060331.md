@@ -1,5 +1,11 @@
 # **CopperMind Projesi Kapsamında TFT-ASRO Modeli Regresyon Analizi: Kapsamlı Performans İyileştirme, Hiperparametre Optimizasyonu ve Gelişmiş Doğrulama Stratejileri**
 
+> **Durum (16 Nisan 2026):** ✅ Bu araştırma raporunun önerileri P0/P1, P2 ve Sprint 1 aşamalarında uygulandı. Nihai İt.4 sonuçları: **DA 52.31% · Sharpe +0.5285 · Sortino +0.9425 · VR 0.6725 · Tail Capture 51.69%** (quality gate PASS). Rapor araştırma kaynağı olarak arşivde tutulmaktadır.
+> **Takip Raporları:** [P0/P1→P2](./tft-reg-2026-001-p0p1-analysis-p2-transition.md) · [REG-2026-002](./tft-asro-directional-accuracy-fix-20260415.md) · [Sprint 1](./tft-asro-sprint1-kapsamli-iyilestirme-20260416.md)
+
+---
+
+
 ## **Regresyonun Analitik Çerçevesi ve P1 Seviyesi Operasyonel Krizin Bağlamı**
 
 Finansal piyasaların modellenmesi, stokastik volatilitenin, rejim değişikliklerinin ve düşük sinyal-gürültü oranlarının bir arada bulunduğu son derece karmaşık bir yapıya sahiptir. Algoritmik ticaret ve kantitatif yatırım stratejilerinin merkezinde yer alan zaman serisi tahminleme modelleri, bu doğrusal olmayan dinamikleri yakalamak üzere tasarlanmıştır. Bu bağlamda, CopperMind projesi çatısı altında operasyonel olarak kullanılan ve çok ufuklu (multi-horizon) zaman serisi tahminlemesinde state-of-the-art (en gelişmiş) mimarilerden biri olan Adaptif Sharpe Oranı Optimizasyonlu Zamansal Füzyon Transformatörü (TFT-ASRO \- Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) modeli, finansal karar alma süreçlerinin temelini oluşturmaktadır. Ancak, 31 Mart 2026 tarihi itibarıyla oluşturulan TFT-REG-2026-001 numaralı regresyon raporu, modelin üretim (production) ortamındaki performansında kritik ve ani bir düşüş yaşandığını belgelemiştir.1

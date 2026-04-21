@@ -295,11 +295,20 @@ export const OverviewPage = () => {
 
   const isBullish = analysis && analysis.predicted_return >= 0;
 
-  const tftReturn = tftAnalysis?.prediction?.predicted_return_median ?? null;
+  // CRITICAL: headline percentage MUST come from the same place as the T+1
+  // price shown beside it. Previously we read `predicted_return_median`
+  // while the price came from `daily_forecasts[0].price_median`, which
+  // could diverge once the backend applied a display clamp. Sourcing both
+  // from `daily_forecasts[0]` makes them guaranteed-consistent.
+  const t1Forecast = tftAnalysis?.prediction?.daily_forecasts?.[0];
+  const tftReturn = t1Forecast?.daily_return ?? tftAnalysis?.prediction?.predicted_return_median ?? null;
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
   const tftDirection = tftAnalysis?.direction;
   const tftWeeklyTrend = tftAnalysis?.weekly_trend;
+  const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
+  const tftReferenceDate = tftAnalysis?.prediction?.reference_price_date;
+  const tftAnomaly = tftAnalysis?.prediction?.anomaly_detected;
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -418,15 +427,33 @@ export const OverviewPage = () => {
                       {tftDirection}
                     </div>
 
-                    {/* Next session headline */}
+                    {/* Next session headline — percent and price derive from
+                        the same forecast entry (single source of truth). */}
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">Next Session (T+1)</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">
+                        Next Session (T+1)
+                        {tftReferenceDate && (
+                          <span className="ml-1 text-gray-600">
+                            vs. {new Date(tftReferenceDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} close
+                          </span>
+                        )}
+                      </p>
                       <div className="flex items-baseline gap-2">
                         <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                           {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
                         </span>
                         <span className="text-sm text-gray-400 font-mono">${t1?.price_median?.toFixed(2) ?? '--'}</span>
+                        {tftReferencePrice && (
+                          <span className="text-[10px] text-gray-600 font-mono">
+                            (from ${tftReferencePrice.toFixed(2)})
+                          </span>
+                        )}
                       </div>
+                      {tftAnomaly && (
+                        <p className="mt-1 text-[10px] text-amber-400">
+                          ⚠ Anomalous raw model output — value bounded to ±12%. Check training logs.
+                        </p>
+                      )}
                     </div>
 
                     {/* T+1 expected range */}
@@ -510,7 +537,7 @@ export const OverviewPage = () => {
                     <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
                       tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                       axisLine={false}
                       tickLine={false}
@@ -519,7 +546,7 @@ export const OverviewPage = () => {
                     <YAxis
                       orientation="right"
                       domain={yDomain}
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'JetBrains Mono' }}
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(val) => `$${val.toFixed(2)}`}
@@ -559,7 +586,7 @@ export const OverviewPage = () => {
                         x={lastHistDate}
                         stroke="rgba(255,255,255,0.15)"
                         strokeDasharray="3 3"
-                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'JetBrains Mono' }}
+                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
                       />
                     )}
                   </ComposedChart>
@@ -570,27 +597,53 @@ export const OverviewPage = () => {
             )}
           </GlassCard>
 
-          {/* Influencers Card */}
+          {/* Influencers Card — shows human-readable labels, category chips and
+              technical ids on hover. Backend contract: Influencer has
+              `label`, `description`, `category`, `time_horizon`. */}
           <GlassCard title="Market Drivers" icon={BarChart3} colSpan={4}>
             <div className="space-y-4">
-              {analysis?.top_influencers.slice(0, 5).map((inf: any, i: number) => (
-                <div key={inf.feature} className="group">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs text-gray-400 group-hover:text-copper-400 transition-colors uppercase tracking-wide">
-                      {inf.feature.replace(/_/g, ' ')}
-                    </span>
-                    <span className="text-xs font-mono text-gray-500">{(inf.importance * 100).toFixed(1)}%</span>
+              {analysis?.top_influencers.slice(0, 5).map((inf: any, i: number) => {
+                const maxImp = analysis.top_influencers[0]?.importance || 1;
+                const label = inf.label || inf.description || inf.feature;
+                const categoryTone: Record<string, string> = {
+                  Momentum:   'bg-copper-500/15 text-copper-300',
+                  Trend:      'bg-blue-500/15 text-blue-300',
+                  Volatility: 'bg-amber-500/15 text-amber-300',
+                  Sentiment:  'bg-violet-500/15 text-violet-300',
+                  Macro:      'bg-emerald-500/15 text-emerald-300',
+                  Sector:     'bg-rose-500/15 text-rose-300',
+                  Embedding:  'bg-slate-500/15 text-slate-300',
+                  Other:      'bg-white/5 text-gray-400',
+                };
+                return (
+                  <div key={inf.feature} className="group" title={inf.feature}>
+                    <div className="flex justify-between items-center mb-1 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {inf.category && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${categoryTone[inf.category] || categoryTone.Other} font-medium uppercase tracking-wider shrink-0`}>
+                            {inf.category}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors truncate">
+                          {label}
+                        </span>
+                        {inf.time_horizon && (
+                          <span className="text-[9px] font-mono text-gray-500 shrink-0">{inf.time_horizon}</span>
+                        )}
+                      </div>
+                      <span className="text-xs font-mono text-gray-500 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(inf.importance / maxImp) * 100}%` }}
+                        transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                    <motion.div
-                      className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${(inf.importance / analysis.top_influencers[0].importance) * 100}%` }}
-                      transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </GlassCard>
 

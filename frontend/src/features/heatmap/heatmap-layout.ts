@@ -19,16 +19,21 @@ export interface HeatmapData {
   sourceTag?: string;
 }
 
+export interface HeatmapMeta {
+  is_stale: boolean;
+  refresh_in_progress: boolean;
+  last_updated_at: string | null;
+  next_refresh_at: string | null;
+  source_delay_minutes: number;
+  payload_count?: number;
+  refresh_error?: string | null;
+  cache_state?: 'fresh' | 'stale' | 'refreshing' | 'empty';
+}
+
 export interface HeatmapNode {
   name: string;
   children?: (HeatmapNode | HeatmapData)[];
-  _meta?: {
-    is_stale: boolean;
-    refresh_in_progress: boolean;
-    last_updated_at: string | null;
-    next_refresh_at: string | null;
-    source_delay_minutes: number;
-  };
+  _meta?: HeatmapMeta;
 }
 
 export interface TreemapLayoutNode extends HierarchyRectangularNode<HeatmapNode | HeatmapData> {}
@@ -36,24 +41,48 @@ export interface TreemapLayoutNode extends HierarchyRectangularNode<HeatmapNode 
 export function buildTreemapLayout(
   data: HeatmapNode,
   width: number,
-  height: number
+  height: number,
+  paddingTop = 24,
 ): HierarchyRectangularNode<HeatmapNode | HeatmapData> {
   const root = hierarchy<HeatmapNode | HeatmapData>(data)
     .sum((d: any) => {
-      // Only leaf nodes carry a weight value for squarification
       return d.children ? 0 : (d.weight || 1);
     })
     .sort((a, b) => (b.value || 0) - (a.value || 0));
 
   const layout = treemap<HeatmapNode | HeatmapData>()
-    .size([width, height])
+    .size([Math.max(1, width), Math.max(1, height)])
     .paddingInner(1)
     .paddingOuter(1)
-    .paddingTop(24)
+    .paddingTop(paddingTop)
     .round(true)
     .tile(treemapSquarify.ratio(1));
 
   layout(root);
 
   return root as HierarchyRectangularNode<HeatmapNode | HeatmapData>;
+}
+
+/**
+ * Extract the list of leaf HeatmapData entries belonging to a given group or
+ * subgroup. Used by the category inspector side panel.
+ */
+export function leavesForCategory(
+  root: HeatmapNode,
+  categoryName: string,
+): HeatmapData[] {
+  const out: HeatmapData[] = [];
+
+  const walk = (node: any, inside: boolean) => {
+    if (!node) return;
+    const isMatch = inside || node.name === categoryName;
+    if (node.children && node.children.length) {
+      node.children.forEach((c: any) => walk(c, isMatch));
+    } else if (isMatch) {
+      out.push(node as HeatmapData);
+    }
+  };
+
+  walk(root, false);
+  return out;
 }

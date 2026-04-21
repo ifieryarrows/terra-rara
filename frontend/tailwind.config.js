@@ -25,8 +25,38 @@ export default {
                 }
             },
             fontFamily: {
-                sans: ['Plus Jakarta Sans', 'sans-serif'],
-                mono: ['JetBrains Mono', 'monospace'],
+                sans: [
+                    'IBM Plex Sans',
+                    'IBM Plex Sans Fallback',
+                    'ui-sans-serif',
+                    'system-ui',
+                    '-apple-system',
+                    'BlinkMacSystemFont',
+                    'Segoe UI',
+                    'Roboto',
+                    'Helvetica Neue',
+                    'Arial',
+                    'Noto Sans',
+                    'sans-serif',
+                    'Apple Color Emoji',
+                    'Segoe UI Emoji',
+                    'Segoe UI Symbol',
+                    'Noto Color Emoji',
+                ],
+                // Monospace values still use a monospaced stack for alignment
+                // but retain IBM Plex Mono as the primary to match the sans
+                // family's visual system.
+                mono: [
+                    'IBM Plex Mono',
+                    'ui-monospace',
+                    'SFMono-Regular',
+                    'Menlo',
+                    'Monaco',
+                    'Consolas',
+                    'Liberation Mono',
+                    'Courier New',
+                    'monospace',
+                ],
             },
             backgroundImage: {
                 'copper-gradient': 'linear-gradient(to right, rgba(249, 115, 22, 0.1), rgba(244, 63, 94, 0.1))',
