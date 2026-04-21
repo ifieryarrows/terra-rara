@@ -1,6 +1,7 @@
 name: Champion/Challenger Backtest
 
 on:
+    # Manual run from the Actions UI
     workflow_dispatch:
         inputs:
             champion_path:
@@ -28,9 +29,40 @@ on:
                     - "false"
                     - "true"
 
+    # Reusable: invoked from tft-training.yml right after a successful
+    # training run so ValidationPage gets a fresh BacktestReport without
+    # manual intervention.
+    workflow_call:
+        inputs:
+            champion_path:
+                type: string
+                required: false
+                default: "backend/config/symbol_sets/active.json"
+            challenger_path:
+                type: string
+                required: false
+                default: "backend/config/symbol_sets/challenger.json"
+            oos_start:
+                type: string
+                required: false
+                default: "2025-04-01"
+            oos_end:
+                type: string
+                required: false
+                default: "2026-03-18"
+            include_tft:
+                type: string
+                required: false
+                default: "true"
+        secrets:
+            DATABASE_URL:
+                required: false
+
 jobs:
     backtest:
         runs-on: ubuntu-latest
+        # 90 min cap — rolling retrain loop is the bottleneck.
+        timeout-minutes: 90
 
         steps:
             - name: Checkout repository
@@ -48,16 +80,30 @@ jobs:
                   pip install yfinance xgboost
 
             - name: Run backtest
+              env:
+                  # Inject DATABASE_URL so BacktestReport rows are persisted
+                  # to the production Postgres instance; ValidationPage reads
+                  # from this table. When the secret isn't configured the
+                  # runner gracefully falls back to filesystem-only output.
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+                  PYTHONPATH: backend
               run: |
+                  CHAMPION_PATH="${{ inputs.champion_path || github.event.inputs.champion_path }}"
+                  CHALLENGER_PATH="${{ inputs.challenger_path || github.event.inputs.challenger_path }}"
+                  OOS_START="${{ inputs.oos_start || github.event.inputs.oos_start }}"
+                  OOS_END="${{ inputs.oos_end || github.event.inputs.oos_end }}"
+                  INCLUDE_TFT="${{ inputs.include_tft || github.event.inputs.include_tft }}"
+
                   TFT_FLAG=""
-                  if [ "${{ github.event.inputs.include_tft }}" == "true" ]; then
+                  if [ "$INCLUDE_TFT" = "true" ]; then
                     TFT_FLAG="--include-tft"
                   fi
+
                   python -m backend.backtest.runner \
-                    --champion "${{ github.event.inputs.champion_path }}" \
-                    --challenger "${{ github.event.inputs.challenger_path }}" \
-                    --oos-start "${{ github.event.inputs.oos_start }}" \
-                    --oos-end "${{ github.event.inputs.oos_end }}" \
+                    --champion "$CHAMPION_PATH" \
+                    --challenger "$CHALLENGER_PATH" \
+                    --oos-start "$OOS_START" \
+                    --oos-end "$OOS_END" \
                     --output-dir backend/artifacts/backtests \
                     $TFT_FLAG
 

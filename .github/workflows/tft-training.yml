@@ -184,3 +184,17 @@ jobs:
                     echo "✅ Model checkpoint has been automatically uploaded to HF Hub."
                     echo "The HF Space will download it on next inference request."
                   fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # JOB 3 — Walk-forward backtest (chained)
+    # Runs only when training succeeded so ValidationPage gets a fresh
+    # BacktestReport without manual intervention. Failure here does NOT
+    # break the overall pipeline — model is already trained and uploaded.
+    # ─────────────────────────────────────────────────────────────────────────
+    backtest:
+        needs: [train]
+        if: ${{ needs.train.result == 'success' }}
+        uses: ./.github/workflows/backtest.yml
+        secrets: inherit
+        with:
+            include_tft: "true"
