@@ -138,6 +138,21 @@ class HealthResponse(BaseModel):
     redis_ok: Optional[bool] = Field(None, description="Redis queue connectivity")
     last_snapshot_age_seconds: Optional[int] = Field(None, description="Age of last analysis snapshot in seconds")
 
+    # Added 2026-04: ingestion + pipeline freshness so the System page can
+    # surface "why is the forecast stale?" at a glance.
+    last_pipeline_run_at: Optional[str] = Field(
+        None, description="ISO timestamp of the most recent scheduler pipeline run"
+    )
+    last_pipeline_status: Optional[str] = Field(
+        None, description="Outcome of the most recent pipeline run (ok, failed, running)"
+    )
+    price_bar_latest_date: Optional[str] = Field(
+        None, description="Date (YYYY-MM-DD) of the most recent PriceBar for the target"
+    )
+    price_bar_staleness_days: Optional[int] = Field(
+        None, description="Calendar days between today and the latest PriceBar"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {

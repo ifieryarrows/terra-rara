@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { HeatmapData } from './heatmap-layout';
 
 interface HeatmapTooltipProps {
@@ -7,7 +7,46 @@ interface HeatmapTooltipProps {
   y: number;
 }
 
+/**
+ * Viewport-aware tooltip. Measured with `useLayoutEffect` and flipped
+ * to the opposite side of the cursor when it would otherwise overflow
+ * the viewport, so tooltips never clip at the edges of the dashboard.
+ */
 const HeatmapTooltip: React.FC<HeatmapTooltipProps> = ({ data, x, y }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number }>({
+    left: x + 15,
+    top: y + 15,
+  });
+
+  useLayoutEffect(() => {
+    if (!data) return;
+    const el = ref.current;
+    if (!el) return;
+
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const vpW = window.innerWidth;
+    const vpH = window.innerHeight;
+
+    const MARGIN = 8;
+    const OFFSET = 15;
+
+    let left = x + OFFSET;
+    let top = y + OFFSET;
+
+    if (left + w + MARGIN > vpW) {
+      left = Math.max(MARGIN, x - OFFSET - w);
+    }
+    if (top + h + MARGIN > vpH) {
+      top = Math.max(MARGIN, y - OFFSET - h);
+    }
+    left = Math.max(MARGIN, Math.min(left, vpW - w - MARGIN));
+    top = Math.max(MARGIN, Math.min(top, vpH - h - MARGIN));
+
+    setPos({ left, top });
+  }, [data, x, y]);
+
   if (!data) return null;
 
   const formatWeight = () => {
@@ -20,10 +59,11 @@ const HeatmapTooltip: React.FC<HeatmapTooltipProps> = ({ data, x, y }) => {
 
   return (
     <div
+      ref={ref}
       style={{
         position: 'fixed',
-        left: x + 15,
-        top: y + 15,
+        left: pos.left,
+        top: pos.top,
         zIndex: 50,
         pointerEvents: 'none',
       }}

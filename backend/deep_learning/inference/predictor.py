@@ -118,6 +118,11 @@ class TFTPredictor:
         """
         Generate a TFT-ASRO prediction for the given symbol.
 
+        Lazily triggers price ingestion when the most recent PriceBar for
+        the target is older than the configured freshness threshold. This
+        prevents the frontend from showing a forecast anchored to a stale
+        close when the weekend scheduler hasn't run or failed to catch up.
+
         Returns a dict with:
             - predicted_return_median, q10, q90
             - predicted_price_median, q10, q90
@@ -125,11 +130,17 @@ class TFTPredictor:
             - volatility_estimate
             - quantiles (all 7)
             - model_info
+            - instrument:          {"symbol": "HG=F", "kind": "futures", "name": ...}
+            - reference_price_date
+            - baseline_staleness_days (int, 0 = fresh)
         """
         from deep_learning.data.feature_store import build_tft_dataframe
         from deep_learning.data.dataset import build_datasets, create_dataloaders
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
+
+        # 1. Pre-flight: check PriceBar freshness and lazy-ingest if stale
+        staleness_days, ingest_triggered = self._check_price_freshness(session, symbol)
 
         master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(session, self.cfg)
 
@@ -223,10 +234,131 @@ class TFTPredictor:
             "n_features_known": len(tv_known),
         }
 
+        # Surface freshness + instrument identity so the UI can label the
+        # baseline unambiguously ("Futures HG=F, close of 2026-04-16").
+        result["instrument"] = self._describe_instrument(symbol)
+        result["baseline_staleness_days"] = staleness_days
+        result["lazy_ingest_triggered"] = bool(ingest_triggered)
+
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["symbol"] = symbol
 
         return result
+
+    # ------------------------------------------------------------------
+    # Freshness helpers
+    # ------------------------------------------------------------------
+
+    # How stale (in calendar days) the latest PriceBar can be before we
+    # attempt a lazy backfill. Futures markets close Fri→Sun globally, so
+    # 3 days covers a standard weekend without spamming yfinance.
+    FRESHNESS_THRESHOLD_DAYS = 3
+
+    @staticmethod
+    def _describe_instrument(symbol: str) -> Dict[str, str]:
+        """Return a structured label for the traded instrument."""
+        mapping = {
+            "HG=F": {
+                "symbol": "HG=F",
+                "kind": "futures",
+                "name": "COMEX Copper Futures",
+                "note": (
+                    "Continuous front-month contract (CME Group). Prices "
+                    "differ from LME spot / XCU_USD due to basis and "
+                    "contract roll, typically by 1–3 USD/ton."
+                ),
+            },
+            "XCU=X": {
+                "symbol": "XCU=X",
+                "kind": "spot",
+                "name": "Copper spot (XCU/USD)",
+                "note": "LBMA-style reference spot price; differs from futures by basis.",
+            },
+        }
+        return mapping.get(
+            symbol,
+            {"symbol": symbol, "kind": "unknown", "name": symbol, "note": ""},
+        )
+
+    def _check_price_freshness(self, session, symbol: str) -> tuple[int, bool]:
+        """
+        Compute staleness in calendar days for the target symbol and, when
+        the latest bar is older than `FRESHNESS_THRESHOLD_DAYS`, trigger a
+        best-effort incremental price ingest.
+
+        Returns:
+            (staleness_days, ingest_triggered)
+        """
+        try:
+            from app.models import PriceBar
+
+            latest = (
+                session.query(PriceBar.date)
+                .filter(PriceBar.symbol == symbol)
+                .order_by(PriceBar.date.desc())
+                .first()
+            )
+        except Exception as exc:
+            logger.warning("Freshness check skipped: %s", exc)
+            return (0, False)
+
+        if latest is None or latest[0] is None:
+            logger.warning("No PriceBar rows for %s — triggering ingest", symbol)
+            return self._trigger_lazy_ingest(session, reason="no-bars")
+
+        last_date = latest[0]
+        if last_date.tzinfo is None:
+            last_date = last_date.replace(tzinfo=timezone.utc)
+        staleness = (datetime.now(timezone.utc) - last_date).days
+        staleness = max(int(staleness), 0)
+
+        if staleness >= self.FRESHNESS_THRESHOLD_DAYS:
+            logger.warning(
+                "PriceBar for %s is %sd stale (last=%s) — lazy ingest",
+                symbol, staleness, last_date,
+            )
+            fresh_staleness, triggered = self._trigger_lazy_ingest(
+                session, reason=f"stale-{staleness}d"
+            )
+            # After ingest, prefer the newly-computed staleness if it
+            # improved; otherwise fall back to the pre-ingest value.
+            if triggered and fresh_staleness < staleness:
+                return (fresh_staleness, True)
+            return (staleness, triggered)
+
+        return (staleness, False)
+
+    def _trigger_lazy_ingest(self, session, *, reason: str) -> tuple[int, bool]:
+        """Run a short incremental price fetch and return updated staleness."""
+        try:
+            from app.data_manager import ingest_prices
+            from app.models import PriceBar
+
+            logger.info("Lazy price ingest triggered (reason=%s)", reason)
+            ingest_prices(session)
+            session.commit()
+
+            latest = (
+                session.query(PriceBar.date)
+                .filter(PriceBar.symbol == self.cfg.feature_store.target_symbol)
+                .order_by(PriceBar.date.desc())
+                .first()
+            )
+            if latest is None or latest[0] is None:
+                return (0, True)
+            last_date = latest[0]
+            if last_date.tzinfo is None:
+                last_date = last_date.replace(tzinfo=timezone.utc)
+            updated = max(int((datetime.now(timezone.utc) - last_date).days), 0)
+            logger.info("Lazy ingest complete — staleness now %sd", updated)
+            return (updated, True)
+        except Exception as exc:
+            logger.error("Lazy ingest failed: %s", exc)
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            return (0, False)
 
     def get_model_metadata(self, session) -> Optional[Dict]:
         """Load persisted TFT model metadata from DB."""

@@ -618,3 +618,40 @@ class HeatmapCache(Base):
 
     def __repr__(self):
         return f"<HeatmapCache(cached_at={self.cached_at}, expires_at={self.expires_at})>"
+
+
+class BacktestReport(Base):
+    """
+    Persisted walk-forward / Theta backtest report.
+
+    Replaces the brittle filesystem-based artifact store (`artifacts/backtest/*.json`)
+    which does not survive HF container restarts. One row per backtest run;
+    the UI and API always read the most recent row per target symbol.
+    """
+
+    __tablename__ = "backtest_reports"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    symbol = Column(String(20), nullable=False, index=True, default="HG=F")
+    run_id = Column(String(80), nullable=True, index=True)
+    report_kind = Column(
+        String(40), nullable=False, default="tft_walk_forward", index=True
+    )
+
+    # Opaque structured payload so we don't have to migrate for every metric change
+    summary_json = Column(JSON, nullable=True)
+    windows_json = Column(JSON, nullable=True)
+    theta_comparison_json = Column(JSON, nullable=True)
+    raw_json = Column(JSON, nullable=True)
+
+    verdict = Column(String(40), nullable=True)
+    generated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+
+    def __repr__(self):
+        return (
+            f"<BacktestReport(symbol={self.symbol}, kind={self.report_kind}, "
+            f"generated_at={self.generated_at}, verdict={self.verdict})>"
+        )

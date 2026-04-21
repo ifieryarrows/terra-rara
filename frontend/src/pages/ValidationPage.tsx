@@ -40,7 +40,9 @@ export const ValidationPage = () => {
     );
   }
 
-  if (isError || !data) {
+  // Empty-state (204-like) or real error
+  if (isError || !data || (data as any).available === false) {
+    const isRealError = isError && !data;
     return (
       <div className="space-y-6">
         <div>
@@ -49,10 +51,29 @@ export const ValidationPage = () => {
             Out-of-sample backtest results and baseline comparisons.
           </p>
         </div>
-        <div className="p-10 border border-rose-800/40 bg-rose-950/30 rounded-lg text-rose-200 text-sm">
-          No backtest report available yet. {error instanceof Error ? `(${error.message})` : ''}
-          <br />
-          Run the walk-forward backtest script to generate a report.
+        <div
+          className={`p-10 border rounded-lg text-sm ${
+            isRealError
+              ? 'border-rose-800/40 bg-rose-950/30 text-rose-200'
+              : 'border-slate-700 bg-slate-900 text-slate-300'
+          }`}
+        >
+          {isRealError ? (
+            <>
+              Failed to load the backtest report.
+              {error instanceof Error ? ` (${error.message})` : ''}
+            </>
+          ) : (
+            <>
+              No backtest report has been generated yet.
+              <br />
+              Run{' '}
+              <code className="text-amber-300 font-mono">
+                python -m backend.backtest.runner --include-tft
+              </code>{' '}
+              and results will appear here automatically.
+            </>
+          )}
         </div>
       </div>
     );

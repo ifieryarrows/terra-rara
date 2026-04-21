@@ -140,6 +140,68 @@ export const SystemPage = () => {
           value={d.timestamp ? new Date(d.timestamp).toLocaleString() : '—'}
         />
       </section>
+
+      <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          Pipeline & Data Freshness
+        </h3>
+        <Row
+          label="Last pipeline run"
+          value={
+            d.last_pipeline_run_at
+              ? new Date(d.last_pipeline_run_at).toLocaleString()
+              : '—'
+          }
+          tone={
+            d.last_pipeline_status === 'ok'
+              ? 'good'
+              : d.last_pipeline_status === 'stale'
+              ? 'bad'
+              : 'neutral'
+          }
+        />
+        <Row
+          label="Pipeline status"
+          value={d.last_pipeline_status ?? '—'}
+          tone={
+            d.last_pipeline_status === 'ok'
+              ? 'good'
+              : d.last_pipeline_status === 'stale' || d.last_pipeline_status === 'failed'
+              ? 'bad'
+              : 'neutral'
+          }
+        />
+        <Row
+          label="Latest PriceBar (HG=F)"
+          value={d.price_bar_latest_date ?? '—'}
+          tone={
+            typeof d.price_bar_staleness_days === 'number'
+              ? d.price_bar_staleness_days <= 2
+                ? 'good'
+                : d.price_bar_staleness_days <= 4
+                ? 'neutral'
+                : 'bad'
+              : 'neutral'
+          }
+        />
+        <Row
+          label="PriceBar staleness"
+          value={
+            typeof d.price_bar_staleness_days === 'number'
+              ? `${d.price_bar_staleness_days} day${d.price_bar_staleness_days === 1 ? '' : 's'}`
+              : '—'
+          }
+          tone={
+            typeof d.price_bar_staleness_days === 'number'
+              ? d.price_bar_staleness_days <= 2
+                ? 'good'
+                : d.price_bar_staleness_days <= 4
+                ? 'neutral'
+                : 'bad'
+              : 'neutral'
+          }
+        />
+      </section>
     </div>
   );
 };

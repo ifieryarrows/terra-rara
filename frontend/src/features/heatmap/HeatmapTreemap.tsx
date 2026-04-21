@@ -1,6 +1,12 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { buildTreemapLayout, HeatmapNode, HeatmapData } from './heatmap-layout';
 import HeatmapTooltip from './HeatmapTooltip';
+
+export interface CategoryAnchor {
+  name: string;
+  /** Rect of the category cell in viewport (client) coordinates. */
+  rect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
+}
 
 interface HeatmapTreemapProps {
   data: HeatmapNode;
@@ -8,8 +14,9 @@ interface HeatmapTreemapProps {
   height: number;
   zoom: number;
   hoveredCategory: string | null;
-  onCategoryHover: (name: string | null) => void;
-  onCategoryClick?: (name: string) => void;
+  onCategoryHover: (anchor: CategoryAnchor | null) => void;
+  onCategoryClick?: (anchor: CategoryAnchor) => void;
+  onZoomDelta?: (delta: number) => void;
 }
 
 export function getColorForChange(change: number | undefined): string {
@@ -29,18 +36,30 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
   hoveredCategory,
   onCategoryHover,
   onCategoryClick,
+  onZoomDelta,
 }) => {
   const [hoveredNode, setHoveredNode] = useState<{ node: any; x: number; y: number } | null>(
     null,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Keep scroll position stable when zoom changes
+  // Non-passive wheel listener: only hijack the wheel when the pointer
+  // is actually over the heatmap AND Ctrl is NOT pressed (Ctrl+wheel
+  // is the browser zoom gesture, never steal it). This way scrolling
+  // outside the heatmap behaves as usual — addressing the "page scroll
+  // disappears when I reach the heatmap" complaint.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    // noop — just ensures re-render; could be extended to re-center on hover
-  }, [zoom]);
+    if (!el || !onZoomDelta) return;
+    const handler = (e: WheelEvent) => {
+      if (e.ctrlKey) return;
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      onZoomDelta(delta);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [onZoomDelta]);
 
   const scaledWidth = Math.max(1, Math.round(width * zoom));
   const scaledHeight = Math.max(1, Math.round(height * zoom));
@@ -57,6 +76,18 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
   };
 
   const handleLeafLeave = () => setHoveredNode(null);
+
+  const emitCategoryAnchor = (el: HTMLElement | null, name: string) => {
+    if (!el) return onCategoryHover({ name, rect: { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } });
+    const r = el.getBoundingClientRect();
+    onCategoryHover({
+      name,
+      rect: {
+        left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+        width: r.width, height: r.height,
+      },
+    });
+  };
 
   return (
     <div
@@ -77,7 +108,6 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
           position: 'relative',
         }}
       >
-        {/* Parent cells — used for hover/click detection (category selection) */}
         {parentNodes.map((p, i) => {
           const nodeWidth = p.x1 - p.x0;
           const nodeHeight = p.y1 - p.y0;
@@ -89,9 +119,19 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
           return (
             <div
               key={`parent-${i}`}
-              onMouseEnter={() => onCategoryHover(name)}
+              onMouseEnter={(e) => emitCategoryAnchor(e.currentTarget, name)}
               onMouseLeave={() => onCategoryHover(null)}
-              onClick={() => onCategoryClick && onCategoryClick(name)}
+              onClick={(e) => {
+                if (!onCategoryClick) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                onCategoryClick({
+                  name,
+                  rect: {
+                    left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+                    width: r.width, height: r.height,
+                  },
+                });
+              }}
               style={{
                 position: 'absolute',
                 left: p.x0,
@@ -125,7 +165,6 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
           );
         })}
 
-        {/* Leaves (symbols) */}
         {leaves.map((leaf, i) => {
           const cellData = leaf.data as HeatmapData;
           const cellWidth = leaf.x1 - leaf.x0;

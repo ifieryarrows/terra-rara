@@ -4,8 +4,8 @@ CI quality gate for TFT-ASRO training.
 Reads tft_metadata.json written by trainer.py and exits non-zero when
 metrics fall below deployment thresholds.
 
-Used by .github/workflows/tft-training.yml (YAML cannot embed indented
-Python multiline strings without breaking the workflow parser).
+Thin wrapper that delegates threshold logic to `app.quality_gate` so that
+GitHub Actions CI and the FastAPI runtime always agree on the rules.
 """
 
 from __future__ import annotations
@@ -13,24 +13,11 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
-from typing import Tuple, List
+
+from app.quality_gate import evaluate_quality_gate
 
 META_PATH = pathlib.Path("/tmp/models/tft/tft_metadata.json")
 
-def evaluate_quality_gate(da: float, sharpe: float, vr: float) -> Tuple[bool, List[str]]:
-    """
-    Evaluate TFT-ASRO metrics against deployment thresholds.
-    Returns (passed: bool, reasons: list[str]).
-    """
-    reasons: list[str] = []
-    if da < 0.49:
-        reasons.append(f"DA={da:.4f} < 0.49")
-    if sharpe < -0.30:
-        reasons.append(f"Sharpe={sharpe:.4f} < -0.30")
-    if vr < 0.2 or vr > 2.5:
-        reasons.append(f"VR={vr:.4f} outside [0.2, 2.5]")
-    
-    return len(reasons) == 0, reasons
 
 def main() -> int:
     if not META_PATH.exists():
@@ -54,6 +41,7 @@ def main() -> int:
     print(f"QUALITY GATE: FAILED — {reasons}")
     print("Model checkpoint will NOT be promoted. Previous checkpoint retained.")
     return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

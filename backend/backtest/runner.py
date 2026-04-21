@@ -652,6 +652,76 @@ class TFTBacktestRunner:
         }
 
 
+# ---------------------------------------------------------------------------
+# DB persistence helpers
+# ---------------------------------------------------------------------------
+
+
+def _persist_report_to_db(result: "BacktestResult", kind: str = "xgb_challenger") -> None:
+    """Write a BacktestResult into the backtest_reports table."""
+    from app.db import SessionLocal
+    from app.models import BacktestReport
+
+    summary = {
+        "champion": result.champion.get("metrics", {}),
+        "challenger": result.challenger.get("metrics", {}),
+        "decision": result.decision,
+        "decision_reason": result.decision_reason,
+        "delta_mae_pct": result.delta_mae_pct,
+        "delta_rmse_pct": result.delta_rmse_pct,
+        "delta_dir_acc_pct": result.delta_dir_acc_pct,
+        "improvement_mae_pct": result.improvement_mae_pct,
+    }
+
+    with SessionLocal() as session:
+        row = BacktestReport(
+            symbol="HG=F",
+            run_id=result.run_id,
+            report_kind=kind,
+            summary_json=summary,
+            windows_json=[],
+            theta_comparison_json={},
+            raw_json=json.loads(json.dumps(asdict(result), default=str)),
+            verdict=result.decision,
+        )
+        session.add(row)
+        session.commit()
+        logger.info(f"Backtest report persisted to DB: id={row.id}")
+
+
+def _persist_tft_report_to_db(tft_comparison: dict) -> None:
+    """Write TFT-vs-XGBoost comparison into the backtest_reports table."""
+    from app.db import SessionLocal
+    from app.models import BacktestReport
+
+    summary = {
+        "xgboost": tft_comparison.get("xgboost", {}),
+        "tft_asro": tft_comparison.get("tft_asro", {}),
+        "delta_mae_pct": tft_comparison.get("delta_mae_pct"),
+        "delta_dir_acc_pct": tft_comparison.get("delta_dir_acc_pct"),
+        "tft_better_mae": tft_comparison.get("tft_better_mae"),
+        "tft_better_dir": tft_comparison.get("tft_better_dir"),
+    }
+
+    with SessionLocal() as session:
+        row = BacktestReport(
+            symbol="HG=F",
+            run_id=tft_comparison.get("run_id"),
+            report_kind="tft_vs_xgb",
+            summary_json=summary,
+            theta_comparison_json={
+                "verdict": None,
+                "tft_better_mae": tft_comparison.get("tft_better_mae"),
+                "tft_better_dir": tft_comparison.get("tft_better_dir"),
+            },
+            raw_json=tft_comparison,
+            verdict="TFT_BETTER" if tft_comparison.get("tft_better_mae") else "XGB_BETTER",
+        )
+        session.add(row)
+        session.commit()
+        logger.info(f"TFT backtest report persisted to DB: id={row.id}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Champion/Challenger Backtest")
     parser.add_argument("--champion", required=True, help="Path to champion symbol set JSON")
@@ -682,11 +752,18 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save report
+    # Save report to filesystem
     report_path = output_dir / f"{result.run_id}_report.json"
     with open(report_path, 'w') as f:
         json.dump(asdict(result), f, indent=2, default=str)
     logger.info(f"Report saved: {report_path}")
+
+    # Persist to DB so the API survives container restarts (production) —
+    # the filesystem artifact is kept as a local-dev fallback/debug aid.
+    try:
+        _persist_report_to_db(result, kind="xgb_challenger")
+    except Exception as db_err:
+        logger.warning(f"Could not persist backtest report to DB: {db_err}")
     
     # Save predictions
     preds_path = output_dir / f"{result.run_id}_predictions.csv"
@@ -716,6 +793,11 @@ def main():
             tft_report_path = output_dir / f"{tft_comparison['run_id']}_tft_report.json"
             with open(tft_report_path, "w") as f:
                 json.dump(tft_comparison, f, indent=2, default=str)
+
+            try:
+                _persist_tft_report_to_db(tft_comparison)
+            except Exception as db_err:
+                print(f"Could not persist TFT backtest report to DB: {db_err}")
 
             print(f"XGBoost MAE:  {tft_comparison['xgboost']['mae']:.6f}")
             print(f"TFT MAE:      {tft_comparison['tft_asro']['mae']:.6f}")

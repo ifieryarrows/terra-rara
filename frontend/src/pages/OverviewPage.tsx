@@ -309,6 +309,12 @@ export const OverviewPage = () => {
   const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
   const tftReferenceDate = tftAnalysis?.prediction?.reference_price_date;
   const tftAnomaly = tftAnalysis?.prediction?.anomaly_detected;
+  const tftInstrument = tftAnalysis?.prediction?.instrument;
+  const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
+  // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
+  const tftBaselineIsStale = tftStalenessDays >= 3;
+  const tftInstrumentLabel = tftInstrument?.name || 'COMEX Copper Futures (HG=F)';
+  const tftInstrumentKind = tftInstrument?.kind || 'futures';
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -430,11 +436,25 @@ export const OverviewPage = () => {
                     {/* Next session headline — percent and price derive from
                         the same forecast entry (single source of truth). */}
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">
-                        Next Session (T+1)
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5 flex items-center gap-2 flex-wrap">
+                        <span>Next Session (T+1)</span>
+                        <span
+                          title={tftInstrument?.note || ''}
+                          className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 text-[9px] normal-case tracking-wider"
+                        >
+                          {tftInstrumentKind === 'futures' ? 'Futures' : tftInstrumentKind === 'spot' ? 'Spot' : 'Instrument'}: {tftInstrument?.symbol || 'HG=F'}
+                        </span>
                         {tftReferenceDate && (
-                          <span className="ml-1 text-gray-600">
+                          <span className="text-gray-600 normal-case">
                             vs. {new Date(tftReferenceDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} close
+                          </span>
+                        )}
+                        {tftBaselineIsStale && (
+                          <span
+                            title={`Last PriceBar is ${tftStalenessDays}d old — lazy ingest attempted on next forecast request.`}
+                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] normal-case tracking-wider"
+                          >
+                            STALE {tftStalenessDays}d
                           </span>
                         )}
                       </p>
@@ -449,6 +469,10 @@ export const OverviewPage = () => {
                           </span>
                         )}
                       </div>
+                      <p className="mt-1 text-[10px] text-gray-500">
+                        Baseline: <span className="text-gray-400">{tftInstrumentLabel}</span>.
+                        LME spot (XCU/USD) can differ by 1–3 USD due to basis and roll.
+                      </p>
                       {tftAnomaly && (
                         <p className="mt-1 text-[10px] text-amber-400">
                           ⚠ Anomalous raw model output — value bounded to ±12%. Check training logs.
@@ -537,7 +561,7 @@ export const OverviewPage = () => {
                     <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                       axisLine={false}
                       tickLine={false}
@@ -546,7 +570,7 @@ export const OverviewPage = () => {
                     <YAxis
                       orientation="right"
                       domain={yDomain}
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
+                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(val) => `$${val.toFixed(2)}`}
@@ -586,7 +610,7 @@ export const OverviewPage = () => {
                         x={lastHistDate}
                         stroke="rgba(255,255,255,0.15)"
                         strokeDasharray="3 3"
-                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'IBM Plex Mono, ui-monospace, monospace' }}
+                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       />
                     )}
                   </ComposedChart>

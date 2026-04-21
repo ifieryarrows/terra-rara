@@ -197,9 +197,42 @@ async def get_analysis(
             }
         if "top_influencers" not in report:
             report["top_influencers"] = []
-        
+
+        # Re-label cached influencers so snapshots written before the
+        # describe_feature() rollout also render human-readable names in the
+        # UI. Non-destructive: pre-existing rich fields (label/description/
+        # category/time_horizon) are preserved; missing ones are back-filled.
+        try:
+            from app.features import describe_feature
+
+            rebuilt: list[dict] = []
+            for infl in report.get("top_influencers", []) or []:
+                if not isinstance(infl, dict):
+                    continue
+                feature_key = infl.get("feature") or infl.get("name") or ""
+                if not feature_key:
+                    rebuilt.append(infl)
+                    continue
+                meta = describe_feature(str(feature_key))
+                enriched = {
+                    **infl,
+                    "feature": feature_key,
+                    "label": infl.get("label") or meta.get("label") or feature_key,
+                    "description": infl.get("description") or meta.get("description") or "",
+                    "category": infl.get("category") or meta.get("category") or "technical",
+                    "time_horizon": (
+                        infl.get("time_horizon")
+                        or meta.get("time_horizon")
+                        or "intraday"
+                    ),
+                }
+                rebuilt.append(enriched)
+            report["top_influencers"] = rebuilt
+        except Exception as label_err:
+            logger.warning(f"Influencer re-label skipped: {label_err}")
+
         logger.info(f"Returning snapshot for {symbol}: age={age_hours:.1f}h, state={quality_state}")
-        
+
         return report
 
 
@@ -327,21 +360,51 @@ async def health_check():
     price_count = None
     last_snapshot_age = None
     
+    # Freshness metadata for the System page
+    last_pipeline_run_at: Optional[str] = None
+    last_pipeline_status: Optional[str] = None
+    price_bar_latest_date: Optional[str] = None
+    price_bar_staleness_days: Optional[int] = None
+
     try:
         with SessionLocal() as session:
             news_count = session.query(func.count(NewsArticle.id)).scalar()
             price_count = session.query(func.count(PriceBar.id)).scalar()
-            
-            # Get latest snapshot age
+
+            # Get latest snapshot age — also serves as "last pipeline run"
+            # proxy since snapshots are the scheduler's terminal artifact.
             from app.models import AnalysisSnapshot
             latest_snapshot = session.query(AnalysisSnapshot).order_by(
                 AnalysisSnapshot.generated_at.desc()
             ).first()
-            
+
             if latest_snapshot and latest_snapshot.generated_at:
-                age = datetime.now(timezone.utc) - latest_snapshot.generated_at.replace(tzinfo=timezone.utc)
+                snap_at = latest_snapshot.generated_at
+                if snap_at.tzinfo is None:
+                    snap_at = snap_at.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - snap_at
                 last_snapshot_age = int(age.total_seconds())
-                
+                last_pipeline_run_at = snap_at.isoformat()
+                # 36h matches the analysis stale threshold used elsewhere
+                last_pipeline_status = "ok" if last_snapshot_age < 36 * 3600 else "stale"
+
+            # PriceBar freshness for the target symbol
+            target = "HG=F"
+            latest_bar = (
+                session.query(PriceBar.date)
+                .filter(PriceBar.symbol == target)
+                .order_by(PriceBar.date.desc())
+                .first()
+            )
+            if latest_bar and latest_bar[0]:
+                bar_date = latest_bar[0]
+                if bar_date.tzinfo is None:
+                    bar_date = bar_date.replace(tzinfo=timezone.utc)
+                price_bar_latest_date = bar_date.strftime("%Y-%m-%d")
+                price_bar_staleness_days = max(
+                    int((datetime.now(timezone.utc) - bar_date).days), 0
+                )
+
     except Exception as e:
         logger.error(f"Error getting counts: {e}")
     
@@ -380,6 +443,10 @@ async def health_check():
         price_bars_count=price_count,
         redis_ok=redis_ok,
         last_snapshot_age_seconds=last_snapshot_age,
+        last_pipeline_run_at=last_pipeline_run_at,
+        last_pipeline_status=last_pipeline_status,
+        price_bar_latest_date=price_bar_latest_date,
+        price_bar_staleness_days=price_bar_staleness_days,
     )
 
 
@@ -971,7 +1038,7 @@ async def get_tft_summary(
     symbol: str = Query(default="HG=F", description="Target symbol")
 ):
     from app.models import TFTModelMetadata
-    from scripts.tft_quality_gate import evaluate_quality_gate
+    from app.quality_gate import evaluate_quality_gate
     import json
     
     with SessionLocal() as session:
@@ -1034,40 +1101,76 @@ async def get_tft_summary(
 
 @app.get(
     "/api/models/tft/backtest/latest",
-    response_model=BacktestReportResponse,
     summary="Get latest backtest report",
-    description="Returns the latest walk-forward backtest results and Theta comparison."
+    description=(
+        "Returns the latest walk-forward backtest results and Theta "
+        "comparison. Prefers DB-persisted reports; falls back to "
+        "filesystem artifacts. Returns a structured empty state (HTTP 200 "
+        "with available=false) when no report has been produced yet, so "
+        "the frontend can render a clean zero-state instead of surfacing "
+        "a 404 error."
+    ),
 )
-async def get_latest_backtest():
+async def get_latest_backtest(symbol: str = Query(default="HG=F", description="Target symbol")):
     import pathlib
-    import json
-    
-    backtest_dir = pathlib.Path("artifacts/backtest")
-    if not backtest_dir.exists():
-        raise HTTPException(status_code=404, detail="No backtest reports found")
-        
-    reports = list(backtest_dir.glob("backtest_*.json"))
-    if not reports:
-        raise HTTPException(status_code=404, detail="No backtest reports found")
-        
-    latest_report_path = max(reports, key=lambda p: p.stat().st_mtime)
-    
+    import json as _json
+
+    from app.models import BacktestReport
+
+    empty_payload = {
+        "available": False,
+        "message": "No backtest runs yet. Run `python -m backend.backtest.runner` to generate one.",
+        "report_date": None,
+        "summary_metrics": {},
+        "window_metrics": [],
+        "theta_comparison": {},
+        "verdict": None,
+    }
+
+    # 1. Prefer DB-persisted row (production-friendly across container restarts)
     try:
-        data = json.loads(latest_report_path.read_text(encoding="utf-8"))
-        
-        tft_bt = data.get("tft_backtest", {})
-        comp = data.get("baseline_comparison", {})
-        
-        return {
-            "report_date": data.get("timestamp", ""),
-            "summary_metrics": tft_bt.get("summary", {}),
-            "window_metrics": tft_bt.get("windows", []),
-            "theta_comparison": comp,
-            "verdict": comp.get("verdict")
-        }
+        with SessionLocal() as session:
+            row = (
+                session.query(BacktestReport)
+                .filter(BacktestReport.symbol == symbol)
+                .order_by(BacktestReport.generated_at.desc())
+                .first()
+            )
+            if row is not None:
+                return {
+                    "available": True,
+                    "report_date": row.generated_at.isoformat() if row.generated_at else None,
+                    "summary_metrics": row.summary_json or {},
+                    "window_metrics": row.windows_json or [],
+                    "theta_comparison": row.theta_comparison_json or {},
+                    "verdict": row.verdict,
+                }
     except Exception as e:
-        logger.error(f"Error reading backtest report: {e}")
-        raise HTTPException(status_code=500, detail="Failed to parse backtest report")
+        logger.warning(f"BacktestReport table read failed, falling back to FS: {e}")
+
+    # 2. Fallback: legacy filesystem artifact (local dev)
+    backtest_dir = pathlib.Path("artifacts/backtest")
+    if backtest_dir.exists():
+        reports = list(backtest_dir.glob("backtest_*.json"))
+        if reports:
+            latest_report_path = max(reports, key=lambda p: p.stat().st_mtime)
+            try:
+                data = _json.loads(latest_report_path.read_text(encoding="utf-8"))
+                tft_bt = data.get("tft_backtest", {})
+                comp = data.get("baseline_comparison", {})
+                return {
+                    "available": True,
+                    "report_date": data.get("timestamp") or data.get("generated_at"),
+                    "summary_metrics": tft_bt.get("summary", {}),
+                    "window_metrics": tft_bt.get("windows", []),
+                    "theta_comparison": comp,
+                    "verdict": comp.get("verdict"),
+                }
+            except Exception as e:
+                logger.error(f"Error reading backtest report: {e}")
+
+    # 3. Empty state (no 404, no error)
+    return empty_payload
 
 
 # =============================================================================

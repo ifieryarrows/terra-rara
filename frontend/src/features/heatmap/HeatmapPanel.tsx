@@ -1,13 +1,19 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import HeatmapFilters from './HeatmapFilters';
-import HeatmapTreemap from './HeatmapTreemap';
+import HeatmapTreemap, { CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel from './HeatmapCategoryPanel';
 import { HeatmapNode, leavesForCategory } from './heatmap-layout';
 import { useMarketHeatmap } from '../../hooks/useQueries';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 2.5;
-const ZOOM_STEP = 0.25;
+// Minimum gap between two auto-refresh invocations. Protects the
+// backend + yfinance quota even if the server's next_refresh_at cycles
+// quickly (e.g., after a failed refresh).
+const AUTO_REFRESH_COOLDOWN_MS = 30_000;
+// Debounce for category hover — below this we assume the pointer is
+// transiting between cells and should NOT flash the inspector panel.
+const CATEGORY_HOVER_DEBOUNCE_MS = 150;
 
 export const HeatmapPanel: React.FC = () => {
   const { data: rawData, isError, error, isLoading, refetch, isFetching } = useMarketHeatmap();
@@ -15,14 +21,12 @@ export const HeatmapPanel: React.FC = () => {
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState('Weight');
   const [zoom, setZoom] = useState(1);
-  const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
-  const [pinnedCategory, setPinnedCategory] = useState<string | null>(null);
+  const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
+  const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
 
-  // Container sizing via ResizeObserver (works at first mount, not only
-  // when DevTools is opened). Falls back to window resize for older
-  // browsers.
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 600 });
+  const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const measure = useCallback(() => {
@@ -38,6 +42,7 @@ export const HeatmapPanel: React.FC = () => {
         ? prev
         : { width: nextWidth, height: nextHeight },
     );
+    setContainerRect(rect);
   }, [isFullscreen]);
 
   useEffect(() => {
@@ -45,20 +50,25 @@ export const HeatmapPanel: React.FC = () => {
     if (typeof ResizeObserver === 'undefined') {
       const handle = () => measure();
       window.addEventListener('resize', handle);
-      return () => window.removeEventListener('resize', handle);
+      window.addEventListener('scroll', handle, { passive: true });
+      return () => {
+        window.removeEventListener('resize', handle);
+        window.removeEventListener('scroll', handle);
+      };
     }
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => measure());
     ro.observe(el);
     window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, { passive: true });
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure);
     };
   }, [measure]);
 
-  // Re-measure once data arrives (container becomes visible).
   useEffect(() => {
     const id = requestAnimationFrame(() => measure());
     return () => cancelAnimationFrame(id);
@@ -102,19 +112,55 @@ export const HeatmapPanel: React.FC = () => {
   const hasContent =
     !!filteredData?.children && filteredData.children.length > 0 && dimensions.width > 0;
 
-  const activeCategory = pinnedCategory ?? hoveredCategory;
+  // Debounced hover: transit between cells <150ms is ignored so we
+  // don't flicker the inspector between subcategories. Pin (click)
+  // behavior still applies synchronously.
+  const hoverTimeout = useRef<number | null>(null);
+  const scheduleHover = useCallback((next: CategoryAnchor | null) => {
+    if (hoverTimeout.current !== null) {
+      window.clearTimeout(hoverTimeout.current);
+      hoverTimeout.current = null;
+    }
+    if (next === null) {
+      hoverTimeout.current = window.setTimeout(() => {
+        setHoveredAnchor(null);
+      }, CATEGORY_HOVER_DEBOUNCE_MS);
+    } else {
+      hoverTimeout.current = window.setTimeout(() => {
+        setHoveredAnchor(next);
+      }, CATEGORY_HOVER_DEBOUNCE_MS);
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (hoverTimeout.current !== null) window.clearTimeout(hoverTimeout.current);
+  }, []);
+
+  const activeAnchor = pinnedAnchor ?? hoveredAnchor;
+  const activeCategory = activeAnchor?.name ?? null;
   const inspectorLeaves = useMemo(() => {
     if (!activeCategory || !filteredData) return [];
     return leavesForCategory(filteredData, activeCategory);
   }, [activeCategory, filteredData]);
 
-  const handleZoomIn = () => setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)));
-  const handleZoomOut = () => setZoom((z) => Math.max(MIN_ZOOM, +(z - ZOOM_STEP).toFixed(2)));
-  const handleZoomReset = () => setZoom(1);
+  // Scroll-to-zoom — inside the heatmap only. Clamp to [MIN_ZOOM, MAX_ZOOM]
+  // and round to one decimal to keep layout recalculations stable.
+  const handleZoomDelta = useCallback((delta: number) => {
+    setZoom((z) => {
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(z + delta).toFixed(2)));
+      return next;
+    });
+  }, []);
 
-  const handleManualRefresh = () => {
+  // Auto-refresh when the countdown hits 00:00 — cooldown-guarded.
+  const lastAutoRefreshAt = useRef<number>(0);
+  const handleCountdownElapsed = useCallback(() => {
+    if (isFetching) return;
+    const now = Date.now();
+    if (now - lastAutoRefreshAt.current < AUTO_REFRESH_COOLDOWN_MS) return;
+    lastAutoRefreshAt.current = now;
     refetch();
-  };
+  }, [isFetching, refetch]);
 
   return (
     <div
@@ -124,7 +170,6 @@ export const HeatmapPanel: React.FC = () => {
           : 'relative rounded-lg shadow-xl border border-slate-700'
       }`}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700">
         <div>
           <h2 className="text-base font-semibold text-white tracking-wide leading-tight">
@@ -136,41 +181,9 @@ export const HeatmapPanel: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Zoom controls */}
-          <div className="flex items-center gap-1 bg-slate-800 border border-slate-600 rounded">
-            <button
-              onClick={handleZoomOut}
-              disabled={zoom <= MIN_ZOOM}
-              title="Zoom out"
-              className="px-2 py-1 text-slate-300 hover:text-white disabled:opacity-30 text-sm"
-            >
-              −
-            </button>
-            <button
-              onClick={handleZoomReset}
-              title="Reset zoom"
-              className="px-2 py-1 text-slate-400 hover:text-white text-[10px] font-mono"
-            >
-              {Math.round(zoom * 100)}%
-            </button>
-            <button
-              onClick={handleZoomIn}
-              disabled={zoom >= MAX_ZOOM}
-              title="Zoom in"
-              className="px-2 py-1 text-slate-300 hover:text-white disabled:opacity-30 text-sm"
-            >
-              +
-            </button>
-          </div>
-
-          <button
-            onClick={handleManualRefresh}
-            disabled={isFetching}
-            title="Refresh now"
-            className="text-slate-400 hover:text-white px-2 py-1 bg-slate-800 rounded border border-slate-600 transition-colors text-xs disabled:opacity-50"
-          >
-            {isFetching ? 'Refreshing…' : 'Refresh'}
-          </button>
+          {/* Manual Refresh button intentionally removed: countdown-driven
+              auto-refresh covers the whole loop and prevents users from
+              spamming yfinance. Scroll wheel over the heatmap handles zoom. */}
           <button
             onClick={() => setIsFullscreen((f) => !f)}
             className="text-slate-400 hover:text-white px-2 py-1 bg-slate-800 rounded border border-slate-600 transition-colors text-xs"
@@ -187,6 +200,7 @@ export const HeatmapPanel: React.FC = () => {
         setSortFilter={setSortFilter}
         availableGroups={availableGroups}
         meta={meta}
+        onCountdownElapsed={handleCountdownElapsed}
       />
 
       {refreshError && (
@@ -195,8 +209,6 @@ export const HeatmapPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Body — always render the measured container so ResizeObserver can fire
-          on first mount even before data arrives. */}
       <div
         ref={containerRef}
         className="relative flex-1"
@@ -224,27 +236,35 @@ export const HeatmapPanel: React.FC = () => {
           </div>
         ) : (
           <>
+            {/* Treemap keeps its full width — the inspector floats on top
+                instead of shrinking the layout. */}
             <HeatmapTreemap
               data={filteredData!}
-              width={activeCategory ? Math.max(200, dimensions.width - 280) : dimensions.width}
+              width={dimensions.width}
               height={dimensions.height}
               zoom={zoom}
               hoveredCategory={activeCategory}
-              onCategoryHover={(name) => {
-                if (!pinnedCategory) setHoveredCategory(name);
+              onCategoryHover={(anchor) => {
+                if (pinnedAnchor) return;
+                scheduleHover(anchor);
               }}
-              onCategoryClick={(name) => {
-                setPinnedCategory((prev) => (prev === name ? null : name));
-                setHoveredCategory(name);
+              onCategoryClick={(anchor) => {
+                setPinnedAnchor((prev) =>
+                  prev && prev.name === anchor.name ? null : anchor,
+                );
+                setHoveredAnchor(anchor);
               }}
+              onZoomDelta={handleZoomDelta}
             />
-            {activeCategory && (
+            {activeAnchor && (
               <HeatmapCategoryPanel
-                categoryName={activeCategory}
+                categoryName={activeAnchor.name}
                 leaves={inspectorLeaves}
+                anchor={activeAnchor.rect}
+                containerRect={containerRect}
                 onClose={() => {
-                  setPinnedCategory(null);
-                  setHoveredCategory(null);
+                  setPinnedAnchor(null);
+                  setHoveredAnchor(null);
                 }}
               />
             )}

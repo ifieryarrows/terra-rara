@@ -96,6 +96,16 @@ export interface TFTPrediction {
   return_basis?: string;
   raw_predicted_return_median?: number;
   anomaly_detected?: boolean;
+  /** Freshness metadata (added 2026-04). */
+  baseline_staleness_days?: number;
+  lazy_ingest_triggered?: boolean;
+  instrument?: {
+    symbol: string;
+    /** "futures" | "spot" | "unknown" */
+    kind: string;
+    name: string;
+    note?: string;
+  };
 }
 
 export interface TFTModelMetadata {
