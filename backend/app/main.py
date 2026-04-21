@@ -359,36 +359,106 @@ async def health_check():
     news_count = None
     price_count = None
     last_snapshot_age = None
-    
-    # Freshness metadata for the System page
+
+    # Freshness metadata for the System page. Each field answers a distinct
+    # question — see HealthResponse for the exact definitions.
     last_pipeline_run_at: Optional[str] = None
     last_pipeline_status: Optional[str] = None
+    last_snapshot_generated_at: Optional[str] = None
+    last_tft_prediction_at: Optional[str] = None
+    tft_model_trained_at: Optional[str] = None
+    tft_reference_price_date: Optional[str] = None
     price_bar_latest_date: Optional[str] = None
     price_bar_staleness_days: Optional[int] = None
+
+    def _iso(dt):
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
 
     try:
         with SessionLocal() as session:
             news_count = session.query(func.count(NewsArticle.id)).scalar()
             price_count = session.query(func.count(PriceBar.id)).scalar()
 
-            # Get latest snapshot age — also serves as "last pipeline run"
-            # proxy since snapshots are the scheduler's terminal artifact.
-            from app.models import AnalysisSnapshot
-            latest_snapshot = session.query(AnalysisSnapshot).order_by(
-                AnalysisSnapshot.generated_at.desc()
-            ).first()
+            from app.models import (
+                AnalysisSnapshot,
+                PipelineRunMetrics,
+                TFTModelMetadata,
+                TFTPredictionSnapshot,
+            )
 
+            # --- Authoritative pipeline run timestamp ------------------------
+            # Read from the actual worker metrics table, not the snapshot
+            # table. Snapshots are only ONE artifact of a pipeline run; a
+            # failed run still records a row here.
+            latest_run = (
+                session.query(PipelineRunMetrics)
+                .order_by(PipelineRunMetrics.run_started_at.desc())
+                .first()
+            )
+            if latest_run is not None:
+                ended = latest_run.run_completed_at or latest_run.run_started_at
+                last_pipeline_run_at = _iso(ended)
+                # Map internal run.status → external pipeline_status.
+                #   running  → running
+                #   success  → ok
+                #   failed   → failed
+                raw_status = (latest_run.status or "").lower()
+                if raw_status == "success":
+                    last_pipeline_status = "ok"
+                elif raw_status in {"running", "failed"}:
+                    last_pipeline_status = raw_status
+                else:
+                    last_pipeline_status = raw_status or None
+
+            # --- XGBoost snapshot age ---------------------------------------
+            latest_snapshot = (
+                session.query(AnalysisSnapshot)
+                .order_by(AnalysisSnapshot.generated_at.desc())
+                .first()
+            )
             if latest_snapshot and latest_snapshot.generated_at:
                 snap_at = latest_snapshot.generated_at
                 if snap_at.tzinfo is None:
                     snap_at = snap_at.replace(tzinfo=timezone.utc)
                 age = datetime.now(timezone.utc) - snap_at
                 last_snapshot_age = int(age.total_seconds())
-                last_pipeline_run_at = snap_at.isoformat()
-                # 36h matches the analysis stale threshold used elsewhere
-                last_pipeline_status = "ok" if last_snapshot_age < 36 * 3600 else "stale"
+                last_snapshot_generated_at = snap_at.isoformat()
+                # If PipelineRunMetrics has no rows yet (fresh DB) fall back
+                # to snapshot-derived status so older deployments don't go
+                # blank.
+                if last_pipeline_run_at is None:
+                    last_pipeline_run_at = last_snapshot_generated_at
+                if last_pipeline_status is None:
+                    last_pipeline_status = (
+                        "ok" if last_snapshot_age < 36 * 3600 else "stale"
+                    )
 
-            # PriceBar freshness for the target symbol
+            # --- Latest persisted TFT snapshot ------------------------------
+            latest_tft = (
+                session.query(TFTPredictionSnapshot)
+                .filter(TFTPredictionSnapshot.symbol == "HG=F")
+                .order_by(TFTPredictionSnapshot.generated_at.desc())
+                .first()
+            )
+            if latest_tft is not None:
+                last_tft_prediction_at = _iso(latest_tft.generated_at)
+                tft_reference_price_date = latest_tft.reference_price_date
+
+            # --- Latest TFT training timestamp ------------------------------
+            latest_tft_model = (
+                session.query(TFTModelMetadata)
+                .filter(TFTModelMetadata.symbol == "HG=F")
+                .order_by(TFTModelMetadata.trained_at.desc())
+                .first()
+            )
+            if latest_tft_model is not None:
+                tft_model_trained_at = _iso(latest_tft_model.trained_at)
+
+            # --- PriceBar freshness -----------------------------------------
             target = "HG=F"
             latest_bar = (
                 session.query(PriceBar.date)
@@ -445,6 +515,10 @@ async def health_check():
         last_snapshot_age_seconds=last_snapshot_age,
         last_pipeline_run_at=last_pipeline_run_at,
         last_pipeline_status=last_pipeline_status,
+        last_snapshot_generated_at=last_snapshot_generated_at,
+        last_tft_prediction_at=last_tft_prediction_at,
+        tft_model_trained_at=tft_model_trained_at,
+        tft_reference_price_date=tft_reference_price_date,
         price_bar_latest_date=price_bar_latest_date,
         price_bar_staleness_days=price_bar_staleness_days,
     )
@@ -803,22 +877,72 @@ _TFT_CACHE_TTL_S = 300  # 5 minutes
 @app.get(
     "/api/analysis/tft/{symbol}",
     summary="Get TFT-ASRO deep learning analysis",
-    description="Returns probabilistic multi-quantile prediction from the Temporal Fusion Transformer model.",
+    description=(
+        "Returns probabilistic multi-quantile prediction from the Temporal "
+        "Fusion Transformer model. By default reads the latest TFT snapshot "
+        "produced by the daily pipeline worker (persistent, cheap). Pass "
+        "`source=live` to force a fresh inference run — useful for diagnostics."
+    ),
     responses={
         200: {"description": "TFT-ASRO analysis with quantile predictions"},
         404: {"description": "TFT model not available"},
         500: {"description": "Prediction failed"},
     },
 )
-async def get_tft_analysis(symbol: str = "HG=F"):
+async def get_tft_analysis(
+    symbol: str = "HG=F",
+    source: str = "snapshot",
+):
     """
     Get TFT-ASRO analysis for the given symbol.
 
-    Results are cached for 5 minutes to avoid rebuilding the full feature
-    store on every frontend auto-refresh (~60 s polling).
+    `source` semantics:
+      * `snapshot` (default) — serve the latest persisted TFTPredictionSnapshot
+        written by the worker. If none exists, transparently fall back to live.
+      * `live`                — always run a fresh inference. In-memory cached
+        for 5 minutes to protect the worker against the 60s polling loop.
     """
+    source = (source or "snapshot").strip().lower()
+    if source not in {"snapshot", "live"}:
+        raise HTTPException(
+            status_code=400,
+            detail="source must be one of: snapshot, live",
+        )
+
+    # --- 1. Try persisted snapshot ------------------------------------------
+    if source == "snapshot":
+        try:
+            from app.models import TFTPredictionSnapshot
+
+            with SessionLocal() as session:
+                latest = (
+                    session.query(TFTPredictionSnapshot)
+                    .filter(TFTPredictionSnapshot.symbol == symbol)
+                    .order_by(TFTPredictionSnapshot.generated_at.desc())
+                    .first()
+                )
+                if latest is not None and isinstance(latest.payload_json, dict):
+                    payload = dict(latest.payload_json)
+                    gen_at = latest.generated_at
+                    if gen_at and gen_at.tzinfo is None:
+                        gen_at = gen_at.replace(tzinfo=timezone.utc)
+                    payload["source"] = "snapshot"
+                    payload["snapshot_generated_at"] = (
+                        gen_at.isoformat() if gen_at else None
+                    )
+                    return payload
+        except Exception as exc:
+            logger.warning(
+                "TFT snapshot read failed, falling back to live inference: %s",
+                exc,
+            )
+        # No snapshot yet — silently fall through to live inference so the
+        # UI can still show something on first deployment.
+
+    # --- 2. Live inference (explicit request or snapshot miss) --------------
     now = datetime.now(timezone.utc)
-    cached = _tft_cache.get(symbol)
+    cache_key = f"{symbol}:live"
+    cached = _tft_cache.get(cache_key)
     if cached:
         age = (now - cached["ts"]).total_seconds()
         if age < _TFT_CACHE_TTL_S:
@@ -833,7 +957,9 @@ async def get_tft_analysis(symbol: str = "HG=F"):
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
 
-        _tft_cache[symbol] = {"data": result, "ts": now}
+        result = dict(result)
+        result["source"] = "live"
+        _tft_cache[cache_key] = {"data": result, "ts": now}
         return result
 
     except FileNotFoundError:

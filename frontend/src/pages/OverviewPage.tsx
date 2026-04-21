@@ -315,6 +315,11 @@ export const OverviewPage = () => {
   const tftBaselineIsStale = tftStalenessDays >= 3;
   const tftInstrumentLabel = tftInstrument?.name || 'COMEX Copper Futures (HG=F)';
   const tftInstrumentKind = tftInstrument?.kind || 'futures';
+  const tftSource = (tftAnalysis as any)?.source as 'snapshot' | 'live' | undefined;
+  const tftSnapshotGeneratedAt = (tftAnalysis as any)?.snapshot_generated_at as
+    | string
+    | null
+    | undefined;
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -338,7 +343,13 @@ export const OverviewPage = () => {
           </div>
 
           <div className="flex bg-slate-900 rounded-lg p-1.5 border border-slate-800 gap-1 shadow-sm">
-            <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden">
+            <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden flex flex-col">
+              <span
+                className="text-[9px] text-gray-500 font-semibold uppercase tracking-widest"
+                title="Spot copper (XCU/USD) shown as a market reference only. The model forecast card below is based on COMEX HG=F futures; prices can diverge by 1–3 USD due to basis and roll."
+              >
+                Spot Ref · XCU/USD
+              </span>
               <div id="tradingview-widget-container" className="tradingview-widget-container">
                 {/* Skeleton while TradingView loads */}
                 {!tradingViewLoaded.current && (
@@ -423,14 +434,37 @@ export const OverviewPage = () => {
                   <div className="relative z-10 space-y-4">
 
                     {/* T+1 Direction badge */}
-                    <div className={clsx(
-                      "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-bold tracking-wide",
-                      tftDirection === 'BULLISH' ? "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20" :
-                      tftDirection === 'BEARISH' ? "bg-rose-400/10 text-rose-400 border border-rose-400/20" :
-                                                   "bg-amber-400/10 text-amber-400 border border-amber-400/20"
-                    )}>
-                      {tftDirection === 'BULLISH' ? <TrendingUp size={14} /> : tftDirection === 'BEARISH' ? <TrendingDown size={14} /> : <Activity size={14} />}
-                      {tftDirection}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className={clsx(
+                        "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-bold tracking-wide",
+                        tftDirection === 'BULLISH' ? "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20" :
+                        tftDirection === 'BEARISH' ? "bg-rose-400/10 text-rose-400 border border-rose-400/20" :
+                                                     "bg-amber-400/10 text-amber-400 border border-amber-400/20"
+                      )}>
+                        {tftDirection === 'BULLISH' ? <TrendingUp size={14} /> : tftDirection === 'BEARISH' ? <TrendingDown size={14} /> : <Activity size={14} />}
+                        {tftDirection}
+                      </div>
+                      {tftSource && (
+                        <span
+                          title={
+                            tftSource === 'snapshot'
+                              ? `Served from the latest persisted daily pipeline snapshot${
+                                  tftSnapshotGeneratedAt
+                                    ? ` (generated ${new Date(tftSnapshotGeneratedAt).toLocaleString()})`
+                                    : ''
+                                }.`
+                              : 'Fresh inference run on this request (diagnostic path).'
+                          }
+                          className={clsx(
+                            'px-1.5 py-0.5 rounded border text-[9px] font-semibold uppercase tracking-wider',
+                            tftSource === 'snapshot'
+                              ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+                              : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                          )}
+                        >
+                          {tftSource}
+                        </span>
+                      )}
                     </div>
 
                     {/* Next session headline — percent and price derive from

@@ -573,16 +573,48 @@ async def _execute_pipeline_stages_v2(
             tft_report = generate_tft_analysis(session, "HG=F")
 
             if "error" not in tft_report:
+                # Persist the full report so /api/analysis/tft/{symbol}
+                # can serve it without re-running inference. This is the
+                # canonical source the frontend reads from.
+                try:
+                    from app.models import TFTPredictionSnapshot
+                    from datetime import datetime, timezone
+
+                    prediction = tft_report.get("prediction") or {}
+                    reference_price_date = prediction.get("reference_price_date")
+
+                    snapshot_row = TFTPredictionSnapshot(
+                        symbol="HG=F",
+                        payload_json=tft_report,
+                        generated_at=datetime.now(timezone.utc),
+                        reference_price_date=reference_price_date,
+                        run_id=str(run_id) if run_id is not None else None,
+                    )
+                    session.add(snapshot_row)
+                    session.flush()
+                    logger.info(
+                        f"[run_id={run_id}] TFT prediction persisted "
+                        f"(reference_price_date={reference_price_date})"
+                    )
+                except Exception as persist_exc:
+                    logger.error(
+                        f"[run_id={run_id}] Failed to persist TFT snapshot: "
+                        f"{persist_exc}",
+                        exc_info=True,
+                    )
+                    session.rollback()
+
                 result["tft_snapshot_generated"] = True
                 update_run_metrics(session, run_id, tft_snapshot_generated=True)
                 session.commit()
                 logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
-                
-                # --- NEW PIPELINE BRIDGE ---
-                # Fallback to TFT data for commentary if XGBoost failed or wasn't generated
+
+                # Fallback to TFT data for commentary if XGBoost failed or
+                # wasn't generated. The commentary layer consumes a flat
+                # structure so we expose top-level price/return fields
+                # derived from the TFT `prediction` block here.
                 if not snapshot_report:
                     snapshot_report = tft_report
-                # ---------------------------
             else:
                 result["tft_snapshot_generated"] = False
                 logger.warning(f"[run_id={run_id}] TFT prediction error: {tft_report.get('error')}")

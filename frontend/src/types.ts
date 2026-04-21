@@ -52,6 +52,17 @@ export interface HealthResponse {
   timestamp: string;
   news_count?: number;
   price_bars_count?: number;
+  redis_ok?: boolean | null;
+  last_snapshot_age_seconds?: number | null;
+  /** Worker pipeline run timestamps (see HealthResponse docstring). */
+  last_pipeline_run_at?: string | null;
+  last_pipeline_status?: 'ok' | 'running' | 'failed' | 'stale' | string | null;
+  last_snapshot_generated_at?: string | null;
+  last_tft_prediction_at?: string | null;
+  tft_model_trained_at?: string | null;
+  tft_reference_price_date?: string | null;
+  price_bar_latest_date?: string | null;
+  price_bar_staleness_days?: number | null;
 }
 
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
@@ -135,6 +146,10 @@ export interface TFTAnalysisResponse {
   prediction: TFTPrediction;
   model_metadata: TFTModelMetadata | null;
   generated_at: string;
+  /** Where the payload came from. Added 2026-04 alongside daily TFT snapshot persistence. */
+  source?: 'snapshot' | 'live';
+  /** Only populated when `source === 'snapshot'` — when the worker persisted the row. */
+  snapshot_generated_at?: string | null;
 }
 
 export interface ConsensusSignal {

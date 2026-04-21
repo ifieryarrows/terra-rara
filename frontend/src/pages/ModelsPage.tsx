@@ -68,8 +68,11 @@ export const ModelsPage = () => {
             Symbol <span className="font-mono text-slate-200">{data.symbol}</span>
             {data.trained_at && (
               <>
-                {' '}· Trained{' '}
-                <span className="font-mono text-slate-200">
+                {' '}· Checkpoint trained at{' '}
+                <span
+                  className="font-mono text-slate-200"
+                  title="TFT checkpoint training completion time. This is NOT the last prediction timestamp — see the System page for prediction freshness."
+                >
                   {new Date(data.trained_at).toLocaleString()}
                 </span>
               </>

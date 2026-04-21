@@ -145,8 +145,13 @@ export const SystemPage = () => {
         <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
           Pipeline & Data Freshness
         </h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Each timestamp answers a different question. They are NOT interchangeable
+          — e.g. a stale baseline close can still be produced by a fresh worker run
+          if Yahoo is delayed.
+        </p>
         <Row
-          label="Last pipeline run"
+          label="Pipeline run (worker) completed"
           value={
             d.last_pipeline_run_at
               ? new Date(d.last_pipeline_run_at).toLocaleString()
@@ -155,7 +160,7 @@ export const SystemPage = () => {
           tone={
             d.last_pipeline_status === 'ok'
               ? 'good'
-              : d.last_pipeline_status === 'stale'
+              : d.last_pipeline_status === 'stale' || d.last_pipeline_status === 'failed'
               ? 'bad'
               : 'neutral'
           }
@@ -169,6 +174,35 @@ export const SystemPage = () => {
               : d.last_pipeline_status === 'stale' || d.last_pipeline_status === 'failed'
               ? 'bad'
               : 'neutral'
+          }
+        />
+        <Row
+          label="XGBoost snapshot generated"
+          value={
+            d.last_snapshot_generated_at
+              ? new Date(d.last_snapshot_generated_at).toLocaleString()
+              : '—'
+          }
+        />
+        <Row
+          label="TFT prediction persisted"
+          value={
+            d.last_tft_prediction_at
+              ? new Date(d.last_tft_prediction_at).toLocaleString()
+              : '—'
+          }
+          tone={d.last_tft_prediction_at ? 'good' : 'neutral'}
+        />
+        <Row
+          label="TFT baseline close date"
+          value={d.tft_reference_price_date ?? '—'}
+        />
+        <Row
+          label="TFT model trained"
+          value={
+            d.tft_model_trained_at
+              ? new Date(d.tft_model_trained_at).toLocaleString()
+              : '—'
           }
         />
         <Row
@@ -201,6 +235,19 @@ export const SystemPage = () => {
               : 'neutral'
           }
         />
+      </section>
+
+      <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          HuggingFace Hub
+        </h3>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          HF Hub is used <span className="text-slate-300">only as a model artifact
+          store</span> — the weekly training workflow uploads the TFT checkpoint
+          there, and the worker downloads it back on cold start. The daily pipeline
+          does <span className="text-slate-300">not</span> write predictions or logs
+          to HF; all prediction state lives in this database.
+        </p>
       </section>
     </div>
   );

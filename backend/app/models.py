@@ -596,6 +596,45 @@ class TFTModelMetadata(Base):
         return f"<TFTModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
 
 
+class TFTPredictionSnapshot(Base):
+    """
+    Persisted TFT-ASRO inference output produced by the daily pipeline.
+
+    The TFT endpoint used to run a fresh inference on every frontend call,
+    which is slow and couples UI uptime to model container warm state. We
+    now persist the worker's Stage 5.5 output here and let the API serve
+    the latest row. The model is distinct from `AnalysisSnapshot` (XGBoost)
+    because the response contracts are structurally different.
+    """
+
+    __tablename__ = "tft_prediction_snapshots"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True, default="HG=F")
+
+    # Full `generate_tft_analysis(...)` payload; keeps the response intact
+    # even as the schema evolves.
+    payload_json = Column(JSON, nullable=False)
+
+    # When the worker produced this snapshot (not model training time).
+    generated_at = Column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+
+    # Close date the forecast is anchored to. Useful for quick freshness
+    # queries from the API without parsing `payload_json`.
+    reference_price_date = Column(String(10), nullable=True, index=True)
+
+    # Which run produced it; null on ad-hoc endpoint writes.
+    run_id = Column(String(80), nullable=True, index=True)
+
+    def __repr__(self):
+        return (
+            f"<TFTPredictionSnapshot(symbol={self.symbol}, "
+            f"generated_at={self.generated_at}, ref={self.reference_price_date})>"
+        )
+
+
 class HeatmapCache(Base):
     """
     Cached CopperMind universe heatmap payload (group->subgroup->symbol hierarchy).

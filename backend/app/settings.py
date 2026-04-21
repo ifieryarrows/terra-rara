@@ -62,9 +62,13 @@ class Settings(BaseSettings):
     analysis_ttl_minutes: int = 30
     log_level: str = "INFO"
     
-    # Futures vs Spot adjustment factor
-    futures_spot_adjustment: float = 0.985
-    
+    # NOTE: `futures_spot_adjustment` was removed 2026-04.
+    # It was an unused 1:1 scaling constant between HG=F and XCU/USD which
+    # encouraged the kind of implicit instrument mixing the pipeline now
+    # explicitly rejects (see `get_current_price` in app/inference.py).
+    # If a proper basis model is needed in the future, add it as a dedicated
+    # module with rolling logic, not as a magic multiplier here.
+
     # Scheduler (DEPRECATED in API - external scheduler only)
     # These are kept for backward compatibility but scheduler no longer runs in API
     schedule_time: str = "02:00"

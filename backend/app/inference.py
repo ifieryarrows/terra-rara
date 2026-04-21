@@ -118,60 +118,81 @@ def _align_features_to_model(df: pd.DataFrame, expected_features: list[str]) -> 
 
 def get_current_price(session: Session, symbol: str) -> Optional[float]:
     """
-    Get the current price for a symbol.
-    
-    Priority:
-    1. Twelve Data API (most reliable, no rate limit issues)
-    2. yfinance live data (15-min delayed)
-    3. Database fallback
+    Get the current price for the *exact* symbol requested.
+
+    CRITICAL — DO NOT cross-mix instruments here. Previously this function
+    silently swapped XCU/USD (spot copper, Twelve Data) in when called with
+    HG=F (COMEX copper futures), which created a hidden basis mismatch
+    against the DB-sourced baseline close. That mismatch surfaced as
+    unrealistic `current_price`/`baseline_price` deltas in the XGBoost
+    analysis card.
+
+    Policy:
+      * HG=F (or any futures ticker)  → yfinance → DB close fallback.
+      * XCU/USD                        → Twelve Data → DB close fallback.
+      * No implicit 1:1 mapping between the two.
     """
-    import httpx
     import yfinance as yf
     from app.settings import get_settings
-    
+
     settings = get_settings()
-    
-    # Try Twelve Data first (for XCU/USD copper)
-    if settings.twelvedata_api_key:
+    is_spot_xcuusd = symbol.upper() in {"XCU/USD", "XCUUSD", "XCU=X"}
+
+    # --- Spot copper path: Twelve Data ----------------------------------
+    if is_spot_xcuusd:
+        twelve_price = _fetch_twelvedata_price("XCU/USD", settings)
+        if twelve_price is not None:
+            logger.info(f"Using Twelve Data price for {symbol}: ${twelve_price:.4f}")
+            return twelve_price
+
+    # --- Futures / everything else: yfinance first ----------------------
+    if not is_spot_xcuusd:
         try:
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(
-                    "https://api.twelvedata.com/price",
-                    params={
-                        "symbol": "XCU/USD",
-                        "apikey": settings.twelvedata_api_key,
-                    }
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    price = data.get("price")
-                    if price:
-                        logger.info(f"Using Twelve Data price for copper: ${float(price):.4f}")
-                        return float(price)
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            live_price = info.get("regularMarketPrice") or info.get("currentPrice")
+            if live_price is not None:
+                logger.info(f"Using yfinance price for {symbol}: ${live_price:.4f}")
+                return float(live_price)
         except Exception as e:
-            from app.settings import mask_api_key
-            logger.debug(f"Twelve Data price fetch failed: {mask_api_key(str(e))}")
-    
-    # Try yfinance as fallback
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        live_price = info.get('regularMarketPrice') or info.get('currentPrice')
-        if live_price is not None:
-            logger.info(f"Using yfinance price for {symbol}: ${live_price:.4f}")
-            return float(live_price)
-    except Exception as e:
-        logger.debug(f"yfinance price fetch failed for {symbol}: {e}")
-    
-    # Final fallback to database
-    latest = session.query(PriceBar).filter(
-        PriceBar.symbol == symbol
-    ).order_by(PriceBar.date.desc()).first()
-    
+            logger.debug(f"yfinance price fetch failed for {symbol}: {e}")
+
+    # --- Final fallback: DB close for the EXACT symbol ------------------
+    latest = (
+        session.query(PriceBar)
+        .filter(PriceBar.symbol == symbol)
+        .order_by(PriceBar.date.desc())
+        .first()
+    )
     if latest:
         logger.info(f"Using DB price for {symbol}: ${latest.close:.4f}")
         return latest.close
-    
+
+    return None
+
+
+def _fetch_twelvedata_price(td_symbol: str, settings) -> Optional[float]:
+    """Helper that isolates the Twelve Data call. Returns None on any failure."""
+    import httpx
+
+    api_key = getattr(settings, "twelvedata_api_key", None)
+    if not api_key:
+        return None
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                "https://api.twelvedata.com/price",
+                params={"symbol": td_symbol, "apikey": api_key},
+            )
+            if response.status_code == 200:
+                data = response.json()
+                price = data.get("price")
+                if price is not None:
+                    return float(price)
+    except Exception as e:
+        from app.settings import mask_api_key
+
+        logger.debug(f"Twelve Data fetch failed for {td_symbol}: {mask_api_key(str(e))}")
     return None
 
 

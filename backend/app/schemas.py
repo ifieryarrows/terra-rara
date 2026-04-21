@@ -140,11 +140,40 @@ class HealthResponse(BaseModel):
 
     # Added 2026-04: ingestion + pipeline freshness so the System page can
     # surface "why is the forecast stale?" at a glance.
+    #
+    # Naming is deliberate — each timestamp answers a different question and
+    # they are NOT interchangeable:
+    #   * last_pipeline_run_at       → when the worker actually completed
+    #   * last_snapshot_generated_at → when /api/analysis was last refreshed
+    #   * last_tft_prediction_at     → when the TFT snapshot was produced
+    #   * tft_model_trained_at       → when the TFT checkpoint was (re)trained
+    #   * tft_reference_price_date   → close date the latest forecast is anchored to
+    #   * price_bar_latest_date      → most recent HG=F OHLC bar we have ingested
     last_pipeline_run_at: Optional[str] = Field(
-        None, description="ISO timestamp of the most recent scheduler pipeline run"
+        None,
+        description=(
+            "ISO timestamp of the most recent pipeline run that actually "
+            "completed on the worker (from pipeline_run_metrics)."
+        ),
     )
     last_pipeline_status: Optional[str] = Field(
         None, description="Outcome of the most recent pipeline run (ok, failed, running)"
+    )
+    last_snapshot_generated_at: Optional[str] = Field(
+        None,
+        description="ISO timestamp of the latest XGBoost analysis snapshot (AnalysisSnapshot.generated_at).",
+    )
+    last_tft_prediction_at: Optional[str] = Field(
+        None,
+        description="ISO timestamp of the latest persisted TFT prediction snapshot.",
+    )
+    tft_model_trained_at: Optional[str] = Field(
+        None,
+        description="ISO timestamp of the most recent TFT checkpoint training completion.",
+    )
+    tft_reference_price_date: Optional[str] = Field(
+        None,
+        description="Close date (YYYY-MM-DD) that the latest TFT forecast is anchored to.",
     )
     price_bar_latest_date: Optional[str] = Field(
         None, description="Date (YYYY-MM-DD) of the most recent PriceBar for the target"
