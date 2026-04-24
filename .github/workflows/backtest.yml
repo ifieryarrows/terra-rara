@@ -117,4 +117,7 @@ jobs:
             - name: Display results
               run: |
                   echo "=== BACKTEST RESULTS ==="
-                  cat backend/artifacts/backtests/*_report.json | python -m json.tool
+                  for f in backend/artifacts/backtests/*_report.json; do
+                    echo "--- $f ---"
+                    python -m json.tool "$f"
+                  done
