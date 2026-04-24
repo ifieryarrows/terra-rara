@@ -228,12 +228,21 @@ def refresh_market_heatmap() -> None:
 
             import yfinance as yf
 
-            # Batch fetch — yfinance accepts space-separated tickers
-            # Process in batches of 100 to avoid URL length issues
+            # Batch fetch with rate-limit protection
+            # Yahoo Finance aggressively blocks high-frequency scrapers.
+            # Process in batches of 50 (smaller than before) with inter-batch
+            # delays to stay under the radar.
+            import time
+
             all_data: list[dict] = []
-            batch_size = 100
+            batch_size = 50
             for i in range(0, len(symbols_to_fetch), batch_size):
                 batch = symbols_to_fetch[i : i + batch_size]
+
+                # Inter-batch delay to avoid Yahoo crumb invalidation
+                if i > 0:
+                    time.sleep(1.5)
+
                 try:
                     tickers_obj = yf.Tickers(" ".join(batch))
                     for sym in batch:
