@@ -11,6 +11,7 @@ import {
   fetchCommentary,
   fetchSentimentSummary,
 } from '../api';
+import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 
 export function useSystemStatus() {
   return useQuery({
@@ -20,7 +21,7 @@ export function useSystemStatus() {
   });
 }
 
-export function useConsensusSignal(symbol: string = 'HG=F') {
+export function useConsensusSignal(symbol: string = DEFAULT_COPPER_SYMBOL) {
   return useQuery({
     queryKey: ['consensus-signal', symbol],
     queryFn: () => fetchConsensusSignal(symbol),
@@ -28,7 +29,7 @@ export function useConsensusSignal(symbol: string = 'HG=F') {
   });
 }
 
-export function useTftModelSummary(symbol: string = 'HG=F') {
+export function useTftModelSummary(symbol: string = DEFAULT_COPPER_SYMBOL) {
   return useQuery({
     queryKey: ['tft-summary', symbol],
     queryFn: () => fetchTftModelSummary(symbol),
@@ -49,24 +50,24 @@ export function useMarketHeatmap() {
   return useQuery({
     queryKey: ['market-heatmap'],
     queryFn: fetchMarketHeatmap,
-    // Adaptive polling: short interval while the cache is empty or a refresh
-    // is in flight; long interval once we have a healthy payload. This prevents
-    // the UI from getting stuck on "Loading…" when the first snapshot is
-    // still being built by the background task.
+    // Poll the API cheaply every few seconds, but let the backend SWR cache
+    // decide when Yahoo/yfinance is actually called. This makes the UI
+    // live-ready without rate-limiting the quote provider.
     refetchInterval: (query) => {
       const data: any = query.state.data;
       const meta = data?._meta;
+      const pollMs = Math.max(2_000, Number(meta?.frontend_poll_seconds ?? 3) * 1000);
       const count = meta?.payload_count ?? (data?.children?.length ? -1 : 0);
-      const refreshing = !!meta?.refresh_in_progress;
       const hasContent = count > 0;
 
-      if (!hasContent) return 3_000;
-      if (refreshing) return 5_000;
-      return 900_000;
+      if (!hasContent) return pollMs;
+      return pollMs;
     },
     refetchOnWindowFocus: false,
     refetchOnMount: 'always',
-    staleTime: 0,
+    refetchIntervalInBackground: false,
+    staleTime: 2_000,
+    notifyOnChangeProps: ['data', 'error', 'isError', 'isLoading'],
   });
 }
 
@@ -85,7 +86,7 @@ export function useSentimentSummary(days: number = 7, recentLimit: number = 6) {
 }
 
 // Additional wrappers for Overview
-export function useOverviewData(symbol: string = 'HG=F') {
+export function useOverviewData(symbol: string = DEFAULT_COPPER_SYMBOL) {
   const analysisQuery = useQuery({
     queryKey: ['analysis', symbol],
     queryFn: () => fetchAnalysis(symbol),

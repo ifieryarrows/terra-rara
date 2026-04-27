@@ -203,6 +203,9 @@ def refresh_market_heatmap() -> None:
     the heatmap cache. Uses project taxonomy (not Yahoo sector/industry).
     """
     from app.db import SessionLocal
+    from app.settings import get_settings
+
+    settings = get_settings()
 
     with SessionLocal() as session:
         cache: Optional[HeatmapCache] = session.query(HeatmapCache).first()
@@ -292,7 +295,7 @@ def refresh_market_heatmap() -> None:
             now = _utcnow()
             cache.payload_json = root
             cache.cached_at = now
-            cache.expires_at = now + timedelta(minutes=15)
+            cache.expires_at = now + timedelta(seconds=settings.heatmap_cache_ttl_seconds)
             cache.refresh_started_at = None
             cache.refresh_error = None
             session.commit()

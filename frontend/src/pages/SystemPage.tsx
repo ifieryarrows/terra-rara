@@ -1,4 +1,5 @@
 import { useSystemStatus } from '../hooks/useQueries';
+import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 
 const StatusDot = ({ tone }: { tone: 'good' | 'bad' | 'neutral' }) => (
   <span
@@ -206,7 +207,7 @@ export const SystemPage = () => {
           }
         />
         <Row
-          label="Latest PriceBar (HG=F)"
+          label={`Latest PriceBar (${DEFAULT_COPPER_SYMBOL})`}
           value={d.price_bar_latest_date ?? '—'}
           tone={
             typeof d.price_bar_staleness_days === 'number'

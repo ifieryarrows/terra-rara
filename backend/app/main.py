@@ -25,6 +25,7 @@ from app.db import init_db, SessionLocal, get_db_type
 from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
+from app.instruments import TARGET_SYMBOL
 # NOTE: Faz 1 - API is snapshot-only, no report generation
 # generate_analysis_report and save_analysis_snapshot are now worker-only
 from app.schemas import (
@@ -119,7 +120,7 @@ app.add_middleware(
     description="Returns the latest cached analysis snapshot. No live computation - all heavy work is done by the worker."
 )
 async def get_analysis(
-    symbol: str = Query(default="HG=F", description="Trading symbol")
+    symbol: str = Query(default=TARGET_SYMBOL, description="Trading symbol")
 ):
     """
     Get current analysis report.
@@ -251,7 +252,7 @@ async def get_analysis(
     description="Returns historical data for charting, including prices and sentiment."
 )
 async def get_history(
-    symbol: str = Query(default="HG=F", description="Trading symbol"),
+    symbol: str = Query(default=TARGET_SYMBOL, description="Trading symbol"),
     days: int = Query(default=180, ge=7, le=730, description="Number of days of history")
 ):
     """
@@ -445,7 +446,7 @@ async def health_check():
             # --- Latest persisted TFT snapshot ------------------------------
             latest_tft = (
                 session.query(TFTPredictionSnapshot)
-                .filter(TFTPredictionSnapshot.symbol == "HG=F")
+                .filter(TFTPredictionSnapshot.symbol == TARGET_SYMBOL)
                 .order_by(TFTPredictionSnapshot.generated_at.desc())
                 .first()
             )
@@ -456,7 +457,7 @@ async def health_check():
             # --- Latest TFT training timestamp ------------------------------
             latest_tft_model = (
                 session.query(TFTModelMetadata)
-                .filter(TFTModelMetadata.symbol == "HG=F")
+                .filter(TFTModelMetadata.symbol == TARGET_SYMBOL)
                 .order_by(TFTModelMetadata.trained_at.desc())
                 .first()
             )
@@ -464,7 +465,7 @@ async def health_check():
                 tft_model_trained_at = _iso(latest_tft_model.trained_at)
 
             # --- PriceBar freshness -----------------------------------------
-            target = "HG=F"
+            target = TARGET_SYMBOL
             latest_bar = (
                 session.query(PriceBar.date)
                 .filter(PriceBar.symbol == target)
@@ -590,16 +591,21 @@ async def get_market_prices():
 
 @app.get(
     "/api/market-heatmap",
-    summary="Get CopperMind universe heatmap (15-min cache)",
+    summary="Get CopperMind universe heatmap",
     description=(
         "Returns a group->subgroup->symbol treemap payload sourced exclusively from the "
         "CopperMind project universe (broad_universe.csv). Uses stale-while-revalidate "
-        "caching with a 15-minute TTL. No general market indices are included."
+        "caching so Yahoo/yfinance is not polled on every frontend refresh. No general "
+        "market indices are included."
     )
 )
 async def get_market_heatmap(background_tasks: BackgroundTasks):
     from app.models import HeatmapCache
     from app.heatmap import refresh_market_heatmap
+
+    settings = get_settings()
+    source_delay_seconds = int(settings.heatmap_cache_ttl_seconds)
+    source_delay_minutes = max(1, round(source_delay_seconds / 60))
 
     # Stuck refresh safety: if a refresh has been "in progress" for longer than
     # this, assume the worker crashed and allow a fresh background refresh to
@@ -640,7 +646,11 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
                     "refresh_in_progress": True,
                     "last_updated_at": None,
                     "next_refresh_at": None,
-                    "source_delay_minutes": 15,
+                    "source_delay_minutes": source_delay_minutes,
+                    "source_delay_seconds": source_delay_seconds,
+                    "frontend_poll_seconds": settings.heatmap_frontend_poll_seconds,
+                    "provider": settings.heatmap_provider,
+                    "live_update_mode": "snapshot_swr",
                     "payload_count": 0,
                     "refresh_error": cache.refresh_error if cache else None,
                     "cache_state": "empty",
@@ -688,7 +698,11 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
                 "refresh_in_progress": refresh_in_progress,
                 "last_updated_at": cache.cached_at.isoformat() if cache.cached_at else None,
                 "next_refresh_at": cache.expires_at.isoformat() if cache.expires_at else None,
-                "source_delay_minutes": 15,
+                "source_delay_minutes": source_delay_minutes,
+                "source_delay_seconds": source_delay_seconds,
+                "frontend_poll_seconds": settings.heatmap_frontend_poll_seconds,
+                "provider": settings.heatmap_provider,
+                "live_update_mode": "snapshot_swr",
                 "payload_count": payload_count,
                 "refresh_error": cache.refresh_error,
                 "cache_state": cache_state,
@@ -704,50 +718,33 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
 
 @app.get(
     "/api/live-price",
-    summary="Get real-time copper price from Twelve Data",
-    description="Returns live XCU/USD price for header display. Uses Twelve Data API for reliability."
+    summary="Get canonical copper futures price",
+    description=(
+        "Returns the canonical CopperMind target price. The project standard is "
+        "COMEX copper futures via HG=F; no spot XCU/USD substitution is applied."
+    )
 )
-async def get_live_price():
+async def get_live_price(
+    symbol: str = Query(default=TARGET_SYMBOL, description="Canonical CopperMind symbol")
+):
     """
-    Get real-time copper price from Twelve Data.
-    
-    Used for the header price display. Separate from yfinance to avoid rate limits.
+    Get the current canonical target price.
+
+    The helper enforces exact-instrument lookup: HG=F uses yfinance first and
+    falls back to the latest DB close. Spot XCU/USD is no longer used by the UI.
     """
-    import httpx
-    
-    settings = get_settings()
-    
-    if not settings.twelvedata_api_key:
-        logger.warning("Twelve Data API key not configured")
-        return {"price": None, "error": "API key not configured"}
-    
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://api.twelvedata.com/price",
-                params={
-                    "symbol": "XCU/USD",
-                    "apikey": settings.twelvedata_api_key,
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                price = data.get("price")
-                if price:
-                    return {
-                        "symbol": "XCU/USD",
-                        "price": round(float(price), 4),
-                        "error": None,
-                    }
-                else:
-                    return {"price": None, "error": data.get("message", "No price data")}
-            else:
-                return {"price": None, "error": f"API error: {response.status_code}"}
-                
+        from app.inference import get_current_price
+
+        with SessionLocal() as session:
+            price = get_current_price(session, symbol)
+        return {
+            "symbol": symbol,
+            "price": round(float(price), 4) if price is not None else None,
+            "error": None if price is not None else "No price data",
+        }
     except Exception as e:
-        from app.settings import mask_api_key
-        logger.error(f"Twelve Data API error: {mask_api_key(str(e))}")
+        logger.error("Canonical live price error: %s", e)
         return {"price": None, "error": "API error"}
 
 
@@ -840,7 +837,7 @@ async def websocket_live_price(websocket: WebSocket):
     description="Returns the AI-generated analysis stored after pipeline completion."
 )
 async def get_commentary(
-    symbol: str = Query(default="HG=F", description="Symbol to get commentary for")
+    symbol: str = Query(default=TARGET_SYMBOL, description="Symbol to get commentary for")
 ):
     """
     Get AI commentary for the specified symbol.
@@ -895,7 +892,7 @@ _TFT_CACHE_TTL_S = 300  # 5 minutes
     },
 )
 async def get_tft_analysis(
-    symbol: str = "HG=F",
+    symbol: str = TARGET_SYMBOL,
     source: str = "snapshot",
 ):
     """
@@ -1124,7 +1121,7 @@ async def trigger_pipeline(
     description="Combines XGBoost and TFT-ASRO signals into a directional consensus."
 )
 async def get_consensus(
-    symbol: str = Query(default="HG=F", description="Trading symbol")
+    symbol: str = Query(default=TARGET_SYMBOL, description="Trading symbol")
 ):
     from deep_learning.inference.predictor import ensemble_directional_vote, generate_tft_analysis
     
@@ -1166,7 +1163,7 @@ async def get_consensus(
     description="Returns training metrics, quality gate results, and feature importance."
 )
 async def get_tft_summary(
-    symbol: str = Query(default="HG=F", description="Target symbol")
+    symbol: str = Query(default=TARGET_SYMBOL, description="Target symbol")
 ):
     from app.models import TFTModelMetadata
     from app.quality_gate import evaluate_quality_gate
@@ -1259,7 +1256,7 @@ async def get_tft_summary(
         "a 404 error."
     ),
 )
-async def get_latest_backtest(symbol: str = Query(default="HG=F", description="Target symbol")):
+async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, description="Target symbol")):
     import pathlib
     import json as _json
 

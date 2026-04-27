@@ -44,6 +44,7 @@ warnings.filterwarnings(
 )
 
 from deep_learning.config import TFTASROConfig, get_tft_config
+from app.instruments import TARGET_DISPLAY_NAME, TARGET_SYMBOL
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class TFTPredictor:
                 self._pca = load_pca(pca_path)
         return self._pca
 
-    def predict(self, session, symbol: str = "HG=F") -> Dict[str, Any]:
+    def predict(self, session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any]:
         """
         Generate a TFT-ASRO prediction for the given symbol.
 
@@ -258,21 +259,14 @@ class TFTPredictor:
     def _describe_instrument(symbol: str) -> Dict[str, str]:
         """Return a structured label for the traded instrument."""
         mapping = {
-            "HG=F": {
-                "symbol": "HG=F",
+            TARGET_SYMBOL: {
+                "symbol": TARGET_SYMBOL,
                 "kind": "futures",
-                "name": "COMEX Copper Futures",
+                "name": TARGET_DISPLAY_NAME,
                 "note": (
                     "Continuous front-month contract (CME Group). Prices "
-                    "differ from LME spot / XCU_USD due to basis and "
-                    "contract roll, typically by 1–3 USD/ton."
+                    "are used consistently across training, inference and UI."
                 ),
-            },
-            "XCU=X": {
-                "symbol": "XCU=X",
-                "kind": "spot",
-                "name": "Copper spot (XCU/USD)",
-                "note": "LBMA-style reference spot price; differs from futures by basis.",
             },
         }
         return mapping.get(
@@ -468,7 +462,7 @@ def get_tft_predictor(cfg: Optional[TFTASROConfig] = None) -> TFTPredictor:
     return _predictor
 
 
-def generate_tft_analysis(session, symbol: str = "HG=F") -> Dict[str, Any]:
+def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any]:
     """
     High-level API for generating a TFT-ASRO analysis report.
 

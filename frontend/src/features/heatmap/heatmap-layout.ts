@@ -25,6 +25,10 @@ export interface HeatmapMeta {
   last_updated_at: string | null;
   next_refresh_at: string | null;
   source_delay_minutes: number;
+  source_delay_seconds?: number;
+  frontend_poll_seconds?: number;
+  provider?: string;
+  live_update_mode?: 'snapshot_swr' | 'streaming' | string;
   payload_count?: number;
   refresh_error?: string | null;
   cache_state?: 'fresh' | 'stale' | 'refreshing' | 'empty';

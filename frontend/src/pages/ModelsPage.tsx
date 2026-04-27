@@ -1,4 +1,5 @@
 import { useTftModelSummary } from '../hooks/useQueries';
+import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 
 const Metric = ({
   label,
@@ -28,7 +29,7 @@ const fmtPct = (v?: number) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
 const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits));
 
 export const ModelsPage = () => {
-  const { data, isLoading, isError, error } = useTftModelSummary('HG=F');
+  const { data, isLoading, isError, error } = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
 
   if (isLoading) {
     return (

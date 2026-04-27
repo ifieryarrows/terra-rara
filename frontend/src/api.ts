@@ -10,6 +10,7 @@ import type {
   NewsListResponse,
   NewsStatsResponse,
 } from './types';
+import { DEFAULT_COPPER_SYMBOL } from './config/instruments';
 
 // Base URL for API calls
 // In production (Vercel), use VITE_API_URL env var pointing to Hugging Face backend
@@ -58,7 +59,7 @@ api.interceptors.response.use(
 /**
  * Fetch current analysis report
  */
-export async function fetchAnalysis(symbol: string = 'HG=F'): Promise<AnalysisReport> {
+export async function fetchAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<AnalysisReport> {
   const response = await api.get<AnalysisReport>('/analysis', {
     params: { symbol },
   });
@@ -69,7 +70,7 @@ export async function fetchAnalysis(symbol: string = 'HG=F'): Promise<AnalysisRe
  * Fetch historical price and sentiment data
  */
 export async function fetchHistory(
-  symbol: string = 'HG=F',
+  symbol: string = DEFAULT_COPPER_SYMBOL,
   days: number = 180
 ): Promise<HistoryResponse> {
   const response = await api.get<HistoryResponse>('/history', {
@@ -89,7 +90,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
 /**
  * Fetch AI-generated market commentary
  */
-export async function fetchCommentary(symbol: string = 'HG=F'): Promise<CommentaryResponse> {
+export async function fetchCommentary(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<CommentaryResponse> {
   const response = await api.get<CommentaryResponse>('/commentary', {
     params: { symbol },
   });
@@ -118,7 +119,7 @@ export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
 /**
  * Fetch TFT-ASRO deep learning analysis
  */
-export async function fetchTFTAnalysis(symbol: string = 'HG=F'): Promise<TFTAnalysisResponse | null> {
+export async function fetchTFTAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<TFTAnalysisResponse | null> {
   try {
     const response = await api.get<TFTAnalysisResponse>(`/analysis/tft/${symbol}`);
     return response.data;
@@ -150,7 +151,7 @@ export async function fetchLivePrice(): Promise<LivePriceResponse> {
 /**
  * Fetch Consensus Signal
  */
-export async function fetchConsensusSignal(symbol: string = 'HG=F'): Promise<any> {
+export async function fetchConsensusSignal(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<any> {
   const response = await api.get('/analysis/consensus', { params: { symbol } });
   return response.data;
 }
@@ -158,7 +159,7 @@ export async function fetchConsensusSignal(symbol: string = 'HG=F'): Promise<any
 /**
  * Fetch TFT Model Summary
  */
-export async function fetchTftModelSummary(symbol: string = 'HG=F'): Promise<any> {
+export async function fetchTftModelSummary(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<any> {
   const response = await api.get('/models/tft/summary', { params: { symbol } });
   return response.data;
 }

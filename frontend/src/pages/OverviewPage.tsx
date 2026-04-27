@@ -1,16 +1,17 @@
-import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef, memo } from 'react';
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine
 } from 'recharts';
 import { motion } from 'framer-motion';
 import {
-  Activity, Globe, Zap, BarChart3, Cpu, TrendingUp, TrendingDown,
+  Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
   Brain, Crosshair, AlertTriangle, CheckCircle2, Clock
 } from 'lucide-react';
 import clsx from 'clsx';
 
 import { fetchAnalysis, fetchHistory, fetchCommentary, fetchTFTAnalysis } from '../api';
+import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
   AnalysisReport, HistoryResponse,
   CommentaryResponse, TFTAnalysisResponse
@@ -48,7 +49,7 @@ const MapSkeleton = () => (
 
 // --- Components ---
 
-const GlassCard = ({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
+const GlassCard = memo(({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
   <motion.div
     className={clsx(
       "glass-panel p-6 shadow-lg hover:shadow-xl transition-shadow duration-500",
@@ -69,9 +70,10 @@ const GlassCard = ({ title, icon: Icon, children, className = '', colSpan = 1 }:
       {children}
     </div>
   </motion.div>
-);
+));
+GlassCard.displayName = 'GlassCard';
 
-const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className = '' }: any) => {
+const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), className = '' }: any) => {
   return (
     <motion.span
       key={value}
@@ -83,10 +85,11 @@ const NumberTicker = ({ value, format = (v: number) => v.toFixed(2), className =
       {format(value)}
     </motion.span>
   );
-};
+});
+NumberTicker.displayName = 'NumberTicker';
 
 // Simple progress bar [0-100]
-const ProgressBar = ({ value, max = 100, color = 'bg-emerald-500' }: { value: number; max?: number; color?: string }) => (
+const ProgressBar = memo(({ value, max = 100, color = 'bg-emerald-500' }: { value: number; max?: number; color?: string }) => (
   <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
     <motion.div
       className={clsx("h-full rounded-full", color)}
@@ -95,7 +98,8 @@ const ProgressBar = ({ value, max = 100, color = 'bg-emerald-500' }: { value: nu
       transition={{ duration: 0.8, ease: 'easeOut' }}
     />
   </div>
-);
+));
+ProgressBar.displayName = 'ProgressBar';
 
 function addBusinessDays(start: Date, n: number): Date {
   const result = new Date(start);
@@ -146,9 +150,9 @@ export const OverviewPage = () => {
   const loadData = useCallback(async (silent = false) => {
     try {
       const [analysisData, historyData, tftData] = await Promise.all([
-        fetchAnalysis('HG=F'),
-        fetchHistory('HG=F', 180),
-        fetchTFTAnalysis('HG=F'),
+        fetchAnalysis(DEFAULT_COPPER_SYMBOL),
+        fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
+        fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
       ]);
       setAnalysis(analysisData);
       setHistory(historyData);
@@ -162,7 +166,7 @@ export const OverviewPage = () => {
 
   const loadCommentary = useCallback(async () => {
     try {
-      const data = await fetchCommentary('HG=F');
+      const data = await fetchCommentary(DEFAULT_COPPER_SYMBOL);
       setCommentary(data);
     } catch (err) {
       console.error(err);
@@ -198,7 +202,7 @@ export const OverviewPage = () => {
         script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
         script.async = true;
         script.textContent = JSON.stringify({
-          symbol: "EIGHTCAP:XCUUSD",
+          symbol: COPPER_INSTRUMENT.tradingViewSymbol,
           width: "100%",
           isTransparent: true,
           colorTheme: "dark",
@@ -296,8 +300,6 @@ export const OverviewPage = () => {
     );
   }
 
-  const isBullish = analysis && analysis.predicted_return >= 0;
-
   // CRITICAL: headline percentage MUST come from the same place as the T+1
   // price shown beside it. Previously we read `predicted_return_median`
   // while the price came from `daily_forecasts[0].price_median`, which
@@ -316,13 +318,6 @@ export const OverviewPage = () => {
   const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
   // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
   const tftBaselineIsStale = tftStalenessDays >= 3;
-  const tftInstrumentLabel = tftInstrument?.name || 'COMEX Copper Futures (HG=F)';
-  const tftInstrumentKind = tftInstrument?.kind || 'futures';
-  const tftSource = (tftAnalysis as any)?.source as 'snapshot' | 'live' | undefined;
-  const tftSnapshotGeneratedAt = (tftAnalysis as any)?.snapshot_generated_at as
-    | string
-    | null
-    | undefined;
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -349,9 +344,9 @@ export const OverviewPage = () => {
             <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden flex flex-col">
               <span
                 className="text-[9px] text-gray-500 font-semibold uppercase tracking-widest"
-                title="Spot copper (XCU/USD) shown as a market reference only. The model forecast card below is based on COMEX HG=F futures; prices can diverge by 1–3 USD due to basis and roll."
+                title={`${COPPER_INSTRUMENT.displayName} quote shown with TradingView symbol ${COPPER_INSTRUMENT.tradingViewSymbol}. Model, chart and forecast data use ${COPPER_INSTRUMENT.canonicalSymbol}.`}
               >
-                Spot Ref · XCU/USD
+                Futures - {COPPER_INSTRUMENT.tradingViewLabel}
               </span>
               <div id="tradingview-widget-container" className="tradingview-widget-container">
                 {/* Skeleton while TradingView loads */}
@@ -379,58 +374,8 @@ export const OverviewPage = () => {
         {/* Main dashboard column */}
         <div className="grid grid-cols-12 gap-6">
 
-          {/* XGBoost Prediction Card */}
-          <GlassCard title="XGBoost (T+1)" icon={Zap} colSpan={3} className={clsx("relative overflow-hidden", isBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              {isBullish ? <TrendingUp size={80} /> : <TrendingDown size={80} />}
-            </div>
-            <div className="relative z-10 flex flex-col h-full justify-between py-1">
-              <div>
-                <div className="flex items-baseline gap-2">
-                  <span className={clsx("text-4xl font-light font-mono tracking-tighter", isBullish ? "text-emerald-400" : "text-rose-400")}>
-                    {isBullish ? '+' : ''}<NumberTicker value={(analysis?.predicted_return || 0) * 100} />%
-                  </span>
-                </div>
-                <div className="mt-3 space-y-1">
-                  <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
-                    <span className="text-gray-500">Target</span>
-                    <span className="font-mono text-gray-200">${analysis?.predicted_price?.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs py-1.5 border-b border-white/5">
-                    <span className="text-gray-500">Coverage</span>
-                    <span className="font-mono text-gray-200">{(analysis?.data_quality.coverage_pct || 0)}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-white/5">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={clsx(
-                    "w-2 h-2 rounded-full animate-pulse",
-                    commentary?.ai_stance === 'BULLISH' ? "bg-emerald-400" :
-                      commentary?.ai_stance === 'BEARISH' ? "bg-rose-400" : "bg-amber-400"
-                  )} />
-                  <span className={clsx(
-                    "text-[10px] font-bold tracking-wider",
-                    commentary?.ai_stance === 'BULLISH' ? "text-emerald-400" :
-                      commentary?.ai_stance === 'BEARISH' ? "text-rose-400" : "text-amber-400"
-                  )}>
-                    {commentary?.ai_stance || 'ANALYZING...'}
-                  </span>
-                </div>
-                <div className="h-[80px] overflow-y-auto text-xs text-gray-400 leading-relaxed custom-scrollbar">
-                  {commentary ? (
-                    <p className="font-light">{(commentary.commentary || '').split('\n')[0]}</p>
-                  ) : (
-                    <span className="text-gray-500 animate-pulse">Processing...</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          {/* TFT-ASRO Prediction Card — T+1 focused */}
-          <GlassCard title="Deep Learning Forecast" icon={Brain} colSpan={3} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
+          {/* Deep Learning Forecast — primary T+1 forecast */}
+          <GlassCard title="Deep Learning Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
             {tftAnalysis ? (() => {
               const t1 = tftAnalysis.prediction.daily_forecasts?.[0];
               return (
@@ -451,54 +396,24 @@ export const OverviewPage = () => {
                         {tftDirection === 'BULLISH' ? <TrendingUp size={14} /> : tftDirection === 'BEARISH' ? <TrendingDown size={14} /> : <Activity size={14} />}
                         {tftDirection}
                       </div>
-                      {tftSource && (
-                        <span
-                          title={
-                            tftSource === 'snapshot'
-                              ? `Served from the latest persisted daily pipeline snapshot${
-                                  tftSnapshotGeneratedAt
-                                    ? ` (generated ${new Date(tftSnapshotGeneratedAt).toLocaleString()})`
-                                    : ''
-                                }.`
-                              : 'Fresh inference run on this request (diagnostic path).'
-                          }
-                          className={clsx(
-                            'px-1.5 py-0.5 rounded border text-[9px] font-semibold uppercase tracking-wider',
-                            tftSource === 'snapshot'
-                              ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
-                              : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                          )}
-                        >
-                          {tftSource}
-                        </span>
-                      )}
                     </div>
 
                     {/* Next session headline — percent and price derive from
                         the same forecast entry (single source of truth). */}
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5 flex items-center gap-2 flex-wrap">
-                        <span>Next Session (T+1)</span>
-                        <span
-                          title={tftInstrument?.note || ''}
-                          className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 text-[9px] normal-case tracking-wider"
-                        >
-                          {tftInstrumentKind === 'futures' ? 'Futures' : tftInstrumentKind === 'spot' ? 'Spot' : 'Instrument'}: {tftInstrument?.symbol || 'HG=F'}
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                          T+1 Forecast
                         </span>
-                        {tftReferenceDate && (
-                          <span className="text-gray-600 normal-case">
-                            vs. {new Date(tftReferenceDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} close
-                          </span>
-                        )}
                         {tftBaselineIsStale && (
                           <span
-                            title={`Last PriceBar is ${tftStalenessDays}d old — lazy ingest attempted on next forecast request.`}
-                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] normal-case tracking-wider"
+                            title={`Last PriceBar is ${tftStalenessDays}d old; lazy ingest attempted on next forecast request.`}
+                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] tracking-wider"
                           >
-                            STALE {tftStalenessDays}d
+                            Stale {tftStalenessDays}d
                           </span>
                         )}
-                      </p>
+                      </div>
                       <div className="flex items-baseline gap-2">
                         <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                           {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
@@ -510,13 +425,19 @@ export const OverviewPage = () => {
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-[10px] text-gray-500">
-                        Baseline: <span className="text-gray-400">{tftInstrumentLabel}</span>.
-                        LME spot (XCU/USD) can differ by 1–3 USD due to basis and roll.
-                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                        <div>
+                          <span className="block uppercase tracking-wider">Instrument</span>
+                          <span className="font-mono text-gray-300">{tftInstrument?.symbol || COPPER_INSTRUMENT.canonicalSymbol}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="block uppercase tracking-wider">Close Date</span>
+                          <span className="font-mono text-gray-300">{tftReferenceDate ?? '--'}</span>
+                        </div>
+                      </div>
                       {tftAnomaly && (
                         <p className="mt-1 text-[10px] text-amber-400">
-                          ⚠ Anomalous raw model output — value bounded to ±12%. Check training logs.
+                          Anomalous raw model output; value bounded to +/-12%. Check training logs.
                         </p>
                       )}
                     </div>
@@ -555,7 +476,22 @@ export const OverviewPage = () => {
                       </div>
                     </div>
 
-                    {/* Risk + model tag */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5">
+                        <span className="block text-[9px] text-gray-600 uppercase tracking-wider">Direction Score</span>
+                        <span className="font-mono text-xs text-gray-200">
+                          {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
+                        </span>
+                      </div>
+                      <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5 text-right">
+                        <span className="block text-[9px] text-gray-600 uppercase tracking-wider">Sharpe</span>
+                        <span className="font-mono text-xs text-gray-200">
+                          {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Risk */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         {tftAnalysis.risk_level === 'LOW'
@@ -570,7 +506,6 @@ export const OverviewPage = () => {
                           {tftAnalysis.risk_level} RISK
                         </span>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">TFT-ASRO</span>
                     </div>
                   </div>
                 </>
@@ -587,7 +522,7 @@ export const OverviewPage = () => {
           </GlassCard>
 
           {/* Price Forecast Chart */}
-          <GlassCard title="Price Forecast" icon={Activity} colSpan={6} className="min-h-[400px]">
+          <GlassCard title="Price Forecast" icon={Activity} colSpan={8} className="min-h-[400px]">
             {forecastChartData.length > 0 ? (
               <div className="h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
