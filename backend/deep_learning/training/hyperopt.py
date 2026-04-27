@@ -38,6 +38,60 @@ from deep_learning.config import (
 logger = logging.getLogger(__name__)
 
 
+def _trial_state_counts(study) -> dict[str, int]:
+    """Return lowercase Optuna trial-state counts for logs and artifacts."""
+    counts: dict[str, int] = {}
+    for trial in study.trials:
+        state = getattr(trial.state, "name", str(trial.state)).lower()
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _best_finite_completed_trial(study):
+    """Optuna raises when no trial completed; select the usable best trial safely."""
+    completed = []
+    for trial in study.trials:
+        if getattr(trial.state, "name", None) != "COMPLETE":
+            continue
+        if trial.value is None or not np.isfinite(float(trial.value)):
+            continue
+        completed.append(trial)
+
+    if not completed:
+        return None
+
+    return min(completed, key=lambda trial: float(trial.value))
+
+
+def _build_result_payload(study) -> dict:
+    """Build the persisted hyperopt artifact without assuming a best trial exists."""
+    trial_state_counts = _trial_state_counts(study)
+    best = _best_finite_completed_trial(study)
+
+    if best is None:
+        return {
+            "status": "no_finite_completed_trials",
+            "best_trial": None,
+            "best_value": None,
+            "best_params": {},
+            "n_trials": len(study.trials),
+            "trial_state_counts": trial_state_counts,
+            "message": (
+                "No Optuna trials completed with a finite objective value; "
+                "final training should use the default TFT-ASRO config."
+            ),
+        }
+
+    return {
+        "status": "completed",
+        "best_trial": best.number,
+        "best_value": float(best.value),
+        "best_params": best.params,
+        "n_trials": len(study.trials),
+        "trial_state_counts": trial_state_counts,
+    }
+
+
 def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     """Map an Optuna trial to a TFT-ASRO configuration."""
     model_cfg = TFTModelConfig(
@@ -414,26 +468,28 @@ def run_hyperopt(
         show_progress_bar=True,
     )
 
-    best = study.best_trial
-    logger.info("Optuna best trial #%d: val_loss=%.6f", best.number, best.value)
-    logger.info("Best params: %s", best.params)
-
     # Save alongside best_tft_asro.ckpt (tft/ root) so upload_tft_artifacts picks it up.
     results_path = Path(base_cfg.training.best_model_path).parent / "optuna_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    results_path.write_text(json.dumps({
-        "best_trial": best.number,
-        "best_value": best.value,
-        "best_params": best.params,
-        "n_trials": len(study.trials),
-    }, indent=2))
+    result = _build_result_payload(study)
+    results_path.write_text(json.dumps(result, indent=2, allow_nan=False))
 
-    return {
-        "best_trial": best.number,
-        "best_value": best.value,
-        "best_params": best.params,
-        "n_trials": len(study.trials),
-    }
+    if result["best_trial"] is None:
+        logger.warning(
+            "Optuna finished without a finite completed trial; state counts=%s. "
+            "Wrote fallback artifact to %s",
+            result["trial_state_counts"],
+            results_path,
+        )
+    else:
+        logger.info(
+            "Optuna best trial #%d: val_loss=%.6f",
+            result["best_trial"],
+            result["best_value"],
+        )
+        logger.info("Best params: %s", result["best_params"])
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +509,17 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("HYPEROPT COMPLETE")
     print("=" * 60)
-    print(f"Best trial: #{result['best_trial']}")
-    print(f"Best val_loss: {result['best_value']:.6f}")
-    for k, v in result["best_params"].items():
-        print(f"  {k}: {v}")
+    if result["best_trial"] is None:
+        print(f"Status: {result['status']}")
+        print(result["message"])
+        if result.get("trial_state_counts"):
+            counts = ", ".join(
+                f"{state}={count}"
+                for state, count in sorted(result["trial_state_counts"].items())
+            )
+            print(f"Trial states: {counts}")
+    else:
+        print(f"Best trial: #{result['best_trial']}")
+        print(f"Best val_loss: {result['best_value']:.6f}")
+        for k, v in result["best_params"].items():
+            print(f"  {k}: {v}")
