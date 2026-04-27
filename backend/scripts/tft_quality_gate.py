@@ -11,12 +11,17 @@ GitHub Actions CI and the FastAPI runtime always agree on the rules.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 
+BACKEND_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 from app.quality_gate import evaluate_quality_gate
 
-META_PATH = pathlib.Path("/tmp/models/tft/tft_metadata.json")
+META_PATH = pathlib.Path(os.environ.get("TFT_METADATA_PATH", "/tmp/models/tft/tft_metadata.json"))
 
 
 def main() -> int:
@@ -24,7 +29,7 @@ def main() -> int:
         print("No metadata file found - quality gate cannot evaluate training output")
         return 1
 
-    data = json.loads(META_PATH.read_text(encoding="utf-8"))
+    data = json.loads(META_PATH.read_text(encoding="utf-8-sig"))
     metrics = data.get("test_metrics", {})
     da = metrics.get("directional_accuracy", 0.5)
     sharpe = metrics.get("sharpe_ratio", 0.0)
