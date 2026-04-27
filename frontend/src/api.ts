@@ -140,12 +140,43 @@ export interface LivePriceResponse {
   error: string | null;
 }
 
+export interface LivePriceStreamMessage {
+  symbol: string;
+  provider_symbol?: string;
+  provider?: string;
+  price?: number | null;
+  timestamp?: number | null;
+  received_at?: string;
+  source?: string;
+  status?: string;
+  change?: number | null;
+  change_percent?: number | null;
+  day_volume?: number | null;
+  day_high?: number | null;
+  day_low?: number | null;
+  market_hours?: string | number | null;
+  error?: string | null;
+}
+
 /**
  * Fetch current canonical copper futures price.
  */
 export async function fetchLivePrice(): Promise<LivePriceResponse> {
   const response = await api.get<LivePriceResponse>('/live-price');
   return response.data;
+}
+
+/**
+ * Build websocket URL for live price streaming.
+ * Converts API base `.../api` into websocket endpoint `.../ws/live-price`.
+ */
+export function getLivePriceWebSocketUrl(symbol: string = DEFAULT_COPPER_SYMBOL): string {
+  const apiUrl = new URL(API_BASE_URL, window.location.origin);
+  const wsUrl = new URL(apiUrl.toString());
+  wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  wsUrl.pathname = wsUrl.pathname.replace(/\/api\/?$/, '/ws/live-price');
+  wsUrl.searchParams.set('symbol', symbol);
+  return wsUrl.toString();
 }
 
 /**

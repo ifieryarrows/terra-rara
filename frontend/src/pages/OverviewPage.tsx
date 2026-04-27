@@ -10,7 +10,14 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-import { fetchAnalysis, fetchHistory, fetchCommentary, fetchTFTAnalysis } from '../api';
+import {
+  fetchAnalysis,
+  fetchHistory,
+  fetchCommentary,
+  fetchTFTAnalysis,
+  fetchLivePrice,
+  getLivePriceWebSocketUrl,
+} from '../api';
 import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
   AnalysisReport, HistoryResponse,
@@ -144,7 +151,10 @@ export const OverviewPage = () => {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [liveFeedStatus, setLiveFeedStatus] = useState<'connecting' | 'live' | 'snapshot'>('connecting');
   const tradingViewLoaded = useRef(false);
+  const liveWsRef = useRef<WebSocket | null>(null);
 
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
@@ -214,6 +224,83 @@ export const OverviewPage = () => {
 
     return () => clearTimeout(timer);
   }, [isInitialLoad]);
+
+  // Live price stream: websocket first, snapshot fallback.
+  useEffect(() => {
+    let mounted = true;
+    let reconnectTimer: number | null = null;
+    let snapshotTimer: number | null = null;
+    let retryCount = 0;
+
+    const fetchSnapshot = async () => {
+      try {
+        const payload = await fetchLivePrice();
+        if (!mounted) return;
+        if (typeof payload.price === 'number') setLivePrice(payload.price);
+      } catch {
+        // Snapshot fallback is best-effort.
+      }
+    };
+
+    const connect = () => {
+      if (!mounted) return;
+      setLiveFeedStatus('connecting');
+      const ws = new WebSocket(getLivePriceWebSocketUrl(DEFAULT_COPPER_SYMBOL));
+      liveWsRef.current = ws;
+
+      ws.onopen = () => {
+        if (!mounted) return;
+        retryCount = 0;
+        setLiveFeedStatus('live');
+      };
+
+      ws.onmessage = (event) => {
+        if (!mounted) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (typeof payload?.price === 'number') {
+            setLivePrice(payload.price);
+          }
+          if (payload?.status === 'reconnecting') {
+            setLiveFeedStatus('connecting');
+          }
+        } catch {
+          // Ignore malformed packets and keep stream alive.
+        }
+      };
+
+      ws.onerror = () => {
+        if (!mounted) return;
+        setLiveFeedStatus('snapshot');
+      };
+
+      ws.onclose = () => {
+        if (!mounted) return;
+        setLiveFeedStatus('snapshot');
+        retryCount += 1;
+        const delayMs = Math.min(10000, 1000 * Math.pow(2, Math.min(retryCount, 3)));
+        reconnectTimer = window.setTimeout(connect, delayMs);
+      };
+    };
+
+    void fetchSnapshot();
+    connect();
+
+    snapshotTimer = window.setInterval(() => {
+      if (!mounted) return;
+      if (liveWsRef.current?.readyState !== WebSocket.OPEN) {
+        void fetchSnapshot();
+      }
+    }, 30000);
+
+    return () => {
+      mounted = false;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (snapshotTimer !== null) window.clearInterval(snapshotTimer);
+      liveWsRef.current?.close();
+      liveWsRef.current = null;
+    };
+  }, []);
 
   // Load commentary after analysis
   useEffect(() => {
@@ -356,6 +443,23 @@ export const OverviewPage = () => {
                     <SkeletonPulse className="w-12 h-6" />
                   </div>
                 )}
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 text-[10px]">
+                <span className="font-mono text-copper-300">
+                  {livePrice != null ? `$${livePrice.toFixed(4)}` : '--'}
+                </span>
+                <span
+                  className={clsx(
+                    "px-1.5 py-0.5 rounded border uppercase tracking-wider",
+                    liveFeedStatus === 'live'
+                      ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
+                      : liveFeedStatus === 'connecting'
+                      ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
+                      : "text-slate-300 border-slate-500/30 bg-slate-500/10"
+                  )}
+                >
+                  {liveFeedStatus === 'live' ? 'WS Live' : liveFeedStatus === 'connecting' ? 'WS...' : 'Snapshot'}
+                </span>
               </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
@@ -522,7 +626,7 @@ export const OverviewPage = () => {
           </GlassCard>
 
           {/* Price Forecast Chart */}
-          <GlassCard title="Price Forecast" icon={Activity} colSpan={8} className="min-h-[400px]">
+          <GlassCard title={`Price Forecast (${COPPER_INSTRUMENT.canonicalSymbol})`} icon={Activity} colSpan={8} className="min-h-[400px]">
             {forecastChartData.length > 0 ? (
               <div className="h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">

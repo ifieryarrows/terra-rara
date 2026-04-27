@@ -74,6 +74,18 @@ export const HeatmapPanel: React.FC = () => {
     return () => cancelAnimationFrame(id);
   }, [rawData, isFullscreen, measure]);
 
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
   const availableGroups = useMemo<string[]>(() => {
     if (!rawData?.children) return [];
     const groups = rawData.children.map((g: any) => g.name).filter(Boolean);
@@ -181,6 +193,9 @@ export const HeatmapPanel: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isFullscreen && (
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Press ESC</span>
+          )}
           {/* Manual Refresh button intentionally removed: countdown-driven
               auto-refresh covers the whole loop and prevents users from
               spamming yfinance. Scroll wheel over the heatmap handles zoom. */}
