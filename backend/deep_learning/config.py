@@ -70,27 +70,24 @@ class LMEConfig:
 class TFTModelConfig:
     max_encoder_length: int = 60
     max_prediction_length: int = 5
-    # hidden_size 64→32: VSN encoder had 3.2M params for only 313 training
-    # samples (344 features × hidden_size × hidden_continuous_size).
-    # Reducing halves the dominant layer while keeping expressiveness.
-    hidden_size: int = 32
+    # It.4 known-good default: post-MRMR feature count supports 48 hidden units
+    # and produced the first quality-gate passing TFT-ASRO run.
+    hidden_size: int = 48
     # attention_head_size 4→2: fewer heads for a small, single-series dataset.
     attention_head_size: int = 2
-    # dropout 0.1→0.20 (REG-2026-001): 313 samples with dropout<0.20 caused
-    # co-adaptation and memorization.  Kept ≤0.35 because higher values with
-    # small hidden_size collapse the output range.
-    dropout: float = 0.20
+    # It.4 used 0.30: enough regularisation for the small sample regime without
+    # collapsing the output range.
+    dropout: float = 0.30
     hidden_continuous_size: int = 16   # was 32; paired reduction with hidden_size
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
-    # lr 1e-3→3e-4: smaller batches produce noisier gradients; conservative LR
-    # reduces the risk of overshooting the narrow-loss landscape.
-    learning_rate: float = 3e-4
+    # It.4 known-good learning rate.
+    learning_rate: float = 2e-4
     reduce_on_plateau_patience: int = 4
     # clip 0.5→1.0: tanh-based Sharpe gradients are inherently bounded;
     # relaxing the clip lets the model escape flat regions more aggressively.
     gradient_clip_val: float = 1.0
     # L2 regularisation via AdamW; prevents large weight growth on small datasets.
-    weight_decay: float = 1e-4
+    weight_decay: float = 5e-5
 
 
 @dataclass(frozen=True)
@@ -104,18 +101,16 @@ class ASROConfig:
     # This normalised (sum-to-1) formulation makes both components interpretable
     # and prevents either from silently dominating across loss-magnitude regimes.
     #
-    # 0.4 / 0.6 split: 40% calibration (keeps TFT probabilistic),
-    #                   60% Sharpe     (drives directional / amplitude learning)
-    lambda_quantile: float = 0.4   # w_quantile; was 0.3 (unnormalised old formula)
+    # It.4 split: 25% calibration, 75% directional learning.
+    lambda_quantile: float = 0.25
     # lambda_vol is a sub-weight within the calibration bundle only.
     # It controls how much the Q90-Q10 spread tracks 2× actual σ.
-    # Two independent Optuna runs (20 trials each) both converged on 0.35 —
-    # updating default to match confirmed optimal value.
-    lambda_vol: float = 0.35
+    # It.4 known-good volatility calibration sub-weight.
+    lambda_vol: float = 0.30
     # MADL (Mean Absolute Directional Loss) weight.
     # Directly rewards correct directional predictions scaled by |actual_return|.
     # Ref: Kisiel & Gorse (2023) "Mean Absolute Directional Loss"
-    lambda_madl: float = 0.25
+    lambda_madl: float = 0.40
     # Quantile monotonicity guard.  This is a structural constraint, not a
     # calibration/direction trade-off knob: adjacent quantile inversions are
     # mathematically invalid and must be penalised during training.

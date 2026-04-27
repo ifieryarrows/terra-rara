@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import warnings
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,19 @@ warnings.filterwarnings(
 )
 
 logger = logging.getLogger(__name__)
+
+KNOWN_GOOD_CONFIG = {
+    "hidden_size": 48,
+    "attention_head_size": 2,
+    "dropout": 0.30,
+    "hidden_continuous_size": 16,
+    "learning_rate": 2e-4,
+    "weight_decay": 5e-5,
+    "lambda_vol": 0.30,
+    "lambda_quantile": 0.25,
+    "lambda_madl": 0.40,
+    "batch_size": 32,
+}
 
 
 def train_tft_model(
@@ -351,21 +365,28 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
     best hyperparameters onto cfg and return the updated config.  This connects
     the hyperopt step to the final training run so search results are not wasted.
     """
-    import json
-    from dataclasses import replace
-    from deep_learning.config import ASROConfig, TFTModelConfig, TrainingConfig
-
     # optuna_results.json is saved at tft/ root (alongside best_tft_asro.ckpt),
     # not inside the checkpoints/ subdirectory.
     results_path = Path(cfg.training.best_model_path).parent / "optuna_results.json"
     if not results_path.exists():
-        return cfg
+        logger.info(
+            "Optuna results not found at %s; using known-good fallback config: %s",
+            results_path,
+            KNOWN_GOOD_CONFIG,
+        )
+        return _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
 
     try:
         data = json.loads(results_path.read_text())
         params = data.get("best_params", {})
         if not params:
-            return cfg
+            logger.warning(
+                "Optuna results did not contain finite best params (status=%s); "
+                "using known-good fallback config: %s",
+                data.get("status", "unknown"),
+                KNOWN_GOOD_CONFIG,
+            )
+            return _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
 
         # Guard against legacy optuna_results.json files produced before the
         # 2026-04-27 metric/coherence fixes.  Reusing those artifacts with
@@ -379,37 +400,42 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "lambda_madl" in params:
             params["lambda_madl"] = max(float(params["lambda_madl"]), 0.30)
 
-        model_overrides = {
-            k: params[k] for k in (
-                "hidden_size", "attention_head_size", "dropout",
-                "hidden_continuous_size", "learning_rate",
-                "gradient_clip_val", "max_encoder_length",
-                "weight_decay",
-            ) if k in params
-        }
-        asro_overrides = {
-            k: params[k] for k in ("lambda_vol", "lambda_quantile", "lambda_madl", "lambda_crossing")
-            if k in params
-        }
-        training_overrides = {
-            k: params[k] for k in ("batch_size",) if k in params
-        }
-
-        new_model = replace(cfg.model, **model_overrides) if model_overrides else cfg.model
-        new_asro = replace(cfg.asro, **asro_overrides) if asro_overrides else cfg.asro
-        new_training = replace(cfg.training, **training_overrides) if training_overrides else cfg.training
-
         logger.info(
             "Loaded Optuna best params (trial #%d, val_loss=%.4f): %s",
             data.get("best_trial", -1),
             data.get("best_value", float("nan")),
             params,
         )
-        return replace(cfg, model=new_model, asro=new_asro, training=new_training)
+        return _overlay_training_config(cfg, params)
 
     except Exception as exc:
         logger.warning("Could not apply Optuna results: %s", exc)
-        return cfg
+        return _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
+
+
+def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
+    """Overlay model, ASRO and batch-size params onto a TFT-ASRO config."""
+    model_overrides = {
+        k: params[k] for k in (
+            "hidden_size", "attention_head_size", "dropout",
+            "hidden_continuous_size", "learning_rate",
+            "gradient_clip_val", "max_encoder_length",
+            "weight_decay",
+        ) if k in params
+    }
+    asro_overrides = {
+        k: params[k] for k in (
+            "lambda_vol", "lambda_quantile", "lambda_madl", "lambda_crossing",
+        ) if k in params
+    }
+    training_overrides = {
+        k: params[k] for k in ("batch_size",) if k in params
+    }
+
+    new_model = replace(cfg.model, **model_overrides) if model_overrides else cfg.model
+    new_asro = replace(cfg.asro, **asro_overrides) if asro_overrides else cfg.asro
+    new_training = replace(cfg.training, **training_overrides) if training_overrides else cfg.training
+    return replace(cfg, model=new_model, asro=new_asro, training=new_training)
 
 
 def _persist_tft_metadata(symbol: str, result: dict) -> None:

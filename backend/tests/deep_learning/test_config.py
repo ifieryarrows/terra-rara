@@ -8,6 +8,7 @@ from deep_learning.config import (
     TrainingConfig,
     get_tft_config,
 )
+from deep_learning.training.trainer import KNOWN_GOOD_CONFIG, _overlay_training_config
 
 
 def test_default_config_creates_valid_instance():
@@ -15,7 +16,7 @@ def test_default_config_creates_valid_instance():
     assert isinstance(cfg, TFTASROConfig)
     assert cfg.embedding.full_dim == 768
     assert cfg.embedding.pca_dim == 8
-    assert cfg.model.hidden_size == 32
+    assert cfg.model.hidden_size == 48
     assert len(cfg.model.quantiles) == 7
 
 
@@ -28,10 +29,30 @@ def test_quantiles_are_sorted_and_include_median():
 
 def test_asro_lambda_defaults():
     cfg = get_tft_config()
+    assert cfg.asro.lambda_quantile == 0.25
+    assert cfg.asro.lambda_vol == 0.30
+    assert cfg.asro.lambda_madl == 0.40
     assert 0 < cfg.asro.lambda_vol <= 1.0
     assert 0 < cfg.asro.lambda_quantile <= 1.0
     assert 0 < cfg.asro.lambda_madl <= 1.0
     assert cfg.asro.lambda_crossing > 0
+
+
+def test_model_defaults_match_known_good_config():
+    cfg = get_tft_config()
+    assert cfg.model.dropout == 0.30
+    assert cfg.model.learning_rate == 2e-4
+    assert cfg.model.weight_decay == 5e-5
+
+
+def test_known_good_overlay_includes_batch_size_fallback():
+    cfg = get_tft_config()
+    updated = _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
+
+    assert updated.model.hidden_size == 48
+    assert updated.asro.lambda_quantile == 0.25
+    assert updated.asro.lambda_madl == 0.40
+    assert updated.training.batch_size == 32
 
 
 def test_lookback_days_is_3_years():

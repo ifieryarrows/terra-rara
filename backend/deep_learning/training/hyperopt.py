@@ -37,6 +37,25 @@ from deep_learning.config import (
 
 logger = logging.getLogger(__name__)
 
+MIN_COMPLETED_TRIALS = 3
+SHARPE_PRUNE_THRESHOLD = -0.3
+FOLD_SHARPE_PRUNE_THRESHOLD = -1.0
+
+KNOWN_GOOD_TRIAL_PARAMS = {
+    "max_encoder_length": 50,
+    "hidden_size": 48,
+    "attention_head_size": 2,
+    "dropout": 0.30,
+    "hidden_continuous_size": 16,
+    "learning_rate": 2e-4,
+    "gradient_clip_val": 1.0,
+    "weight_decay": 5e-5,
+    "lambda_vol": 0.30,
+    "lambda_quantile": 0.25,
+    "lambda_madl": 0.40,
+    "batch_size": 32,
+}
+
 
 def _trial_state_counts(study) -> dict[str, int]:
     """Return lowercase Optuna trial-state counts for logs and artifacts."""
@@ -63,10 +82,66 @@ def _best_finite_completed_trial(study):
     return min(completed, key=lambda trial: float(trial.value))
 
 
+def _finite_completed_trial_count(study) -> int:
+    """Count completed trials with finite objective values."""
+    return sum(
+        1
+        for trial in getattr(study, "trials", [])
+        if getattr(trial.state, "name", None) == "COMPLETE"
+        and trial.value is not None
+        and np.isfinite(float(trial.value))
+    )
+
+
+def _is_startup_protected(trial) -> bool:
+    """Protect early trials until Optuna has enough finite completed evidence."""
+    study = getattr(trial, "study", None)
+    if study is None:
+        return False
+    return _finite_completed_trial_count(study) < MIN_COMPLETED_TRIALS
+
+
+def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
+    prune_reasons = {
+        "sharpe_prune": 0,
+        "crossing_prune": 0,
+        "median_prune": 0,
+        "fold_sharpe_prune": 0,
+        "error": 0,
+    }
+    fold_diagnostics: list[dict] = []
+    metric_keys = (
+        "avg_variance_ratio",
+        "avg_directional_accuracy",
+        "avg_val_sharpe",
+        "avg_quantile_crossing_rate",
+        "avg_median_sort_gap",
+        "fold_score_std",
+    )
+
+    for trial in study.trials:
+        state = getattr(trial.state, "name", str(trial.state))
+        user_attrs = getattr(trial, "user_attrs", {}) or {}
+        if state == "PRUNED":
+            reason = user_attrs.get("prune_reason", "median_prune")
+            prune_reasons[reason] = prune_reasons.get(reason, 0) + 1
+
+        metrics = {key: user_attrs[key] for key in metric_keys if key in user_attrs}
+        if metrics:
+            fold_diagnostics.append({
+                "trial": trial.number,
+                "state": state,
+                **metrics,
+            })
+
+    return prune_reasons, fold_diagnostics
+
+
 def _build_result_payload(study) -> dict:
     """Build the persisted hyperopt artifact without assuming a best trial exists."""
     trial_state_counts = _trial_state_counts(study)
     best = _best_finite_completed_trial(study)
+    prune_reasons, fold_diagnostics = _build_prune_diagnostics(study)
 
     if best is None:
         return {
@@ -76,9 +151,12 @@ def _build_result_payload(study) -> dict:
             "best_params": {},
             "n_trials": len(study.trials),
             "trial_state_counts": trial_state_counts,
+            "prune_reasons": prune_reasons,
+            "fold_diagnostics": fold_diagnostics,
             "message": (
                 "No Optuna trials completed with a finite objective value; "
-                "final training should use the default TFT-ASRO config."
+                "final training will use the known-good fallback config "
+                "(It.4 parameters: lambda_quantile=0.25, lambda_madl=0.40)."
             ),
         }
 
@@ -89,7 +167,24 @@ def _build_result_payload(study) -> dict:
         "best_params": best.params,
         "n_trials": len(study.trials),
         "trial_state_counts": trial_state_counts,
+        "prune_reasons": prune_reasons,
+        "fold_diagnostics": fold_diagnostics,
     }
+
+
+def _enqueue_known_good_trial(study, base_cfg: TFTASROConfig) -> bool:
+    """
+    Start a fresh Optuna study from the It.4 known-good parameter set.
+
+    The static warm-start is intentionally a single enqueued trial; the
+    remaining trials still explore the configured search space freely.
+    """
+    if getattr(study, "trials", []):
+        return False
+
+    study.enqueue_trial(dict(KNOWN_GOOD_TRIAL_PARAMS))
+    logger.info("Enqueued known-good TFT-ASRO warm-start trial: %s", KNOWN_GOOD_TRIAL_PARAMS)
+    return True
 
 
 def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
@@ -192,6 +287,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     import torch
     from deep_learning.data.dataset import build_cv_folds, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
+    from deep_learning.training.callbacks import CurriculumLossScheduler
     from deep_learning.training.metrics import (
         quantile_crossing_rate,
         quantile_median_sort_gap,
@@ -199,6 +295,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     )
 
     trial_cfg = create_trial_config(trial, base_cfg)
+    protect_trial = _is_startup_protected(trial)
     master_df, tv_unknown, tv_known, target_cols, _ = master_data
     n_folds = getattr(trial_cfg.training, "cv_n_folds", 3)
 
@@ -237,6 +334,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 monitor="val_loss",
                 patience=trial_cfg.training.early_stopping_patience,
                 mode="min",
+            ),
+            CurriculumLossScheduler(
+                warmup_epochs=5,
+                initial_lambda_quantile=0.55,
+                target_lambda_quantile=trial_cfg.asro.lambda_quantile,
+                initial_lambda_madl=0.10,
+                target_lambda_madl=trial_cfg.asro.lambda_madl,
             ),
         ]
 
@@ -354,17 +458,24 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         # Per-fold Sharpe pruning: if a fold has deeply negative Sharpe,
         # the trial is systematically predicting the wrong direction for
         # that market regime — no point continuing to subsequent folds.
-        if fold_sharpe < -0.5 and fold_idx >= 1:
+        if (
+            fold_sharpe < FOLD_SHARPE_PRUNE_THRESHOLD
+            and fold_idx >= 1
+            and not protect_trial
+        ):
             logger.warning(
-                "Trial %d PRUNED at fold %d: fold_sharpe=%.4f < -0.5",
+                "Trial %d PRUNED at fold %d: fold_sharpe=%.4f < %.1f",
                 trial.number, fold_idx + 1, fold_sharpe,
+                FOLD_SHARPE_PRUNE_THRESHOLD,
             )
+            trial.set_user_attr("prune_reason", "fold_sharpe_prune")
             raise optuna.exceptions.TrialPruned()
 
         # Report running average so MedianPruner can kill bad trials early
         running_avg = float(np.mean(fold_scores))
         trial.report(running_avg, fold_idx)
-        if trial.should_prune():
+        if trial.should_prune() and not protect_trial:
+            trial.set_user_attr("prune_reason", "median_prune")
             raise optuna.exceptions.TrialPruned()
 
         # Free GPU memory between folds
@@ -396,18 +507,20 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     )
 
     # Hard prune: avg Sharpe negative across folds = systematically wrong
-    if avg_sharpe < 0.0:
+    if avg_sharpe < SHARPE_PRUNE_THRESHOLD and not protect_trial:
         logger.warning(
-            "Trial %d PRUNED: avg_sharpe=%.4f < 0 across %d folds (DA=%.1f%%)",
-            trial.number, avg_sharpe, n_folds, avg_da * 100,
+            "Trial %d PRUNED: avg_sharpe=%.4f < %.1f across %d folds (DA=%.1f%%)",
+            trial.number, avg_sharpe, SHARPE_PRUNE_THRESHOLD, n_folds, avg_da * 100,
         )
+        trial.set_user_attr("prune_reason", "sharpe_prune")
         raise optuna.exceptions.TrialPruned()
 
-    if avg_crossing > 0.20 or avg_median_gap > 0.01:
+    if (avg_crossing > 0.20 or avg_median_gap > 0.01) and not protect_trial:
         logger.warning(
             "Trial %d PRUNED: quantile incoherence crossing=%.3f median_gap=%.4f",
             trial.number, avg_crossing, avg_median_gap,
         )
+        trial.set_user_attr("prune_reason", "crossing_prune")
         raise optuna.exceptions.TrialPruned()
 
     # Soft penalty: avg DA below coin-flip
@@ -459,8 +572,12 @@ def run_hyperopt(
         direction="minimize",
         storage=storage,
         load_if_exists=True,
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=max(5, n_trials // 3),
+            n_warmup_steps=1,
+        ),
     )
+    _enqueue_known_good_trial(study, base_cfg)
 
     study.optimize(
         lambda trial: _objective(trial, base_cfg, master_data),
