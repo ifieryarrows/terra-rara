@@ -54,7 +54,6 @@ const HeatmapFilters: React.FC<HeatmapFiltersProps> = ({
 
   const isStale = meta?.is_stale;
   const isRefreshing = meta?.refresh_in_progress;
-  const sourceDelayMinutes = meta?.source_delay_minutes ?? 15;
 
   return (
     <div className="flex flex-wrap items-center justify-between bg-[#0f172a] border-b border-slate-700 px-3 py-2 text-sm text-slate-300 gap-2">
@@ -81,7 +80,7 @@ const HeatmapFilters: React.FC<HeatmapFiltersProps> = ({
       </div>
 
       <div className="flex items-center gap-3 text-xs font-mono">
-        <span className="text-slate-600 hidden sm:inline">{sourceDelayMinutes} min source cache</span>
+        <span className="text-slate-600 hidden sm:inline">15 min delay</span>
         {isRefreshing ? (
           <span className="text-amber-400 animate-pulse flex items-center gap-1" title="Refreshing from live market data">
             <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">

@@ -25,7 +25,11 @@ from app.db import init_db, SessionLocal, get_db_type
 from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
-from app.instruments import TARGET_SYMBOL
+from app.instruments import (
+    TARGET_SYMBOL,
+    canonicalize_instrument_symbol,
+    resolve_provider_symbol,
+)
 # NOTE: Faz 1 - API is snapshot-only, no report generation
 # generate_analysis_report and save_analysis_snapshot are now worker-only
 from app.schemas import (
@@ -591,21 +595,16 @@ async def get_market_prices():
 
 @app.get(
     "/api/market-heatmap",
-    summary="Get CopperMind universe heatmap",
+    summary="Get CopperMind universe heatmap (15-min cache)",
     description=(
         "Returns a group->subgroup->symbol treemap payload sourced exclusively from the "
         "CopperMind project universe (broad_universe.csv). Uses stale-while-revalidate "
-        "caching so Yahoo/yfinance is not polled on every frontend refresh. No general "
-        "market indices are included."
+        "caching with a 15-minute TTL. No general market indices are included."
     )
 )
 async def get_market_heatmap(background_tasks: BackgroundTasks):
     from app.models import HeatmapCache
     from app.heatmap import refresh_market_heatmap
-
-    settings = get_settings()
-    source_delay_seconds = int(settings.heatmap_cache_ttl_seconds)
-    source_delay_minutes = max(1, round(source_delay_seconds / 60))
 
     # Stuck refresh safety: if a refresh has been "in progress" for longer than
     # this, assume the worker crashed and allow a fresh background refresh to
@@ -646,11 +645,7 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
                     "refresh_in_progress": True,
                     "last_updated_at": None,
                     "next_refresh_at": None,
-                    "source_delay_minutes": source_delay_minutes,
-                    "source_delay_seconds": source_delay_seconds,
-                    "frontend_poll_seconds": settings.heatmap_frontend_poll_seconds,
-                    "provider": settings.heatmap_provider,
-                    "live_update_mode": "snapshot_swr",
+                    "source_delay_minutes": 15,
                     "payload_count": 0,
                     "refresh_error": cache.refresh_error if cache else None,
                     "cache_state": "empty",
@@ -698,11 +693,7 @@ async def get_market_heatmap(background_tasks: BackgroundTasks):
                 "refresh_in_progress": refresh_in_progress,
                 "last_updated_at": cache.cached_at.isoformat() if cache.cached_at else None,
                 "next_refresh_at": cache.expires_at.isoformat() if cache.expires_at else None,
-                "source_delay_minutes": source_delay_minutes,
-                "source_delay_seconds": source_delay_seconds,
-                "frontend_poll_seconds": settings.heatmap_frontend_poll_seconds,
-                "provider": settings.heatmap_provider,
-                "live_update_mode": "snapshot_swr",
+                "source_delay_minutes": 15,
                 "payload_count": payload_count,
                 "refresh_error": cache.refresh_error,
                 "cache_state": cache_state,
@@ -749,82 +740,173 @@ async def get_live_price(
 
 
 # =============================================================================
-# WebSocket Live Price Streaming (Twelve Data)
+# WebSocket Live Price Streaming (Yahoo Finance)
 # =============================================================================
 
 @app.websocket("/ws/live-price")
-async def websocket_live_price(websocket: WebSocket):
+async def websocket_live_price(
+    websocket: WebSocket,
+    symbol: str = Query(default=TARGET_SYMBOL, description="Canonical CopperMind symbol"),
+):
     """
     WebSocket endpoint for real-time copper price streaming.
-    
-    Connects to Twelve Data WebSocket and relays price events to the client.
+
+    Streams the canonical CopperMind instrument from Yahoo Finance's websocket.
+    TradingView uses COMEX:HG1! for the same futures contract, but Yahoo uses
+    HG=F; provider-specific mapping is handled before subscribing.
     """
-    import websockets
     import asyncio
     import json
-    
+    import websockets
+    import yfinance as yf
+
     await websocket.accept()
-    settings = get_settings()
-    
-    if not settings.twelvedata_api_key:
-        await websocket.send_json({"error": "API key not configured"})
-        await websocket.close()
-        return
-    
-    td_ws_url = f"wss://ws.twelvedata.com/v1/quotes?apikey={settings.twelvedata_api_key}"
-    
-    try:
-        async with websockets.connect(td_ws_url) as td_ws:
-            # Subscribe to BTC/USD first (for testing Basic plan support)
-            # If BTC works but XCU doesn't, it means commodities need Pro plan
-            subscribe_msg = json.dumps({
-                "action": "subscribe",
-                "params": {"symbols": "BTC/USD"}
-            })
-            await td_ws.send(subscribe_msg)
-            logger.info("Subscribed to BTC/USD via Twelve Data WebSocket (testing)")
-            
-            # Heartbeat task to keep connection alive
-            async def send_heartbeat():
-                while True:
-                    await asyncio.sleep(10)
-                    try:
-                        await td_ws.send(json.dumps({"action": "heartbeat"}))
-                    except Exception:
-                        break
-            
-            heartbeat_task = asyncio.create_task(send_heartbeat())
-            
-            try:
-                # Relay messages from Twelve Data to client
-                async for message in td_ws:
-                    data = json.loads(message)
-                    
-                    if data.get("event") == "price":
-                        await websocket.send_json({
-                            "symbol": data.get("symbol"),
-                            "price": data.get("price"),
-                            "timestamp": data.get("timestamp"),
-                        })
-                    elif data.get("event") == "subscribe-status":
-                        logger.info(f"Subscription status: {data.get('status')}")
-                        if data.get("fails"):
-                            logger.warning(f"Subscription failures: {data.get('fails')}")
-                    
-            except WebSocketDisconnect:
-                logger.info("Client disconnected from live-price WebSocket")
-            finally:
-                heartbeat_task.cancel()
-                
-    except Exception as e:
-        # Mask potential API keys in error messages
-        from app.settings import mask_api_key
-        safe_error = mask_api_key(str(e))
-        logger.error(f"WebSocket error: {safe_error}")
+    canonical_symbol = canonicalize_instrument_symbol(symbol)
+    yahoo_symbol = resolve_provider_symbol(canonical_symbol, "yahoo_websocket")
+    yahoo_ws_url = "wss://streamer.finance.yahoo.com/?version=2"
+
+    def _as_float(value):
         try:
-            await websocket.send_json({"error": "Connection error"})  # Don't expose details
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _as_int(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    async def send_payload(payload: dict):
+        await websocket.send_json(
+            {
+                "symbol": canonical_symbol,
+                "provider_symbol": yahoo_symbol,
+                "provider": "yahoo_finance",
+                **payload,
+            }
+        )
+
+    async def send_initial_snapshot():
+        from app.inference import get_current_price
+
+        def read_price():
+            with SessionLocal() as session:
+                return get_current_price(session, canonical_symbol)
+
+        price = await asyncio.to_thread(read_price)
+        if price is not None:
+            await send_payload(
+                {
+                    "price": round(float(price), 4),
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                    "received_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "yfinance_snapshot",
+                    "error": None,
+                }
+            )
+
+    async def watch_client_disconnect():
+        while True:
+            await websocket.receive_text()
+
+    async def stream_yahoo_prices():
+        decoder = yf.AsyncWebSocket(verbose=False)
+
+        while True:
+            try:
+                async with websockets.connect(
+                    yahoo_ws_url,
+                    ping_interval=15,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as yahoo_ws:
+                    await yahoo_ws.send(json.dumps({"subscribe": [yahoo_symbol]}))
+                    await send_payload(
+                        {
+                            "status": "subscribed",
+                            "source": "yahoo_finance_websocket",
+                            "error": None,
+                        }
+                    )
+
+                    async for message in yahoo_ws:
+                        raw = json.loads(message)
+                        encoded = raw.get("message")
+                        if not encoded:
+                            continue
+
+                        decoded = decoder._decode_message(encoded)
+                        if decoded.get("id") not in {None, yahoo_symbol}:
+                            continue
+
+                        price = _as_float(decoded.get("price"))
+                        if price is None:
+                            continue
+
+                        await send_payload(
+                            {
+                                "price": price,
+                                "timestamp": _as_int(decoded.get("time")),
+                                "received_at": datetime.now(timezone.utc).isoformat(),
+                                "source": "yahoo_finance_websocket",
+                                "change": _as_float(decoded.get("change")),
+                                "change_percent": _as_float(decoded.get("change_percent")),
+                                "day_volume": _as_float(decoded.get("day_volume")),
+                                "day_high": _as_float(decoded.get("day_high")),
+                                "day_low": _as_float(decoded.get("day_low")),
+                                "market_hours": decoded.get("market_hours"),
+                                "error": None,
+                            }
+                        )
+
+            except asyncio.CancelledError:
+                raise
+            except WebSocketDisconnect:
+                raise
+            except Exception as e:
+                logger.warning("Yahoo websocket stream interrupted for %s: %s", yahoo_symbol, e)
+                try:
+                    await send_payload(
+                        {
+                            "status": "reconnecting",
+                            "source": "yahoo_finance_websocket",
+                            "error": "stream reconnecting",
+                        }
+                    )
+                except Exception:
+                    raise WebSocketDisconnect()
+                await asyncio.sleep(5)
+
+    disconnect_task = None
+    stream_task = None
+
+    try:
+        await send_initial_snapshot()
+        disconnect_task = asyncio.create_task(watch_client_disconnect())
+        stream_task = asyncio.create_task(stream_yahoo_prices())
+
+        done, pending = await asyncio.wait(
+            {disconnect_task, stream_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from live-price WebSocket")
+    except Exception as e:
+        logger.error("Yahoo live-price WebSocket error: %s", e)
+        try:
+            await websocket.send_json({"error": "Connection error"})
         except Exception:
             pass
+    finally:
+        for task in (disconnect_task, stream_task):
+            if task is not None and not task.done():
+                task.cancel()
 
 
 # =============================================================================

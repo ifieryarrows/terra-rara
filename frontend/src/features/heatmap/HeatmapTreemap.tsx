@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { buildTreemapLayout, HeatmapNode, HeatmapData } from './heatmap-layout';
 import HeatmapTooltip from './HeatmapTooltip';
 
@@ -42,8 +42,6 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
     null,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
-  const hoverFrameRef = useRef<number | null>(null);
-  const pendingHoverRef = useRef<{ node: any; x: number; y: number } | null>(null);
   const pendingZoomFocusRef = useRef<{
     prevZoom: number;
     /** Pointer position in viewport coordinates relative to scroll container */
@@ -110,38 +108,14 @@ const HeatmapTreemap: React.FC<HeatmapTreemapProps> = ({
     return buildTreemapLayout(data, scaledWidth, scaledHeight);
   }, [data, scaledWidth, scaledHeight]);
 
-  const leaves = useMemo(() => layout.leaves(), [layout]);
-  const parentNodes = useMemo(
-    () => layout.descendants().filter((d) => d.depth > 0 && d.children),
-    [layout],
-  );
+  const leaves = layout.leaves();
+  const parentNodes = layout.descendants().filter((d) => d.depth > 0 && d.children);
 
-  const handleLeafMove = useCallback((e: React.MouseEvent, leaf: any) => {
-    pendingHoverRef.current = { node: leaf, x: e.clientX, y: e.clientY };
-    if (hoverFrameRef.current !== null) return;
+  const handleLeafMove = (e: React.MouseEvent, leaf: any) => {
+    setHoveredNode({ node: leaf, x: e.clientX, y: e.clientY });
+  };
 
-    hoverFrameRef.current = window.requestAnimationFrame(() => {
-      hoverFrameRef.current = null;
-      if (pendingHoverRef.current) {
-        setHoveredNode(pendingHoverRef.current);
-      }
-    });
-  }, []);
-
-  const handleLeafLeave = useCallback(() => {
-    pendingHoverRef.current = null;
-    if (hoverFrameRef.current !== null) {
-      window.cancelAnimationFrame(hoverFrameRef.current);
-      hoverFrameRef.current = null;
-    }
-    setHoveredNode(null);
-  }, []);
-
-  useEffect(() => () => {
-    if (hoverFrameRef.current !== null) {
-      window.cancelAnimationFrame(hoverFrameRef.current);
-    }
-  }, []);
+  const handleLeafLeave = () => setHoveredNode(null);
 
   const emitCategoryAnchor = (el: HTMLElement | null, name: string) => {
     if (!el) return onCategoryHover({ name, rect: { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } });

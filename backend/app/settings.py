@@ -109,15 +109,6 @@ class Settings(BaseSettings):
     # Twelve Data (Live Price)
     twelvedata_api_key: Optional[str] = None
 
-    # Heatmap quote strategy
-    # Yahoo/yfinance is kept as a snapshot source. Polling the full project
-    # universe every 2-3 seconds would trigger rate limits and waste CPU, so
-    # the frontend can poll the API quickly while this server-side cache
-    # controls actual provider refreshes.
-    heatmap_cache_ttl_seconds: int = 900
-    heatmap_frontend_poll_seconds: int = 3
-    heatmap_provider: str = "yfinance_snapshot"
-
     # Inference sentiment adjustment (aggressive but capped)
     inference_sentiment_multiplier_max: float = 2.0
     inference_sentiment_multiplier_min: float = 0.5

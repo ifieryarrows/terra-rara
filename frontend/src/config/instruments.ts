@@ -3,7 +3,10 @@ export const COPPER_INSTRUMENT = {
   displayName: 'COMEX Copper Futures',
   shortLabel: 'HG=F',
   tradingViewSymbol: 'COMEX:HG1!',
+  tradingViewExchange: 'COMEX',
+  tradingViewTicker: 'HG1!',
   tradingViewLabel: 'COMEX HG1!',
+  yahooStreamSymbol: 'HG=F',
   quoteDelayLabel: 'Delayed futures quote',
 } as const;
 

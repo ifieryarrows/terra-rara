@@ -4,7 +4,6 @@ import HeatmapTreemap, { CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel from './HeatmapCategoryPanel';
 import { HeatmapNode, leavesForCategory } from './heatmap-layout';
 import { useMarketHeatmap } from '../../hooks/useQueries';
-import { Maximize2, Minimize2 } from 'lucide-react';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 2.5;
@@ -17,7 +16,7 @@ const AUTO_REFRESH_COOLDOWN_MS = 30_000;
 const CATEGORY_HOVER_DEBOUNCE_MS = 150;
 
 export const HeatmapPanel: React.FC = () => {
-  const { data: rawData, isError, error, isLoading, refetch } = useMarketHeatmap();
+  const { data: rawData, isError, error, isLoading, refetch, isFetching } = useMarketHeatmap();
 
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState('Weight');
@@ -25,12 +24,10 @@ export const HeatmapPanel: React.FC = () => {
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
 
-  const panelRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 600 });
   const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const isFullscreenRef = useRef(false);
 
   const measure = useCallback(() => {
     const el = containerRef.current;
@@ -76,80 +73,6 @@ export const HeatmapPanel: React.FC = () => {
     const id = requestAnimationFrame(() => measure());
     return () => cancelAnimationFrame(id);
   }, [rawData, isFullscreen, measure]);
-
-  useEffect(() => {
-    isFullscreenRef.current = isFullscreen;
-  }, [isFullscreen]);
-
-  const exitFullscreen = useCallback(() => {
-    const activeFullscreen = document.fullscreenElement;
-    if (activeFullscreen === panelRef.current && document.exitFullscreen) {
-      void document.exitFullscreen().catch(() => undefined);
-    }
-    setPinnedAnchor(null);
-    setHoveredAnchor(null);
-    setIsFullscreen(false);
-  }, []);
-
-  const enterFullscreen = useCallback(() => {
-    setIsFullscreen(true);
-    const el = panelRef.current;
-    if (el?.requestFullscreen) {
-      void el.requestFullscreen().catch(() => undefined);
-    }
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
-    if (isFullscreen) {
-      exitFullscreen();
-    } else {
-      enterFullscreen();
-    }
-  }, [enterFullscreen, exitFullscreen, isFullscreen]);
-
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isFullscreen]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isFullscreen) {
-        event.preventDefault();
-        exitFullscreen();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [exitFullscreen, isFullscreen]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const active = document.fullscreenElement;
-      if (!active && isFullscreenRef.current) {
-        setPinnedAnchor(null);
-        setHoveredAnchor(null);
-        setIsFullscreen(false);
-      } else if (active === panelRef.current && !isFullscreenRef.current) {
-        setIsFullscreen(true);
-      }
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
-  useEffect(() => () => {
-    if (document.fullscreenElement === panelRef.current && document.exitFullscreen) {
-      void document.exitFullscreen().catch(() => undefined);
-    }
-  }, []);
 
   const availableGroups = useMemo<string[]>(() => {
     if (!rawData?.children) return [];
@@ -232,15 +155,15 @@ export const HeatmapPanel: React.FC = () => {
   // Auto-refresh when the countdown hits 00:00 — cooldown-guarded.
   const lastAutoRefreshAt = useRef<number>(0);
   const handleCountdownElapsed = useCallback(() => {
+    if (isFetching) return;
     const now = Date.now();
     if (now - lastAutoRefreshAt.current < AUTO_REFRESH_COOLDOWN_MS) return;
     lastAutoRefreshAt.current = now;
     refetch();
-  }, [refetch]);
+  }, [isFetching, refetch]);
 
   return (
     <div
-      ref={panelRef}
       className={`flex flex-col bg-[#0f172a] overflow-hidden font-sans ${
         isFullscreen
           ? 'fixed inset-0 z-50'
@@ -261,19 +184,11 @@ export const HeatmapPanel: React.FC = () => {
           {/* Manual Refresh button intentionally removed: countdown-driven
               auto-refresh covers the whole loop and prevents users from
               spamming yfinance. Scroll wheel over the heatmap handles zoom. */}
-          {isFullscreen && (
-            <span className="hidden sm:inline text-[10px] font-mono text-slate-500">
-              ESC exits
-            </span>
-          )}
           <button
-            onClick={toggleFullscreen}
-            className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white px-2 py-1 bg-slate-800 rounded border border-slate-600 transition-colors text-xs"
-            title={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'}
-            aria-label={isFullscreen ? 'Exit fullscreen heatmap' : 'Open fullscreen heatmap'}
+            onClick={() => setIsFullscreen((f) => !f)}
+            className="text-slate-400 hover:text-white px-2 py-1 bg-slate-800 rounded border border-slate-600 transition-colors text-xs"
           >
-            {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-            {isFullscreen ? 'Exit' : 'Fullscreen'}
+            {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
           </button>
         </div>
       </div>

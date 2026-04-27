@@ -132,7 +132,7 @@ export async function fetchTFTAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): 
 export default api;
 
 /**
- * Live price response type (Twelve Data)
+ * Live price response type (canonical Yahoo/COMEX futures)
  */
 export interface LivePriceResponse {
   symbol: string;
@@ -141,7 +141,7 @@ export interface LivePriceResponse {
 }
 
 /**
- * Fetch real-time copper price from Twelve Data
+ * Fetch current canonical copper futures price.
  */
 export async function fetchLivePrice(): Promise<LivePriceResponse> {
   const response = await api.get<LivePriceResponse>('/live-price');
