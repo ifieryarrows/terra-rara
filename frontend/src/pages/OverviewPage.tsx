@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, Suspense, lazy, useRef, memo } from 'react';
+import { useEffect, useState, useCallback, useMemo, Suspense, lazy, memo } from 'react';
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine
@@ -16,7 +16,6 @@ import {
   fetchCommentary,
   fetchTFTAnalysis,
   fetchLivePrice,
-  getLivePriceWebSocketUrl,
 } from '../api';
 import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
@@ -32,10 +31,6 @@ const NewsIntelligencePanel = lazy(() =>
 );
 
 // --- Skeleton Components for perceived performance ---
-const SkeletonPulse = ({ className = '' }: { className?: string }) => (
-  <div className={clsx("animate-pulse bg-white/5 rounded", className)} />
-);
-
 const ChartSkeleton = () => (
   <div className="h-[350px] w-full flex items-center justify-center">
     <div className="flex flex-col items-center gap-3">
@@ -152,9 +147,7 @@ export const OverviewPage = () => {
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [livePrice, setLivePrice] = useState<number | null>(null);
-  const [liveFeedStatus, setLiveFeedStatus] = useState<'connecting' | 'live' | 'snapshot'>('connecting');
-  const tradingViewLoaded = useRef(false);
-  const liveWsRef = useRef<WebSocket | null>(null);
+  const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
 
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
@@ -194,111 +187,24 @@ export const OverviewPage = () => {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Lazy load TradingView widget after initial render
+  // Live price snapshot polling (TradingView/websocket removed).
   useEffect(() => {
-    if (isInitialLoad || tradingViewLoaded.current) return;
-
-    const timer = setTimeout(() => {
-      const container = document.getElementById('tradingview-widget-container');
-      if (container && !container.querySelector('script')) {
-        tradingViewLoaded.current = true;
-
-        const widgetDiv = document.createElement('div');
-        widgetDiv.className = 'tradingview-widget-container__widget';
-        container.appendChild(widgetDiv);
-
-        const script = document.createElement('script');
-        script.type = 'text/javascript';
-        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js';
-        script.async = true;
-        script.textContent = JSON.stringify({
-          symbol: COPPER_INSTRUMENT.tradingViewSymbol,
-          width: "100%",
-          isTransparent: true,
-          colorTheme: "dark",
-          locale: "en"
-        });
-        container.appendChild(script);
-      }
-    }, 100); // Small delay to prioritize main content
-
-    return () => clearTimeout(timer);
-  }, [isInitialLoad]);
-
-  // Live price stream: websocket first, snapshot fallback.
-  useEffect(() => {
-    let mounted = true;
-    let reconnectTimer: number | null = null;
-    let snapshotTimer: number | null = null;
-    let retryCount = 0;
-
     const fetchSnapshot = async () => {
       try {
         const payload = await fetchLivePrice();
-        if (!mounted) return;
-        if (typeof payload.price === 'number') setLivePrice(payload.price);
-      } catch {
-        // Snapshot fallback is best-effort.
-      }
-    };
-
-    const connect = () => {
-      if (!mounted) return;
-      setLiveFeedStatus('connecting');
-      const ws = new WebSocket(getLivePriceWebSocketUrl(DEFAULT_COPPER_SYMBOL));
-      liveWsRef.current = ws;
-
-      ws.onopen = () => {
-        if (!mounted) return;
-        retryCount = 0;
-        setLiveFeedStatus('live');
-      };
-
-      ws.onmessage = (event) => {
-        if (!mounted) return;
-        try {
-          const payload = JSON.parse(event.data);
-          if (typeof payload?.price === 'number') {
-            setLivePrice(payload.price);
-          }
-          if (payload?.status === 'reconnecting') {
-            setLiveFeedStatus('connecting');
-          }
-        } catch {
-          // Ignore malformed packets and keep stream alive.
+        if (typeof payload.price === 'number') {
+          setLivePrice(payload.price);
+          setLastLiveUpdateAt(new Date());
         }
-      };
-
-      ws.onerror = () => {
-        if (!mounted) return;
-        setLiveFeedStatus('snapshot');
-      };
-
-      ws.onclose = () => {
-        if (!mounted) return;
-        setLiveFeedStatus('snapshot');
-        retryCount += 1;
-        const delayMs = Math.min(10000, 1000 * Math.pow(2, Math.min(retryCount, 3)));
-        reconnectTimer = window.setTimeout(connect, delayMs);
-      };
+      } catch {
+        // Best-effort polling.
+      }
     };
 
     void fetchSnapshot();
-    connect();
-
-    snapshotTimer = window.setInterval(() => {
-      if (!mounted) return;
-      if (liveWsRef.current?.readyState !== WebSocket.OPEN) {
-        void fetchSnapshot();
-      }
-    }, 30000);
-
+    const id = window.setInterval(() => void fetchSnapshot(), 120000);
     return () => {
-      mounted = false;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      if (snapshotTimer !== null) window.clearInterval(snapshotTimer);
-      liveWsRef.current?.close();
-      liveWsRef.current = null;
+      window.clearInterval(id);
     };
   }, []);
 
@@ -405,6 +311,16 @@ export const OverviewPage = () => {
   const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
   // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
   const tftBaselineIsStale = tftStalenessDays >= 3;
+  const latestHistoryPrice = [...(history?.data || [])]
+    .reverse()
+    .find((p) => p.price != null)?.price ?? null;
+  const quotePrice = livePrice ?? latestHistoryPrice;
+  const quoteDelta = quotePrice != null && latestHistoryPrice != null
+    ? quotePrice - latestHistoryPrice
+    : null;
+  const quoteDeltaPct = quoteDelta != null && latestHistoryPrice
+    ? (quoteDelta / latestHistoryPrice) * 100
+    : null;
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -428,38 +344,43 @@ export const OverviewPage = () => {
           </div>
 
           <div className="flex bg-slate-900 rounded-lg p-1.5 border border-slate-800 gap-1 shadow-sm">
-            <div className="px-2 py-1 rounded-xl bg-midnight/50 min-w-[180px] overflow-hidden flex flex-col">
-              <span
-                className="text-[9px] text-gray-500 font-semibold uppercase tracking-widest"
-                title={`${COPPER_INSTRUMENT.displayName} quote shown with TradingView symbol ${COPPER_INSTRUMENT.tradingViewSymbol}. Model, chart and forecast data use ${COPPER_INSTRUMENT.canonicalSymbol}.`}
-              >
-                Futures - {COPPER_INSTRUMENT.tradingViewLabel}
-              </span>
-              <div id="tradingview-widget-container" className="tradingview-widget-container">
-                {/* Skeleton while TradingView loads */}
-                {!tradingViewLoaded.current && (
-                  <div className="flex items-center gap-2 py-2">
-                    <SkeletonPulse className="w-16 h-4" />
-                    <SkeletonPulse className="w-12 h-6" />
+            <div className="px-3 py-2 rounded-xl bg-black min-w-[360px] overflow-hidden border border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-[#1f2937] flex items-center justify-center shrink-0 overflow-hidden">
+                  <img
+                    src="https://s3-symbol-logo.tradingview.com/metal/copper--big.svg"
+                    alt="Copper logo"
+                    className="w-9 h-9 object-contain"
+                    loading="lazy"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">
+                    Copper Futures
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900 text-[11px] text-white font-semibold tracking-wide">
+                      {COPPER_INSTRUMENT.canonicalSymbol}
+                    </span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" title="Live price feed active" />
                   </div>
-                )}
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-2 text-[10px]">
-                <span className="font-mono text-copper-300">
-                  {livePrice != null ? `$${livePrice.toFixed(4)}` : '--'}
-                </span>
-                <span
-                  className={clsx(
-                    "px-1.5 py-0.5 rounded border uppercase tracking-wider",
-                    liveFeedStatus === 'live'
-                      ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
-                      : liveFeedStatus === 'connecting'
-                      ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
-                      : "text-slate-300 border-slate-500/30 bg-slate-500/10"
-                  )}
-                >
-                  {liveFeedStatus === 'live' ? 'WS Live' : liveFeedStatus === 'connecting' ? 'WS...' : 'Snapshot'}
-                </span>
+                  <div className="mt-1 flex items-baseline gap-2 font-mono">
+                    <span className="text-3xl text-white leading-none">
+                      {quotePrice != null ? quotePrice.toFixed(4) : '--'}
+                    </span>
+                    <span className="text-sm text-slate-400">USD</span>
+                    {quoteDelta != null && quoteDeltaPct != null && (
+                      <span className={clsx("text-xl leading-none", quoteDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                        {quoteDelta >= 0 ? '+' : ''}{quoteDelta.toFixed(5)} {quoteDelta >= 0 ? '+' : ''}{quoteDeltaPct.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    {lastLiveUpdateAt
+                      ? `As of ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
+                      : 'Waiting for latest quote'}
+                  </p>
+                </div>
               </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
