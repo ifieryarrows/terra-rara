@@ -346,11 +346,11 @@ export const OverviewPage = () => {
           <div className="flex bg-slate-900 rounded-lg p-1.5 border border-slate-800 gap-1 shadow-sm">
             <div className="px-3 py-2 rounded-xl bg-black min-w-[360px] overflow-hidden border border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-full bg-[#1f2937] flex items-center justify-center shrink-0 overflow-hidden">
+                <div className="w-11 h-11 rounded-md flex items-center justify-center shrink-0">
                   <img
                     src="https://s3-symbol-logo.tradingview.com/metal/copper--big.svg"
                     alt="Copper logo"
-                    className="w-9 h-9 object-contain"
+                    className="w-full h-full object-contain"
                     loading="lazy"
                   />
                 </div>
