@@ -184,6 +184,20 @@ class CombinedQuantileLoss(nn.Module):
         return loss.mean()
 
 
+def quantile_crossing_penalty(y_pred: torch.Tensor) -> torch.Tensor:
+    """
+    Penalise adjacent quantile inversions.
+
+    Quantile heads must be monotonic in the quantile dimension.  Pinball loss
+    alone does not guarantee that ordering, especially when q50 also receives
+    directional Sharpe/MADL gradients.
+    """
+    if y_pred.shape[-1] < 2:
+        return y_pred.new_tensor(0.0)
+    diffs = y_pred[..., 1:] - y_pred[..., :-1]
+    return torch.relu(-diffs).mean()
+
+
 class AdaptiveSharpeRatioLoss(nn.Module):
     """
     TFT-ASRO loss: combines three objectives to break the low-variance trap.
@@ -204,6 +218,7 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         lambda_vol: float = 0.3,
         lambda_quantile: float = 0.2,
         lambda_madl: float = 0.25,
+        lambda_crossing: float = 1.0,
         risk_free_rate: float = 0.0,
         sharpe_eps: float = 1e-6,
         median_idx: Optional[int] = None,
@@ -212,6 +227,7 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         self.lambda_vol = lambda_vol
         self.lambda_quantile = lambda_quantile
         self.lambda_madl = lambda_madl
+        self.lambda_crossing = lambda_crossing
         self.rf = risk_free_rate
         self.sharpe_eps = sharpe_eps
         self.median_idx = median_idx if median_idx is not None else len(quantiles) // 2
@@ -296,6 +312,7 @@ class AdaptiveSharpeRatioLoss(nn.Module):
 
         # --- Quantile (pinball) loss ---
         q_loss = self.quantile_loss(y_pred, y_actual)
+        crossing_loss = quantile_crossing_penalty(y_pred)
 
         # --- MADL: direct directional accuracy optimisation ---
         madl_loss = self.madl(median_pred, y_actual_f)
@@ -305,7 +322,11 @@ class AdaptiveSharpeRatioLoss(nn.Module):
         # directional = Sharpe (risk-normalised) + MADL (magnitude-weighted)
         # w_quantile + w_directional = 1.0
         w_directional = 1.0 - self.lambda_quantile
-        calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
+        calibration = (
+            q_loss
+            + self.lambda_vol * (vol_loss + amplitude_loss)
+            + self.lambda_crossing * crossing_loss
+        )
         directional = sharpe_loss + self.lambda_madl * madl_loss
         total = self.lambda_quantile * calibration + w_directional * directional
         return total
@@ -317,5 +338,6 @@ class AdaptiveSharpeRatioLoss(nn.Module):
             lambda_vol=cfg.lambda_vol,
             lambda_quantile=cfg.lambda_quantile,
             lambda_madl=cfg.lambda_madl,
+            lambda_crossing=cfg.lambda_crossing,
             risk_free_rate=cfg.risk_free_rate,
         )

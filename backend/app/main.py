@@ -1212,8 +1212,18 @@ async def get_tft_summary(
         da = metrics.get("directional_accuracy", 0.5)
         sharpe = metrics.get("sharpe_ratio", 0.0)
         vr = metrics.get("variance_ratio", 1.0)
+        tail_capture = metrics.get("tail_capture_rate")
+        quantile_crossing = metrics.get("quantile_crossing_rate")
+        median_gap_max = metrics.get("median_sort_gap_max")
         
-        passed, reasons = evaluate_quality_gate(da, sharpe, vr)
+        passed, reasons = evaluate_quality_gate(
+            da,
+            sharpe,
+            vr,
+            tail_capture=tail_capture,
+            quantile_crossing_rate=quantile_crossing,
+            median_sort_gap_max=median_gap_max,
+        )
         
         return {
             "symbol": symbol,
@@ -1225,7 +1235,14 @@ async def get_tft_summary(
             "quality_gate": {
                 "passed": passed,
                 "reasons": reasons,
-                "metrics": {"da": da, "sharpe": sharpe, "vr": vr}
+                "metrics": {
+                    "da": da,
+                    "sharpe": sharpe,
+                    "vr": vr,
+                    "tail_capture": tail_capture,
+                    "quantile_crossing_rate": quantile_crossing,
+                    "median_sort_gap_max": median_gap_max,
+                }
             }
         }
 

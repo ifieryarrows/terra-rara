@@ -10,6 +10,9 @@ from deep_learning.training.metrics import (
     tail_capture_rate,
     prediction_interval_coverage,
     prediction_interval_width,
+    quantile_crossing_rate,
+    quantile_median_sort_gap,
+    select_prediction_horizon,
     compute_all_metrics,
 )
 
@@ -90,3 +93,42 @@ def test_compute_all_metrics_full():
     assert "variance_ratio" in m
     assert m["mae"] > 0
     assert 0 < m["pi80_coverage"] <= 1
+
+
+def test_select_prediction_horizon_uses_t1_only():
+    actual_matrix = np.array([
+        [0.01, -0.20, -0.30],
+        [-0.02, 0.40, 0.50],
+    ])
+
+    t1 = select_prediction_horizon(actual_matrix, horizon_idx=0)
+
+    assert np.array_equal(t1, np.array([0.01, -0.02]))
+
+
+def test_quantile_crossing_metrics_detect_inversions():
+    crossed = np.array([
+        [0.01, 0.04, 0.03, 0.05],
+        [-0.02, -0.01, 0.00, 0.01],
+    ])
+
+    rate = quantile_crossing_rate(crossed)
+    gap_mean, gap_max = quantile_median_sort_gap(crossed, median_idx=2)
+
+    assert rate > 0
+    assert gap_mean > 0
+    assert gap_max > 0
+
+
+def test_compute_all_metrics_includes_quantile_coherence_fields():
+    actual = np.array([0.01, -0.02])
+    pred = np.array([0.02, -0.01])
+    quantiles = np.array([
+        [0.01, 0.04, 0.03, 0.05],
+        [-0.03, -0.02, -0.01, 0.00],
+    ])
+
+    m = compute_all_metrics(actual, pred, y_pred_quantiles=quantiles)
+
+    assert m["quantile_crossing_rate"] > 0
+    assert m["median_sort_gap_max"] > 0

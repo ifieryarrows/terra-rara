@@ -18,7 +18,11 @@ import torch
 import numpy as np
 
 from deep_learning.config import TFTASROConfig, get_tft_config
-from deep_learning.models.losses import AdaptiveSharpeRatioLoss, CombinedQuantileLoss
+from deep_learning.models.losses import (
+    AdaptiveSharpeRatioLoss,
+    CombinedQuantileLoss,
+    quantile_crossing_penalty,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,7 @@ try:
             lambda_vol: float = 0.3,
             lambda_quantile: float = 0.2,
             lambda_madl: float = 0.25,
+            lambda_crossing: float = 1.0,
             risk_free_rate: float = 0.0,
             sharpe_eps: float = 1e-6,
         ):
@@ -51,6 +56,7 @@ try:
             self.lambda_vol = lambda_vol
             self.lambda_quantile = lambda_quantile
             self.lambda_madl = lambda_madl
+            self.lambda_crossing = lambda_crossing
             self.rf = risk_free_rate
             self.sharpe_eps = sharpe_eps
             self.median_idx = len(quantiles) // 2
@@ -101,6 +107,7 @@ try:
 
             # Quantile (pinball) loss via parent — covers all 7 quantile bands
             q_loss = super().loss(y_pred, target)
+            crossing_loss = quantile_crossing_penalty(y_pred)
 
             # MADL: direct directional accuracy via magnitude-weighted sign match
             soft_sign_madl = torch.tanh(median_pred * 20.0)
@@ -108,7 +115,11 @@ try:
             madl_loss = (-direction_match * y_actual.float().abs()).mean()
 
             w_directional = 1.0 - self.lambda_quantile
-            calibration = q_loss + self.lambda_vol * (vol_loss + amplitude_loss)
+            calibration = (
+                q_loss
+                + self.lambda_vol * (vol_loss + amplitude_loss)
+                + self.lambda_crossing * crossing_loss
+            )
             directional = sharpe_loss + self.lambda_madl * madl_loss
             return self.lambda_quantile * calibration + w_directional * directional
 
@@ -146,13 +157,15 @@ def create_tft_model(
             lambda_vol=cfg.asro.lambda_vol,
             lambda_quantile=cfg.asro.lambda_quantile,
             lambda_madl=cfg.asro.lambda_madl,
+            lambda_crossing=cfg.asro.lambda_crossing,
             risk_free_rate=cfg.asro.risk_free_rate,
         )
         logger.info(
-            "Using ASRO loss | w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
+            "Using ASRO loss | w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f lambda_crossing=%.2f",
             cfg.asro.lambda_quantile,
             1.0 - cfg.asro.lambda_quantile,
             cfg.asro.lambda_vol,
+            cfg.asro.lambda_crossing,
         )
     else:
         loss = QuantileLoss(quantiles=quantiles)
@@ -302,9 +315,31 @@ def format_prediction(
     """
     import math as _math
 
-    pred = raw_prediction.cpu().numpy() if isinstance(raw_prediction, torch.Tensor) else raw_prediction
+    pred = raw_prediction.detach().cpu().numpy() if isinstance(raw_prediction, torch.Tensor) else raw_prediction
+    pred = np.array(pred, dtype=np.float64, copy=True)
+    if pred.ndim == 1:
+        pred = pred.reshape(1, -1)
     n_days = pred.shape[0]
     median_idx = len(quantiles) // 2
+    raw_pred = pred.copy()
+
+    quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
+    crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
+    quantile_crossing_detected = bool(crossing_mask.any())
+    quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+    sorted_pred = np.sort(raw_pred, axis=-1)
+    median_sort_gap = float(
+        np.max(np.abs(raw_pred[..., median_idx] - sorted_pred[..., median_idx]))
+    )
+    if quantile_crossing_detected:
+        logger.error(
+            "format_prediction: non-monotonic quantiles detected "
+            "(crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
+            "will use monotonic sorted quantiles and expose raw_quantiles for audit.",
+            quantile_crossing_rate,
+            median_sort_gap,
+        )
+        pred = sorted_pred
 
     if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
         logger.warning(
@@ -320,14 +355,19 @@ def format_prediction(
     # Below this level we trust the model output as-is.
     # ------------------------------------------------------------------
     ANOMALY_DAILY_RET = 0.12
-    raw_median_0 = float(pred[0, median_idx])
-    anomaly_detected = abs(raw_median_0) > ANOMALY_DAILY_RET
-    if anomaly_detected:
+    raw_median_0 = float(raw_pred[0, median_idx])
+    corrected_median_0 = float(pred[0, median_idx])
+    anomaly_detected = (
+        abs(raw_median_0) > ANOMALY_DAILY_RET
+        or abs(corrected_median_0) > ANOMALY_DAILY_RET
+        or quantile_crossing_detected
+    )
+    if abs(raw_median_0) > ANOMALY_DAILY_RET or abs(corrected_median_0) > ANOMALY_DAILY_RET:
         logger.error(
-            "format_prediction: anomalous raw return detected at T+1: %.4f "
-            "(|r| > %.3f). Likely a scaling / target-space bug — the value "
-            "will be bounded at ±%.2f and flagged in the response.",
-            raw_median_0, ANOMALY_DAILY_RET, ANOMALY_DAILY_RET,
+            "format_prediction: anomalous return detected at T+1: raw=%.4f corrected=%.4f "
+            "(|r| > %.3f). Likely a scaling / target-space bug; the value "
+            "will be bounded at +/-%.2f and flagged in the response.",
+            raw_median_0, corrected_median_0, ANOMALY_DAILY_RET, ANOMALY_DAILY_RET,
         )
 
     def _bound(x: float) -> float:
@@ -339,7 +379,7 @@ def format_prediction(
     # Quantile spreads (distance of each quantile from the median, in
     # return-space). We do NOT clip *spreads* — models with a healthy
     # variance ratio produce spreads of ~2σ and that is fine.
-    raw_med_0 = raw_median_0
+    raw_med_0 = corrected_median_0
     spread_q10 = float(pred[0, 1]) - raw_med_0 if len(quantiles) > 2 else 0.0
     spread_q90 = float(pred[0, -2]) - raw_med_0 if len(quantiles) > 2 else 0.0
     spread_q02 = float(pred[0, 0]) - raw_med_0
@@ -349,8 +389,9 @@ def format_prediction(
     cum_price_med = baseline_price
 
     for d in range(n_days):
-        raw_med = float(pred[d, median_idx])
-        med = _bound(raw_med)
+        raw_med = float(raw_pred[d, median_idx])
+        corrected_med = float(pred[d, median_idx])
+        med = _bound(corrected_med)
         cum_price_med *= (1 + med)
         cum_return = (cum_price_med / baseline_price) - 1.0
 
@@ -362,6 +403,7 @@ def format_prediction(
             "day": d + 1,
             "daily_return": med,
             "raw_daily_return": raw_med,
+            "corrected_daily_return": corrected_med,
             "cumulative_return": cum_return,
             "price_median": cum_price_med,
             "price_q10": cum_price_med * (1 + spread_q10 * scale),
@@ -386,6 +428,10 @@ def format_prediction(
         "confidence_band_96": (first["price_q02"], first["price_q98"]),
         "volatility_estimate": vol_estimate,
         "quantiles": {f"q{q:.2f}": float(pred[0, i]) for i, q in enumerate(quantiles)},
+        "raw_quantiles": {f"q{q:.2f}": float(raw_pred[0, i]) for i, q in enumerate(quantiles)},
+        "quantile_crossing_detected": quantile_crossing_detected,
+        "quantile_crossing_rate": quantile_crossing_rate,
+        "median_sort_gap": median_sort_gap,
         "weekly_return": last["cumulative_return"],
         "weekly_price": last["price_median"],
         "prediction_horizon_days": n_days,

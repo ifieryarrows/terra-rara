@@ -66,15 +66,15 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     asro_cfg = ASROConfig(
         # Floor at 0.25: three Optuna runs consistently selected 0.30-0.35.
         # Lower values let the model collapse to near-zero pred_std.
-        lambda_vol=trial.suggest_float("lambda_vol", 0.25, 0.45, step=0.05),
+        lambda_vol=trial.suggest_float("lambda_vol", 0.30, 0.45, step=0.05),
         # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
         # Capped at 0.40 to ensure Sharpe (directional) component always has
         # ≥60% weight.  Higher values caused the "perfect calibration, coin-flip
         # direction" pathology where the model optimised volatility at the
         # expense of directional signal.
-        lambda_quantile=trial.suggest_float("lambda_quantile", 0.2, 0.4, step=0.05),
+        lambda_quantile=trial.suggest_float("lambda_quantile", 0.25, 0.4, step=0.05),
         # MADL weight: how much the directional loss contributes relative to Sharpe.
-        lambda_madl=trial.suggest_float("lambda_madl", 0.1, 0.5, step=0.1),
+        lambda_madl=trial.suggest_float("lambda_madl", 0.3, 0.5, step=0.1),
         risk_free_rate=0.0,
     )
 
@@ -138,6 +138,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     import torch
     from deep_learning.data.dataset import build_cv_folds, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
+    from deep_learning.training.metrics import (
+        quantile_crossing_rate,
+        quantile_median_sort_gap,
+        select_prediction_horizon,
+    )
 
     trial_cfg = create_trial_config(trial, base_cfg)
     master_df, tv_unknown, tv_known, target_cols, _ = master_data
@@ -156,6 +161,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_da_list: list[float] = []
     fold_sharpe_list: list[float] = []
     fold_vr_list: list[float] = []
+    fold_crossing_list: list[float] = []
+    fold_median_gap_list: list[float] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
         # ---- setup ----
@@ -209,6 +216,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_da = 0.5
         fold_sharpe = 0.0
         fold_vr = 0.0
+        fold_crossing_rate = 0.0
+        fold_median_gap = 0.0
 
         try:
             pred_tensor = model.predict(fold_val_dl, mode="quantiles")
@@ -218,14 +227,21 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 pred_np = np.array(pred_tensor)
 
             median_idx = len(trial_cfg.model.quantiles) // 2
-            y_pred = pred_np[:, 0, median_idx] if pred_np.ndim == 3 else pred_np.flatten()
+            if pred_np.ndim == 3:
+                pred_t1 = pred_np[:, 0, :]
+                y_pred = pred_t1[:, median_idx]
+                fold_crossing_rate = quantile_crossing_rate(pred_t1)
+                _, fold_median_gap = quantile_median_sort_gap(pred_t1, median_idx)
+            else:
+                pred_t1 = None
+                y_pred = pred_np.flatten()
 
             y_actual_parts = []
             for batch in fold_val_dl:
                 y_actual_parts.append(
                     batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
                 )
-            y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
+            y_actual = select_prediction_horizon(torch.cat(y_actual_parts).cpu().numpy(), horizon_idx=0)
 
             fn = min(len(y_actual), len(y_pred))
             pred_std = float(y_pred[:fn].std())
@@ -253,6 +269,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_vr_list.append(fold_vr)
         fold_da_list.append(fold_da)
         fold_sharpe_list.append(fold_sharpe)
+        fold_crossing_list.append(fold_crossing_rate)
+        fold_median_gap_list.append(fold_median_gap)
 
         # Incorporate DA directly into fold_score as a reward (not just penalty).
         # DA > 50% (coin-flip) is rewarded, < 50% penalised.
@@ -260,13 +278,23 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         # accuracy, not just low calibration loss.
         da_baseline = 0.50
         da_adjustment = (fold_da - da_baseline) * 2.0  # reward when DA > 50%, penalty when < 50%
-        fold_score = fold_val_loss + fold_vr_penalty - da_adjustment
+        crossing_penalty = 2.0 * max(0.0, fold_crossing_rate - 0.05)
+        median_gap_penalty = 5.0 * max(0.0, fold_median_gap - 0.005)
+        fold_score = (
+            fold_val_loss
+            + fold_vr_penalty
+            + crossing_penalty
+            + median_gap_penalty
+            - da_adjustment
+        )
         fold_scores.append(fold_score)
 
         logger.debug(
-            "Trial %d fold %d/%d: val_loss=%.4f vr=%.3f da=%.1f%% sharpe=%.4f",
+            "Trial %d fold %d/%d: val_loss=%.4f vr=%.3f da=%.1f%% "
+            "sharpe=%.4f q_cross=%.3f q_gap=%.4f",
             trial.number, fold_idx + 1, n_folds,
             fold_val_loss, fold_vr, fold_da * 100, fold_sharpe,
+            fold_crossing_rate, fold_median_gap,
         )
 
         # Per-fold Sharpe pruning: if a fold has deeply negative Sharpe,
@@ -295,6 +323,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     avg_da = float(np.mean(fold_da_list)) if fold_da_list else 0.5
     avg_sharpe = float(np.mean(fold_sharpe_list)) if fold_sharpe_list else 0.0
     avg_vr = float(np.mean(fold_vr_list)) if fold_vr_list else 0.0
+    avg_crossing = float(np.mean(fold_crossing_list)) if fold_crossing_list else 0.0
+    avg_median_gap = float(np.mean(fold_median_gap_list)) if fold_median_gap_list else 0.0
 
     # High fold-score variance = trial is unreliable (works in one regime, fails in another)
     consistency_penalty = (
@@ -304,6 +334,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_variance_ratio", round(avg_vr, 4))
     trial.set_user_attr("avg_directional_accuracy", round(avg_da, 4))
     trial.set_user_attr("avg_val_sharpe", round(avg_sharpe, 4))
+    trial.set_user_attr("avg_quantile_crossing_rate", round(avg_crossing, 4))
+    trial.set_user_attr("avg_median_sort_gap", round(avg_median_gap, 4))
     trial.set_user_attr(
         "fold_score_std",
         round(float(np.std(fold_scores)) if len(fold_scores) > 1 else 0.0, 4),
@@ -314,6 +346,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         logger.warning(
             "Trial %d PRUNED: avg_sharpe=%.4f < 0 across %d folds (DA=%.1f%%)",
             trial.number, avg_sharpe, n_folds, avg_da * 100,
+        )
+        raise optuna.exceptions.TrialPruned()
+
+    if avg_crossing > 0.20 or avg_median_gap > 0.01:
+        logger.warning(
+            "Trial %d PRUNED: quantile incoherence crossing=%.3f median_gap=%.4f",
+            trial.number, avg_crossing, avg_median_gap,
         )
         raise optuna.exceptions.TrialPruned()
 

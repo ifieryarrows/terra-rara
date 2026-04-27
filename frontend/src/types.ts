@@ -107,6 +107,10 @@ export interface TFTPrediction {
   return_basis?: string;
   raw_predicted_return_median?: number;
   anomaly_detected?: boolean;
+  raw_quantiles?: Record<string, number>;
+  quantile_crossing_detected?: boolean;
+  quantile_crossing_rate?: number;
+  median_sort_gap?: number;
   /** Freshness metadata (added 2026-04). */
   baseline_staleness_days?: number;
   lazy_ingest_triggered?: boolean;

@@ -15,6 +15,56 @@ import numpy as np
 import pandas as pd
 
 
+def select_prediction_horizon(values: np.ndarray, horizon_idx: int = 0) -> np.ndarray:
+    """
+    Select one forecast horizon from a target/prediction matrix.
+
+    TFT emits multi-horizon targets with shape ``(n_samples, prediction_length)``.
+    Financial metrics used for promotion are T+1 metrics, so predictions from
+    horizon 0 must be compared with actuals from horizon 0 only.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim == 0:
+        return arr.reshape(1)
+    if arr.ndim == 1:
+        return arr
+    if horizon_idx < 0 or horizon_idx >= arr.shape[1]:
+        raise IndexError(f"horizon_idx={horizon_idx} outside prediction length {arr.shape[1]}")
+    return arr[:, horizon_idx].reshape(-1)
+
+
+def quantile_crossing_rate(y_pred_quantiles: np.ndarray, eps: float = 1e-12) -> float:
+    """
+    Fraction of adjacent quantile pairs that violate monotonic ordering.
+    """
+    arr = np.asarray(y_pred_quantiles, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.shape[-1] < 2:
+        return 0.0
+    violations = np.diff(arr, axis=-1) < -eps
+    return float(violations.mean())
+
+
+def quantile_median_sort_gap(
+    y_pred_quantiles: np.ndarray,
+    median_idx: int | None = None,
+) -> tuple[float, float]:
+    """
+    Mean and max absolute movement of q50 after monotonic sorting.
+    """
+    arr = np.asarray(y_pred_quantiles, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.shape[-1] == 0:
+        return 0.0, 0.0
+    if median_idx is None:
+        median_idx = arr.shape[-1] // 2
+    sorted_arr = np.sort(arr, axis=-1)
+    gap = np.abs(arr[..., median_idx] - sorted_arr[..., median_idx])
+    return float(gap.mean()), float(gap.max())
+
+
 def sharpe_ratio(
     returns: np.ndarray,
     risk_free_rate: float = 0.0,
@@ -105,6 +155,7 @@ def compute_all_metrics(
     y_pred_q90: np.ndarray | None = None,
     y_pred_q02: np.ndarray | None = None,
     y_pred_q98: np.ndarray | None = None,
+    y_pred_quantiles: np.ndarray | None = None,
     tail_threshold: float = 0.015,
 ) -> dict[str, float]:
     """
@@ -144,5 +195,12 @@ def compute_all_metrics(
         q98 = np.asarray(y_pred_q98, dtype=np.float64)
         metrics["pi96_coverage"] = prediction_interval_coverage(y_actual, q02, q98)
         metrics["pi96_width"] = prediction_interval_width(q02, q98)
+
+    if y_pred_quantiles is not None:
+        q_arr = np.asarray(y_pred_quantiles, dtype=np.float64)
+        metrics["quantile_crossing_rate"] = quantile_crossing_rate(q_arr)
+        gap_mean, gap_max = quantile_median_sort_gap(q_arr)
+        metrics["median_sort_gap_mean"] = gap_mean
+        metrics["median_sort_gap_max"] = gap_max
 
     return metrics

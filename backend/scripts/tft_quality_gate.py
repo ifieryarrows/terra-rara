@@ -21,18 +21,33 @@ META_PATH = pathlib.Path("/tmp/models/tft/tft_metadata.json")
 
 def main() -> int:
     if not META_PATH.exists():
-        print("No metadata file found — skipping quality gate")
-        return 0
+        print("No metadata file found - quality gate cannot evaluate training output")
+        return 1
 
     data = json.loads(META_PATH.read_text(encoding="utf-8"))
     metrics = data.get("test_metrics", {})
     da = metrics.get("directional_accuracy", 0.5)
     sharpe = metrics.get("sharpe_ratio", 0.0)
     vr = metrics.get("variance_ratio", 1.0)
+    tail_capture = metrics.get("tail_capture_rate")
+    quantile_crossing = metrics.get("quantile_crossing_rate")
+    median_gap_max = metrics.get("median_sort_gap_max")
 
-    print(f"Quality gate metrics: DA={da:.4f} Sharpe={sharpe:.4f} VR={vr:.4f}")
+    print(
+        "Quality gate metrics: "
+        f"DA={da:.4f} Sharpe={sharpe:.4f} VR={vr:.4f} "
+        f"Tail={tail_capture if tail_capture is not None else 'n/a'} "
+        f"QCross={quantile_crossing if quantile_crossing is not None else 'n/a'}"
+    )
 
-    passed, reasons = evaluate_quality_gate(da, sharpe, vr)
+    passed, reasons = evaluate_quality_gate(
+        da,
+        sharpe,
+        vr,
+        tail_capture=tail_capture,
+        quantile_crossing_rate=quantile_crossing,
+        median_sort_gap_max=median_gap_max,
+    )
 
     if passed:
         print("QUALITY GATE: PASSED")

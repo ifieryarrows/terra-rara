@@ -8,6 +8,7 @@ from deep_learning.models.losses import (
     CombinedQuantileLoss,
     AdaptiveSharpeRatioLoss,
     MeanAbsoluteDirectionalLoss,
+    quantile_crossing_penalty,
 )
 
 
@@ -123,3 +124,15 @@ def test_asro_includes_madl_component():
     l1 = loss_no_madl(y_pred, y_actual).item()
     l2 = loss_with_madl(y_pred, y_actual).item()
     assert l1 != l2, "MADL component should change the total loss"
+
+
+def test_quantile_crossing_penalty_zero_for_monotonic_predictions():
+    y_pred = torch.tensor([[[0.01, 0.02, 0.03, 0.04]]])
+    penalty = quantile_crossing_penalty(y_pred)
+    assert penalty.item() == pytest.approx(0.0)
+
+
+def test_quantile_crossing_penalty_positive_for_crossed_predictions():
+    y_pred = torch.tensor([[[0.01, 0.04, 0.03, 0.05]]])
+    penalty = quantile_crossing_penalty(y_pred)
+    assert penalty.item() > 0

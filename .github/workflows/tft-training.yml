@@ -162,13 +162,36 @@ jobs:
               if: ${{ steps.quality_gate.outcome == 'failure' }}
               run: |
                   echo "⚠️  Quality gate FAILED — rolling back to previous checkpoint"
-                  echo "The HF Hub checkpoint was NOT updated (upload happens before gate)."
+                  echo "The HF Hub checkpoint was NOT updated (upload now happens after gate)."
                   echo "Manual intervention required: check training logs and metrics."
                   echo ""
                   echo "To recover, re-run with previous hyperopt results or use:"
                   echo "  gh workflow run tft-training.yml -f run_hyperopt=false"
+                  exit 1
+
+            - name: Upload model artifacts to HF Hub
+              if: ${{ steps.quality_gate.outcome == 'success' }}
+              working-directory: backend
+              run: |
+                  python - <<'PY'
+                  from pathlib import Path
+                  from deep_learning.config import get_tft_config
+                  from deep_learning.models.hub import upload_tft_artifacts
+
+                  cfg = get_tft_config()
+                  tft_dir = Path(cfg.training.best_model_path).parent
+                  ok = upload_tft_artifacts(
+                      local_dir=tft_dir,
+                      repo_id=cfg.training.hf_model_repo,
+                      commit_message="TFT-ASRO checkpoint (quality gate passed)",
+                  )
+                  raise SystemExit(0 if ok else 1)
+                  PY
+              env:
+                  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
             - name: Display training results
+              if: ${{ always() }}
               run: |
                   echo "=== TFT-ASRO Training Complete ==="
                   if [ -f "/tmp/models/tft/optuna_results.json" ]; then

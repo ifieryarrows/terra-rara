@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 def train_tft_model(
     cfg: Optional[TFTASROConfig] = None,
     use_asro: bool = True,
+    upload_to_hub: bool = False,
 ) -> dict:
     """
     End-to-end TFT-ASRO training.
@@ -63,7 +64,7 @@ def train_tft_model(
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
-    from deep_learning.training.metrics import compute_all_metrics
+    from deep_learning.training.metrics import compute_all_metrics, select_prediction_horizon
     from deep_learning.training.callbacks import CurriculumLossScheduler, SWACallback
 
     if cfg is None:
@@ -216,7 +217,7 @@ def train_tft_model(
             y_actual_parts.append(
                 batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
             )
-        y_actual = torch.cat(y_actual_parts).cpu().numpy().flatten()
+        y_actual = select_prediction_horizon(torch.cat(y_actual_parts).cpu().numpy(), horizon_idx=0)
 
         # Gather top-k checkpoint paths
         best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
@@ -257,13 +258,15 @@ def train_tft_model(
 
         median_idx = len(cfg.model.quantiles) // 2
         if pred_np.ndim == 3:
-            y_pred_median = pred_np[:, 0, median_idx]
-            y_pred_q10 = pred_np[:, 0, 1] if pred_np.shape[2] > 2 else None
-            y_pred_q90 = pred_np[:, 0, -2] if pred_np.shape[2] > 2 else None
-            y_pred_q02 = pred_np[:, 0, 0] if pred_np.shape[2] > 2 else None
-            y_pred_q98 = pred_np[:, 0, -1] if pred_np.shape[2] > 2 else None
+            pred_t1 = pred_np[:, 0, :]
+            y_pred_median = pred_t1[:, median_idx]
+            y_pred_q10 = pred_t1[:, 1] if pred_t1.shape[1] > 2 else None
+            y_pred_q90 = pred_t1[:, -2] if pred_t1.shape[1] > 2 else None
+            y_pred_q02 = pred_t1[:, 0] if pred_t1.shape[1] > 2 else None
+            y_pred_q98 = pred_t1[:, -1] if pred_t1.shape[1] > 2 else None
         else:
             y_pred_median = pred_np.flatten()
+            pred_t1 = None
             y_pred_q10 = y_pred_q90 = y_pred_q02 = y_pred_q98 = None
 
         n = min(len(y_actual), len(y_pred_median))
@@ -274,6 +277,7 @@ def train_tft_model(
             y_pred_q90=y_pred_q90[:n] if y_pred_q90 is not None else None,
             y_pred_q02=y_pred_q02[:n] if y_pred_q02 is not None else None,
             y_pred_q98=y_pred_q98[:n] if y_pred_q98 is not None else None,
+            y_pred_quantiles=pred_t1[:n] if pred_t1 is not None else None,
         )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -294,6 +298,8 @@ def train_tft_model(
             "use_asro": use_asro,
             "lambda_vol": cfg.asro.lambda_vol,
             "lambda_quantile": cfg.asro.lambda_quantile,
+            "lambda_madl": cfg.asro.lambda_madl,
+            "lambda_crossing": cfg.asro.lambda_crossing,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
         },
@@ -313,22 +319,28 @@ def train_tft_model(
     except Exception as exc:
         logger.warning("Could not write metadata JSON: %s", exc)
 
-    # ---- 10. Upload to HF Hub (for persistence across HF Space rebuilds) ----
-    try:
-        from deep_learning.models.hub import upload_tft_artifacts
+    # ---- 10. Optional HF Hub upload ----
+    # CI promotes artifacts only after scripts/tft_quality_gate.py passes.
+    # Keeping upload disabled by default prevents a failed model from replacing
+    # the production checkpoint before the gate has evaluated test metrics.
+    result["hub_uploaded"] = False
+    if upload_to_hub:
+        try:
+            from deep_learning.models.hub import upload_tft_artifacts
 
-        tft_dir = final_path.parent
-        uploaded = upload_tft_artifacts(
-            local_dir=tft_dir,
-            repo_id=cfg.training.hf_model_repo,
-            commit_message=f"TFT-ASRO checkpoint (val_loss={trainer.checkpoint_callback.best_model_score:.4f})"
-            if trainer.checkpoint_callback.best_model_score
-            else "TFT-ASRO checkpoint",
-        )
-        result["hub_uploaded"] = uploaded
-    except Exception as exc:
-        logger.warning("HF Hub upload skipped: %s", exc)
-        result["hub_uploaded"] = False
+            tft_dir = final_path.parent
+            uploaded = upload_tft_artifacts(
+                local_dir=tft_dir,
+                repo_id=cfg.training.hf_model_repo,
+                commit_message=f"TFT-ASRO checkpoint (val_loss={trainer.checkpoint_callback.best_model_score:.4f})"
+                if trainer.checkpoint_callback.best_model_score
+                else "TFT-ASRO checkpoint",
+            )
+            result["hub_uploaded"] = uploaded
+        except Exception as exc:
+            logger.warning("HF Hub upload skipped: %s", exc)
+    else:
+        result["hub_upload_skipped"] = "disabled_until_quality_gate_passes"
 
     return result
 
@@ -355,6 +367,18 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if not params:
             return cfg
 
+        # Guard against legacy optuna_results.json files produced before the
+        # 2026-04-27 metric/coherence fixes.  Reusing those artifacts with
+        # run_hyperopt=false can otherwise re-apply the known weak-direction
+        # regime (for example lambda_madl=0.2).
+        params = dict(params)
+        if "lambda_vol" in params:
+            params["lambda_vol"] = max(float(params["lambda_vol"]), 0.30)
+        if "lambda_quantile" in params:
+            params["lambda_quantile"] = min(max(float(params["lambda_quantile"]), 0.25), 0.40)
+        if "lambda_madl" in params:
+            params["lambda_madl"] = max(float(params["lambda_madl"]), 0.30)
+
         model_overrides = {
             k: params[k] for k in (
                 "hidden_size", "attention_head_size", "dropout",
@@ -364,7 +388,7 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             ) if k in params
         }
         asro_overrides = {
-            k: params[k] for k in ("lambda_vol", "lambda_quantile", "lambda_madl")
+            k: params[k] for k in ("lambda_vol", "lambda_quantile", "lambda_madl", "lambda_crossing")
             if k in params
         }
         training_overrides = {
@@ -428,10 +452,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train TFT-ASRO model")
     parser.add_argument("--symbol", default="HG=F")
     parser.add_argument("--no-asro", action="store_true", help="Use standard QuantileLoss instead of ASRO")
+    parser.add_argument("--upload-hub", action="store_true", help="Upload artifacts to HF Hub after training")
     args = parser.parse_args()
 
     cfg = get_tft_config()
-    result = train_tft_model(cfg, use_asro=not args.no_asro)
+    result = train_tft_model(cfg, use_asro=not args.no_asro, upload_to_hub=args.upload_hub)
 
     print("\n" + "=" * 60)
     print("TFT-ASRO TRAINING COMPLETE")

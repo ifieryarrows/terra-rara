@@ -116,6 +116,10 @@ class ASROConfig:
     # Directly rewards correct directional predictions scaled by |actual_return|.
     # Ref: Kisiel & Gorse (2023) "Mean Absolute Directional Loss"
     lambda_madl: float = 0.25
+    # Quantile monotonicity guard.  This is a structural constraint, not a
+    # calibration/direction trade-off knob: adjacent quantile inversions are
+    # mathematically invalid and must be penalised during training.
+    lambda_crossing: float = 1.0
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
 

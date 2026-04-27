@@ -11,10 +11,17 @@ Lives under the `app` package so the HF production container (which copies
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
-def evaluate_quality_gate(da: float, sharpe: float, vr: float) -> Tuple[bool, List[str]]:
+def evaluate_quality_gate(
+    da: float,
+    sharpe: float,
+    vr: float,
+    tail_capture: Optional[float] = None,
+    quantile_crossing_rate: Optional[float] = None,
+    median_sort_gap_max: Optional[float] = None,
+) -> Tuple[bool, List[str]]:
     """
     Evaluate TFT-ASRO metrics against deployment thresholds.
 
@@ -31,5 +38,11 @@ def evaluate_quality_gate(da: float, sharpe: float, vr: float) -> Tuple[bool, Li
         reasons.append(f"Sharpe={sharpe:.4f} < -0.30")
     if vr < 0.2 or vr > 2.5:
         reasons.append(f"VR={vr:.4f} outside [0.2, 2.5]")
+    if tail_capture is not None and tail_capture < 0.35:
+        reasons.append(f"TailCapture={tail_capture:.4f} < 0.35")
+    if quantile_crossing_rate is not None and quantile_crossing_rate > 0.20:
+        reasons.append(f"QuantileCrossing={quantile_crossing_rate:.4f} > 0.20")
+    if median_sort_gap_max is not None and median_sort_gap_max > 0.01:
+        reasons.append(f"MedianSortGapMax={median_sort_gap_max:.4f} > 0.01")
 
     return len(reasons) == 0, reasons

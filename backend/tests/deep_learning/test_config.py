@@ -31,6 +31,7 @@ def test_asro_lambda_defaults():
     assert 0 < cfg.asro.lambda_vol <= 1.0
     assert 0 < cfg.asro.lambda_quantile <= 1.0
     assert 0 < cfg.asro.lambda_madl <= 1.0
+    assert cfg.asro.lambda_crossing > 0
 
 
 def test_lookback_days_is_3_years():
