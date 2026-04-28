@@ -996,7 +996,23 @@ async def get_tft_analysis(
     # --- 1. Try persisted snapshot ------------------------------------------
     if source == "snapshot":
         try:
-            from app.models import TFTPredictionSnapshot
+            from app.models import TFTPredictionSnapshot, TFTModelMetadata
+            from datetime import date
+
+            def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+                if dt is None:
+                    return None
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=timezone.utc)
+                return dt
+
+            def _parse_ref_date(value: Optional[str]) -> Optional[date]:
+                if not value:
+                    return None
+                try:
+                    return datetime.strptime(value[:10], "%Y-%m-%d").date()
+                except Exception:
+                    return None
 
             with SessionLocal() as session:
                 latest = (
@@ -1008,13 +1024,52 @@ async def get_tft_analysis(
                 if latest is not None and isinstance(latest.payload_json, dict):
                     payload = dict(latest.payload_json)
                     gen_at = latest.generated_at
-                    if gen_at and gen_at.tzinfo is None:
-                        gen_at = gen_at.replace(tzinfo=timezone.utc)
-                    payload["source"] = "snapshot"
-                    payload["snapshot_generated_at"] = (
-                        gen_at.isoformat() if gen_at else None
+                    gen_at = _as_utc(gen_at)
+                    model_meta = (
+                        session.query(TFTModelMetadata)
+                        .filter(TFTModelMetadata.symbol == symbol)
+                        .order_by(TFTModelMetadata.trained_at.desc())
+                        .first()
                     )
-                    return payload
+                    trained_at = _as_utc(model_meta.trained_at) if model_meta else None
+
+                    # Decide whether snapshot is still valid.
+                    should_fallback_live = False
+                    fallback_reasons: list[str] = []
+
+                    if trained_at and gen_at and trained_at > gen_at:
+                        should_fallback_live = True
+                        fallback_reasons.append(
+                            "model trained after snapshot "
+                            f"(trained_at={trained_at.isoformat()} > snapshot_at={gen_at.isoformat()})"
+                        )
+
+                    prediction = payload.get("prediction") if isinstance(payload.get("prediction"), dict) else {}
+                    reference_price_date = (
+                        latest.reference_price_date
+                        or prediction.get("reference_price_date")
+                    )
+                    ref_date = _parse_ref_date(reference_price_date)
+                    if ref_date is not None:
+                        staleness_days = (datetime.now(timezone.utc).date() - ref_date).days
+                        if staleness_days >= 3:
+                            should_fallback_live = True
+                            fallback_reasons.append(
+                                f"reference_price_date stale ({reference_price_date}, {staleness_days}d)"
+                            )
+
+                    if not should_fallback_live:
+                        payload["source"] = "snapshot"
+                        payload["snapshot_generated_at"] = (
+                            gen_at.isoformat() if gen_at else None
+                        )
+                        return payload
+
+                    logger.info(
+                        "TFT snapshot bypassed for %s; using live inference (%s)",
+                        symbol,
+                        "; ".join(fallback_reasons),
+                    )
         except Exception as exc:
             logger.warning(
                 "TFT snapshot read failed, falling back to live inference: %s",
@@ -1251,6 +1306,29 @@ async def get_tft_summary(
     from app.quality_gate import evaluate_quality_gate
     import json
     
+    import math
+
+    def _safe_json_load(raw: Optional[str]) -> dict:
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _numeric_map(data: dict) -> dict:
+        out: dict[str, float] = {}
+        for k, v in data.items():
+            try:
+                num = float(v)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(num) or math.isinf(num):
+                continue
+            out[k] = num
+        return out
+
     with SessionLocal() as session:
         meta = session.query(TFTModelMetadata).filter(
             TFTModelMetadata.symbol == symbol
@@ -1259,8 +1337,9 @@ async def get_tft_summary(
         if not meta:
             raise HTTPException(status_code=404, detail=f"No TFT model metadata found for {symbol}")
 
-        config = json.loads(meta.config_json) if meta.config_json else {}
-        metrics = json.loads(meta.metrics_json) if meta.metrics_json else {}
+        config = _safe_json_load(meta.config_json)
+        metrics_raw = _safe_json_load(meta.metrics_json)
+        metrics = _numeric_map(metrics_raw)
         
         # Variable importance not directly in TFTModelMetadata yet, extract from latest artifacts if available
         # But we can try to find it in the artifacts folder
@@ -1288,9 +1367,9 @@ async def get_tft_summary(
         except Exception as e:
             logger.warning(f"Could not load variable importance: {e}")
 
-        da = metrics.get("directional_accuracy", 0.5)
-        sharpe = metrics.get("sharpe_ratio", 0.0)
-        vr = metrics.get("variance_ratio", 1.0)
+        da = float(metrics.get("directional_accuracy", 0.5))
+        sharpe = float(metrics.get("sharpe_ratio", 0.0))
+        vr = float(metrics.get("variance_ratio", 1.0))
         tail_capture = metrics.get("tail_capture_rate")
         quantile_crossing = metrics.get("quantile_crossing_rate")
         median_gap_max = metrics.get("median_sort_gap_max")
@@ -1304,6 +1383,18 @@ async def get_tft_summary(
             median_sort_gap_max=median_gap_max,
         )
         
+        gate_metrics = {
+            "da": da,
+            "sharpe": sharpe,
+            "vr": vr,
+        }
+        if tail_capture is not None:
+            gate_metrics["tail_capture"] = float(tail_capture)
+        if quantile_crossing is not None:
+            gate_metrics["quantile_crossing_rate"] = float(quantile_crossing)
+        if median_gap_max is not None:
+            gate_metrics["median_sort_gap_max"] = float(median_gap_max)
+
         return {
             "symbol": symbol,
             "trained_at": meta.trained_at.isoformat() if meta.trained_at else None,
@@ -1314,14 +1405,7 @@ async def get_tft_summary(
             "quality_gate": {
                 "passed": passed,
                 "reasons": reasons,
-                "metrics": {
-                    "da": da,
-                    "sharpe": sharpe,
-                    "vr": vr,
-                    "tail_capture": tail_capture,
-                    "quantile_crossing_rate": quantile_crossing,
-                    "median_sort_gap_max": median_gap_max,
-                }
+                "metrics": gate_metrics,
             }
         }
 
