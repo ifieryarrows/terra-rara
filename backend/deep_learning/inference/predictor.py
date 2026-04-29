@@ -136,28 +136,44 @@ class TFTPredictor:
             - baseline_staleness_days (int, 0 = fresh)
         """
         from deep_learning.data.feature_store import build_tft_dataframe
-        from deep_learning.data.dataset import build_datasets, create_dataloaders
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
 
         # 1. Pre-flight: check PriceBar freshness and lazy-ingest if stale
         staleness_days, ingest_triggered = self._check_price_freshness(session, symbol)
 
-        master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(session, self.cfg)
+        master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(
+            session,
+            self.cfg,
+            drop_missing_target=False,
+        )
 
-        # Extract the date of the baseline price so the frontend can show
-        # "% change relative to <date> close" unambiguously.
-        reference_price_date: Optional[str] = None
+        # Track feature freshness separately from the baseline close. In live
+        # inference the feature frame keeps the final bar with a dummy target,
+        # while training still drops it.
+        feature_last_date: Optional[str] = None
         try:
             if hasattr(master_df.index, "max"):
                 last_date = master_df.index.max()
-                reference_price_date = str(last_date)[:10] if last_date is not None else None
+                feature_last_date = self._date_label(last_date)
         except Exception:
-            reference_price_date = None
+            feature_last_date = None
+
+        baseline_price, reference_price_date = self._latest_price_baseline(
+            session,
+            symbol,
+            fallback_price=last_known_price,
+            fallback_date=feature_last_date,
+        )
 
         logger.info(
-            "TFT predict: baseline_price=%.4f (date=%s) for %s",
-            last_known_price, reference_price_date, symbol,
+            "TFT predict: baseline_price=%.4f reference_price_date=%s "
+            "feature_last_date=%s baseline_staleness_days=%s for %s",
+            baseline_price,
+            reference_price_date,
+            feature_last_date,
+            staleness_days,
+            symbol,
         )
 
         encoder_length = self.cfg.model.max_encoder_length
@@ -222,7 +238,7 @@ class TFTPredictor:
         result = format_prediction(
             pred_for_format,
             quantiles=self.cfg.model.quantiles,
-            baseline_price=last_known_price,
+            baseline_price=baseline_price,
             reference_price_date=reference_price_date,
         )
 
@@ -273,6 +289,57 @@ class TFTPredictor:
             symbol,
             {"symbol": symbol, "kind": "unknown", "name": symbol, "note": ""},
         )
+
+    @staticmethod
+    def _date_label(value: Any) -> Optional[str]:
+        """Format a date-like value as YYYY-MM-DD for API/log fields."""
+        if value is None:
+            return None
+        try:
+            return value.date().isoformat()
+        except AttributeError:
+            return str(value)[:10]
+        except Exception:
+            return None
+
+    def _latest_price_baseline(
+        self,
+        session,
+        symbol: str,
+        *,
+        fallback_price: float,
+        fallback_date: Optional[str],
+    ) -> tuple[float, Optional[str]]:
+        """
+        Return the latest close and date from PriceBar.
+
+        The feature frame may drop or dummy-fill the final target depending on
+        training vs inference mode. Baseline reporting must therefore come from
+        the canonical price table, not from the post-target-filter frame.
+        """
+        baseline_price = fallback_price
+        reference_price_date = fallback_date
+
+        try:
+            from app.models import PriceBar
+
+            latest_bar = (
+                session.query(PriceBar)
+                .filter(PriceBar.symbol == symbol)
+                .order_by(PriceBar.date.desc())
+                .first()
+            )
+            if latest_bar is not None and latest_bar.close is not None:
+                baseline_price = float(latest_bar.close)
+                reference_price_date = self._date_label(latest_bar.date)
+        except Exception as exc:
+            logger.warning(
+                "Latest PriceBar baseline lookup failed for %s; using feature fallback: %s",
+                symbol,
+                exc,
+            )
+
+        return baseline_price, reference_price_date
 
     def _check_price_freshness(self, session, symbol: str) -> tuple[int, bool]:
         """

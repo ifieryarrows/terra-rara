@@ -249,18 +249,25 @@ def _build_daily_embedding_features(
 def build_tft_dataframe(
     session,
     cfg: Optional[TFTASROConfig] = None,
+    *,
+    drop_missing_target: bool = True,
 ) -> tuple[pd.DataFrame, list[str], list[str], list[str], float]:
     """
     Build the master DataFrame for TFT training / inference.
 
     Returns:
-        (df, time_varying_unknown_reals, time_varying_known_reals, target_cols)
+        (df, time_varying_unknown_reals, time_varying_known_reals, target_cols, last_close)
 
     The returned df has:
         - "time_idx"  : integer time index (required by pytorch_forecasting)
         - "group_id"  : constant "copper" (single series)
         - "target"    : next-day simple return
         - columns for all three TFT feature categories
+
+    Training and validation need complete next-day targets, so the default
+    drops rows where ``target`` is missing. Live inference needs the latest
+    observed bar as the forecast anchor, so callers can keep that final row
+    and let the missing target be filled with a neutral dummy value.
     """
     if cfg is None:
         cfg = get_tft_config()
@@ -369,8 +376,11 @@ def build_tft_dataframe(
     master = pd.concat(parts, axis=1)
     master = master.loc[target_index]
 
-    valid_mask = master["target"].notna()
-    master = master[valid_mask].copy()
+    if drop_missing_target:
+        valid_mask = master["target"].notna()
+        master = master[valid_mask].copy()
+    else:
+        master = master.copy()
 
     master = master.fillna(0.0)
 
