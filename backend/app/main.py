@@ -1496,7 +1496,8 @@ async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, descrip
 #   - `components`:     breakdown of LLM vs FinBERT vs rule_sign contributions
 #   - `trend_7d`:       list of {date, index, news_count} for sparkline
 #   - `recent_articles`: a small sample of latest processed headlines
-#   - `data_freshness`: {oldest, newest, age_hours, article_count_24h}
+#   - `data_freshness`: {oldest, newest, age_hours, article_count_24h,
+#                         window_start, window_days, article_count_window}
 #
 # This endpoint NEVER calls an LLM. Commentary generation (which does use
 # OpenRouter) is pipeline-driven and cached in `AICommentary`.
@@ -1600,6 +1601,7 @@ async def get_sentiment_summary(
                 NewsSentimentV2,
                 NewsSentimentV2.news_processed_id == NewsProcessed.id,
             )
+            .filter(NewsRaw.published_at >= window_start)
             .order_by(desc(NewsRaw.published_at))
             .limit(recent_limit)
             .all()
@@ -1627,6 +1629,10 @@ async def get_sentiment_summary(
             func.count(NewsRaw.id).label("n_total"),
         ).filter(NewsRaw.published_at >= (now - timedelta(hours=24))).one()
 
+        window_freshness_q = session.query(
+            func.count(NewsRaw.id).label("n_total"),
+        ).filter(NewsRaw.published_at >= window_start).one()
+
         newest = freshness_q.newest
         age_hours = ((now - newest).total_seconds() / 3600.0) if newest else None
 
@@ -1649,6 +1655,9 @@ async def get_sentiment_summary(
                 "oldest": freshness_q.oldest.isoformat() if freshness_q.oldest else None,
                 "age_hours": round(age_hours, 2) if age_hours is not None else None,
                 "article_count_24h": int(freshness_q.n_total or 0),
+                "window_start": window_start.isoformat(),
+                "window_days": int(days),
+                "article_count_window": int(window_freshness_q.n_total or 0),
             },
             "generated_at": now.isoformat(),
         }

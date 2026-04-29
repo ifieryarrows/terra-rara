@@ -22,6 +22,7 @@ import type {
   AnalysisReport, HistoryResponse,
   CommentaryResponse, TFTAnalysisResponse
 } from '../types';
+import { useSentimentSummary } from '../hooks/useQueries';
 import '../App.css';
 
 // Lazy load heavy components
@@ -148,6 +149,7 @@ export const OverviewPage = () => {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
+  const sentimentSummary = useSentimentSummary(7, 6);
 
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
@@ -311,6 +313,14 @@ export const OverviewPage = () => {
   const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
   // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
   const tftBaselineIsStale = tftStalenessDays >= 3;
+  const newsSentimentIndex = sentimentSummary.data?.index ?? 0;
+  const newsSentimentLabel = sentimentSummary.data?.label ?? 'Neutral';
+  const newsSentimentTone =
+    newsSentimentLabel === 'Bullish'
+      ? 'text-emerald-400'
+      : newsSentimentLabel === 'Bearish'
+      ? 'text-rose-400'
+      : 'text-amber-400';
   const latestHistoryPrice = [...(history?.data || [])]
     .reverse()
     .find((p) => p.price != null)?.price ?? null;
@@ -384,9 +394,9 @@ export const OverviewPage = () => {
               </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
-              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sentiment</span>
-              <div className={clsx("font-mono text-lg font-light", (analysis?.sentiment_index || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                <NumberTicker value={analysis?.sentiment_index || 0} format={(v: number) => v.toFixed(3)} />
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">7D News Sentiment</span>
+              <div className={clsx("font-mono text-lg font-light", newsSentimentTone)}>
+                <NumberTicker value={newsSentimentIndex} format={(v: number) => v.toFixed(3)} />
               </div>
             </div>
           </div>

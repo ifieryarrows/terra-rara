@@ -30,7 +30,7 @@ const SINCE_OPTIONS = [
 
 const DEFAULT_FILTERS: NewsFeedFilters = {
   limit: 20,
-  since_hours: 48,
+  since_hours: 168,
   label: 'all',
   min_relevance: 0.2,
   channel: 'all',
@@ -57,9 +57,11 @@ export const NewsIntelligencePanel: React.FC = () => {
     () => ({ ...filters, search: debouncedSearch || undefined }),
     [filters, debouncedSearch],
   );
+  const activeWindowHours = effectiveFilters.since_hours ?? 168;
+  const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
 
   const feed = useNewsFeed(effectiveFilters);
-  const stats = useNewsStats(24);
+  const stats = useNewsStats(activeWindowHours);
 
   const items = useMemo(() => flattenNewsPages(feed.data?.pages), [feed.data]);
   const totalMatching = feed.data?.pages?.[0]?.total ?? items.length;
@@ -133,13 +135,13 @@ export const NewsIntelligencePanel: React.FC = () => {
       {/* Stats summary */}
       <div className="px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
         <div className="flex items-center gap-1.5 text-[10px] font-mono mb-2">
-          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title="Bullish (24h)">
+          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title={`Bullish (${activeWindowLabel})`}>
             ↑ {bullishCount}
           </span>
-          <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300" title="Bearish (24h)">
+          <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300" title={`Bearish (${activeWindowLabel})`}>
             ↓ {bearishCount}
           </span>
-          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200" title="Neutral (24h)">
+          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200" title={`Neutral (${activeWindowLabel})`}>
             · {neutralCount}
           </span>
           <span className="ml-auto text-gray-500">

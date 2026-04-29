@@ -23,7 +23,7 @@ function buildNewsKey(filters: NewsFeedFilters) {
   return [
     'news-feed',
     {
-      since_hours: filters.since_hours ?? 48,
+      since_hours: filters.since_hours ?? 168,
       label: filters.label ?? 'all',
       event_type: filters.event_type ?? 'all',
       min_relevance: filters.min_relevance ?? 0,
@@ -71,7 +71,7 @@ export function flattenNewsPages(pages: NewsListResponse[] | undefined): NewsIte
   return pages.flatMap((page) => page.items);
 }
 
-export function useNewsStats(sinceHours = 24) {
+export function useNewsStats(sinceHours = 168) {
   return useQuery<NewsStatsResponse, Error>({
     queryKey: ['news-stats', sinceHours],
     queryFn: () => fetchNewsStats(sinceHours),

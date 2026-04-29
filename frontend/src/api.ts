@@ -224,6 +224,9 @@ export interface SentimentSummary {
     oldest: string | null;
     age_hours: number | null;
     article_count_24h: number;
+    window_start?: string | null;
+    window_days?: number;
+    article_count_window?: number;
   };
   generated_at: string;
 }
@@ -246,7 +249,7 @@ function toNewsParams(filters: NewsFeedFilters = {}): Record<string, string | nu
   const params: Record<string, string | number> = {
     limit: filters.limit ?? 20,
     offset: filters.offset ?? 0,
-    since_hours: filters.since_hours ?? 48,
+    since_hours: filters.since_hours ?? 168,
     label: filters.label ?? 'all',
     event_type: filters.event_type ?? 'all',
     min_relevance: filters.min_relevance ?? 0,
@@ -280,7 +283,7 @@ export async function fetchNewsById(processedId: number): Promise<NewsItem> {
 /**
  * Fetch aggregate stats used by the NewsIntelligencePanel header.
  */
-export async function fetchNewsStats(sinceHours = 24): Promise<NewsStatsResponse> {
+export async function fetchNewsStats(sinceHours = 168): Promise<NewsStatsResponse> {
   const response = await api.get<NewsStatsResponse>('/news/stats', {
     params: { since_hours: sinceHours },
   });

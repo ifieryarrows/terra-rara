@@ -5,6 +5,8 @@ Tests for API endpoints.
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
+from types import SimpleNamespace
+import asyncio
 
 
 class TestHealthEndpoint:
@@ -405,4 +407,126 @@ class TestNewsHelpers:
 
         assert _extract_reasoning_text("") is None
         assert _extract_reasoning_text("not json") == "not json"
+
+
+class TestSentimentSummary:
+    """Regression tests for the DB-backed /api/sentiment/summary contract."""
+
+    def test_sentiment_summary_filters_recent_articles_to_window(self, monkeypatch):
+        from app import main as main_module
+
+        class FakeQuery:
+            def __init__(self, kind, session):
+                self.kind = kind
+                self.session = session
+                self.filters = []
+
+            def filter(self, *criteria):
+                self.filters.extend(criteria)
+                return self
+
+            def order_by(self, *_args):
+                return self
+
+            def join(self, *_args):
+                return self
+
+            def outerjoin(self, *_args):
+                return self
+
+            def limit(self, *_args):
+                return self
+
+            def all(self):
+                if self.kind == "daily":
+                    return self.session.daily_rows
+                if self.kind == "recent":
+                    assert self.filters, "recent articles query must be window-filtered"
+                    return self.session.recent_rows
+                return []
+
+            def one(self):
+                if self.kind == "components":
+                    return self.session.components
+                if self.kind == "freshness_24h":
+                    return self.session.freshness_24h
+                if self.kind == "freshness_window":
+                    return self.session.freshness_window
+                raise AssertionError(f"unexpected one() for {self.kind}")
+
+        class FakeSession:
+            kinds = ["daily", "components", "recent", "freshness_24h", "freshness_window"]
+
+            def __init__(self):
+                now = datetime(2026, 4, 29, 12, 0, tzinfo=timezone.utc)
+                self.query_index = 0
+                self.queries = []
+                self.daily_rows = [
+                    SimpleNamespace(
+                        date=datetime(2026, 4, 28, tzinfo=timezone.utc),
+                        sentiment_index=-0.2,
+                        news_count=13,
+                        avg_confidence=0.79,
+                    )
+                ]
+                self.components = SimpleNamespace(
+                    avg_llm=0.1,
+                    avg_finbert=-0.05,
+                    avg_rule=0.0,
+                    avg_conf=0.7,
+                    avg_rel=0.6,
+                    n=2,
+                )
+                raw = SimpleNamespace(
+                    title="Windowed copper article",
+                    source="google_news",
+                    url="https://example.com/copper",
+                    published_at=now,
+                )
+                processed = SimpleNamespace(canonical_title="Windowed copper article")
+                score = SimpleNamespace(
+                    label="BEARISH",
+                    final_score=-0.4,
+                    impact_score_llm=-0.5,
+                    confidence_calibrated=0.8,
+                    relevance_score=0.9,
+                    event_type="supply_expansion",
+                    finbert_pos=0.1,
+                    finbert_neu=0.2,
+                    finbert_neg=0.7,
+                    reasoning_json=None,
+                    scored_at=now,
+                )
+                self.recent_rows = [(raw, processed, score)]
+                self.freshness_24h = SimpleNamespace(
+                    oldest=now,
+                    newest=now,
+                    n_total=1,
+                )
+                self.freshness_window = SimpleNamespace(n_total=2)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def query(self, *_args):
+                kind = self.kinds[self.query_index]
+                self.query_index += 1
+                query = FakeQuery(kind, self)
+                self.queries.append(query)
+                return query
+
+        fake_session = FakeSession()
+        monkeypatch.setattr(main_module, "SessionLocal", lambda: fake_session)
+
+        result = asyncio.run(main_module.get_sentiment_summary(days=7, recent_limit=1))
+
+        assert result["index"] == -0.2
+        assert len(result["recent_articles"]) == 1
+        assert fake_session.queries[2].kind == "recent"
+        assert fake_session.queries[2].filters
+        assert result["data_freshness"]["window_days"] == 7
+        assert result["data_freshness"]["article_count_window"] == 2
 
