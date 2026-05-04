@@ -264,6 +264,23 @@ function toNewsParams(filters: NewsFeedFilters = {}): Record<string, string | nu
   return params;
 }
 
+function toNewsStatsParams(filters: NewsFeedFilters = {}): Record<string, string | number> {
+  const params: Record<string, string | number> = {
+    since_hours: filters.since_hours ?? 168,
+    label: filters.label ?? 'all',
+    event_type: filters.event_type ?? 'all',
+    min_relevance: filters.min_relevance ?? 0,
+    channel: filters.channel ?? 'all',
+  };
+  if (filters.publisher && filters.publisher.trim()) {
+    params.publisher = filters.publisher.trim();
+  }
+  if (filters.search && filters.search.trim()) {
+    params.search = filters.search.trim();
+  }
+  return params;
+}
+
 /**
  * Fetch the paginated news feed. Backend caches at 60s TTL.
  */
@@ -283,9 +300,9 @@ export async function fetchNewsById(processedId: number): Promise<NewsItem> {
 /**
  * Fetch aggregate stats used by the NewsIntelligencePanel header.
  */
-export async function fetchNewsStats(sinceHours = 168): Promise<NewsStatsResponse> {
+export async function fetchNewsStats(filters: NewsFeedFilters = {}): Promise<NewsStatsResponse> {
   const response = await api.get<NewsStatsResponse>('/news/stats', {
-    params: { since_hours: sinceHours },
+    params: toNewsStatsParams(filters),
   });
   return response.data;
 }

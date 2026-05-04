@@ -61,7 +61,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
 
   const feed = useNewsFeed(effectiveFilters);
-  const stats = useNewsStats(activeWindowHours);
+  const stats = useNewsStats(effectiveFilters);
 
   const items = useMemo(() => flattenNewsPages(feed.data?.pages), [feed.data]);
   const totalMatching = feed.data?.pages?.[0]?.total ?? items.length;

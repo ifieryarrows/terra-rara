@@ -409,6 +409,152 @@ class TestNewsHelpers:
         assert _extract_reasoning_text("not json") == "not json"
 
 
+class TestNewsStatsFilters:
+    """Regression tests for filtered /api/news/stats semantics."""
+
+    def test_news_stats_respects_min_relevance_and_other_filters(self, monkeypatch):
+        from app import main as main_module
+
+        class FakeQuery:
+            def __init__(self, rows):
+                self.rows = rows
+                self.filters = []
+                self.limit_n = None
+
+            def join(self, *_args):
+                return self
+
+            def outerjoin(self, *_args):
+                return self
+
+            def filter(self, *criteria):
+                self.filters.extend(criteria)
+                return self
+
+            def order_by(self, *_args):
+                return self
+
+            def limit(self, n):
+                self.limit_n = int(n)
+                return self
+
+            def _extract_filter(self, criterion):
+                left = getattr(criterion, "left", None)
+                key = getattr(left, "key", None)
+                right = getattr(criterion, "right", None)
+                value = getattr(right, "value", None)
+                op = getattr(getattr(criterion, "operator", None), "__name__", "")
+                return key, op, value
+
+            def _match(self, triple, key, op, value):
+                raw, _processed, sent = triple
+                if key == "published_at" and op == "ge":
+                    return raw.published_at >= value
+                if key == "source" and op == "eq":
+                    return (raw.source or "") == value
+                if key == "event_type" and op == "eq":
+                    return sent is not None and (sent.event_type or "") == value
+                if key == "label" and op == "eq":
+                    return sent is not None and (sent.label or "") == value
+                if key == "relevance_score" and op == "ge":
+                    return sent is not None and sent.relevance_score is not None and float(sent.relevance_score) >= float(value)
+                if key == "title" and ("like" in op):
+                    needle = str(value).replace("%", "").lower()
+                    return needle in (raw.title or "").lower()
+                return True
+
+            def all(self):
+                rows = list(self.rows)
+                for criterion in self.filters:
+                    key, op, value = self._extract_filter(criterion)
+                    rows = [triple for triple in rows if self._match(triple, key, op, value)]
+                if self.limit_n is not None:
+                    rows = rows[: self.limit_n]
+                return rows
+
+        class FakeSession:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def query(self, *_args):
+                return FakeQuery(self.rows)
+
+        now = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
+
+        def make_row(title, source, publisher, label, relevance, event_type):
+            raw = SimpleNamespace(
+                title=title,
+                source=source,
+                published_at=now,
+                raw_payload={"source": publisher},
+            )
+            processed = SimpleNamespace(id=1)
+            sent = SimpleNamespace(
+                label=label,
+                event_type=event_type,
+                relevance_score=relevance,
+                final_score=0.1,
+                confidence_calibrated=0.7,
+            )
+            return (raw, processed, sent)
+
+        rows = [
+            make_row("Copper supply squeeze", "google_news", "Reuters", "BULLISH", 0.80, "supply_disruption"),
+            make_row("Copper demand softens", "newsapi", "Bloomberg", "BEARISH", 0.40, "demand_softening"),
+            make_row("Mining update points to stable output", "google_news", "Mining.com", "NEUTRAL", 0.65, "production_stable"),
+        ]
+
+        monkeypatch.setattr(main_module, "SessionLocal", lambda: FakeSession(rows))
+        main_module._news_stats_cache.clear()
+
+        relaxed = asyncio.run(
+            main_module.get_news_stats(
+                since_hours=168,
+                label="all",
+                event_type="all",
+                min_relevance=0.2,
+                channel="all",
+                publisher=None,
+                search=None,
+            )
+        )
+        strict = asyncio.run(
+            main_module.get_news_stats(
+                since_hours=168,
+                label="all",
+                event_type="all",
+                min_relevance=0.6,
+                channel="all",
+                publisher=None,
+                search=None,
+            )
+        )
+        focused = asyncio.run(
+            main_module.get_news_stats(
+                since_hours=168,
+                label="all",
+                event_type="all",
+                min_relevance=0.2,
+                channel="google_news",
+                publisher=None,
+                search="mining",
+            )
+        )
+
+        assert relaxed["total_articles"] == 3
+        assert strict["total_articles"] == 2
+        assert relaxed["label_distribution"]["BEARISH"] == 1
+        assert strict["label_distribution"]["BEARISH"] == 0
+        assert focused["total_articles"] == 1
+        assert focused["channel_distribution"] == {"google_news": 1}
+
+
 class TestSentimentSummary:
     """Regression tests for the DB-backed /api/sentiment/summary contract."""
 

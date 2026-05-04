@@ -6,7 +6,7 @@ import {
 import { motion } from 'framer-motion';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
-  Brain, Crosshair, AlertTriangle, CheckCircle2, Clock
+  Brain, Crosshair, AlertTriangle, CheckCircle2, Clock, Minus
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -315,12 +315,13 @@ export const OverviewPage = () => {
   const tftBaselineIsStale = tftStalenessDays >= 3;
   const newsSentimentIndex = sentimentSummary.data?.index ?? 0;
   const newsSentimentLabel = sentimentSummary.data?.label ?? 'Neutral';
-  const newsSentimentTone =
+  const newsSentimentMeta =
     newsSentimentLabel === 'Bullish'
-      ? 'text-emerald-400'
+      ? { tone: 'text-emerald-300', chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30', icon: TrendingUp, label: 'Positive' }
       : newsSentimentLabel === 'Bearish'
-      ? 'text-rose-400'
-      : 'text-amber-400';
+      ? { tone: 'text-rose-300', chip: 'bg-rose-500/15 text-rose-300 border-rose-400/30', icon: TrendingDown, label: 'Negative' }
+      : { tone: 'text-amber-300', chip: 'bg-amber-500/15 text-amber-300 border-amber-400/30', icon: Minus, label: 'Balanced' };
+  const SentimentIcon = newsSentimentMeta.icon;
   const latestHistoryPrice = [...(history?.data || [])]
     .reverse()
     .find((p) => p.price != null)?.price ?? null;
@@ -381,7 +382,7 @@ export const OverviewPage = () => {
                     <span className="text-sm text-slate-400">USD</span>
                     {quoteDelta != null && quoteDeltaPct != null && (
                       <span className={clsx("text-xl leading-none", quoteDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                        {quoteDelta >= 0 ? '+' : ''}{quoteDelta.toFixed(5)} {quoteDelta >= 0 ? '+' : ''}{quoteDeltaPct.toFixed(2)}%
+                        {quoteDelta >= 0 ? '+' : ''}{quoteDelta.toFixed(2)} {quoteDelta >= 0 ? '+' : ''}{quoteDeltaPct.toFixed(2)}%
                       </span>
                     )}
                   </div>
@@ -395,8 +396,12 @@ export const OverviewPage = () => {
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
               <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">7D News Sentiment</span>
-              <div className={clsx("font-mono text-lg font-light", newsSentimentTone)}>
-                <NumberTicker value={newsSentimentIndex} format={(v: number) => v.toFixed(3)} />
+              <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-semibold", newsSentimentMeta.chip)}>
+                <SentimentIcon size={12} />
+                <span>{newsSentimentMeta.label}</span>
+              </div>
+              <div className={clsx("mt-1 font-mono text-xs", newsSentimentMeta.tone)}>
+                <NumberTicker value={newsSentimentIndex} format={(v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(3)}`} />
               </div>
             </div>
           </div>
@@ -652,14 +657,14 @@ export const OverviewPage = () => {
                 };
                 return (
                   <div key={inf.feature} className="group" title={inf.feature}>
-                    <div className="flex justify-between items-center mb-1 gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex justify-between items-start mb-1 gap-2">
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
                         {inf.category && (
                           <span className={`text-[9px] px-1.5 py-0.5 rounded ${categoryTone[inf.category] || categoryTone.Other} font-medium uppercase tracking-wider shrink-0`}>
                             {inf.category}
                           </span>
                         )}
-                        <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors truncate">
+                        <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors whitespace-normal break-words leading-snug">
                           {label}
                         </span>
                         {inf.time_horizon && (
@@ -750,14 +755,11 @@ export const OverviewPage = () => {
           {/* AI Commentary Card */}
           <GlassCard title="Neural Analysis" icon={Cpu} colSpan={4}>
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-copper-500/10 text-copper-500 border border-copper-500/20">MIMO-V3</span>
-                {commentary?.generated_at && (
-                  <span className="text-[10px] text-gray-600 font-mono">
-                    {new Date(commentary.generated_at).toLocaleTimeString()}
-                  </span>
-                )}
-              </div>
+              {commentary?.generated_at && (
+                <span className="text-[10px] text-gray-600 font-mono">
+                  {new Date(commentary.generated_at).toLocaleTimeString()}
+                </span>
+              )}
             </div>
             <div className="h-[140px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
               {commentary ? (

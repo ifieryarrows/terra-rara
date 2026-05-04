@@ -1677,7 +1677,7 @@ async def get_sentiment_summary(
 # =============================================================================
 
 _news_list_cache: dict[tuple, tuple[float, dict]] = {}
-_news_stats_cache: dict[int, tuple[float, dict]] = {}
+_news_stats_cache: dict[tuple, tuple[float, dict]] = {}
 _NEWS_LIST_TTL_S = 60.0
 _NEWS_STATS_TTL_S = 120.0
 _VALID_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
@@ -1876,17 +1876,39 @@ async def get_news_feed(
 )
 async def get_news_stats(
     since_hours: int = Query(default=24, ge=1, le=168),
+    label: str = Query(default="all"),
+    event_type: str = Query(default="all"),
+    min_relevance: float = Query(default=0.0, ge=0.0, le=1.0),
+    channel: str = Query(default="all"),
+    publisher: Optional[str] = Query(default=None, max_length=200),
+    search: Optional[str] = Query(default=None, max_length=200),
 ):
+    from sqlalchemy import desc as _desc
+
+    filters_echo = {
+        "since_hours": since_hours,
+        "label": label,
+        "event_type": event_type,
+        "min_relevance": min_relevance,
+        "channel": channel,
+        "publisher": publisher,
+        "search": search,
+    }
+    cache_key = tuple(sorted(filters_echo.items()))
     now_ts = datetime.now(timezone.utc).timestamp()
-    cached = _news_stats_cache.get(since_hours)
+    cached = _news_stats_cache.get(cache_key)
     if cached and (now_ts - cached[0]) < _NEWS_STATS_TTL_S:
         return cached[1]
+
+    label_upper = label.upper()
+    if label_upper != "ALL" and label_upper not in _VALID_LABELS:
+        raise HTTPException(status_code=400, detail=f"Invalid label '{label}'")
 
     with SessionLocal() as session:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=since_hours)
 
-        rows = (
+        q = (
             session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
             .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
             .outerjoin(
@@ -1894,8 +1916,30 @@ async def get_news_stats(
                 NewsSentimentV2.news_processed_id == NewsProcessed.id,
             )
             .filter(NewsRaw.published_at >= cutoff)
-            .all()
         )
+
+        if channel.lower() != "all":
+            q = q.filter(NewsRaw.source == channel)
+        if event_type.lower() != "all":
+            q = q.filter(NewsSentimentV2.event_type == event_type)
+        if label_upper != "ALL":
+            q = q.filter(NewsSentimentV2.label == label_upper)
+        if min_relevance > 0:
+            q = q.filter(NewsSentimentV2.relevance_score >= min_relevance)
+        if search:
+            q = q.filter(NewsRaw.title.ilike(f"%{search}%"))
+
+        q = q.order_by(_desc(NewsRaw.published_at))
+
+        publisher_needle = publisher.strip().lower() if publisher and publisher.strip() else None
+        if publisher_needle:
+            rows = q.limit(500).all()
+            rows = [
+                triple for triple in rows
+                if ((_extract_publisher(triple[0].raw_payload) or "").lower().find(publisher_needle) >= 0)
+            ]
+        else:
+            rows = q.all()
 
         label_dist: dict[str, int] = {"BULLISH": 0, "BEARISH": 0, "NEUTRAL": 0}
         event_dist: dict[str, int] = {}
@@ -1964,7 +2008,7 @@ async def get_news_stats(
         )
 
     payload = response.model_dump()
-    _news_stats_cache[since_hours] = (now_ts, payload)
+    _news_stats_cache[cache_key] = (now_ts, payload)
     return payload
 
 

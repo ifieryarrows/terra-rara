@@ -34,6 +34,21 @@ function buildNewsKey(filters: NewsFeedFilters) {
   ] as const;
 }
 
+function buildNewsStatsKey(filters: NewsFeedFilters) {
+  return [
+    'news-stats',
+    {
+      since_hours: filters.since_hours ?? 168,
+      label: filters.label ?? 'all',
+      event_type: filters.event_type ?? 'all',
+      min_relevance: filters.min_relevance ?? 0,
+      channel: filters.channel ?? 'all',
+      publisher: (filters.publisher ?? '').trim().toLowerCase(),
+      search: (filters.search ?? '').trim().toLowerCase(),
+    },
+  ] as const;
+}
+
 /**
  * Infinite-scrolling news feed used by NewsIntelligencePanel.
  *
@@ -71,10 +86,10 @@ export function flattenNewsPages(pages: NewsListResponse[] | undefined): NewsIte
   return pages.flatMap((page) => page.items);
 }
 
-export function useNewsStats(sinceHours = 168) {
+export function useNewsStats(filters: NewsFeedFilters = {}) {
   return useQuery<NewsStatsResponse, Error>({
-    queryKey: ['news-stats', sinceHours],
-    queryFn: () => fetchNewsStats(sinceHours),
+    queryKey: buildNewsStatsKey(filters),
+    queryFn: () => fetchNewsStats(filters),
     refetchInterval: NEWS_STATS_POLL_MS,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
