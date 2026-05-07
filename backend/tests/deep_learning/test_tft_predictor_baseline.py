@@ -73,6 +73,8 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
 
     import deep_learning.data.feature_store as feature_store
+    import deep_learning.data.dataset as dataset_mod
+    monkeypatch.setattr(dataset_mod, "_identity_target_normalizer", lambda: None)
 
     def fake_build_tft_dataframe(_session, _cfg, *, drop_missing_target=True):
         assert drop_missing_target is False
@@ -81,7 +83,12 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
             {
                 "feat": [1.0, 1.1, 1.2],
                 "target": [0.001, -0.002, 0.0],
+                "target_1d_log_return": [0.001, -0.002, 0.0],
+                "target_5d_log_return": [0.01, 0.02, 0.0],
+                "realized_vol_20d": [0.01, 0.01, 0.0],
+                "material_move_5d": [0.0, 1.0, 0.0],
                 "group_id": ["copper", "copper", "copper"],
+                "time_idx": [0, 1, 2],
             },
             index=index,
         )
@@ -111,4 +118,19 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     assert "error" not in result
     assert result["reference_price"] == pytest.approx(6.0180)
     assert result["reference_price_date"] == "2026-04-27"
-    assert result["predicted_price_median"] == pytest.approx(6.0180 * 1.01)
+    assert result["predicted_price_median"] == pytest.approx(6.0180 * np.exp(0.01))
+    assert result["return_basis"] == "daily_log_return_path"
+
+
+def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):
+    ckpt = tmp_path / "old.ckpt"
+    ckpt.write_bytes(b"not-a-real-checkpoint")
+    predictor = TFTPredictor(checkpoint_path=str(ckpt))
+    result = None
+    try:
+        _ = predictor.model
+    except Exception as exc:
+        result = predictor._degraded_retrain_required(str(exc))
+    assert result is not None
+    assert result["model_state"] == "retrain_required"
+    assert result["quality_state"] == "degraded"

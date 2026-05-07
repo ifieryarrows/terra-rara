@@ -72,3 +72,27 @@ def test_select_features_preserves_known(sample_df):
     assert "target" in filtered.columns
     assert "group_id" in filtered.columns
     assert len(unknown) <= 5
+
+
+def test_select_features_forces_sentiment_regime_and_preserves_forbidden(sample_df):
+    df = sample_df.copy()
+    df["target_5d_log_return"] = sample_df["target"] * 5
+    df["target_1d_log_return"] = sample_df["target"]
+    df["realized_vol_20d"] = 0.01
+    df["material_move_5d"] = 0.0
+    df["sentiment_index"] = 0.0
+    df["regime_usd_pressure"] = 1.0
+    filtered, unknown, _ = select_features(
+        df,
+        target_col="target_5d_log_return",
+        mrmr_top_k=2,
+        known_features=[],
+        forced_unknown_features=["sentiment_index", "regime_usd_pressure"],
+        forbidden_features=["target", "target_1d_log_return", "realized_vol_20d", "material_move_5d"],
+    )
+    assert "sentiment_index" in unknown
+    assert "regime_usd_pressure" in unknown
+    assert "target_5d_log_return" in filtered.columns
+    assert "target_1d_log_return" in filtered.columns
+    assert "target_1d_log_return" not in unknown
+    assert "material_move_5d" not in unknown

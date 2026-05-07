@@ -46,6 +46,7 @@ def test_build_result_payload_handles_all_pruned_trials():
         "crossing_prune": 0,
         "median_prune": 3,
         "fold_sharpe_prune": 0,
+        "weekly_magnitude_collapse": 0,
         "error": 0,
     }
     assert result["fold_diagnostics"] == []

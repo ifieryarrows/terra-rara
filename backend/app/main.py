@@ -1059,6 +1059,14 @@ async def get_tft_analysis(
                             )
 
                     if not should_fallback_live:
+                        if isinstance(prediction, dict):
+                            payload.setdefault("primary_horizon", "5D")
+                            payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
+                            payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
+                            payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
+                            payload.setdefault("t1_return", prediction.get("predicted_return_median"))
+                            payload.setdefault("t1_impulse", payload.get("t1_impulse"))
+                            payload.setdefault("return_space", prediction.get("return_space"))
                         payload["source"] = "snapshot"
                         payload["snapshot_generated_at"] = (
                             gen_at.isoformat() if gen_at else None
@@ -1373,6 +1381,13 @@ async def get_tft_summary(
         tail_capture = metrics.get("tail_capture_rate")
         quantile_crossing = metrics.get("quantile_crossing_rate")
         median_gap_max = metrics.get("median_sort_gap_max")
+        weekly_da = metrics.get("weekly_directional_accuracy")
+        weekly_mr = metrics.get("weekly_magnitude_ratio")
+        weekly_tail = metrics.get("weekly_tail_capture_rate")
+        weekly_pi80 = metrics.get("weekly_pi80_coverage")
+        weekly_qcross = metrics.get("weekly_quantile_crossing_rate")
+        weekly_gap = metrics.get("weekly_median_sort_gap_max")
+        weekly_samples = metrics.get("weekly_sample_count")
         
         passed, reasons = evaluate_quality_gate(
             da,
@@ -1381,6 +1396,13 @@ async def get_tft_summary(
             tail_capture=tail_capture,
             quantile_crossing_rate=quantile_crossing,
             median_sort_gap_max=median_gap_max,
+            weekly_directional_accuracy=weekly_da,
+            weekly_magnitude_ratio=weekly_mr,
+            weekly_tail_capture_rate=weekly_tail,
+            weekly_pi80_coverage=weekly_pi80,
+            weekly_quantile_crossing_rate=weekly_qcross,
+            weekly_median_sort_gap_max=weekly_gap,
+            weekly_sample_count=weekly_samples,
         )
         
         gate_metrics = {
@@ -1394,6 +1416,17 @@ async def get_tft_summary(
             gate_metrics["quantile_crossing_rate"] = float(quantile_crossing)
         if median_gap_max is not None:
             gate_metrics["median_sort_gap_max"] = float(median_gap_max)
+        for name, value in {
+            "weekly_directional_accuracy": weekly_da,
+            "weekly_magnitude_ratio": weekly_mr,
+            "weekly_tail_capture_rate": weekly_tail,
+            "weekly_pi80_coverage": weekly_pi80,
+            "weekly_quantile_crossing_rate": weekly_qcross,
+            "weekly_median_sort_gap_max": weekly_gap,
+            "weekly_sample_count": weekly_samples,
+        }.items():
+            if value is not None:
+                gate_metrics[name] = float(value)
 
         return {
             "symbol": symbol,

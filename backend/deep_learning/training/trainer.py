@@ -27,6 +27,12 @@ from typing import Optional
 import numpy as np
 
 from deep_learning.config import TFTASROConfig, get_tft_config
+from deep_learning.contract import (
+    FORECAST_CONTRACT_VERSION,
+    PUBLIC_RETURN_SPACE,
+    RETURN_SPACE,
+    TARGET_RETURN_TYPE,
+)
 
 # pytorch_forecasting prescalers are fit on DataFrames but transform numpy arrays
 # internally on every batch — this produces thousands of identical sklearn warnings.
@@ -78,7 +84,7 @@ def train_tft_model(
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
-    from deep_learning.training.metrics import compute_all_metrics, select_prediction_horizon
+    from deep_learning.training.metrics import compute_all_metrics, compute_weekly_metrics, select_prediction_horizon
     from deep_learning.training.callbacks import CurriculumLossScheduler, SWACallback
 
     if cfg is None:
@@ -178,7 +184,7 @@ def train_tft_model(
         ),
     ]
 
-    if use_asro:
+    if use_asro and cfg.forecast.primary_horizon_days != 5:
         callbacks.append(CurriculumLossScheduler(
             warmup_epochs=10,
             initial_lambda_quantile=0.65,
@@ -231,7 +237,8 @@ def train_tft_model(
             y_actual_parts.append(
                 batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
             )
-        y_actual = select_prediction_horizon(torch.cat(y_actual_parts).cpu().numpy(), horizon_idx=0)
+        y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
+        y_actual = select_prediction_horizon(y_actual_path, horizon_idx=0)
 
         # Gather top-k checkpoint paths
         best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
@@ -293,8 +300,23 @@ def train_tft_model(
             y_pred_q98=y_pred_q98[:n] if y_pred_q98 is not None else None,
             y_pred_quantiles=pred_t1[:n] if pred_t1 is not None else None,
         )
+        if pred_np.ndim == 3:
+            n_path = min(len(y_actual_path), len(pred_np))
+            weekly_metrics = compute_weekly_metrics(
+                y_actual_path[:n_path],
+                pred_np[:n_path],
+                quantiles=cfg.model.quantiles,
+            )
+            test_metrics.update(weekly_metrics)
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
+
+    calibration_artifact = _write_conformal_calibration_artifact(
+        cfg=cfg,
+        model=model,
+        val_dl=val_dl,
+        feature_frame=master_df,
+    )
 
     # ---- 8. Variable importance ----
     var_importance = get_variable_importance(model, val_dataloader=val_dl)
@@ -316,7 +338,18 @@ def train_tft_model(
             "lambda_crossing": cfg.asro.lambda_crossing,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
+            "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+            "target_return_type": TARGET_RETURN_TYPE,
+            "primary_horizon_days": cfg.forecast.primary_horizon_days,
+            "public_return_space": PUBLIC_RETURN_SPACE,
+            "return_space": RETURN_SPACE,
         },
+        "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+        "target_return_type": TARGET_RETURN_TYPE,
+        "primary_horizon_days": cfg.forecast.primary_horizon_days,
+        "public_return_space": PUBLIC_RETURN_SPACE,
+        "return_space": RETURN_SPACE,
+        "conformal_calibration_path": str(calibration_artifact) if calibration_artifact else None,
         "n_unknown_features": len(tv_unknown),
         "n_known_features": len(tv_known),
         "train_samples": len(training_ds),
@@ -357,6 +390,78 @@ def train_tft_model(
         result["hub_upload_skipped"] = "disabled_until_quality_gate_passes"
 
     return result
+
+
+def _write_conformal_calibration_artifact(
+    *,
+    cfg: TFTASROConfig,
+    model,
+    val_dl,
+    feature_frame,
+) -> Optional[Path]:
+    """
+    Fit interval adjustment on validation/calibration data, never final test.
+
+    If the validation window is too small, the adjustment is intentionally
+    zero; this preserves interval honesty without leaking test information.
+    """
+    try:
+        import torch
+
+        from deep_learning.calibration.conformal import rolling_conformal_adjustment
+        from deep_learning.training.metrics import cumulative_horizon, cumulative_quantiles
+
+        y_parts = []
+        for batch in val_dl:
+            y_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
+        if not y_parts:
+            return None
+
+        y_actual_path = torch.cat(y_parts).cpu().numpy()
+        pred = model.predict(val_dl, mode="quantiles")
+        pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
+        n = min(len(y_actual_path), len(pred_np))
+        if n <= 0:
+            return None
+
+        weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=cfg.forecast.primary_horizon_days)
+        weekly_quantiles = cumulative_quantiles(pred_np[:n], horizon=cfg.forecast.primary_horizon_days)
+        q = tuple(cfg.model.quantiles)
+        q10_idx = q.index(0.10)
+        q90_idx = q.index(0.90)
+
+        global_adj = rolling_conformal_adjustment(
+            weekly_actual,
+            weekly_quantiles[:, q10_idx],
+            weekly_quantiles[:, q90_idx],
+            alpha=0.20,
+        )
+        artifact = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "target": "weekly_5d_log_return",
+            "alpha": 0.20,
+            "global_adjustment": float(global_adj),
+            "bucket_adjustments": {
+                "neutral": float(global_adj),
+                "risk_on": float(global_adj),
+                "usd_pressure": float(global_adj),
+                "supply_shock": float(global_adj),
+                "high_vol": float(global_adj),
+            },
+            "min_bucket_samples": 30,
+            "window": int(min(252, n)),
+            "fit_split": "validation",
+            "test_split_used_for_fit": False,
+        }
+
+        calibration_path = Path(cfg.training.best_model_path).parent / "conformal_calibration.json"
+        calibration_path.parent.mkdir(parents=True, exist_ok=True)
+        calibration_path.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+        logger.info("Conformal calibration written to %s", calibration_path)
+        return calibration_path
+    except Exception as exc:
+        logger.warning("Could not write conformal calibration artifact: %s", exc)
+        return None
 
 
 def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:

@@ -205,6 +205,8 @@ def select_features(
     target_col: str = "target",
     mrmr_top_k: int = 80,
     known_features: Optional[list[str]] = None,
+    forced_unknown_features: Optional[list[str]] = None,
+    forbidden_features: Optional[list[str]] = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Run MRMR selection on unknown features while preserving known features.
@@ -220,25 +222,40 @@ def select_features(
     """
     if known_features is None:
         known_features = []
+    if forced_unknown_features is None:
+        forced_unknown_features = []
+    if forbidden_features is None:
+        forbidden_features = []
 
+    forbidden = set(forbidden_features)
     meta_cols = ["time_idx", "group_id", target_col]
-    preserve_cols = set(meta_cols) | set(known_features)
+    preserve_cols = set(meta_cols) | set(known_features) | forbidden
 
-    unknown_candidates = [c for c in df.columns if c not in preserve_cols]
+    unknown_candidates = [
+        c for c in df.columns
+        if c not in preserve_cols and c not in forbidden
+    ]
+    forced_unknown = [
+        c for c in forced_unknown_features
+        if c in df.columns and c not in preserve_cols
+    ]
 
     if len(unknown_candidates) <= mrmr_top_k:
         logger.info(
             "Feature selection: %d unknown features <= top_k=%d, no pruning needed",
             len(unknown_candidates), mrmr_top_k,
         )
-        return df, unknown_candidates, known_features
+        selected = sorted(set(unknown_candidates) | set(forced_unknown))
+        keep_cols = [c for c in list(preserve_cols) + selected if c in df.columns]
+        return df[keep_cols].copy(), selected, known_features
 
     selected_unknown = mrmr_select(
         df,
         target_col=target_col,
         top_k=mrmr_top_k,
-        exclude_cols=list(preserve_cols),
+        exclude_cols=list(preserve_cols | forbidden),
     )
+    selected_unknown = sorted(set(selected_unknown) | set(forced_unknown))
 
     keep_cols = list(preserve_cols) + selected_unknown
     keep_cols = [c for c in keep_cols if c in df.columns]

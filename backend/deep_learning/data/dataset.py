@@ -19,6 +19,17 @@ from deep_learning.config import TFTASROConfig, get_tft_config
 logger = logging.getLogger(__name__)
 
 
+def _identity_target_normalizer():
+    """No-op target normalizer so weekly sums stay in raw log-return space."""
+    from pytorch_forecasting.data.encoders import TorchNormalizer
+
+    return TorchNormalizer(
+        method="identity",
+        center=False,
+        transformation=None,
+    )
+
+
 def build_datasets(
     master_df: pd.DataFrame,
     time_varying_unknown_reals: list[str],
@@ -71,6 +82,7 @@ def build_datasets(
         time_varying_unknown_reals=time_varying_unknown_reals,
         time_varying_known_reals=time_varying_known_reals,
         static_categoricals=["group_id"],
+        target_normalizer=_identity_target_normalizer(),
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
@@ -194,6 +206,7 @@ def build_cv_folds(
             time_varying_unknown_reals=time_varying_unknown_reals,
             time_varying_known_reals=time_varying_known_reals,
             static_categoricals=["group_id"],
+            target_normalizer=_identity_target_normalizer(),
             add_relative_time_idx=True,
             add_target_scales=True,
             add_encoder_length=True,

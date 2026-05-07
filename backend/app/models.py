@@ -23,6 +23,7 @@ from sqlalchemy import (
     BigInteger,
     String,
     Float,
+    Date,
     DateTime,
     Text,
     Boolean,
@@ -473,6 +474,9 @@ class NewsSentimentV2(Base):
     event_type = Column(String(50), nullable=False, index=True)
     rule_sign = Column(Integer, nullable=False)
     final_score = Column(Float, nullable=False, index=True)
+    market_date = Column(Date, nullable=True, index=True)
+    available_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    cutoff_version = Column(String(50), nullable=True, default="market_close_v1")
 
     finbert_pos = Column(Float, nullable=False)
     finbert_neu = Column(Float, nullable=False)
@@ -509,6 +513,12 @@ class DailySentimentV2(Base):
 
     sentiment_index = Column(Float, nullable=False, index=True)
     news_count = Column(Integer, nullable=False, default=0)
+    market_date = Column(Date, nullable=True, index=True)
+    material_news_count = Column(Integer, nullable=False, default=0)
+    after_close_news_count = Column(Integer, nullable=False, default=0)
+    stale_sentiment_flag = Column(Boolean, nullable=False, default=False)
+    days_since_last_material_news = Column(Integer, nullable=False, default=999)
+    cutoff_version = Column(String(50), nullable=True, default="market_close_v1")
     avg_confidence = Column(Float, nullable=True)
     avg_relevance = Column(Float, nullable=True)
     source_version = Column(String(20), nullable=False, default="v2")

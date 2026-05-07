@@ -33,6 +33,34 @@ def select_prediction_horizon(values: np.ndarray, horizon_idx: int = 0) -> np.nd
     return arr[:, horizon_idx].reshape(-1)
 
 
+def cumulative_horizon(values: np.ndarray, horizon: int = 5) -> np.ndarray:
+    """Sum the first ``horizon`` daily log-return targets into a weekly target."""
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim == 1:
+        return arr
+    if arr.shape[1] < horizon:
+        raise ValueError(f"Need at least {horizon} horizons, got {arr.shape[1]}")
+    return arr[:, :horizon].sum(axis=1)
+
+
+def cumulative_quantiles(pred: np.ndarray, horizon: int = 5) -> np.ndarray:
+    """Sum same-quantile daily path values into approximate weekly quantiles."""
+    arr = np.asarray(pred, dtype=np.float64)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [n, horizon, q], got shape {arr.shape}")
+    if arr.shape[1] < horizon:
+        raise ValueError(f"Need at least {horizon} horizons, got {arr.shape[1]}")
+    return arr[:, :horizon, :].sum(axis=1)
+
+
+def magnitude_ratio(y_actual: np.ndarray, y_pred: np.ndarray) -> float:
+    """Median predicted absolute move divided by median actual absolute move."""
+    denom = np.median(np.abs(np.asarray(y_actual, dtype=np.float64)))
+    if denom < 1e-9:
+        return 0.0
+    return float(np.median(np.abs(np.asarray(y_pred, dtype=np.float64))) / denom)
+
+
 def quantile_crossing_rate(y_pred_quantiles: np.ndarray, eps: float = 1e-12) -> float:
     """
     Fraction of adjacent quantile pairs that violate monotonic ordering.
@@ -204,3 +232,49 @@ def compute_all_metrics(
         metrics["median_sort_gap_max"] = gap_max
 
     return metrics
+
+
+def compute_weekly_metrics(
+    y_actual_path: np.ndarray,
+    y_pred_quantiles_path: np.ndarray,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+) -> dict[str, float]:
+    """
+    Compute weekly-first metrics from 5-step daily log-return paths.
+
+    Internal evaluation remains in log-return space. Public API/UI conversion
+    to simple returns happens only during inference formatting.
+    """
+    weekly_actual = cumulative_horizon(y_actual_path, horizon=5)
+    weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=5)
+
+    median_idx = len(quantiles) // 2
+    q10_idx = quantiles.index(0.10)
+    q90_idx = quantiles.index(0.90)
+    q02_idx = quantiles.index(0.02)
+    q98_idx = quantiles.index(0.98)
+
+    weekly_pred = weekly_quantiles[:, median_idx]
+    tail_threshold = (
+        float(np.nanpercentile(np.abs(weekly_actual), 75))
+        if len(weekly_actual)
+        else 0.0
+    )
+
+    metrics = compute_all_metrics(
+        weekly_actual,
+        weekly_pred,
+        y_pred_q10=weekly_quantiles[:, q10_idx],
+        y_pred_q90=weekly_quantiles[:, q90_idx],
+        y_pred_q02=weekly_quantiles[:, q02_idx],
+        y_pred_q98=weekly_quantiles[:, q98_idx],
+        y_pred_quantiles=weekly_quantiles,
+        tail_threshold=tail_threshold,
+    )
+
+    weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}
+    weekly_metrics["weekly_magnitude_ratio"] = magnitude_ratio(weekly_actual, weekly_pred)
+    weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
+    weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))
+    weekly_metrics["weekly_sample_count"] = int(len(weekly_actual))
+    return weekly_metrics

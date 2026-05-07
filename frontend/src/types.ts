@@ -32,6 +32,18 @@ export interface AnalysisReport {
   generated_at: string;
 }
 
+export interface WeeklyForecastBlock {
+  horizon: "5D";
+  expected_return: number;
+  q10_return?: number | null;
+  q90_return?: number | null;
+  calibrated: boolean;
+  calibration_adjustment?: number | null;
+  t1_impulse?: "BULLISH" | "BEARISH" | "NEUTRAL" | string;
+  t1_return?: number | null;
+  regime?: string | null;
+}
+
 export interface HistoryDataPoint {
   date: string;
   price: number;
@@ -78,8 +90,11 @@ export interface CommentaryResponse {
 export interface TFTDailyForecast {
   day: number;
   daily_return: number;
+  daily_log_return?: number;
   raw_daily_return?: number;
+  raw_daily_log_return?: number;
   cumulative_return: number;
+  cumulative_log_return?: number;
   price_median: number;
   price_q10: number;
   price_q90: number;
@@ -97,8 +112,16 @@ export interface TFTPrediction {
   confidence_band_96: [number, number];
   volatility_estimate: number;
   quantiles: Record<string, number>;
+  quantiles_log?: Record<string, number>;
   weekly_return: number;
+  weekly_log_return?: number;
   weekly_price: number;
+  weekly_return_q10_raw?: number;
+  weekly_return_q90_raw?: number;
+  weekly_return_q10_calibrated?: number | null;
+  weekly_return_q90_calibrated?: number | null;
+  weekly_interval_calibration_adjustment?: number | null;
+  weekly_interval_calibrated?: boolean;
   prediction_horizon_days: number;
   daily_forecasts: TFTDailyForecast[];
   /** Explicit contract: the close used as the basis for all returns/prices */
@@ -111,6 +134,7 @@ export interface TFTPrediction {
   quantile_crossing_detected?: boolean;
   quantile_crossing_rate?: number;
   median_sort_gap?: number;
+  return_space?: string;
   /** Freshness metadata (added 2026-04). */
   baseline_staleness_days?: number;
   lazy_ingest_triggered?: boolean;
@@ -142,14 +166,24 @@ export interface TFTModelMetadata {
 }
 
 export interface TFTAnalysisResponse {
-  symbol: string;
-  model_type: string;
-  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  weekly_trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  risk_level: 'HIGH' | 'MEDIUM' | 'LOW';
-  prediction: TFTPrediction;
-  model_metadata: TFTModelMetadata | null;
-  generated_at: string;
+  symbol?: string;
+  model_type?: string;
+  model_state?: string;
+  quality_state?: string;
+  message?: string;
+  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  weekly_trend?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  primary_horizon?: string;
+  primary_forecast_return?: number;
+  primary_forecast_q10?: number | null;
+  primary_forecast_q90?: number | null;
+  t1_impulse?: string;
+  t1_return?: number | null;
+  weekly_forecast?: WeeklyForecastBlock | null;
+  risk_level?: 'HIGH' | 'MEDIUM' | 'LOW';
+  prediction?: TFTPrediction;
+  model_metadata?: TFTModelMetadata | null;
+  generated_at?: string;
   /** Where the payload came from. Added 2026-04 alongside daily TFT snapshot persistence. */
   source?: 'snapshot' | 'live';
   /** Only populated when `source === 'snapshot'` — when the worker persisted the row. */

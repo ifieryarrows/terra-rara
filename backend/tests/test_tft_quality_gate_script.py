@@ -19,6 +19,13 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
             "tail_capture_rate": 0.45,
             "quantile_crossing_rate": 0.0,
             "median_sort_gap_max": 0.0,
+            "weekly_directional_accuracy": 0.55,
+            "weekly_magnitude_ratio": 1.0,
+            "weekly_tail_capture_rate": 0.50,
+            "weekly_pi80_coverage": 0.80,
+            "weekly_quantile_crossing_rate": 0.0,
+            "weekly_median_sort_gap_max": 0.0,
+            "weekly_sample_count": 120,
         }
     }
     metadata_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")

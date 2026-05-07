@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from deep_learning.contract import TARGET_RETURN_TYPE
+
 
 def _model_dir() -> str:
     """Resolve the base model directory from env (same as app.settings)."""
@@ -91,6 +93,19 @@ class TFTModelConfig:
 
 
 @dataclass(frozen=True)
+class ForecastContractConfig:
+    primary_horizon_days: int = 5
+    auxiliary_horizon_days: int = 1
+    target_return_type: str = TARGET_RETURN_TYPE
+    primary_target_col: str = "target_5d_log_return"
+    auxiliary_target_col: str = "target_1d_log_return"
+    model_daily_target_col: str = "target"
+    material_move_vol_multiple: float = 0.75
+    weekly_direction_threshold: float = 0.005
+    t1_direction_threshold: float = 0.002
+
+
+@dataclass(frozen=True)
 class ASROConfig:
     # Total loss = lambda_quantile * calibration + (1-lambda_quantile) * sharpe
     #
@@ -117,6 +132,15 @@ class ASROConfig:
     lambda_crossing: float = 1.0
     risk_free_rate: float = 0.0
     sharpe_window: int = 20
+
+
+@dataclass(frozen=True)
+class WeeklyLossConfig:
+    lambda_weekly_quantile: float = 0.35
+    lambda_t1_quantile: float = 0.15
+    lambda_directional: float = 0.25
+    lambda_magnitude: float = 0.15
+    lambda_vol: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -167,7 +191,9 @@ class TFTASROConfig:
     sentiment: SentimentFeatureConfig = field(default_factory=SentimentFeatureConfig)
     lme: LMEConfig = field(default_factory=LMEConfig)
     model: TFTModelConfig = field(default_factory=TFTModelConfig)
+    forecast: ForecastContractConfig = field(default_factory=ForecastContractConfig)
     asro: ASROConfig = field(default_factory=ASROConfig)
+    weekly_loss: WeeklyLossConfig = field(default_factory=WeeklyLossConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     feature_store: FeatureStoreConfig = field(default_factory=FeatureStoreConfig)
 

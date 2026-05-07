@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Sequence
 import torch
 import numpy as np
 
+from deep_learning.contract import RETURN_SPACE, log_to_simple_return
 from deep_learning.config import TFTASROConfig, get_tft_config
 from deep_learning.models.losses import (
     AdaptiveSharpeRatioLoss,
@@ -123,8 +124,92 @@ try:
             directional = sharpe_loss + self.lambda_madl * madl_loss
             return self.lambda_quantile * calibration + w_directional * directional
 
+
+    class WeeklyASROPFLoss(_PFQuantileLoss):
+        """Weekly-first ASRO loss over a 5-step daily log-return path."""
+
+        def __init__(
+            self,
+            quantiles: list,
+            lambda_weekly_quantile: float = 0.35,
+            lambda_t1_quantile: float = 0.15,
+            lambda_directional: float = 0.25,
+            lambda_magnitude: float = 0.15,
+            lambda_vol: float = 0.05,
+            lambda_crossing: float = 1.0,
+            sharpe_eps: float = 1e-6,
+        ):
+            super().__init__(quantiles=quantiles)
+            self.lambda_weekly_quantile = lambda_weekly_quantile
+            self.lambda_t1_quantile = lambda_t1_quantile
+            self.lambda_directional = lambda_directional
+            self.lambda_magnitude = lambda_magnitude
+            self.lambda_vol = lambda_vol
+            self.lambda_crossing = lambda_crossing
+            self.sharpe_eps = sharpe_eps
+            self.median_idx = len(quantiles) // 2
+            q = list(quantiles)
+            self._q10_idx = q.index(0.10) if 0.10 in q else 1
+            self._q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
+
+        def _pinball(self, pred: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
+            q = torch.tensor(self.quantiles, device=pred.device, dtype=pred.dtype).view(1, -1)
+            err = actual.unsqueeze(-1) - pred
+            return torch.maximum(q * err, (q - 1.0) * err).mean()
+
+        def loss(self, y_pred: torch.Tensor, target) -> torch.Tensor:  # type: ignore[override]
+            if isinstance(target, (list, tuple)):
+                y_actual = target[0]
+            else:
+                y_actual = target
+
+            y_actual = y_actual.float()
+            y_pred = y_pred.float()
+
+            median_path = y_pred[..., self.median_idx]
+            pred_weekly_quantiles = y_pred.sum(dim=1)
+            actual_weekly = y_actual.sum(dim=1)
+
+            weekly_q_loss = self._pinball(pred_weekly_quantiles, actual_weekly)
+            t1_q_loss = super().loss(y_pred[:, 0:1, :], y_actual[:, 0:1])
+
+            pred_weekly_median = median_path.sum(dim=1)
+            signal = torch.tanh(pred_weekly_median * 20.0)
+            weekly_directional = -(signal * actual_weekly).mean() / (
+                (signal * actual_weekly).std() + self.sharpe_eps
+            )
+
+            abs_actual = actual_weekly.abs()
+            material_mask = abs_actual > (abs_actual.median() + self.sharpe_eps)
+            if material_mask.any():
+                pred_abs = pred_weekly_median[material_mask].abs()
+                true_abs = actual_weekly[material_mask].abs()
+                magnitude_loss = torch.abs(
+                    torch.log((pred_abs + self.sharpe_eps) / (true_abs + self.sharpe_eps))
+                ).mean()
+            else:
+                magnitude_loss = y_pred.new_tensor(0.0)
+
+            weekly_spread = (
+                pred_weekly_quantiles[:, self._q90_idx]
+                - pred_weekly_quantiles[:, self._q10_idx]
+            )
+            target_spread = 2.0 * actual_weekly.std()
+            vol_loss = torch.abs(weekly_spread.mean() - target_spread)
+            crossing_loss = quantile_crossing_penalty(y_pred)
+
+            return (
+                self.lambda_weekly_quantile * weekly_q_loss
+                + self.lambda_t1_quantile * t1_q_loss
+                + self.lambda_directional * weekly_directional
+                + self.lambda_magnitude * magnitude_loss
+                + self.lambda_vol * vol_loss
+                + self.lambda_crossing * crossing_loss
+            )
+
 except ImportError:
     ASROPFLoss = None  # type: ignore[assignment,misc]
+    WeeklyASROPFLoss = None  # type: ignore[assignment,misc]
 
 
 def create_tft_model(
@@ -151,7 +236,26 @@ def create_tft_model(
 
     quantiles = list(cfg.model.quantiles)
 
-    if use_asro and ASROPFLoss is not None:
+    if use_asro and cfg.forecast.primary_horizon_days == 5 and WeeklyASROPFLoss is not None:
+        loss = WeeklyASROPFLoss(
+            quantiles=quantiles,
+            lambda_weekly_quantile=cfg.weekly_loss.lambda_weekly_quantile,
+            lambda_t1_quantile=cfg.weekly_loss.lambda_t1_quantile,
+            lambda_directional=cfg.weekly_loss.lambda_directional,
+            lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
+            lambda_vol=cfg.weekly_loss.lambda_vol,
+            lambda_crossing=cfg.asro.lambda_crossing,
+        )
+        logger.info(
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f crossing=%.2f",
+            cfg.weekly_loss.lambda_weekly_quantile,
+            cfg.weekly_loss.lambda_t1_quantile,
+            cfg.weekly_loss.lambda_directional,
+            cfg.weekly_loss.lambda_magnitude,
+            cfg.weekly_loss.lambda_vol,
+            cfg.asro.lambda_crossing,
+        )
+    elif use_asro and ASROPFLoss is not None:
         loss = ASROPFLoss(
             quantiles=quantiles,
             lambda_vol=cfg.asro.lambda_vol,
@@ -289,7 +393,7 @@ def get_attention_weights(model, dataloader) -> Optional[np.ndarray]:
 # Prediction formatting
 # ---------------------------------------------------------------------------
 
-def format_prediction(
+def _format_prediction_legacy_simple_return(
     raw_prediction: torch.Tensor,
     quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     baseline_price: float = 1.0,
@@ -442,5 +546,172 @@ def format_prediction(
         "reference_price_date": reference_price_date,
         "return_basis": "simple_next_day_return",
         "raw_predicted_return_median": raw_median_0,
+        "anomaly_detected": bool(anomaly_detected),
+    }
+
+
+def format_prediction(
+    raw_prediction: torch.Tensor,
+    quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    baseline_price: float = 1.0,
+    reference_price_date: Optional[str] = None,
+    conformal_adjustment: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Convert daily log-return TFT quantiles into public simple-return fields.
+
+    Internal model space is a 5-step daily log-return path. Public return
+    fields are simple returns, and prices are derived with
+    ``baseline_price * exp(cumulative_log_return)``.
+    """
+    import math as _math
+
+    pred = raw_prediction.detach().cpu().numpy() if isinstance(raw_prediction, torch.Tensor) else raw_prediction
+    pred = np.array(pred, dtype=np.float64, copy=True)
+    if pred.ndim == 1:
+        pred = pred.reshape(1, -1)
+
+    n_days = pred.shape[0]
+    q_list = list(quantiles)
+    median_idx = len(q_list) // 2
+    q10_idx = q_list.index(0.10) if 0.10 in q_list else 1
+    q90_idx = q_list.index(0.90) if 0.90 in q_list else len(q_list) - 2
+    q02_idx = q_list.index(0.02) if 0.02 in q_list else 0
+    q98_idx = q_list.index(0.98) if 0.98 in q_list else len(q_list) - 1
+    raw_pred = pred.copy()
+
+    quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
+    crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
+    quantile_crossing_detected = bool(crossing_mask.any())
+    quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+    sorted_pred = np.sort(raw_pred, axis=-1)
+    median_sort_gap = float(np.max(np.abs(raw_pred[..., median_idx] - sorted_pred[..., median_idx])))
+    if quantile_crossing_detected:
+        logger.error(
+            "format_prediction: non-monotonic quantiles detected "
+            "(crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
+            "will use monotonic sorted quantiles and expose raw_quantiles for audit.",
+            quantile_crossing_rate,
+            median_sort_gap,
+        )
+        pred = sorted_pred
+
+    if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
+        logger.warning(
+            "format_prediction: invalid baseline_price=%s; price fields will be null",
+            baseline_price,
+        )
+
+    anomaly_bound = 0.12
+    raw_median_0 = float(raw_pred[0, median_idx])
+    corrected_median_0 = float(pred[0, median_idx])
+    anomaly_detected = (
+        abs(raw_median_0) > anomaly_bound
+        or abs(corrected_median_0) > anomaly_bound
+        or quantile_crossing_detected
+    )
+    if abs(raw_median_0) > anomaly_bound or abs(corrected_median_0) > anomaly_bound:
+        logger.error(
+            "format_prediction: anomalous log return detected at T+1: raw=%.4f corrected=%.4f",
+            raw_median_0,
+            corrected_median_0,
+        )
+
+    bounded_pred = pred.copy()
+    bounded_pred[..., median_idx] = np.clip(
+        bounded_pred[..., median_idx],
+        -anomaly_bound,
+        anomaly_bound,
+    )
+
+    def _valid_price_base() -> bool:
+        return bool(baseline_price > 0 and np.isfinite(baseline_price))
+
+    def _price(cum_log_return: float) -> Optional[float]:
+        if not _valid_price_base():
+            return None
+        return float(baseline_price * np.exp(cum_log_return))
+
+    daily_forecasts = []
+    cum_log_median = 0.0
+    for d in range(n_days):
+        raw_med = float(raw_pred[d, median_idx])
+        daily_log = float(bounded_pred[d, median_idx])
+        cum_log_median += daily_log
+        cum_q = bounded_pred[: d + 1, :].sum(axis=0)
+
+        daily_forecasts.append(
+            {
+                "day": d + 1,
+                "daily_return": log_to_simple_return(daily_log),
+                "daily_log_return": daily_log,
+                "raw_daily_log_return": raw_med,
+                "corrected_daily_log_return": daily_log,
+                "cumulative_return": log_to_simple_return(cum_log_median),
+                "cumulative_log_return": float(cum_log_median),
+                "price_median": _price(cum_log_median),
+                "price_q10": _price(float(cum_q[q10_idx])),
+                "price_q90": _price(float(cum_q[q90_idx])),
+                "price_q02": _price(float(cum_q[q02_idx])),
+                "price_q98": _price(float(cum_q[q98_idx])),
+            }
+        )
+
+    first = daily_forecasts[0]
+    weekly_quantile_logs = bounded_pred.sum(axis=0)
+    weekly_log_return = float(weekly_quantile_logs[median_idx])
+    weekly_q10_log_raw = float(weekly_quantile_logs[q10_idx])
+    weekly_q90_log_raw = float(weekly_quantile_logs[q90_idx])
+    conformal_adjustment = max(float(conformal_adjustment or 0.0), 0.0)
+    weekly_q10_log_cal = weekly_q10_log_raw - conformal_adjustment
+    weekly_q90_log_cal = weekly_q90_log_raw + conformal_adjustment
+
+    q10_price = first.get("price_q10")
+    q90_price = first.get("price_q90")
+    vol_estimate = (
+        float((q90_price - q10_price) / (2.0 * baseline_price))
+        if q10_price is not None and q90_price is not None and _valid_price_base()
+        else 0.0
+    )
+
+    return {
+        "predicted_return_median": first["daily_return"],
+        "predicted_return_q10": log_to_simple_return(float(bounded_pred[0, q10_idx])),
+        "predicted_return_q90": log_to_simple_return(float(bounded_pred[0, q90_idx])),
+        "predicted_log_return_median": first["daily_log_return"],
+        "predicted_log_return_q10": float(bounded_pred[0, q10_idx]),
+        "predicted_log_return_q90": float(bounded_pred[0, q90_idx]),
+        "predicted_price_median": first["price_median"],
+        "predicted_price_q10": first["price_q10"],
+        "predicted_price_q90": first["price_q90"],
+        "confidence_band_96": (first["price_q02"], first["price_q98"]),
+        "volatility_estimate": vol_estimate,
+        "quantiles": {f"q{q:.2f}": log_to_simple_return(float(bounded_pred[0, i])) for i, q in enumerate(q_list)},
+        "quantiles_log": {f"q{q:.2f}": float(bounded_pred[0, i]) for i, q in enumerate(q_list)},
+        "raw_quantiles": {f"q{q:.2f}": float(raw_pred[0, i]) for i, q in enumerate(q_list)},
+        "quantile_crossing_detected": quantile_crossing_detected,
+        "quantile_crossing_rate": quantile_crossing_rate,
+        "median_sort_gap": median_sort_gap,
+        "weekly_return": log_to_simple_return(weekly_log_return),
+        "weekly_log_return": weekly_log_return,
+        "weekly_price": _price(weekly_log_return),
+        "weekly_return_q10_raw": log_to_simple_return(weekly_q10_log_raw),
+        "weekly_return_q90_raw": log_to_simple_return(weekly_q90_log_raw),
+        "weekly_log_return_q10_raw": weekly_q10_log_raw,
+        "weekly_log_return_q90_raw": weekly_q90_log_raw,
+        "weekly_return_q10_calibrated": log_to_simple_return(weekly_q10_log_cal),
+        "weekly_return_q90_calibrated": log_to_simple_return(weekly_q90_log_cal),
+        "weekly_log_return_q10_calibrated": weekly_q10_log_cal,
+        "weekly_log_return_q90_calibrated": weekly_q90_log_cal,
+        "weekly_interval_calibration_adjustment": conformal_adjustment,
+        "weekly_interval_calibrated": conformal_adjustment > 0,
+        "prediction_horizon_days": n_days,
+        "daily_forecasts": daily_forecasts,
+        "reference_price": float(baseline_price),
+        "reference_price_date": reference_price_date,
+        "return_basis": "daily_log_return_path",
+        "return_space": RETURN_SPACE,
+        "raw_predicted_return_median": log_to_simple_return(raw_median_0),
+        "raw_predicted_log_return_median": raw_median_0,
         "anomaly_detected": bool(anomaly_detected),
     }

@@ -33,3 +33,12 @@ def test_format_prediction_keeps_monotonic_quantiles_unflagged():
     assert result["quantile_crossing_detected"] is False
     assert result["quantile_crossing_rate"] == 0.0
     assert result["anomaly_detected"] is False
+
+
+def test_format_prediction_uses_log_return_price_conversion():
+    raw = np.tile(np.array([[0.005, 0.008, 0.009, 0.01, 0.011, 0.012, 0.015]]), (5, 1))
+    result = format_prediction(raw, baseline_price=100.0)
+    assert np.isclose(result["weekly_log_return"], 0.05)
+    assert np.isclose(result["weekly_price"], 100.0 * np.exp(0.05))
+    assert np.isclose(result["weekly_return"], np.exp(0.05) - 1.0)
+    assert result["return_basis"] == "daily_log_return_path"

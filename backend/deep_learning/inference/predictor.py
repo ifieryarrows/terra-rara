@@ -45,11 +45,20 @@ warnings.filterwarnings(
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 from app.instruments import TARGET_DISPLAY_NAME, TARGET_SYMBOL
+from deep_learning.contract import (
+    FORECAST_CONTRACT_VERSION,
+    RETURN_SPACE,
+    TARGET_RETURN_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
 # Suppress PyTorch Lightning promotional tips ("litlogger", "litmodels")
 logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
+
+
+class IncompatibleTFTCheckpointError(RuntimeError):
+    """Raised when a checkpoint predates the weekly log-return contract."""
 
 
 class TFTPredictor:
@@ -68,6 +77,7 @@ class TFTPredictor:
         self._model = None
         self._pca = None
         self._hub_checked = False
+        self._metadata_checked = False
 
     def _ensure_local_artifacts(self) -> None:
         """Download checkpoint from HF Hub if not present locally."""
@@ -101,9 +111,44 @@ class TFTPredictor:
                 raise FileNotFoundError(
                     f"TFT checkpoint not found: {self._checkpoint_path}"
                 )
+            self._validate_checkpoint_contract()
             from deep_learning.models.tft_copper import load_tft_model
             self._model = load_tft_model(self._checkpoint_path)
         return self._model
+
+    def _validate_checkpoint_contract(self) -> None:
+        if self._metadata_checked:
+            return
+
+        metadata_path = Path(self._checkpoint_path).parent / "tft_metadata.json"
+        if not metadata_path.exists():
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: missing weekly_log_v1 metadata. Retraining required."
+            )
+
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise IncompatibleTFTCheckpointError(
+                f"Incompatible TFT checkpoint: unreadable metadata ({exc}). Retraining required."
+            ) from exc
+
+        config = metadata.get("config") or {}
+        version = metadata.get("forecast_contract_version") or config.get("forecast_contract_version")
+        target_return_type = metadata.get("target_return_type") or config.get("target_return_type")
+        primary_horizon = metadata.get("primary_horizon_days") or config.get("primary_horizon_days")
+        return_space = metadata.get("return_space") or config.get("return_space")
+
+        if (
+            version != FORECAST_CONTRACT_VERSION
+            or target_return_type != TARGET_RETURN_TYPE
+            or int(primary_horizon or 0) != self.cfg.forecast.primary_horizon_days
+            or return_space != RETURN_SPACE
+        ):
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: expected weekly_log_v1 contract. Retraining required."
+            )
+        self._metadata_checked = True
 
     @property
     def pca(self):
@@ -136,6 +181,8 @@ class TFTPredictor:
             - baseline_staleness_days (int, 0 = fresh)
         """
         from deep_learning.data.feature_store import build_tft_dataframe
+        from deep_learning.data.future_frame import build_future_decoder_rows
+        from deep_learning.data.dataset import _identity_target_normalizer
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
 
@@ -179,7 +226,9 @@ class TFTPredictor:
         encoder_length = self.cfg.model.max_encoder_length
         prediction_length = self.cfg.model.max_prediction_length
 
-        recent = master_df.tail(encoder_length + prediction_length).copy()
+        history = master_df.tail(encoder_length).copy()
+        future = build_future_decoder_rows(history, prediction_length, self.cfg)
+        recent = pd.concat([history, future], axis=0)
         if len(recent) < encoder_length + 1:
             return {"error": f"Insufficient data: {len(recent)} rows, need {encoder_length + 1}"}
 
@@ -198,6 +247,7 @@ class TFTPredictor:
                 time_varying_unknown_reals=tv_unknown,
                 time_varying_known_reals=tv_known,
                 static_categoricals=["group_id"],
+                target_normalizer=_identity_target_normalizer(),
                 add_relative_time_idx=True,
                 add_target_scales=True,
                 add_encoder_length=True,
@@ -231,15 +281,20 @@ class TFTPredictor:
             else:
                 pred_for_format = pred_np.reshape(1, -1)
 
+        except IncompatibleTFTCheckpointError as exc:
+            logger.warning("TFT checkpoint incompatible: %s", exc)
+            return self._degraded_retrain_required(str(exc))
         except Exception as exc:
             logger.error("TFT prediction failed: %s", exc)
             return {"error": str(exc)}
 
+        conformal_adjustment = self._conformal_adjustment_for_latest_regime(master_df)
         result = format_prediction(
             pred_for_format,
             quantiles=self.cfg.model.quantiles,
             baseline_price=baseline_price,
             reference_price_date=reference_price_date,
+            conformal_adjustment=conformal_adjustment,
         )
 
         result["model_info"] = {
@@ -249,6 +304,9 @@ class TFTPredictor:
             "prediction_length": prediction_length,
             "n_features_unknown": len(tv_unknown),
             "n_features_known": len(tv_known),
+            "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+            "target_return_type": TARGET_RETURN_TYPE,
+            "return_space": RETURN_SPACE,
         }
 
         # Surface freshness + instrument identity so the UI can label the
@@ -261,6 +319,29 @@ class TFTPredictor:
         result["symbol"] = symbol
 
         return result
+
+    @staticmethod
+    def _degraded_retrain_required(message: str) -> Dict[str, Any]:
+        return {
+            "model_state": "retrain_required",
+            "quality_state": "degraded",
+            "message": message,
+            "return_space": RETURN_SPACE,
+        }
+
+    def _conformal_adjustment_for_latest_regime(self, master_df: pd.DataFrame) -> float:
+        try:
+            from deep_learning.calibration.conformal import bucketize_regime, select_bucket_adjustment
+
+            path = Path(self._checkpoint_path).parent / "conformal_calibration.json"
+            if not path.exists() or master_df.empty:
+                return 0.0
+            calibration = json.loads(path.read_text(encoding="utf-8"))
+            bucket = bucketize_regime(master_df.iloc[-1])
+            return select_bucket_adjustment(calibration, bucket)
+        except Exception as exc:
+            logger.debug("Conformal adjustment unavailable: %s", exc)
+            return 0.0
 
     # ------------------------------------------------------------------
     # Freshness helpers
@@ -539,28 +620,29 @@ def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any
     predictor = get_tft_predictor()
 
     prediction = predictor.predict(session, symbol)
+    if prediction.get("model_state") == "retrain_required":
+        return prediction
     if "error" in prediction:
         return prediction
 
     metadata = predictor.get_model_metadata(session)
 
-    # Direction based on T+1 (most reliable signal)
-    median_ret = prediction.get("predicted_return_median", 0)
-    if median_ret > 0.005:
+    weekly_ret = prediction.get("weekly_return", 0.0)
+    t1_ret = prediction.get("predicted_return_median", 0.0)
+
+    if weekly_ret > predictor.cfg.forecast.weekly_direction_threshold:
         direction = "BULLISH"
-    elif median_ret < -0.005:
+    elif weekly_ret < -predictor.cfg.forecast.weekly_direction_threshold:
         direction = "BEARISH"
     else:
         direction = "NEUTRAL"
 
-    # Weekly trend based on T+5 (end-of-horizon)
-    weekly_ret = prediction.get("weekly_return", median_ret)
-    if weekly_ret > 0.005:
-        weekly_trend = "BULLISH"
-    elif weekly_ret < -0.005:
-        weekly_trend = "BEARISH"
+    if t1_ret > predictor.cfg.forecast.t1_direction_threshold:
+        t1_impulse = "BULLISH"
+    elif t1_ret < -predictor.cfg.forecast.t1_direction_threshold:
+        t1_impulse = "BEARISH"
     else:
-        weekly_trend = "NEUTRAL"
+        t1_impulse = "NEUTRAL"
 
     vol = prediction.get("volatility_estimate", 0)
     if vol > 0.02:
@@ -586,7 +668,24 @@ def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any
         "symbol": symbol,
         "model_type": "TFT-ASRO",
         "direction": direction,
-        "weekly_trend": weekly_trend,
+        "weekly_trend": direction,
+        "primary_horizon": "5D",
+        "primary_forecast_return": weekly_ret,
+        "primary_forecast_q10": prediction.get("weekly_return_q10_calibrated"),
+        "primary_forecast_q90": prediction.get("weekly_return_q90_calibrated"),
+        "t1_impulse": t1_impulse,
+        "t1_return": t1_ret,
+        "weekly_forecast": {
+            "horizon": "5D",
+            "expected_return": weekly_ret,
+            "q10_return": prediction.get("weekly_return_q10_calibrated"),
+            "q90_return": prediction.get("weekly_return_q90_calibrated"),
+            "calibrated": bool(prediction.get("weekly_interval_calibrated", False)),
+            "calibration_adjustment": prediction.get("weekly_interval_calibration_adjustment"),
+            "t1_impulse": t1_impulse,
+            "t1_return": t1_ret,
+            "regime": None,
+        },
         "risk_level": risk_level,
         "prediction": prediction,
         "model_metadata": metadata,

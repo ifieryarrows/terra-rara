@@ -116,24 +116,25 @@ def _patch_feature_store_sources(monkeypatch, price_df: pd.DataFrame) -> None:
 
 
 def test_build_tft_dataframe_drops_missing_target_by_default(monkeypatch):
-    dates = pd.date_range("2026-04-20", periods=5, freq="B")
+    dates = pd.date_range("2026-04-20", periods=10, freq="B")
     price_df = pd.DataFrame(
-        {"close": [6.00, 6.05, 6.10, 6.02, 6.01]},
+        {"close": [6.00, 6.05, 6.10, 6.02, 6.01, 6.08, 6.11, 6.09, 6.15, 6.20]},
         index=dates,
     )
     _patch_feature_store_sources(monkeypatch, price_df)
 
     master, *_ = build_tft_dataframe(object(), _minimal_tft_cfg())
 
-    assert master.index.max() == dates[-2]
-    assert dates[-1] not in master.index
+    assert master.index.max() == dates[-6]
+    assert dates[-5] not in master.index
     assert master["target"].isna().sum() == 0
+    assert master["target_5d_log_return"].isna().sum() == 0
 
 
 def test_build_tft_dataframe_keeps_latest_bar_for_inference(monkeypatch):
-    dates = pd.date_range("2026-04-20", periods=5, freq="B")
+    dates = pd.date_range("2026-04-20", periods=10, freq="B")
     price_df = pd.DataFrame(
-        {"close": [6.00, 6.05, 6.10, 6.02, 6.01]},
+        {"close": [6.00, 6.05, 6.10, 6.02, 6.01, 6.08, 6.11, 6.09, 6.15, 6.20]},
         index=dates,
     )
     _patch_feature_store_sources(monkeypatch, price_df)
@@ -146,4 +147,5 @@ def test_build_tft_dataframe_keeps_latest_bar_for_inference(monkeypatch):
 
     assert master.index.max() == dates[-1]
     assert master.loc[dates[-1], "target"] == 0.0
+    assert master.loc[dates[-1], "target_5d_log_return"] == 0.0
     assert master["target"].isna().sum() == 0

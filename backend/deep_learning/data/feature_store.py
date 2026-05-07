@@ -195,13 +195,13 @@ def _build_daily_embedding_features(
     Load PCA-reduced FinBERT embeddings, aggregate to daily level,
     and reindex onto the trading calendar.
     """
-    from sqlalchemy import func as sa_func
     from app.models import NewsEmbedding, NewsProcessed, NewsRaw
     from deep_learning.data.embeddings import bytes_to_embedding, aggregate_daily_embeddings
+    from pipelines.market_calendar import assign_market_date
 
     rows = (
         session.query(
-            sa_func.date(NewsRaw.published_at).label("date"),
+            NewsRaw.published_at,
             NewsEmbedding.embedding_pca,
         )
         .join(NewsProcessed, NewsEmbedding.news_processed_id == NewsProcessed.id)
@@ -216,7 +216,7 @@ def _build_daily_embedding_features(
 
     date_groups: dict[str, list[np.ndarray]] = {}
     for r in rows:
-        d = str(r.date)
+        d = assign_market_date(r.published_at).isoformat()
         vec = bytes_to_embedding(r.embedding_pca, dim=pca_dim)
         # bytes_to_embedding now always returns dim-length arrays, but
         # guard against any future shape surprises to keep stack safe.
@@ -261,10 +261,10 @@ def build_tft_dataframe(
     The returned df has:
         - "time_idx"  : integer time index (required by pytorch_forecasting)
         - "group_id"  : constant "copper" (single series)
-        - "target"    : next-day simple return
+        - "target"    : next-day daily log return
         - columns for all three TFT feature categories
 
-    Training and validation need complete next-day targets, so the default
+    Training and validation need complete weekly targets, so the default
     drops rows where ``target`` is missing. Live inference needs the latest
     observed bar as the forecast anchor, so callers can keep that final row
     and let the missing target be filled with a neutral dummy value.
@@ -308,23 +308,39 @@ def build_tft_dataframe(
     logger.info("Price data: %d bars for %s", len(target_index), target_symbol)
 
     # ---- 2. Sentiment features ----
-    from app.features import load_sentiment_data
     from deep_learning.data.sentiment_features import (
         build_all_sentiment_features,
-        build_event_counts_from_db,
+    )
+    from deep_learning.data.sentiment_market_date import (
+        build_market_date_event_counts_from_db,
+        build_market_date_sentiment_frame,
     )
 
-    sent_df = load_sentiment_data(session, start_date, end_date)
+    sent_df = build_market_date_sentiment_frame(session, start_date, end_date)
     if not sent_df.empty:
         sent_aligned = sent_df.reindex(target_index).ffill(limit=cfg.feature_store.max_ffill)
         sent_aligned["sentiment_index"] = sent_aligned["sentiment_index"].fillna(0.0)
         sent_aligned["news_count"] = sent_aligned["news_count"].fillna(0)
+        for col, default in (
+            ("material_news_count", 0.0),
+            ("after_close_news_count", 0.0),
+            ("days_since_last_material_news", 999.0),
+            ("stale_sentiment_flag", 1.0),
+        ):
+            sent_aligned[col] = sent_aligned[col].fillna(default)
 
-        event_counts = build_event_counts_from_db(session, start_date, end_date)
+        event_counts = build_market_date_event_counts_from_db(session, start_date, end_date)
         advanced_sent = build_all_sentiment_features(sent_aligned, event_counts=event_counts, cfg=cfg.sentiment)
     else:
         sent_aligned = pd.DataFrame(
-            {"sentiment_index": 0.0, "news_count": 0},
+            {
+                "sentiment_index": 0.0,
+                "news_count": 0.0,
+                "material_news_count": 0.0,
+                "after_close_news_count": 0.0,
+                "days_since_last_material_news": 999.0,
+                "stale_sentiment_flag": 1.0,
+            },
             index=target_index,
         )
         advanced_sent = pd.DataFrame(index=target_index)
@@ -356,28 +372,78 @@ def build_tft_dataframe(
     # ---- 5. Calendar (known future) ----
     calendar_features = _build_calendar_features(target_index)
 
-    # ---- 6. Target: next-day simple return ----
-    close = price_df["close"]
-    target_ret = close.pct_change(fill_method=None).shift(-1)
-    target_ret.name = "target"
+    # ---- 6. Target: daily log-return path plus explicit weekly helpers ----
+    close = price_df["close"].astype(float)
+    log_close = np.log(close)
+
+    target_1d = log_close.shift(-cfg.forecast.auxiliary_horizon_days) - log_close
+    target_1d.name = cfg.forecast.auxiliary_target_col
+
+    target_5d = log_close.shift(-cfg.forecast.primary_horizon_days) - log_close
+    target_5d.name = cfg.forecast.primary_target_col
+
+    target_model = target_1d.copy()
+    target_model.name = cfg.forecast.model_daily_target_col
+
+    realized_vol_20d = target_1d.rolling(20, min_periods=10).std()
+    realized_vol_20d.name = "realized_vol_20d"
+
+    material_move_5d = (
+        target_5d.abs()
+        > cfg.forecast.material_move_vol_multiple
+        * realized_vol_20d
+        * np.sqrt(cfg.forecast.primary_horizon_days)
+    ).astype(float)
+    material_move_5d.name = "material_move_5d"
+
+    from deep_learning.data.regime_features import build_regime_event_features
+
+    sentiment_cols = [
+        "sentiment_index",
+        "news_count",
+        "material_news_count",
+        "after_close_news_count",
+        "days_since_last_material_news",
+        "stale_sentiment_flag",
+    ]
+    pre_regime = pd.concat(
+        [
+            price_features,
+            sent_aligned[sentiment_cols],
+            advanced_sent,
+            lme_features,
+            futures_features,
+            target_model.to_frame(),
+        ],
+        axis=1,
+    ).reindex(target_index).fillna(0.0)
+    regime_features = build_regime_event_features(pre_regime)
 
     # ---- Assemble master DataFrame ----
     parts = [
         price_features,
-        sent_aligned[["sentiment_index", "news_count"]],
+        sent_aligned[sentiment_cols],
         advanced_sent,
         emb_features,
         lme_features,
         futures_features,
+        regime_features,
         calendar_features,
-        target_ret.to_frame(),
+        target_model.to_frame(),
+        target_1d.to_frame(),
+        target_5d.to_frame(),
+        realized_vol_20d.to_frame(),
+        material_move_5d.to_frame(),
     ]
 
     master = pd.concat(parts, axis=1)
     master = master.loc[target_index]
 
     if drop_missing_target:
-        valid_mask = master["target"].notna()
+        valid_mask = (
+            master[cfg.forecast.model_daily_target_col].notna()
+            & master[cfg.forecast.primary_target_col].notna()
+        )
         master = master[valid_mask].copy()
     else:
         master = master.copy()
@@ -398,11 +464,29 @@ def build_tft_dataframe(
         c.replace(".", "_").replace("-", "_")
         for c in calendar_features.columns
     ]
-    target_cols = ["target"]
+    target_cols = [cfg.forecast.model_daily_target_col]
 
-    all_feature_cols = [c for c in master.columns if c not in ("time_idx", "group_id", "target")]
+    non_feature_cols = {
+        "time_idx",
+        "group_id",
+        cfg.forecast.model_daily_target_col,
+        cfg.forecast.auxiliary_target_col,
+        cfg.forecast.primary_target_col,
+        "realized_vol_20d",
+        "material_move_5d",
+    }
+    all_feature_cols = [c for c in master.columns if c not in non_feature_cols]
     time_varying_known = [c for c in calendar_cols if c in master.columns]
     time_varying_unknown = [c for c in all_feature_cols if c not in time_varying_known]
+
+    from deep_learning.data.regime_features import FORCED_TFT_UNKNOWN_FEATURES, REGIME_FEATURES
+
+    forced_unknown = [c for c in FORCED_TFT_UNKNOWN_FEATURES if c in master.columns]
+    time_varying_unknown = sorted(set(time_varying_unknown) | set(forced_unknown))
+
+    missing_regime = [c for c in REGIME_FEATURES if c not in master.columns]
+    if missing_regime:
+        raise ValueError(f"Missing regime features: {missing_regime}")
 
     logger.info(
         "Feature store raw: %d rows, %d unknown features, %d known features, %d embedding dims",
@@ -418,10 +502,19 @@ def build_tft_dataframe(
 
         master, time_varying_unknown, time_varying_known = select_features(
             master,
-            target_col="target",
+            target_col=cfg.forecast.primary_target_col,
             mrmr_top_k=cfg.feature_store.mrmr_top_k,
             known_features=time_varying_known,
+            forced_unknown_features=forced_unknown,
+            forbidden_features=list(non_feature_cols),
         )
+
+    from deep_learning.data.validation import validate_weekly_target_contract
+
+    validate_weekly_target_contract(
+        master,
+        mode="train" if drop_missing_target else "inference",
+    )
 
     # Also return the last valid close price for baseline_price calculation
     valid_close = close.dropna()

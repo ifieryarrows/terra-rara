@@ -573,6 +573,31 @@ async def _execute_pipeline_stages_v2(
             tft_report = generate_tft_analysis(session, "HG=F")
 
             if "error" not in tft_report:
+                try:
+                    from deep_learning.contract import RETURN_SPACE
+
+                    prediction = tft_report.get("prediction") or {}
+                    tft_report["return_space"] = RETURN_SPACE
+                    tft_report["primary_horizon"] = tft_report.get("primary_horizon", "5D")
+                    tft_report["primary_forecast_return"] = tft_report.get(
+                        "primary_forecast_return",
+                        prediction.get("weekly_return"),
+                    )
+                    tft_report["primary_forecast_q10"] = tft_report.get(
+                        "primary_forecast_q10",
+                        prediction.get("weekly_return_q10_calibrated"),
+                    )
+                    tft_report["primary_forecast_q90"] = tft_report.get(
+                        "primary_forecast_q90",
+                        prediction.get("weekly_return_q90_calibrated"),
+                    )
+                    tft_report["t1_impulse"] = tft_report.get("t1_impulse")
+                    tft_report["t1_return"] = tft_report.get(
+                        "t1_return",
+                        prediction.get("predicted_return_median"),
+                    )
+                except Exception:
+                    pass
                 # Persist the full report so /api/analysis/tft/{symbol}
                 # can serve it without re-running inference. This is the
                 # canonical source the frontend reads from.

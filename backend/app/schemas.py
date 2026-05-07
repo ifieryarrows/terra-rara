@@ -26,6 +26,19 @@ class DataQuality(BaseModel):
     language_filtered: Optional[int] = Field(None, description="Articles filtered by language")
 
 
+class WeeklyForecastBlock(BaseModel):
+    """Weekly-first TFT public forecast block using simple returns."""
+    horizon: str = Field("5D")
+    expected_return: float
+    q10_return: Optional[float] = None
+    q90_return: Optional[float] = None
+    calibrated: bool = False
+    calibration_adjustment: Optional[float] = None
+    t1_impulse: Optional[str] = None
+    t1_return: Optional[float] = None
+    regime: Optional[str] = None
+
+
 class AnalysisReport(BaseModel):
     """
     Full analysis report returned by /api/analysis.
@@ -55,6 +68,7 @@ class AnalysisReport(BaseModel):
     confidence_upper: Optional[float] = Field(0.0, description="Upper bound of confidence interval")
     sentiment_index: Optional[float] = Field(0.0, description="Current sentiment index (-1 to 1)")
     sentiment_label: Optional[str] = Field("Neutral", description="Sentiment label: Bullish, Bearish, or Neutral")
+    weekly_forecast: Optional[WeeklyForecastBlock] = Field(None, description="Weekly-first TFT forecast block")
     
     # Feature influencers (may be empty)
     top_influencers: list[Influencer] = Field(default_factory=list, description="Top feature influencers")

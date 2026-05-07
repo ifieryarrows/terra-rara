@@ -242,7 +242,7 @@ export const OverviewPage = () => {
     };
 
     const forecasts = hasForecast
-      ? tftAnalysis!.prediction.daily_forecasts.slice(0, 1).map((fc: any) => {
+      ? tftAnalysis!.prediction!.daily_forecasts.slice(0, 5).map((fc: any) => {
           const d = addBusinessDays(new Date(last.date), fc.day);
           return {
             date: d.toISOString().split('T')[0],
@@ -295,17 +295,14 @@ export const OverviewPage = () => {
     );
   }
 
-  // CRITICAL: headline percentage MUST come from the same place as the T+1
-  // price shown beside it. Previously we read `predicted_return_median`
-  // while the price came from `daily_forecasts[0].price_median`, which
-  // could diverge once the backend applied a display clamp. Sourcing both
-  // from `daily_forecasts[0]` makes them guaranteed-consistent.
-  const t1Forecast = tftAnalysis?.prediction?.daily_forecasts?.[0];
-  const tftReturn = t1Forecast?.daily_return ?? tftAnalysis?.prediction?.predicted_return_median ?? null;
+  const tftReturn = tftAnalysis?.primary_forecast_return
+    ?? tftAnalysis?.weekly_forecast?.expected_return
+    ?? tftAnalysis?.prediction?.weekly_return
+    ?? null;
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
   const tftDirection = tftAnalysis?.direction;
-  const tftWeeklyTrend = tftAnalysis?.weekly_trend;
+  const tftImpulse = tftAnalysis?.t1_impulse ?? tftAnalysis?.weekly_forecast?.t1_impulse ?? 'NEUTRAL';
   const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
   const tftReferenceDate = tftAnalysis?.prediction?.reference_price_date;
   const tftAnomaly = tftAnalysis?.prediction?.anomaly_detected;
@@ -415,9 +412,12 @@ export const OverviewPage = () => {
         <div className="grid grid-cols-12 gap-6">
 
           {/* Deep Learning Forecast — primary T+1 forecast */}
-          <GlassCard title="Deep Learning Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
-            {tftAnalysis ? (() => {
-              const t1 = tftAnalysis.prediction.daily_forecasts?.[0];
+          <GlassCard title="Deep Learning Weekly Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
+            {tftAnalysis?.prediction ? (() => {
+              const prediction = tftAnalysis.prediction;
+              const weeklyQ10 = tftAnalysis.primary_forecast_q10 ?? tftAnalysis.weekly_forecast?.q10_return ?? prediction.weekly_return_q10_calibrated;
+              const weeklyQ90 = tftAnalysis.primary_forecast_q90 ?? tftAnalysis.weekly_forecast?.q90_return ?? prediction.weekly_return_q90_calibrated;
+              const calibrated = tftAnalysis.weekly_forecast?.calibrated ?? prediction.weekly_interval_calibrated ?? false;
               return (
                 <>
                   <div className="absolute top-0 right-0 p-4 opacity-5">
@@ -443,7 +443,7 @@ export const OverviewPage = () => {
                     <div>
                       <div className="mb-1 flex items-center justify-between gap-3">
                         <span className="text-[10px] text-gray-500 uppercase tracking-widest">
-                          T+1 Forecast
+                          Expected 5D Performance
                         </span>
                         {tftBaselineIsStale && (
                           <span
@@ -458,7 +458,7 @@ export const OverviewPage = () => {
                         <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
                           {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
                         </span>
-                        <span className="text-sm text-gray-400 font-mono">${t1?.price_median?.toFixed(2) ?? '--'}</span>
+                        <span className="text-sm text-gray-400 font-mono">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
                         {tftReferencePrice && (
                           <span className="text-[10px] text-gray-600 font-mono">
                             (from ${tftReferencePrice.toFixed(2)})
@@ -484,34 +484,41 @@ export const OverviewPage = () => {
 
                     {/* T+1 expected range */}
                     <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">Expected Range (80% confidence)</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
+                        5D Range {calibrated ? '(calibrated)' : '(raw)'}
+                      </p>
                       <div className="flex items-center justify-between">
                         <div className="text-center">
                           <p className="text-[10px] text-gray-600 mb-0.5">Low</p>
-                          <span className="text-sm font-mono text-rose-400/80">${t1?.price_q10?.toFixed(2) ?? '--'}</span>
+                          <span className="text-sm font-mono text-rose-400/80">
+                            {weeklyQ10 != null ? `${(weeklyQ10 * 100).toFixed(2)}%` : '--'}
+                          </span>
                         </div>
                         <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/5 relative overflow-hidden">
                           <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 via-gray-500/20 to-emerald-500/40 rounded-full" />
                         </div>
                         <div className="text-center">
                           <p className="text-[10px] text-gray-600 mb-0.5">High</p>
-                          <span className="text-sm font-mono text-emerald-400/80">${t1?.price_q90?.toFixed(2) ?? '--'}</span>
+                          <span className="text-sm font-mono text-emerald-400/80">
+                            {weeklyQ90 != null ? `${weeklyQ90 >= 0 ? '+' : ''}${(weeklyQ90 * 100).toFixed(2)}%` : '--'}
+                          </span>
                         </div>
                       </div>
                     </div>
 
                     {/* Weekly trend — direction only, no price targets */}
                     <div className="flex items-center justify-between py-2 border-t border-white/5">
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">Week Trend</span>
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">T+1 Impulse</span>
                       <div className="flex items-center gap-1.5">
-                        {tftWeeklyTrend === 'BULLISH' ? <TrendingUp size={12} className="text-emerald-400" /> :
-                         tftWeeklyTrend === 'BEARISH' ? <TrendingDown size={12} className="text-rose-400" /> :
+                        {tftImpulse === 'BULLISH' ? <TrendingUp size={12} className="text-emerald-400" /> :
+                         tftImpulse === 'BEARISH' ? <TrendingDown size={12} className="text-rose-400" /> :
                          <Activity size={12} className="text-amber-400" />}
                         <span className={clsx("text-xs font-bold tracking-wide",
-                          tftWeeklyTrend === 'BULLISH' ? "text-emerald-400" :
-                          tftWeeklyTrend === 'BEARISH' ? "text-rose-400" : "text-amber-400"
+                          tftImpulse === 'BULLISH' ? "text-emerald-400" :
+                          tftImpulse === 'BEARISH' ? "text-rose-400" : "text-amber-400"
                         )}>
-                          {tftWeeklyTrend}
+                          {tftImpulse}
+                          {tftAnalysis.t1_return != null ? ` ${tftAnalysis.t1_return >= 0 ? '+' : ''}${(tftAnalysis.t1_return * 100).toFixed(2)}%` : ''}
                         </span>
                       </div>
                     </div>

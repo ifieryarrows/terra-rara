@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -45,6 +45,7 @@ from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
 from app.async_bridge import run_async_from_sync
 from app.openrouter_client import OpenRouterError, OpenRouterRateLimitError, create_chat_completion
+from pipelines.market_calendar import assign_market_date, is_after_close_news
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1361,6 +1362,7 @@ def score_unscored_processed_articles(
             NewsRaw.title.label("raw_title"),
             NewsRaw.description.label("raw_description"),
             NewsRaw.published_at,
+            NewsRaw.fetched_at,
         )
         .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
         .outerjoin(
@@ -1422,6 +1424,7 @@ def score_unscored_processed_articles(
                     "description": description,
                     "text": text,
                     "published_at": row.published_at,
+                    "fetched_at": row.fetched_at,
                     "language": language or None,
                 }
             )
@@ -1572,6 +1575,9 @@ def score_unscored_processed_articles(
                 reasoning_json=json.dumps(payload, ensure_ascii=True),
                 model_fast=fast_model,
                 model_reliable=reliable_model,
+                market_date=assign_market_date(article["published_at"]),
+                available_at=article.get("fetched_at") or article["published_at"],
+                cutoff_version="market_close_v1",
                 scored_at=datetime.now(timezone.utc),
             )
             session.add(sentiment_v2)
@@ -1610,9 +1616,11 @@ def aggregate_daily_sentiment_v2(
     rows = (
         session.query(
             NewsRaw.published_at,
+            NewsRaw.fetched_at,
             NewsSentimentV2.final_score,
             NewsSentimentV2.confidence_calibrated,
             NewsSentimentV2.relevance_score,
+            NewsSentimentV2.event_type,
         )
         .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
         .join(
@@ -1630,12 +1638,27 @@ def aggregate_daily_sentiment_v2(
 
     df = pd.DataFrame(
         rows,
-        columns=["published_at", "final_score", "confidence_calibrated", "relevance_score"],
+        columns=[
+            "published_at",
+            "fetched_at",
+            "final_score",
+            "confidence_calibrated",
+            "relevance_score",
+            "event_type",
+        ],
     )
-    df["date"] = pd.to_datetime(df["published_at"]).dt.normalize()
+    df["market_date"] = df["published_at"].apply(assign_market_date)
+    df["date"] = pd.to_datetime(df["market_date"])
+    df["material"] = (
+        (df["relevance_score"].astype(float) >= 0.60)
+        & (df["confidence_calibrated"].astype(float) >= 0.55)
+    ).astype(int)
+    df["after_close"] = df["published_at"].apply(lambda ts: int(is_after_close_news(ts)))
 
     def calc_weights(group):
-        hours = (group["published_at"] - group["date"]).dt.total_seconds() / 3600.0
+        published = pd.to_datetime(group["published_at"], utc=True)
+        available = pd.to_datetime(group["fetched_at"].fillna(group["published_at"]), utc=True)
+        hours = (available - published).dt.total_seconds().clip(lower=0.0) / 3600.0
         weights = np.exp(hours / tau_hours)
         return weights / weights.sum()
 
@@ -1645,12 +1668,26 @@ def aggregate_daily_sentiment_v2(
         daily_rows.append(
             {
                 "date": date,
+                "market_date": date.date(),
                 "sentiment_index": float((group["final_score"] * weights).sum()),
                 "news_count": int(len(group)),
+                "material_news_count": int(group["material"].sum()),
+                "after_close_news_count": int(group["after_close"].sum()),
                 "avg_confidence": float(group["confidence_calibrated"].mean()),
                 "avg_relevance": float(group["relevance_score"].mean()),
             }
         )
+
+    last_material = None
+    for row in daily_rows:
+        if row["material_news_count"] > 0:
+            last_material = row["market_date"]
+            row["days_since_last_material_news"] = 0
+        elif last_material is None:
+            row["days_since_last_material_news"] = 999
+        else:
+            row["days_since_last_material_news"] = int((row["market_date"] - last_material).days)
+        row["stale_sentiment_flag"] = row["days_since_last_material_news"] > 3
 
     count = 0
     for row in daily_rows:
@@ -1659,11 +1696,21 @@ def aggregate_daily_sentiment_v2(
             date_dt = date_dt.replace(tzinfo=timezone.utc)
 
         existing = session.query(DailySentimentV2).filter(
-            func.date(DailySentimentV2.date) == func.date(date_dt)
+            or_(
+                DailySentimentV2.market_date == row["market_date"],
+                func.date(DailySentimentV2.date) == row["market_date"].isoformat(),
+            )
         ).first()
         if existing:
             existing.sentiment_index = row["sentiment_index"]
             existing.news_count = row["news_count"]
+            existing.date = date_dt
+            existing.market_date = row["market_date"]
+            existing.material_news_count = row["material_news_count"]
+            existing.after_close_news_count = row["after_close_news_count"]
+            existing.days_since_last_material_news = row["days_since_last_material_news"]
+            existing.stale_sentiment_flag = row["stale_sentiment_flag"]
+            existing.cutoff_version = "market_close_v1"
             existing.avg_confidence = row["avg_confidence"]
             existing.avg_relevance = row["avg_relevance"]
             existing.source_version = "v2"
@@ -1672,8 +1719,14 @@ def aggregate_daily_sentiment_v2(
             session.add(
                 DailySentimentV2(
                     date=date_dt,
+                    market_date=row["market_date"],
                     sentiment_index=row["sentiment_index"],
                     news_count=row["news_count"],
+                    material_news_count=row["material_news_count"],
+                    after_close_news_count=row["after_close_news_count"],
+                    days_since_last_material_news=row["days_since_last_material_news"],
+                    stale_sentiment_flag=row["stale_sentiment_flag"],
+                    cutoff_version="market_close_v1",
                     avg_confidence=row["avg_confidence"],
                     avg_relevance=row["avg_relevance"],
                     source_version="v2",
@@ -2576,4 +2629,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
