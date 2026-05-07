@@ -198,13 +198,19 @@ try:
             vol_loss = torch.abs(weekly_spread.mean() - target_spread)
             crossing_loss = quantile_crossing_penalty(y_pred)
 
+            def _to_scalar(x: torch.Tensor) -> torch.Tensor:
+                # pytorch_forecasting metrics can return per-sample tensors;
+                # weekly objective needs a single scalar to avoid ambiguous
+                # boolean comparisons in tests and stable optimizer behaviour.
+                return x.mean() if x.ndim > 0 else x
+
             return (
-                self.lambda_weekly_quantile * weekly_q_loss
-                + self.lambda_t1_quantile * t1_q_loss
-                + self.lambda_directional * weekly_directional
-                + self.lambda_magnitude * magnitude_loss
-                + self.lambda_vol * vol_loss
-                + self.lambda_crossing * crossing_loss
+                self.lambda_weekly_quantile * _to_scalar(weekly_q_loss)
+                + self.lambda_t1_quantile * _to_scalar(t1_q_loss)
+                + self.lambda_directional * _to_scalar(weekly_directional)
+                + self.lambda_magnitude * _to_scalar(magnitude_loss)
+                + self.lambda_vol * _to_scalar(vol_loss)
+                + self.lambda_crossing * _to_scalar(crossing_loss)
             )
 
 except ImportError:
