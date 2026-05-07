@@ -8,6 +8,7 @@ Endpoints:
 """
 
 import logging
+from dataclasses import dataclass
 
 # Suppress httpx request logging to prevent API keys in URLs from appearing in logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -1628,19 +1629,15 @@ async def get_sentiment_summary(
 
         # ---- 5) Recent articles (hybrid: raw news + processed + V2 score) ----
         recent_q = (
-            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
-            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
-            .outerjoin(
-                NewsSentimentV2,
-                NewsSentimentV2.news_processed_id == NewsProcessed.id,
-            )
+            _news_projection_query(session)
             .filter(NewsRaw.published_at >= window_start)
             .order_by(desc(NewsRaw.published_at))
             .limit(recent_limit)
             .all()
         )
         recent_articles = []
-        for raw, proc, score in recent_q:
+        for row in recent_q:
+            raw, proc, score = _unpack_news_projection_row(row)
             recent_articles.append({
                 "title": getattr(raw, "title", None) or getattr(proc, "canonical_title", None) or "",
                 "source": getattr(raw, "source", None),
@@ -1716,6 +1713,79 @@ _NEWS_STATS_TTL_S = 120.0
 _VALID_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
 
 
+@dataclass(frozen=True)
+class _NewsSentimentProjection:
+    label: Optional[str]
+    final_score: Optional[float]
+    impact_score_llm: Optional[float]
+    confidence_calibrated: Optional[float]
+    relevance_score: Optional[float]
+    event_type: Optional[str]
+    finbert_pos: Optional[float]
+    finbert_neu: Optional[float]
+    finbert_neg: Optional[float]
+    reasoning_json: Optional[str]
+    scored_at: Optional[datetime]
+
+
+def _news_projection_query(session):
+    """
+    Build a backward-compatible query for news + sentiment.
+
+    We intentionally project only stable legacy sentiment columns so this
+    endpoint keeps working even before weekly-contract migrations are applied
+    on older databases.
+    """
+    return (
+        session.query(
+            NewsRaw,
+            NewsProcessed,
+            NewsSentimentV2.id.label("sent_id"),
+            NewsSentimentV2.label.label("sent_label"),
+            NewsSentimentV2.final_score.label("sent_final_score"),
+            NewsSentimentV2.impact_score_llm.label("sent_impact_score_llm"),
+            NewsSentimentV2.confidence_calibrated.label("sent_confidence_calibrated"),
+            NewsSentimentV2.relevance_score.label("sent_relevance_score"),
+            NewsSentimentV2.event_type.label("sent_event_type"),
+            NewsSentimentV2.finbert_pos.label("sent_finbert_pos"),
+            NewsSentimentV2.finbert_neu.label("sent_finbert_neu"),
+            NewsSentimentV2.finbert_neg.label("sent_finbert_neg"),
+            NewsSentimentV2.reasoning_json.label("sent_reasoning_json"),
+            NewsSentimentV2.scored_at.label("sent_scored_at"),
+        )
+        .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
+        .outerjoin(
+            NewsSentimentV2,
+            NewsSentimentV2.news_processed_id == NewsProcessed.id,
+        )
+    )
+
+
+def _unpack_news_projection_row(row):
+    if len(row) == 3:
+        return row
+
+    raw = row[0]
+    processed = row[1]
+    sent_id = row[2]
+    sentiment = None
+    if sent_id is not None:
+        sentiment = _NewsSentimentProjection(
+            label=row[3],
+            final_score=float(row[4]) if row[4] is not None else None,
+            impact_score_llm=float(row[5]) if row[5] is not None else None,
+            confidence_calibrated=float(row[6]) if row[6] is not None else None,
+            relevance_score=float(row[7]) if row[7] is not None else None,
+            event_type=row[8],
+            finbert_pos=float(row[9]) if row[9] is not None else None,
+            finbert_neu=float(row[10]) if row[10] is not None else None,
+            finbert_neg=float(row[11]) if row[11] is not None else None,
+            reasoning_json=row[12],
+            scored_at=row[13],
+        )
+    return raw, processed, sentiment
+
+
 def _extract_publisher(raw_payload) -> Optional[str]:
     """Pull the original publisher name out of a NewsRaw.raw_payload blob."""
     if not raw_payload:
@@ -1738,7 +1808,7 @@ def _extract_publisher(raw_payload) -> Optional[str]:
     return str(name) if name else None
 
 
-def _build_news_sentiment_block(sent: Optional[NewsSentimentV2]) -> Optional[NewsSentimentBlock]:
+def _build_news_sentiment_block(sent: Optional[_NewsSentimentProjection]) -> Optional[NewsSentimentBlock]:
     if sent is None:
         return None
     return NewsSentimentBlock(
@@ -1821,15 +1891,7 @@ async def get_news_feed(
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=since_hours)
 
-        q = (
-            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
-            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
-            .outerjoin(
-                NewsSentimentV2,
-                NewsSentimentV2.news_processed_id == NewsProcessed.id,
-            )
-            .filter(NewsRaw.published_at >= cutoff)
-        )
+        q = _news_projection_query(session).filter(NewsRaw.published_at >= cutoff)
 
         if channel.lower() != "all":
             q = q.filter(NewsRaw.source == channel)
@@ -1852,9 +1914,9 @@ async def get_news_feed(
             # simple. Scope is bounded by the time window filter above.
             rows = q.limit(500).all()
             filtered = [
-                triple for triple in rows
+                row for row in rows
                 if (
-                    _extract_publisher(triple[0].raw_payload) or ""
+                    _extract_publisher(row[0].raw_payload) or ""
                 ).lower().find(publisher_needle) >= 0
             ]
             total = len(filtered)
@@ -1864,7 +1926,8 @@ async def get_news_feed(
             page_rows = q.offset(offset).limit(limit).all()
 
         items: list[NewsItem] = []
-        for raw, processed, sentiment in page_rows:
+        for row in page_rows:
+            raw, processed, sentiment = _unpack_news_projection_row(row)
             items.append(
                 NewsItem(
                     id=int(processed.id),
@@ -1941,15 +2004,7 @@ async def get_news_stats(
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=since_hours)
 
-        q = (
-            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
-            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
-            .outerjoin(
-                NewsSentimentV2,
-                NewsSentimentV2.news_processed_id == NewsProcessed.id,
-            )
-            .filter(NewsRaw.published_at >= cutoff)
-        )
+        q = _news_projection_query(session).filter(NewsRaw.published_at >= cutoff)
 
         if channel.lower() != "all":
             q = q.filter(NewsRaw.source == channel)
@@ -1968,8 +2023,8 @@ async def get_news_stats(
         if publisher_needle:
             rows = q.limit(500).all()
             rows = [
-                triple for triple in rows
-                if ((_extract_publisher(triple[0].raw_payload) or "").lower().find(publisher_needle) >= 0)
+                row for row in rows
+                if ((_extract_publisher(row[0].raw_payload) or "").lower().find(publisher_needle) >= 0)
             ]
         else:
             rows = q.all()
@@ -1984,7 +2039,8 @@ async def get_news_stats(
         scored_count = 0
         total = len(rows)
 
-        for raw, _processed, sent in rows:
+        for row in rows:
+            raw, _processed, sent = _unpack_news_projection_row(row)
             ch = str(raw.source or "unknown")
             channel_dist[ch] = channel_dist.get(ch, 0) + 1
             pub = _extract_publisher(raw.raw_payload)
@@ -2053,18 +2109,13 @@ async def get_news_stats(
 async def get_news_item(processed_id: int):
     with SessionLocal() as session:
         row = (
-            session.query(NewsRaw, NewsProcessed, NewsSentimentV2)
-            .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
-            .outerjoin(
-                NewsSentimentV2,
-                NewsSentimentV2.news_processed_id == NewsProcessed.id,
-            )
+            _news_projection_query(session)
             .filter(NewsProcessed.id == processed_id)
             .first()
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Article not found")
-        raw, processed, sentiment = row
+        raw, processed, sentiment = _unpack_news_projection_row(row)
         return NewsItem(
             id=int(processed.id),
             raw_id=int(raw.id),
