@@ -62,7 +62,9 @@ def evaluate_quality_gate(
     elif weekly_pi80_coverage < 0.74 or weekly_pi80_coverage > 0.86:
         reasons.append(f"WeeklyPI80={weekly_pi80_coverage:.4f} outside [0.74, 0.86]")
 
-    if weekly_quantile_crossing_rate is not None and weekly_quantile_crossing_rate > 0.10:
+    if weekly_quantile_crossing_rate is None:
+        reasons.append("Missing weekly_quantile_crossing_rate")
+    elif weekly_quantile_crossing_rate > 0.10:
         reasons.append(f"WeeklyQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.10")
 
     if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.005:
@@ -76,7 +78,9 @@ def evaluate_quality_gate(
         reasons.append(f"VR={vr:.4f} outside [0.2, 2.5]")
     if tail_capture is not None and tail_capture < 0.35:
         reasons.append(f"TailCapture={tail_capture:.4f} < 0.35")
-    if quantile_crossing_rate is not None and quantile_crossing_rate > 0.20:
+    if quantile_crossing_rate is None:
+        reasons.append("Missing quantile_crossing_rate")
+    elif quantile_crossing_rate > 0.20:
         reasons.append(f"QuantileCrossing={quantile_crossing_rate:.4f} > 0.20")
     if median_sort_gap_max is not None and median_sort_gap_max > 0.01:
         reasons.append(f"MedianSortGapMax={median_sort_gap_max:.4f} > 0.01")

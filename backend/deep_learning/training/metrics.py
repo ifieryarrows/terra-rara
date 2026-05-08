@@ -238,15 +238,16 @@ def compute_weekly_metrics(
     y_actual_path: np.ndarray,
     y_pred_quantiles_path: np.ndarray,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    horizon: int = 5,
 ) -> dict[str, float]:
     """
-    Compute weekly-first metrics from 5-step daily log-return paths.
+    Compute weekly-first metrics from a daily log-return path.
 
     Internal evaluation remains in log-return space. Public API/UI conversion
     to simple returns happens only during inference formatting.
     """
-    weekly_actual = cumulative_horizon(y_actual_path, horizon=5)
-    weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=5)
+    weekly_actual = cumulative_horizon(y_actual_path, horizon=horizon)
+    weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=horizon)
 
     median_idx = len(quantiles) // 2
     q10_idx = quantiles.index(0.10)

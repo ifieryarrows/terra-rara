@@ -93,9 +93,14 @@ def _finite_completed_trial_count(study) -> int:
     )
 
 
-def _weekly_pinball_loss(actual_path: np.ndarray, pred_path: np.ndarray, quantiles: tuple[float, ...]) -> float:
-    actual = np.asarray(actual_path, dtype=np.float64)[:, :5].sum(axis=1)
-    pred = np.asarray(pred_path, dtype=np.float64)[:, :5, :].sum(axis=1)
+def _weekly_pinball_loss(
+    actual_path: np.ndarray,
+    pred_path: np.ndarray,
+    quantiles: tuple[float, ...],
+    horizon: int = 5,
+) -> float:
+    actual = np.asarray(actual_path, dtype=np.float64)[:, :horizon].sum(axis=1)
+    pred = np.asarray(pred_path, dtype=np.float64)[:, :horizon, :].sum(axis=1)
     q = np.asarray(quantiles, dtype=np.float64).reshape(1, -1)
     err = actual.reshape(-1, 1) - pred
     return float(np.maximum(q * err, (q - 1.0) * err).mean())
@@ -447,11 +452,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                     y_actual_path[:n_path],
                     pred_np[:n_path],
                     quantiles=trial_cfg.model.quantiles,
+                    horizon=trial_cfg.forecast.primary_horizon_days,
                 )
                 weekly_pinball = _weekly_pinball_loss(
                     y_actual_path[:n_path],
                     pred_np[:n_path],
                     tuple(trial_cfg.model.quantiles),
+                    horizon=trial_cfg.forecast.primary_horizon_days,
                 )
                 fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
                 fold_weekly_objective = (
@@ -648,7 +655,7 @@ def run_hyperopt(
         )
     else:
         logger.info(
-            "Optuna best trial #%d: val_loss=%.6f",
+            "Optuna best trial #%d: weekly_objective=%.6f",
             result["best_trial"],
             result["best_value"],
         )
@@ -685,6 +692,6 @@ if __name__ == "__main__":
             print(f"Trial states: {counts}")
     else:
         print(f"Best trial: #{result['best_trial']}")
-        print(f"Best val_loss: {result['best_value']:.6f}")
+        print(f"Best weekly objective: {result['best_value']:.6f}")
         for k, v in result["best_params"].items():
             print(f"  {k}: {v}")

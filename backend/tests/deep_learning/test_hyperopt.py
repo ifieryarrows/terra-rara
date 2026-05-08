@@ -1,7 +1,9 @@
 """Tests for Optuna hyperopt result handling."""
 
+import inspect
 from types import SimpleNamespace
 
+import deep_learning.training.hyperopt as hyperopt_module
 from deep_learning.training.hyperopt import (
     KNOWN_GOOD_TRIAL_PARAMS,
     MIN_COMPLETED_TRIALS,
@@ -148,3 +150,11 @@ def test_enqueue_known_good_trial_only_for_empty_study():
     existing_study = FakeStudy(trials=[_trial(0, "COMPLETE", 0.5)])
     assert not _enqueue_known_good_trial(existing_study, base_cfg=None)
     assert existing_study.enqueued == []
+
+
+def test_hyperopt_reports_weekly_objective_label():
+    source = inspect.getsource(hyperopt_module)
+
+    assert "Best weekly objective" in source
+    assert "weekly_objective=%.6f" in source
+    assert "Best val_loss" not in source

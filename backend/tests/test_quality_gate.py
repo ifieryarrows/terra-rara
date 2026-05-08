@@ -12,10 +12,14 @@ GOOD_WEEKLY = {
     "weekly_median_sort_gap_max": 0.0,
     "weekly_sample_count": 120,
 }
+GOOD_QUANTILE = {
+    "quantile_crossing_rate": 0.0,
+    "median_sort_gap_max": 0.0,
+}
 
 
 def test_quality_gate_rejects_negative_sharpe_and_low_da():
-    passed, reasons = evaluate_quality_gate(da=0.4377, sharpe=-2.4054, vr=0.9424, **GOOD_WEEKLY)
+    passed, reasons = evaluate_quality_gate(da=0.4377, sharpe=-2.4054, vr=0.9424, **GOOD_QUANTILE, **GOOD_WEEKLY)
 
     assert passed is False
     assert any("DA=" in reason for reason in reasons)
@@ -48,6 +52,7 @@ def test_quality_gate_relaxes_only_weekly_da_for_small_sample():
         da=0.52,
         sharpe=0.0,
         vr=1.0,
+        **GOOD_QUANTILE,
         **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.515, "weekly_sample_count": 50},
     )
     assert passed is True, reasons

@@ -58,6 +58,94 @@ KNOWN_GOOD_CONFIG = {
     "batch_size": 32,
 }
 
+REQUIRED_PROMOTABLE_METRICS = (
+    "weekly_directional_accuracy",
+    "weekly_magnitude_ratio",
+    "weekly_tail_capture_rate",
+    "weekly_pi80_coverage",
+    "weekly_sample_count",
+    "weekly_quantile_crossing_rate",
+    "quantile_crossing_rate",
+)
+
+
+def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig) -> None:
+    if pred_np.ndim != 3:
+        raise RuntimeError(
+            f"Expected quantile prediction tensor [n, horizon, q], got shape={pred_np.shape}. "
+            "Weekly quality gate cannot run without full multi-horizon quantile predictions."
+        )
+    if pred_np.shape[1] < cfg.forecast.primary_horizon_days:
+        raise RuntimeError(
+            f"Prediction horizon too short: got {pred_np.shape[1]}, "
+            f"need {cfg.forecast.primary_horizon_days}"
+        )
+    if pred_np.shape[2] != len(cfg.model.quantiles):
+        raise RuntimeError(
+            f"Quantile dim mismatch: {pred_np.shape[2]} != {len(cfg.model.quantiles)}"
+        )
+
+
+def _predict_quantiles_to_np(mdl, dataloader, cfg: TFTASROConfig) -> np.ndarray:
+    pred = mdl.predict(dataloader, mode="quantiles")
+    pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
+    _validate_quantile_prediction_shape(pred_np, cfg)
+    return pred_np
+
+
+def _require_promotable_metrics(metrics: dict) -> None:
+    missing = [
+        key for key in REQUIRED_PROMOTABLE_METRICS
+        if key not in metrics or metrics.get(key) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Required TFT promotion metrics missing after evaluation: {missing}. "
+            "Refusing to write promotable TFT metadata."
+        )
+
+
+def _compute_test_metrics_from_quantiles(
+    y_actual_path: np.ndarray,
+    pred_np: np.ndarray,
+    cfg: TFTASROConfig,
+) -> dict[str, float]:
+    from deep_learning.training.metrics import compute_all_metrics, compute_weekly_metrics, select_prediction_horizon
+
+    pred_np = np.asarray(pred_np)
+    _validate_quantile_prediction_shape(pred_np, cfg)
+
+    median_idx = len(cfg.model.quantiles) // 2
+    pred_t1 = pred_np[:, 0, :]
+    y_pred_median = pred_t1[:, median_idx]
+    y_pred_q10 = pred_t1[:, 1]
+    y_pred_q90 = pred_t1[:, -2]
+    y_pred_q02 = pred_t1[:, 0]
+    y_pred_q98 = pred_t1[:, -1]
+
+    y_actual = select_prediction_horizon(y_actual_path, horizon_idx=0)
+    n = min(len(y_actual), len(y_pred_median))
+    test_metrics = compute_all_metrics(
+        y_actual[:n],
+        y_pred_median[:n],
+        y_pred_q10=y_pred_q10[:n],
+        y_pred_q90=y_pred_q90[:n],
+        y_pred_q02=y_pred_q02[:n],
+        y_pred_q98=y_pred_q98[:n],
+        y_pred_quantiles=pred_t1[:n],
+    )
+
+    n_path = min(len(y_actual_path), len(pred_np))
+    weekly_metrics = compute_weekly_metrics(
+        y_actual_path[:n_path],
+        pred_np[:n_path],
+        quantiles=cfg.model.quantiles,
+        horizon=cfg.forecast.primary_horizon_days,
+    )
+    test_metrics.update(weekly_metrics)
+    _require_promotable_metrics(test_metrics)
+    return test_metrics
+
 
 def train_tft_model(
     cfg: Optional[TFTASROConfig] = None,
@@ -84,7 +172,6 @@ def train_tft_model(
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
-    from deep_learning.training.metrics import compute_all_metrics, compute_weekly_metrics, select_prediction_horizon
     from deep_learning.training.callbacks import CurriculumLossScheduler, SWACallback
 
     if cfg is None:
@@ -149,14 +236,29 @@ def train_tft_model(
         cfg.model.dropout, cfg.model.attention_head_size,
         cfg.model.learning_rate, cfg.model.gradient_clip_val,
     )
-    logger.info(
-        "Training data  | samples=%d batch_size=%d batches/epoch=%d "
-        "patience=%d w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
-        len(training_ds), cfg.training.batch_size, n_batches,
-        cfg.training.early_stopping_patience,
-        cfg.asro.lambda_quantile, 1.0 - cfg.asro.lambda_quantile,
-        cfg.asro.lambda_vol,
-    )
+    if cfg.forecast.primary_horizon_days == 5:
+        logger.info(
+            "Training data  | samples=%d batch_size=%d batches/epoch=%d patience=%d",
+            len(training_ds), cfg.training.batch_size, n_batches,
+            cfg.training.early_stopping_patience,
+        )
+        logger.info(
+            "Weekly loss   | weekly_q=%.2f t1_q=%.2f directional=%.2f magnitude=%.2f vol=%.2f",
+            cfg.weekly_loss.lambda_weekly_quantile,
+            cfg.weekly_loss.lambda_t1_quantile,
+            cfg.weekly_loss.lambda_directional,
+            cfg.weekly_loss.lambda_magnitude,
+            cfg.weekly_loss.lambda_vol,
+        )
+    else:
+        logger.info(
+            "Training data  | samples=%d batch_size=%d batches/epoch=%d "
+            "patience=%d w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
+            len(training_ds), cfg.training.batch_size, n_batches,
+            cfg.training.early_stopping_patience,
+            cfg.asro.lambda_quantile, 1.0 - cfg.asro.lambda_quantile,
+            cfg.asro.lambda_vol,
+        )
     logger.info(
         "Model params   | total=%s trainable=%s",
         f"{total_params:,}", f"{trainable_params:,}",
@@ -238,8 +340,6 @@ def train_tft_model(
                 batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
             )
         y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
-        y_actual = select_prediction_horizon(y_actual_path, horizon_idx=0)
-
         # Gather top-k checkpoint paths
         best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
         ckpt_paths = sorted(best_k.keys(), key=lambda p: best_k[p]) if best_k else []
@@ -247,13 +347,8 @@ def train_tft_model(
         # Always include the just-trained model as a baseline
         all_pred_arrays = []
 
-        def _predict_to_np(mdl):
-            pred = mdl.predict(test_dl, return_x=True)
-            pt = pred.output if hasattr(pred, "output") else pred
-            return pt.cpu().numpy() if hasattr(pt, "cpu") else np.array(pt)
-
         # Predictions from the best model (already in memory)
-        all_pred_arrays.append(_predict_to_np(model))
+        all_pred_arrays.append(_predict_quantiles_to_np(model, test_dl, cfg))
 
         # Load additional checkpoints for ensemble
         for cp in ckpt_paths:
@@ -261,10 +356,10 @@ def train_tft_model(
                 continue  # already have this one
             try:
                 ckpt_model = load_tft_model(str(cp))
-                all_pred_arrays.append(_predict_to_np(ckpt_model))
+                all_pred_arrays.append(_predict_quantiles_to_np(ckpt_model, test_dl, cfg))
                 del ckpt_model
             except Exception as exc:
-                logger.debug("Skipping ensemble checkpoint %s: %s", cp, exc)
+                logger.warning("Skipping incompatible ensemble checkpoint %s: %s", cp, exc)
 
         ensemble_size = len(all_pred_arrays)
         logger.info(
@@ -277,39 +372,11 @@ def train_tft_model(
         else:
             pred_np = all_pred_arrays[0]
 
-        median_idx = len(cfg.model.quantiles) // 2
-        if pred_np.ndim == 3:
-            pred_t1 = pred_np[:, 0, :]
-            y_pred_median = pred_t1[:, median_idx]
-            y_pred_q10 = pred_t1[:, 1] if pred_t1.shape[1] > 2 else None
-            y_pred_q90 = pred_t1[:, -2] if pred_t1.shape[1] > 2 else None
-            y_pred_q02 = pred_t1[:, 0] if pred_t1.shape[1] > 2 else None
-            y_pred_q98 = pred_t1[:, -1] if pred_t1.shape[1] > 2 else None
-        else:
-            y_pred_median = pred_np.flatten()
-            pred_t1 = None
-            y_pred_q10 = y_pred_q90 = y_pred_q02 = y_pred_q98 = None
-
-        n = min(len(y_actual), len(y_pred_median))
-        test_metrics = compute_all_metrics(
-            y_actual[:n],
-            y_pred_median[:n],
-            y_pred_q10=y_pred_q10[:n] if y_pred_q10 is not None else None,
-            y_pred_q90=y_pred_q90[:n] if y_pred_q90 is not None else None,
-            y_pred_q02=y_pred_q02[:n] if y_pred_q02 is not None else None,
-            y_pred_q98=y_pred_q98[:n] if y_pred_q98 is not None else None,
-            y_pred_quantiles=pred_t1[:n] if pred_t1 is not None else None,
-        )
-        if pred_np.ndim == 3:
-            n_path = min(len(y_actual_path), len(pred_np))
-            weekly_metrics = compute_weekly_metrics(
-                y_actual_path[:n_path],
-                pred_np[:n_path],
-                quantiles=cfg.model.quantiles,
-            )
-            test_metrics.update(weekly_metrics)
+        test_metrics = _compute_test_metrics_from_quantiles(y_actual_path, pred_np, cfg)
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
+
+    _require_promotable_metrics(test_metrics)
 
     calibration_artifact = _write_conformal_calibration_artifact(
         cfg=cfg,
@@ -506,7 +573,7 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_madl"] = max(float(params["lambda_madl"]), 0.30)
 
         logger.info(
-            "Loaded Optuna best params (trial #%d, val_loss=%.4f): %s",
+            "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",
             data.get("best_trial", -1),
             data.get("best_value", float("nan")),
             params,

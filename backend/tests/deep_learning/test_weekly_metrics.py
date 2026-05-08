@@ -25,6 +25,23 @@ def test_compute_weekly_metrics_returns_sample_count():
     assert "weekly_magnitude_ratio" in metrics
 
 
+def test_compute_weekly_metrics_uses_configured_horizon():
+    actual = np.tile(np.array([[0.01, 0.02, 0.03, 0.50, 0.50]]), (4, 1))
+    pred = np.zeros((4, 5, 7), dtype=float)
+    pred[..., 3] = actual
+    pred[..., 1] = actual - 0.01
+    pred[..., 5] = actual + 0.01
+    pred[..., 0] = actual - 0.02
+    pred[..., 2] = actual - 0.005
+    pred[..., 4] = actual + 0.005
+    pred[..., 6] = actual + 0.02
+
+    metrics = compute_weekly_metrics(actual, pred, horizon=3)
+
+    assert metrics["weekly_sample_count"] == 4
+    assert np.isclose(metrics["weekly_mean_actual_abs"], 0.06)
+
+
 def test_cumulative_quantiles_rejects_short_path():
     pred = np.zeros((2, 4, 7))
     try:
