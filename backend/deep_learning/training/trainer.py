@@ -55,6 +55,13 @@ KNOWN_GOOD_CONFIG = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
+    "lambda_weekly_quantile": 0.60,
+    "lambda_t1_quantile": 0.15,
+    "lambda_directional": 0.10,
+    "lambda_magnitude": 0.40,
+    "weekly_lambda_vol": 0.35,
+    "lambda_width": 0.25,
+    "lambda_tail_width": 0.05,
     "batch_size": 32,
 }
 
@@ -251,7 +258,9 @@ def train_tft_model(
             cfg.weekly_loss.lambda_vol,
         )
         logger.info(
-            "Weekly guards | crossing=%.2f sanity=%.2f",
+            "Weekly guards | width=%.2f tail_width=%.2f crossing=%.2f sanity=%.2f",
+            cfg.weekly_loss.lambda_width,
+            cfg.weekly_loss.lambda_tail_width,
             cfg.weekly_loss.lambda_crossing,
             cfg.weekly_loss.lambda_sanity,
         )
@@ -415,6 +424,8 @@ def train_tft_model(
             "weekly_lambda_vol": cfg.weekly_loss.lambda_vol,
             "weekly_lambda_crossing": cfg.weekly_loss.lambda_crossing,
             "lambda_sanity": cfg.weekly_loss.lambda_sanity,
+            "lambda_width": cfg.weekly_loss.lambda_width,
+            "lambda_tail_width": cfg.weekly_loss.lambda_tail_width,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
@@ -508,13 +519,23 @@ def _write_conformal_calibration_artifact(
         q = tuple(cfg.model.quantiles)
         q10_idx = q.index(0.10)
         q90_idx = q.index(0.90)
-
-        global_adj = rolling_conformal_adjustment(
-            weekly_actual,
-            weekly_quantiles[:, q10_idx],
-            weekly_quantiles[:, q90_idx],
-            alpha=0.20,
+        raw_lower = weekly_quantiles[:, q10_idx]
+        raw_upper = weekly_quantiles[:, q90_idx]
+        validation_pi80_coverage = float(
+            np.mean((weekly_actual >= raw_lower) & (weekly_actual <= raw_upper))
         )
+
+        calibration_status = "fit"
+        if validation_pi80_coverage >= 0.90:
+            global_adj = 0.0
+            calibration_status = "skipped_interval_already_overcovered"
+        else:
+            global_adj = rolling_conformal_adjustment(
+                weekly_actual,
+                raw_lower,
+                raw_upper,
+                alpha=0.20,
+            )
         artifact = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "target": "weekly_5d_log_return",
@@ -531,6 +552,8 @@ def _write_conformal_calibration_artifact(
             "window": int(min(252, n)),
             "fit_split": "validation",
             "test_split_used_for_fit": False,
+            "validation_pi80_coverage": validation_pi80_coverage,
+            "calibration_status": calibration_status,
         }
 
         calibration_path = Path(cfg.training.best_model_path).parent / "conformal_calibration.json"
@@ -619,6 +642,7 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
             "lambda_magnitude", "lambda_crossing", "lambda_sanity",
+            "lambda_width", "lambda_tail_width",
         ) if k in params
     }
     if "weekly_lambda_vol" in params:

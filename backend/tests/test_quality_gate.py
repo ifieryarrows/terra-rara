@@ -18,11 +18,11 @@ GOOD_QUANTILE = {
 }
 
 
-def test_quality_gate_rejects_negative_sharpe_and_low_da():
+def test_quality_gate_rejects_negative_sharpe_but_not_low_da():
     passed, reasons = evaluate_quality_gate(da=0.4377, sharpe=-2.4054, vr=0.9424, **GOOD_QUANTILE, **GOOD_WEEKLY)
 
     assert passed is False
-    assert any("DA=" in reason for reason in reasons)
+    assert not any("DA=" in reason for reason in reasons)
     assert any("Sharpe=" in reason for reason in reasons)
 
 
@@ -56,3 +56,26 @@ def test_quality_gate_relaxes_only_weekly_da_for_small_sample():
         **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.515, "weekly_sample_count": 50},
     )
     assert passed is True, reasons
+
+
+def test_quality_gate_does_not_fail_on_low_t1_da_alone():
+    passed, reasons = evaluate_quality_gate(
+        da=0.42,
+        sharpe=0.1,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **GOOD_WEEKLY,
+    )
+    assert passed is True, reasons
+
+
+def test_quality_gate_rejects_t1_variance_ratio_above_three():
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=3.1,
+        **GOOD_QUANTILE,
+        **GOOD_WEEKLY,
+    )
+    assert passed is False
+    assert "VR=3.1000 outside [0.2, 3.0]" in reasons

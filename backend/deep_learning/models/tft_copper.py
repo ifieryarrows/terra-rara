@@ -138,6 +138,8 @@ try:
             lambda_vol: float = 0.15,
             lambda_crossing: float = 5.0,
             lambda_sanity: float = 0.10,
+            lambda_width: float = 0.25,
+            lambda_tail_width: float = 0.05,
             sharpe_eps: float = 1e-6,
             daily_log_return_bound: float = 0.08,
             weekly_log_return_bound: float = 0.20,
@@ -150,13 +152,17 @@ try:
             self.lambda_vol = lambda_vol
             self.lambda_crossing = lambda_crossing
             self.lambda_sanity = lambda_sanity
+            self.lambda_width = lambda_width
+            self.lambda_tail_width = lambda_tail_width
             self.sharpe_eps = sharpe_eps
             self.daily_log_return_bound = daily_log_return_bound
             self.weekly_log_return_bound = weekly_log_return_bound
             self.median_idx = len(quantiles) // 2
             q = list(quantiles)
+            self._q02_idx = q.index(0.02) if 0.02 in q else 0
             self._q10_idx = q.index(0.10) if 0.10 in q else 1
             self._q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
+            self._q98_idx = q.index(0.98) if 0.98 in q else len(q) - 1
 
         def _pinball(self, pred: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
             q = torch.tensor(self.quantiles, device=pred.device, dtype=pred.dtype).view(1, -1)
@@ -200,8 +206,21 @@ try:
                 pred_weekly_quantiles[:, self._q90_idx]
                 - pred_weekly_quantiles[:, self._q10_idx]
             )
-            target_spread = 2.0 * actual_weekly.std()
-            vol_loss = torch.abs(weekly_spread.mean() - target_spread)
+            actual_weekly_std = actual_weekly.std() + self.sharpe_eps
+            target_spread = 2.56 * actual_weekly_std
+            mean_weekly_spread = weekly_spread.mean()
+            vol_loss = torch.abs(mean_weekly_spread - target_spread)
+            width_ratio = mean_weekly_spread / (target_spread + self.sharpe_eps)
+            width_loss = torch.relu(width_ratio - 2.0).pow(2)
+
+            weekly_tail_spread = (
+                pred_weekly_quantiles[:, self._q98_idx]
+                - pred_weekly_quantiles[:, self._q02_idx]
+            )
+            target_tail_spread = 4.10 * actual_weekly_std
+            tail_width_loss = torch.relu(
+                weekly_tail_spread.mean() - 2.0 * target_tail_spread
+            )
             daily_crossing_loss = quantile_crossing_penalty(y_pred)
             weekly_crossing_loss = quantile_crossing_penalty(pred_weekly_quantiles.unsqueeze(1))
             crossing_loss = daily_crossing_loss + weekly_crossing_loss
@@ -226,6 +245,8 @@ try:
                 + self.lambda_directional * _to_scalar(weekly_directional)
                 + self.lambda_magnitude * _to_scalar(magnitude_loss)
                 + self.lambda_vol * _to_scalar(vol_loss)
+                + self.lambda_width * _to_scalar(width_loss)
+                + self.lambda_tail_width * _to_scalar(tail_width_loss)
                 + self.lambda_crossing * _to_scalar(crossing_loss)
                 + self.lambda_sanity * _to_scalar(sanity_loss)
             )
@@ -269,14 +290,18 @@ def create_tft_model(
             lambda_vol=cfg.weekly_loss.lambda_vol,
             lambda_crossing=cfg.weekly_loss.lambda_crossing,
             lambda_sanity=cfg.weekly_loss.lambda_sanity,
+            lambda_width=cfg.weekly_loss.lambda_width,
+            lambda_tail_width=cfg.weekly_loss.lambda_tail_width,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f crossing=%.2f sanity=%.2f",
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f width=%.2f tail_width=%.2f crossing=%.2f sanity=%.2f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_directional,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_vol,
+            cfg.weekly_loss.lambda_width,
+            cfg.weekly_loss.lambda_tail_width,
             cfg.weekly_loss.lambda_crossing,
             cfg.weekly_loss.lambda_sanity,
         )

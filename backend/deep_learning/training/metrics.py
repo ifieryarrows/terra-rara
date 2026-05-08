@@ -176,6 +176,27 @@ def prediction_interval_width(
     return float((upper - lower).mean())
 
 
+def interval_score(
+    y_actual: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    alpha: float = 0.20,
+) -> float:
+    """
+    Mean interval score for a central prediction interval.
+
+    Lower is better. The score balances interval width with penalties when
+    actual values fall below/above the interval.
+    """
+    y = np.asarray(y_actual, dtype=np.float64)
+    lo = np.asarray(lower, dtype=np.float64)
+    hi = np.asarray(upper, dtype=np.float64)
+    width = hi - lo
+    below = np.maximum(lo - y, 0.0)
+    above = np.maximum(y - hi, 0.0)
+    return float(np.mean(width + (2.0 / alpha) * below + (2.0 / alpha) * above))
+
+
 def compute_all_metrics(
     y_actual: np.ndarray,
     y_pred_median: np.ndarray,
@@ -277,5 +298,18 @@ def compute_weekly_metrics(
     weekly_metrics["weekly_magnitude_ratio"] = magnitude_ratio(weekly_actual, weekly_pred)
     weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
     weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))
+    weekly_std = float(np.std(weekly_actual))
+    weekly_metrics["weekly_pi80_width_ratio"] = float(
+        weekly_metrics.get("weekly_pi80_width", 0.0) / (2.56 * weekly_std + 1e-8)
+    )
+    weekly_metrics["weekly_pi96_width_ratio"] = float(
+        weekly_metrics.get("weekly_pi96_width", 0.0) / (4.10 * weekly_std + 1e-8)
+    )
+    weekly_metrics["weekly_interval_score_80"] = interval_score(
+        weekly_actual,
+        weekly_quantiles[:, q10_idx],
+        weekly_quantiles[:, q90_idx],
+        alpha=0.20,
+    )
     weekly_metrics["weekly_sample_count"] = int(len(weekly_actual))
     return weekly_metrics

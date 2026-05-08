@@ -143,6 +143,8 @@ class WeeklyLossConfig:
     lambda_vol: float = 0.15
     lambda_crossing: float = 5.0
     lambda_sanity: float = 0.10
+    lambda_width: float = 0.25
+    lambda_tail_width: float = 0.05
 
 
 @dataclass(frozen=True)

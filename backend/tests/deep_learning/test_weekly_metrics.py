@@ -1,6 +1,11 @@
 import numpy as np
 
-from deep_learning.training.metrics import compute_weekly_metrics, cumulative_horizon, cumulative_quantiles
+from deep_learning.training.metrics import (
+    compute_weekly_metrics,
+    cumulative_horizon,
+    cumulative_quantiles,
+    interval_score,
+)
 
 
 def test_cumulative_horizon_sums_first_five_steps():
@@ -40,6 +45,52 @@ def test_compute_weekly_metrics_uses_configured_horizon():
 
     assert metrics["weekly_sample_count"] == 4
     assert np.isclose(metrics["weekly_mean_actual_abs"], 0.06)
+    assert np.isfinite(metrics["weekly_pi80_width_ratio"])
+    assert np.isfinite(metrics["weekly_pi96_width_ratio"])
+    assert np.isfinite(metrics["weekly_interval_score_80"])
+
+
+def test_weekly_width_ratios_match_expected_formulas():
+    actual = np.array(
+        [
+            [0.01, 0.01, 0.0, 0.0, 0.0],
+            [-0.01, -0.01, 0.0, 0.0, 0.0],
+            [0.02, 0.0, 0.0, 0.0, 0.0],
+            [-0.02, 0.0, 0.0, 0.0, 0.0],
+        ]
+    )
+    pred = np.zeros((4, 5, 7), dtype=float)
+    pred[..., 3] = actual
+    pred[..., 1] = actual - 0.002
+    pred[..., 5] = actual + 0.002
+    pred[..., 0] = actual - 0.004
+    pred[..., 2] = actual - 0.001
+    pred[..., 4] = actual + 0.001
+    pred[..., 6] = actual + 0.004
+
+    metrics = compute_weekly_metrics(actual, pred, horizon=5)
+    weekly_actual = cumulative_horizon(actual, horizon=5)
+    expected_pi80_width = 0.004 * 5
+    expected_pi96_width = 0.008 * 5
+
+    assert np.isclose(
+        metrics["weekly_pi80_width_ratio"],
+        expected_pi80_width / (2.56 * weekly_actual.std() + 1e-8),
+    )
+    assert np.isclose(
+        metrics["weekly_pi96_width_ratio"],
+        expected_pi96_width / (4.10 * weekly_actual.std() + 1e-8),
+    )
+
+
+def test_interval_score_penalizes_width_and_misses():
+    actual = np.array([0.0, 0.0])
+    tight = interval_score(actual, np.array([-0.1, -0.1]), np.array([0.1, 0.1]), alpha=0.20)
+    wide = interval_score(actual, np.array([-0.5, -0.5]), np.array([0.5, 0.5]), alpha=0.20)
+    missed = interval_score(actual, np.array([0.1, 0.1]), np.array([0.2, 0.2]), alpha=0.20)
+
+    assert wide > tight
+    assert missed > tight
 
 
 def test_cumulative_quantiles_rejects_short_path():

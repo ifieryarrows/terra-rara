@@ -52,9 +52,13 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.model.hidden_size == 48
     assert updated.asro.lambda_quantile == 0.25
     assert updated.asro.lambda_madl == 0.40
-    assert updated.weekly_loss.lambda_weekly_quantile == 0.55
-    assert updated.weekly_loss.lambda_magnitude == 0.35
-    assert updated.weekly_loss.lambda_vol == 0.15
+    assert updated.weekly_loss.lambda_weekly_quantile == 0.60
+    assert updated.weekly_loss.lambda_t1_quantile == 0.15
+    assert updated.weekly_loss.lambda_directional == 0.10
+    assert updated.weekly_loss.lambda_magnitude == 0.40
+    assert updated.weekly_loss.lambda_vol == 0.35
+    assert updated.weekly_loss.lambda_width == 0.25
+    assert updated.weekly_loss.lambda_tail_width == 0.05
     assert updated.training.batch_size == 32
 
 
@@ -67,6 +71,8 @@ def test_weekly_loss_defaults_are_conservative_after_explosion_run():
     assert cfg.weekly_loss.lambda_vol == 0.15
     assert cfg.weekly_loss.lambda_crossing == 5.0
     assert cfg.weekly_loss.lambda_sanity == 0.10
+    assert cfg.weekly_loss.lambda_width == 0.25
+    assert cfg.weekly_loss.lambda_tail_width == 0.05
 
 
 def test_lookback_days_is_3_years():

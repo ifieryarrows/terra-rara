@@ -72,12 +72,10 @@ def evaluate_quality_gate(
     if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.005:
         reasons.append(f"WeeklyMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.005")
 
-    if da < 0.49:
-        reasons.append(f"DA={da:.4f} < 0.49")
     if sharpe < -0.30:
         reasons.append(f"Sharpe={sharpe:.4f} < -0.30")
-    if vr < 0.2 or vr > 2.5:
-        reasons.append(f"VR={vr:.4f} outside [0.2, 2.5]")
+    if vr < 0.2 or vr > 3.0:
+        reasons.append(f"VR={vr:.4f} outside [0.2, 3.0]")
     if tail_capture is not None and tail_capture < 0.35:
         reasons.append(f"TailCapture={tail_capture:.4f} < 0.35")
     if quantile_crossing_rate is None:

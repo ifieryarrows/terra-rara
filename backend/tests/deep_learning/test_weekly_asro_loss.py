@@ -58,3 +58,43 @@ def test_sanity_penalty_discourages_implausible_log_returns():
         lambda_sanity=10.0,
     )
     assert loss.loss(pred_huge, actual) > loss.loss(pred_normal, actual)
+
+
+def test_excess_weekly_width_increases_loss():
+    actual = torch.tensor([[0.02, 0.0, 0.0, 0.0, 0.0], [-0.02, 0.0, 0.0, 0.0, 0.0]])
+    pred_normal = _path_from_median(actual, spread=0.005)
+    pred_wide = _path_from_median(actual, spread=0.020)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_directional=0.0,
+        lambda_magnitude=0.0,
+        lambda_vol=0.0,
+        lambda_crossing=0.0,
+        lambda_sanity=0.0,
+        lambda_width=10.0,
+        lambda_tail_width=0.0,
+    )
+    assert loss.loss(pred_wide, actual) > loss.loss(pred_normal, actual)
+
+
+def test_excess_tail_width_increases_loss():
+    actual = torch.tensor([[0.02, 0.0, 0.0, 0.0, 0.0], [-0.02, 0.0, 0.0, 0.0, 0.0]])
+    pred_normal = _path_from_median(actual, spread=0.005)
+    pred_tail = pred_normal.clone()
+    pred_tail[..., 0] = pred_tail[..., 3] - 0.20
+    pred_tail[..., 6] = pred_tail[..., 3] + 0.20
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_directional=0.0,
+        lambda_magnitude=0.0,
+        lambda_vol=0.0,
+        lambda_crossing=0.0,
+        lambda_sanity=0.0,
+        lambda_width=0.0,
+        lambda_tail_width=10.0,
+    )
+    assert loss.loss(pred_tail, actual) > loss.loss(pred_normal, actual)
