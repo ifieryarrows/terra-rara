@@ -131,13 +131,16 @@ try:
         def __init__(
             self,
             quantiles: list,
-            lambda_weekly_quantile: float = 0.35,
-            lambda_t1_quantile: float = 0.15,
-            lambda_directional: float = 0.25,
-            lambda_magnitude: float = 0.15,
-            lambda_vol: float = 0.05,
-            lambda_crossing: float = 1.0,
+            lambda_weekly_quantile: float = 0.55,
+            lambda_t1_quantile: float = 0.10,
+            lambda_directional: float = 0.15,
+            lambda_magnitude: float = 0.35,
+            lambda_vol: float = 0.15,
+            lambda_crossing: float = 5.0,
+            lambda_sanity: float = 0.10,
             sharpe_eps: float = 1e-6,
+            daily_log_return_bound: float = 0.08,
+            weekly_log_return_bound: float = 0.20,
         ):
             super().__init__(quantiles=quantiles)
             self.lambda_weekly_quantile = lambda_weekly_quantile
@@ -146,7 +149,10 @@ try:
             self.lambda_magnitude = lambda_magnitude
             self.lambda_vol = lambda_vol
             self.lambda_crossing = lambda_crossing
+            self.lambda_sanity = lambda_sanity
             self.sharpe_eps = sharpe_eps
+            self.daily_log_return_bound = daily_log_return_bound
+            self.weekly_log_return_bound = weekly_log_return_bound
             self.median_idx = len(quantiles) // 2
             q = list(quantiles)
             self._q10_idx = q.index(0.10) if 0.10 in q else 1
@@ -196,7 +202,17 @@ try:
             )
             target_spread = 2.0 * actual_weekly.std()
             vol_loss = torch.abs(weekly_spread.mean() - target_spread)
-            crossing_loss = quantile_crossing_penalty(y_pred)
+            daily_crossing_loss = quantile_crossing_penalty(y_pred)
+            weekly_crossing_loss = quantile_crossing_penalty(pred_weekly_quantiles.unsqueeze(1))
+            crossing_loss = daily_crossing_loss + weekly_crossing_loss
+
+            daily_bound_loss = torch.relu(
+                median_path.abs() - self.daily_log_return_bound
+            ).pow(2).mean()
+            weekly_bound_loss = torch.relu(
+                pred_weekly_median.abs() - self.weekly_log_return_bound
+            ).pow(2).mean()
+            sanity_loss = daily_bound_loss + weekly_bound_loss
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
                 # pytorch_forecasting metrics can return per-sample tensors;
@@ -211,6 +227,7 @@ try:
                 + self.lambda_magnitude * _to_scalar(magnitude_loss)
                 + self.lambda_vol * _to_scalar(vol_loss)
                 + self.lambda_crossing * _to_scalar(crossing_loss)
+                + self.lambda_sanity * _to_scalar(sanity_loss)
             )
 
 except ImportError:
@@ -250,16 +267,18 @@ def create_tft_model(
             lambda_directional=cfg.weekly_loss.lambda_directional,
             lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
             lambda_vol=cfg.weekly_loss.lambda_vol,
-            lambda_crossing=cfg.asro.lambda_crossing,
+            lambda_crossing=cfg.weekly_loss.lambda_crossing,
+            lambda_sanity=cfg.weekly_loss.lambda_sanity,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f crossing=%.2f",
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f crossing=%.2f sanity=%.2f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_directional,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_vol,
-            cfg.asro.lambda_crossing,
+            cfg.weekly_loss.lambda_crossing,
+            cfg.weekly_loss.lambda_sanity,
         )
     elif use_asro and ASROPFLoss is not None:
         loss = ASROPFLoss(

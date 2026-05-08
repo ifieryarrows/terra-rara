@@ -51,6 +51,8 @@ def evaluate_quality_gate(
         reasons.append("Missing weekly_magnitude_ratio")
     elif weekly_magnitude_ratio < 0.65 or weekly_magnitude_ratio > 1.35:
         reasons.append(f"WeeklyMagnitudeRatio={weekly_magnitude_ratio:.4f} outside [0.65, 1.35]")
+        if weekly_magnitude_ratio > 3.0:
+            reasons.append(f"WeeklyMagnitudeExplosion={weekly_magnitude_ratio:.4f} > 3.0")
 
     if weekly_tail_capture_rate is None:
         reasons.append("Missing weekly_tail_capture_rate")

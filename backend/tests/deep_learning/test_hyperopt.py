@@ -49,6 +49,7 @@ def test_build_result_payload_handles_all_pruned_trials():
         "median_prune": 3,
         "fold_sharpe_prune": 0,
         "weekly_magnitude_collapse": 0,
+        "weekly_magnitude_explosion": 0,
         "error": 0,
     }
     assert result["fold_diagnostics"] == []
@@ -150,6 +151,17 @@ def test_enqueue_known_good_trial_only_for_empty_study():
     existing_study = FakeStudy(trials=[_trial(0, "COMPLETE", 0.5)])
     assert not _enqueue_known_good_trial(existing_study, base_cfg=None)
     assert existing_study.enqueued == []
+
+
+def test_known_good_trial_includes_weekly_loss_search_params():
+    for key in (
+        "lambda_weekly_quantile",
+        "lambda_t1_quantile",
+        "lambda_directional",
+        "lambda_magnitude",
+        "weekly_lambda_vol",
+    ):
+        assert key in KNOWN_GOOD_TRIAL_PARAMS
 
 
 def test_hyperopt_reports_weekly_objective_label():

@@ -41,3 +41,20 @@ def test_quantile_crossing_increases_loss():
     crossed[..., 1], crossed[..., 5] = crossed[..., 5].clone(), crossed[..., 1].clone()
     loss = tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_crossing=10.0)
     assert loss.loss(crossed, actual) > loss.loss(pred, actual)
+
+
+def test_sanity_penalty_discourages_implausible_log_returns():
+    actual = torch.tensor([[0.01, 0.01, 0.0, 0.0, 0.0], [-0.01, -0.01, 0.0, 0.0, 0.0]])
+    pred_normal = _path_from_median(actual)
+    pred_huge = _path_from_median(torch.sign(actual + 1e-6) * 0.25)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_directional=0.0,
+        lambda_magnitude=0.0,
+        lambda_vol=0.0,
+        lambda_crossing=0.0,
+        lambda_sanity=10.0,
+    )
+    assert loss.loss(pred_huge, actual) > loss.loss(pred_normal, actual)

@@ -250,6 +250,11 @@ def train_tft_model(
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_vol,
         )
+        logger.info(
+            "Weekly guards | crossing=%.2f sanity=%.2f",
+            cfg.weekly_loss.lambda_crossing,
+            cfg.weekly_loss.lambda_sanity,
+        )
     else:
         logger.info(
             "Training data  | samples=%d batch_size=%d batches/epoch=%d "
@@ -403,6 +408,13 @@ def train_tft_model(
             "lambda_quantile": cfg.asro.lambda_quantile,
             "lambda_madl": cfg.asro.lambda_madl,
             "lambda_crossing": cfg.asro.lambda_crossing,
+            "lambda_weekly_quantile": cfg.weekly_loss.lambda_weekly_quantile,
+            "lambda_t1_quantile": cfg.weekly_loss.lambda_t1_quantile,
+            "lambda_directional": cfg.weekly_loss.lambda_directional,
+            "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
+            "weekly_lambda_vol": cfg.weekly_loss.lambda_vol,
+            "weekly_lambda_crossing": cfg.weekly_loss.lambda_crossing,
+            "lambda_sanity": cfg.weekly_loss.lambda_sanity,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
@@ -603,11 +615,24 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     training_overrides = {
         k: params[k] for k in ("batch_size",) if k in params
     }
+    weekly_loss_overrides = {
+        k: params[k] for k in (
+            "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
+            "lambda_magnitude", "lambda_crossing", "lambda_sanity",
+        ) if k in params
+    }
+    if "weekly_lambda_vol" in params:
+        weekly_loss_overrides["lambda_vol"] = params["weekly_lambda_vol"]
 
     new_model = replace(cfg.model, **model_overrides) if model_overrides else cfg.model
     new_asro = replace(cfg.asro, **asro_overrides) if asro_overrides else cfg.asro
+    new_weekly_loss = (
+        replace(cfg.weekly_loss, **weekly_loss_overrides)
+        if weekly_loss_overrides
+        else cfg.weekly_loss
+    )
     new_training = replace(cfg.training, **training_overrides) if training_overrides else cfg.training
-    return replace(cfg, model=new_model, asro=new_asro, training=new_training)
+    return replace(cfg, model=new_model, asro=new_asro, weekly_loss=new_weekly_loss, training=new_training)
 
 
 def _persist_tft_metadata(symbol: str, result: dict) -> None:

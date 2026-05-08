@@ -32,6 +32,7 @@ from deep_learning.config import (
     TFTASROConfig,
     TFTModelConfig,
     TrainingConfig,
+    WeeklyLossConfig,
     get_tft_config,
 )
 
@@ -53,6 +54,11 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
+    "lambda_weekly_quantile": 0.55,
+    "lambda_t1_quantile": 0.10,
+    "lambda_directional": 0.15,
+    "lambda_magnitude": 0.35,
+    "weekly_lambda_vol": 0.15,
     "batch_size": 32,
 }
 
@@ -121,6 +127,7 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "median_prune": 0,
         "fold_sharpe_prune": 0,
         "weekly_magnitude_collapse": 0,
+        "weekly_magnitude_explosion": 0,
         "error": 0,
     }
     fold_diagnostics: list[dict] = []
@@ -242,6 +249,16 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         risk_free_rate=0.0,
     )
 
+    weekly_loss_cfg = WeeklyLossConfig(
+        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.45, 0.65, step=0.05),
+        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.10, 0.20, step=0.05),
+        lambda_directional=trial.suggest_float("lambda_directional", 0.10, 0.25, step=0.05),
+        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.25, 0.50, step=0.05),
+        lambda_vol=trial.suggest_float("weekly_lambda_vol", 0.10, 0.25, step=0.05),
+        lambda_crossing=base_cfg.weekly_loss.lambda_crossing,
+        lambda_sanity=base_cfg.weekly_loss.lambda_sanity,
+    )
+
     training_cfg = TrainingConfig(
         # CI budget: 3h limit @ CPU-only.
         # 15 trials × 3 folds × 25 epochs ≈ 108 min → leaves 70 min for final trainer.
@@ -270,7 +287,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         training=training_cfg,
         feature_store=base_cfg.feature_store,
         forecast=base_cfg.forecast,
-        weekly_loss=base_cfg.weekly_loss,
+        weekly_loss=weekly_loss_cfg,
     )
 
 
@@ -410,14 +427,16 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 pred_np = np.array(pred_tensor)
 
             median_idx = len(trial_cfg.model.quantiles) // 2
-            if pred_np.ndim == 3:
-                pred_t1 = pred_np[:, 0, :]
-                y_pred = pred_t1[:, median_idx]
-                fold_crossing_rate = quantile_crossing_rate(pred_t1)
-                _, fold_median_gap = quantile_median_sort_gap(pred_t1, median_idx)
-            else:
-                pred_t1 = None
-                y_pred = pred_np.flatten()
+            if pred_np.ndim != 3:
+                raise ValueError(f"Expected quantile prediction tensor [n,horizon,q], got {pred_np.shape}")
+            if pred_np.shape[1] < trial_cfg.forecast.primary_horizon_days:
+                raise ValueError(
+                    f"Prediction horizon too short: {pred_np.shape[1]} < {trial_cfg.forecast.primary_horizon_days}"
+                )
+            pred_t1 = pred_np[:, 0, :]
+            y_pred = pred_t1[:, median_idx]
+            fold_crossing_rate = quantile_crossing_rate(pred_t1)
+            _, fold_median_gap = quantile_median_sort_gap(pred_t1, median_idx)
 
             y_actual_parts = []
             for batch in fold_val_dl:
@@ -446,32 +465,32 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             sr_std = float(strategy_returns.std()) + 1e-9
             fold_sharpe = sr_mean / sr_std
 
-            if pred_np.ndim == 3:
-                n_path = min(len(y_actual_path), len(pred_np))
-                weekly = compute_weekly_metrics(
-                    y_actual_path[:n_path],
-                    pred_np[:n_path],
-                    quantiles=trial_cfg.model.quantiles,
-                    horizon=trial_cfg.forecast.primary_horizon_days,
-                )
-                weekly_pinball = _weekly_pinball_loss(
-                    y_actual_path[:n_path],
-                    pred_np[:n_path],
-                    tuple(trial_cfg.model.quantiles),
-                    horizon=trial_cfg.forecast.primary_horizon_days,
-                )
-                fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
-                fold_weekly_objective = (
-                    0.35 * weekly_pinball
-                    + 0.20 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
-                    + 0.20 * abs(np.log(fold_weekly_mr + 1e-8))
-                    + 0.15 * max(0.0, abs(float(weekly.get("weekly_pi80_coverage", 0.0)) - 0.80) - 0.06)
-                    + 0.10 * float(weekly.get("weekly_quantile_crossing_rate", 0.0))
-                )
+            n_path = min(len(y_actual_path), len(pred_np))
+            weekly = compute_weekly_metrics(
+                y_actual_path[:n_path],
+                pred_np[:n_path],
+                quantiles=trial_cfg.model.quantiles,
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
+            weekly_pinball = _weekly_pinball_loss(
+                y_actual_path[:n_path],
+                pred_np[:n_path],
+                tuple(trial_cfg.model.quantiles),
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
+            fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
+            fold_weekly_objective = (
+                0.40 * weekly_pinball
+                + 0.15 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
+                + 0.35 * abs(np.log(fold_weekly_mr + 1e-8))
+                + 0.20 * max(0.0, abs(float(weekly.get("weekly_pi80_coverage", 0.0)) - 0.80) - 0.06)
+                + 0.20 * float(weekly.get("weekly_quantile_crossing_rate", 0.0))
+            )
         except Exception as exc:
-            logger.debug(
+            logger.warning(
                 "Trial %d fold %d metrics failed: %s", trial.number, fold_idx, exc
             )
+            return float("inf")
 
         fold_vr_list.append(fold_vr)
         fold_da_list.append(fold_da)
@@ -522,6 +541,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 trial.number, fold_idx + 1, fold_weekly_mr,
             )
             trial.set_user_attr("prune_reason", "weekly_magnitude_collapse")
+            raise optuna.exceptions.TrialPruned()
+
+        if fold_weekly_mr > 3.0 and fold_idx >= 1 and not protect_trial:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly_magnitude_ratio=%.4f > 3.0",
+                trial.number, fold_idx + 1, fold_weekly_mr,
+            )
+            trial.set_user_attr("prune_reason", "weekly_magnitude_explosion")
             raise optuna.exceptions.TrialPruned()
 
         # Report running average so MedianPruner can kill bad trials early
