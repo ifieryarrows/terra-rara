@@ -4,7 +4,7 @@ Tests for API endpoints.
 
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import asyncio
 
@@ -485,7 +485,7 @@ class TestNewsStatsFilters:
             def query(self, *_args):
                 return FakeQuery(self.rows)
 
-        now = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc) - timedelta(hours=1)
 
         def make_row(title, source, publisher, label, relevance, event_type):
             raw = SimpleNamespace(
@@ -562,9 +562,10 @@ class TestSentimentSummary:
         from app import main as main_module
 
         class FakeQuery:
-            def __init__(self, kind, session):
+            def __init__(self, kind, session, entities):
                 self.kind = kind
                 self.session = session
+                self.entities = entities
                 self.filters = []
 
             def filter(self, *criteria):
@@ -657,10 +658,10 @@ class TestSentimentSummary:
             def __exit__(self, *_args):
                 return False
 
-            def query(self, *_args):
+            def query(self, *entities):
                 kind = self.kinds[self.query_index]
                 self.query_index += 1
-                query = FakeQuery(kind, self)
+                query = FakeQuery(kind, self, entities)
                 self.queries.append(query)
                 return query
 
@@ -671,6 +672,10 @@ class TestSentimentSummary:
 
         assert result["index"] == -0.2
         assert len(result["recent_articles"]) == 1
+        daily_entities = fake_session.queries[0].entities
+        daily_entity_keys = {getattr(entity, "key", None) for entity in daily_entities}
+        assert all(entity is not main_module.DailySentimentV2 for entity in daily_entities)
+        assert {"date", "sentiment_index", "news_count", "avg_confidence"} <= daily_entity_keys
         assert fake_session.queries[2].kind == "recent"
         assert fake_session.queries[2].filters
         assert result["data_freshness"]["window_days"] == 7

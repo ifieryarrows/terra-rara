@@ -202,9 +202,11 @@ def get_current_sentiment(session: Session) -> Optional[float]:
     source = str(getattr(settings, "scoring_source", "news_articles")).strip().lower()
 
     if source == "news_processed":
-        latest_v2 = session.query(DailySentimentV2).order_by(
-            DailySentimentV2.date.desc()
-        ).first()
+        latest_v2 = (
+            session.query(DailySentimentV2.sentiment_index)
+            .order_by(DailySentimentV2.date.desc())
+            .first()
+        )
         if latest_v2 is not None:
             return latest_v2.sentiment_index
         logger.warning("No rows in daily_sentiments_v2; falling back to legacy daily_sentiments")

@@ -1565,7 +1565,12 @@ async def get_sentiment_summary(
 
         # ---- 1) Preferred source: DailySentimentV2 (commodity-aware) ----
         v2_rows = (
-            session.query(DailySentimentV2)
+            session.query(
+                DailySentimentV2.date,
+                DailySentimentV2.sentiment_index,
+                DailySentimentV2.news_count,
+                DailySentimentV2.avg_confidence,
+            )
             .filter(DailySentimentV2.date >= window_start)
             .order_by(DailySentimentV2.date.asc())
             .all()

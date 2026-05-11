@@ -14,6 +14,21 @@ from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+WEEKLY_NEWS_SENTIMENT_COLUMNS = (
+    ("market_date", "DATE", "DATE"),
+    ("available_at", "TIMESTAMPTZ", "TIMESTAMP"),
+    ("cutoff_version", "TEXT DEFAULT 'market_close_v1'", "TEXT DEFAULT 'market_close_v1'"),
+)
+
+WEEKLY_DAILY_SENTIMENT_COLUMNS = (
+    ("market_date", "DATE", "DATE"),
+    ("material_news_count", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+    ("after_close_news_count", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+    ("stale_sentiment_flag", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT FALSE"),
+    ("days_since_last_material_news", "INTEGER DEFAULT 999", "INTEGER DEFAULT 999"),
+    ("cutoff_version", "TEXT DEFAULT 'market_close_v1'", "TEXT DEFAULT 'market_close_v1'"),
+)
+
 # SQLAlchemy declarative base
 Base = declarative_base()
 
@@ -119,13 +134,60 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
+def _sqlite_columns(conn, table_name: str) -> set[str]:
+    result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+    return {row[1] for row in result.fetchall()}
+
+
+def _ensure_columns(conn, table_name: str, columns, is_sqlite: bool) -> None:
+    if is_sqlite:
+        existing = _sqlite_columns(conn, table_name)
+        if not existing:
+            raise RuntimeError(f"Expected table {table_name} to exist before migration")
+        for column_name, _pg_type, sqlite_type in columns:
+            if column_name not in existing:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN {column_name} {sqlite_type}"
+                    )
+                )
+        return
+
+    for column_name, pg_type, _sqlite_type in columns:
+        conn.execute(
+            text(
+                f"ALTER TABLE {table_name} "
+                f"ADD COLUMN IF NOT EXISTS {column_name} {pg_type}"
+            )
+        )
+
+
+def _ensure_weekly_sentiment_schema(conn, is_sqlite: bool) -> None:
+    """Ensure market-date sentiment columns from migration 003 exist."""
+    _ensure_columns(conn, "news_sentiments_v2", WEEKLY_NEWS_SENTIMENT_COLUMNS, is_sqlite)
+    _ensure_columns(conn, "daily_sentiments_v2", WEEKLY_DAILY_SENTIMENT_COLUMNS, is_sqlite)
+
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_news_sentiments_v2_market_date "
+            "ON news_sentiments_v2(market_date)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_daily_sentiments_v2_market_date "
+            "ON daily_sentiments_v2(market_date)"
+        )
+    )
+
+
 def _run_migrations(engine):
     """
     Run necessary database migrations for schema changes.
     These are safe to run multiple times (idempotent).
     """
-    settings = get_settings()
-    is_sqlite = settings.database_url.startswith("sqlite")
+    is_sqlite = engine.dialect.name == "sqlite"
     
     with engine.connect() as conn:
         # Migration: Add ai_stance column to ai_commentaries if it doesn't exist
@@ -215,6 +277,15 @@ def _run_migrations(engine):
             logger.info("Migration: Ensured TFT-ASRO metric columns exist")
         except Exception as e:
             logger.debug(f"Migration check for TFT metric columns: {e}")
+
+        try:
+            _ensure_weekly_sentiment_schema(conn, is_sqlite)
+            conn.commit()
+            logger.info("Migration: Ensured weekly market-date sentiment schema exists")
+        except Exception:
+            conn.rollback()
+            logger.exception("Migration failed for weekly market-date sentiment schema")
+            raise
 
 
 def init_db():
