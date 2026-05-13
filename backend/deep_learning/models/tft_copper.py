@@ -218,7 +218,8 @@ try:
             mean_weekly_spread = weekly_spread.mean()
             vol_loss = torch.abs(mean_weekly_spread - target_spread)
             width_ratio = mean_weekly_spread / (target_spread + self.sharpe_eps)
-            width_loss = torch.abs(torch.log(width_ratio + self.sharpe_eps))
+            safe_width_ratio = torch.clamp(width_ratio + self.sharpe_eps, min=1e-6)
+            width_loss = torch.abs(torch.log(safe_width_ratio))
             width_loss = width_loss + torch.relu(width_ratio - 2.0).pow(2)
 
             weekly_tail_spread = (
@@ -227,7 +228,8 @@ try:
             )
             target_tail_spread = 4.10 * actual_weekly_std
             tail_width_ratio = weekly_tail_spread.mean() / (target_tail_spread + self.sharpe_eps)
-            tail_width_loss = torch.abs(torch.log(tail_width_ratio + self.sharpe_eps))
+            safe_tail_width_ratio = torch.clamp(tail_width_ratio + self.sharpe_eps, min=1e-6)
+            tail_width_loss = torch.abs(torch.log(safe_tail_width_ratio))
             tail_width_loss = tail_width_loss + torch.relu(tail_width_ratio - 3.0).pow(2)
             daily_crossing_loss = quantile_crossing_penalty(y_pred)
             weekly_crossing_loss = quantile_crossing_penalty(pred_weekly_quantiles.unsqueeze(1))
