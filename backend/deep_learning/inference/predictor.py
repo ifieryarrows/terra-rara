@@ -134,6 +134,20 @@ class TFTPredictor:
             return
 
         metadata_path = Path(self._checkpoint_path).parent / "tft_metadata.json"
+        try:
+            from deep_learning.models.hub import validate_artifact_manifest
+
+            if not validate_artifact_manifest(metadata_path.parent):
+                raise IncompatibleTFTCheckpointError(
+                    "Incompatible TFT checkpoint: missing or invalid artifact manifest. Retraining required."
+                )
+        except IncompatibleTFTCheckpointError:
+            raise
+        except Exception as exc:
+            raise IncompatibleTFTCheckpointError(
+                f"Incompatible TFT checkpoint: artifact manifest validation failed ({exc}). Retraining required."
+            ) from exc
+
         if not metadata_path.exists():
             raise IncompatibleTFTCheckpointError(
                 "Incompatible TFT checkpoint: missing weekly_log_v1 metadata. Retraining required."

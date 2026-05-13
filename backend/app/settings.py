@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # API settings
     analysis_ttl_minutes: int = 30
     log_level: str = "INFO"
+    environment: str = "development"
+    cors_allowed_origins: str = (
+        "http://localhost:3000,"
+        "http://localhost:5173,"
+        "http://127.0.0.1:3000,"
+        "http://127.0.0.1:5173"
+    )
     
     # NOTE: `futures_spot_adjustment` was removed 2026-04.
     # It was an unused 1:1 scaling constant between HG=F and XCU/USD which
@@ -204,6 +211,16 @@ class Settings(BaseSettings):
         Always uses env variable (14 symbols).
         """
         return [s.strip() for s in self.yfinance_symbols.split(",") if s.strip()]
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated environment configuration."""
+        origins = [
+            origin.strip()
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
+        return origins or ["http://localhost:3000", "http://localhost:5173"]
     
     @property
     def target_symbol(self) -> str:

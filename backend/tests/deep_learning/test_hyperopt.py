@@ -51,6 +51,8 @@ def test_build_result_payload_handles_all_pruned_trials():
         "weekly_magnitude_collapse": 0,
         "weekly_magnitude_explosion": 0,
         "weekly_interval_width_explosion": 0,
+        "weekly_tail_width_explosion": 0,
+        "weekly_raw_crossing_prune": 0,
         "weekly_overcoverage_width_explosion": 0,
         "error": 0,
     }
@@ -157,10 +159,12 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 
 def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.60
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.15
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.10
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.10
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.40
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.55
     assert KNOWN_GOOD_TRIAL_PARAMS["weekly_lambda_vol"] == 0.35
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_width"] == 0.50
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_tail_width"] == 0.30
 
 
 def test_hyperopt_reports_weekly_objective_label():
@@ -175,7 +179,10 @@ def test_hyperopt_objective_penalizes_interval_width_and_overcoverage():
     source = inspect.getsource(hyperopt_module)
 
     assert "coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)" in source
-    assert "width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 2.0)" in source
+    assert "width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)" in source
+    assert "tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)" in source
     assert "interval_score_penalty" in source
     assert "weekly_interval_width_explosion" in source
+    assert "weekly_tail_width_explosion" in source
+    assert "weekly_raw_crossing_prune" in source
     assert "weekly_overcoverage_width_explosion" in source

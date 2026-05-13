@@ -41,7 +41,11 @@ def main() -> int:
     weekly_mr = metrics.get("weekly_magnitude_ratio")
     weekly_tail = metrics.get("weekly_tail_capture_rate")
     weekly_pi80 = metrics.get("weekly_pi80_coverage")
+    weekly_pi80_width_ratio = metrics.get("weekly_pi80_width_ratio")
+    weekly_pi96 = metrics.get("weekly_pi96_coverage")
+    weekly_pi96_width_ratio = metrics.get("weekly_pi96_width_ratio")
     weekly_qcross = metrics.get("weekly_quantile_crossing_rate")
+    weekly_sorted_qcross = metrics.get("weekly_sorted_quantile_crossing_rate")
     weekly_gap = metrics.get("weekly_median_sort_gap_max")
     weekly_samples = metrics.get("weekly_sample_count")
 
@@ -55,7 +59,9 @@ def main() -> int:
         "Weekly gate metrics: "
         f"WeeklyDA={weekly_da} WeeklyMR={weekly_mr} "
         f"WeeklyTail={weekly_tail} WeeklyPI80={weekly_pi80} "
-        f"WeeklyQCross={weekly_qcross} WeeklyN={weekly_samples}"
+        f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
+        f"WeeklyQCross={weekly_qcross} WeeklySortedQCross={weekly_sorted_qcross} "
+        f"WeeklyN={weekly_samples}"
     )
 
     passed, reasons = evaluate_quality_gate(
@@ -69,7 +75,11 @@ def main() -> int:
         weekly_magnitude_ratio=weekly_mr,
         weekly_tail_capture_rate=weekly_tail,
         weekly_pi80_coverage=weekly_pi80,
+        weekly_pi80_width_ratio=weekly_pi80_width_ratio,
+        weekly_pi96_coverage=weekly_pi96,
+        weekly_pi96_width_ratio=weekly_pi96_width_ratio,
         weekly_quantile_crossing_rate=weekly_qcross,
+        weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
         weekly_median_sort_gap_max=weekly_gap,
         weekly_sample_count=weekly_samples,
     )

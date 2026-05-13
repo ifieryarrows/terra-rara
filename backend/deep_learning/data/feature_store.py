@@ -223,14 +223,21 @@ def _build_daily_embedding_features(
     from app.models import NewsEmbedding, NewsProcessed, NewsRaw
     from deep_learning.data.embeddings import bytes_to_embedding, aggregate_daily_embeddings
     from pipelines.market_calendar import assign_market_date
+    from sqlalchemy import func
+
+    start_date = index.min().to_pydatetime()
+    end_date = index.max().to_pydatetime()
+    available_expr = func.coalesce(NewsRaw.fetched_at, NewsRaw.published_at)
 
     rows = (
         session.query(
             NewsRaw.published_at,
+            NewsRaw.fetched_at,
             NewsEmbedding.embedding_pca,
         )
         .join(NewsProcessed, NewsEmbedding.news_processed_id == NewsProcessed.id)
         .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
+        .filter(NewsRaw.published_at <= end_date, available_expr <= end_date)
         .order_by(NewsRaw.published_at.asc())
         .all()
     )
@@ -241,7 +248,13 @@ def _build_daily_embedding_features(
 
     date_groups: dict[str, list[np.ndarray]] = {}
     for r in rows:
-        d = assign_market_date(r.published_at).isoformat()
+        published_market_date = assign_market_date(r.published_at)
+        available_at = getattr(r, "fetched_at", None) or r.published_at
+        available_market_date = assign_market_date(available_at)
+        market_date = max(published_market_date, available_market_date)
+        if not (pd.Timestamp(start_date).date() <= market_date <= pd.Timestamp(end_date).date()):
+            continue
+        d = market_date.isoformat()
         vec = bytes_to_embedding(r.embedding_pca, dim=pca_dim)
         # bytes_to_embedding now always returns dim-length arrays, but
         # guard against any future shape surprises to keep stack safe.
@@ -259,6 +272,10 @@ def _build_daily_embedding_features(
         for i, v in enumerate(agg):
             record[f"emb_pca_{i}"] = float(v)
         records.append(record)
+
+    if not records:
+        cols = [f"emb_pca_{i}" for i in range(pca_dim)]
+        return pd.DataFrame(0.0, index=index, columns=cols)
 
     emb_df = pd.DataFrame(records).set_index("date").sort_index()
     emb_df.index = pd.to_datetime(emb_df.index)

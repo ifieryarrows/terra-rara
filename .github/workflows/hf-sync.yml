@@ -1,7 +1,6 @@
 name: Sync to Hugging Face Space
 
 on:
-  # Only run after Tests workflow completes successfully
   workflow_run:
     workflows: ["Tests"]
     types: [completed]
@@ -11,7 +10,6 @@ on:
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
-    # Only run if Tests workflow succeeded
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -24,27 +22,24 @@ jobs:
       - name: Check token exists
         run: |
           if [ -z "$HF_TOKEN" ]; then
-            echo "❌ HF_TOKEN secret is not set!"
+            echo "HF_TOKEN secret is not set"
             exit 1
           fi
-          echo "✅ HF_TOKEN is set (length: ${#HF_TOKEN})"
+          echo "HF_TOKEN secret is configured"
 
       - name: Install huggingface_hub
         run: pip install huggingface_hub
 
       - name: Prepare files for upload
         run: |
-          # Copy model files to backend data directory
           mkdir -p backend/data/models
           if [ -d "data/models" ]; then
             cp -r data/models/* backend/data/models/ 2>/dev/null || true
-            echo "✅ Model files copied"
+            echo "Model files copied"
             ls -la backend/data/models/
           else
-            echo "⚠️ No model files found in data/models/"
+            echo "No model files found in data/models/"
           fi
-
-          # Ensure TFT model directory exists (checkpoints are stored on HF Hub)
           mkdir -p backend/data/models/tft
 
       - name: Upload backend to Space
@@ -55,8 +50,6 @@ jobs:
           import os
 
           api = HfApi(token=os.environ['HF_TOKEN'])
-
-          # Upload backend folder with ignore patterns for cleaner deployment
           api.upload_folder(
               folder_path='.',
               repo_id='ifieryarrows/copper-mind',
@@ -68,8 +61,8 @@ jobs:
                   '*.pyc',
                   '.pytest_cache/*',
                   'artifacts/*',
-                  '*.egg-info/*'
-              ]
+                  '*.egg-info/*',
+              ],
           )
-          print('✅ Upload complete!')
+          print('Upload complete')
           "

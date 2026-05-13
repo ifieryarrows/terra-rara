@@ -131,15 +131,15 @@ try:
         def __init__(
             self,
             quantiles: list,
-            lambda_weekly_quantile: float = 0.55,
+            lambda_weekly_quantile: float = 0.60,
             lambda_t1_quantile: float = 0.10,
-            lambda_directional: float = 0.15,
-            lambda_magnitude: float = 0.35,
-            lambda_vol: float = 0.15,
-            lambda_crossing: float = 5.0,
-            lambda_sanity: float = 0.10,
-            lambda_width: float = 0.25,
-            lambda_tail_width: float = 0.05,
+            lambda_directional: float = 0.10,
+            lambda_magnitude: float = 0.55,
+            lambda_vol: float = 0.35,
+            lambda_crossing: float = 7.0,
+            lambda_sanity: float = 0.20,
+            lambda_width: float = 0.50,
+            lambda_tail_width: float = 0.30,
             sharpe_eps: float = 1e-6,
             daily_log_return_bound: float = 0.08,
             weekly_log_return_bound: float = 0.20,
@@ -193,14 +193,21 @@ try:
 
             abs_actual = actual_weekly.abs()
             material_mask = abs_actual > (abs_actual.median() + self.sharpe_eps)
+            global_magnitude_loss = torch.abs(
+                torch.log(
+                    (pred_weekly_median.abs() + self.sharpe_eps)
+                    / (actual_weekly.abs() + self.sharpe_eps)
+                )
+            ).mean()
             if material_mask.any():
                 pred_abs = pred_weekly_median[material_mask].abs()
                 true_abs = actual_weekly[material_mask].abs()
-                magnitude_loss = torch.abs(
+                material_magnitude_loss = torch.abs(
                     torch.log((pred_abs + self.sharpe_eps) / (true_abs + self.sharpe_eps))
                 ).mean()
             else:
-                magnitude_loss = y_pred.new_tensor(0.0)
+                material_magnitude_loss = y_pred.new_tensor(0.0)
+            magnitude_loss = 0.5 * global_magnitude_loss + 0.5 * material_magnitude_loss
 
             weekly_spread = (
                 pred_weekly_quantiles[:, self._q90_idx]
@@ -211,16 +218,17 @@ try:
             mean_weekly_spread = weekly_spread.mean()
             vol_loss = torch.abs(mean_weekly_spread - target_spread)
             width_ratio = mean_weekly_spread / (target_spread + self.sharpe_eps)
-            width_loss = torch.relu(width_ratio - 2.0).pow(2)
+            width_loss = torch.abs(torch.log(width_ratio + self.sharpe_eps))
+            width_loss = width_loss + torch.relu(width_ratio - 2.0).pow(2)
 
             weekly_tail_spread = (
                 pred_weekly_quantiles[:, self._q98_idx]
                 - pred_weekly_quantiles[:, self._q02_idx]
             )
             target_tail_spread = 4.10 * actual_weekly_std
-            tail_width_loss = torch.relu(
-                weekly_tail_spread.mean() - 2.0 * target_tail_spread
-            )
+            tail_width_ratio = weekly_tail_spread.mean() / (target_tail_spread + self.sharpe_eps)
+            tail_width_loss = torch.abs(torch.log(tail_width_ratio + self.sharpe_eps))
+            tail_width_loss = tail_width_loss + torch.relu(tail_width_ratio - 3.0).pow(2)
             daily_crossing_loss = quantile_crossing_penalty(y_pred)
             weekly_crossing_loss = quantile_crossing_penalty(pred_weekly_quantiles.unsqueeze(1))
             crossing_loss = daily_crossing_loss + weekly_crossing_loss

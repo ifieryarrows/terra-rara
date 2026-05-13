@@ -48,6 +48,8 @@ def test_compute_weekly_metrics_uses_configured_horizon():
     assert np.isfinite(metrics["weekly_pi80_width_ratio"])
     assert np.isfinite(metrics["weekly_pi96_width_ratio"])
     assert np.isfinite(metrics["weekly_interval_score_80"])
+    assert np.isfinite(metrics["weekly_interval_score_96"])
+    assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
 
 
 def test_weekly_width_ratios_match_expected_formulas():
@@ -101,3 +103,22 @@ def test_cumulative_quantiles_rejects_short_path():
         assert "Need at least 5 horizons" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_weekly_metrics_preserve_raw_crossing_and_promote_sorted_quantiles():
+    actual = np.tile(np.array([[0.01, 0.0, 0.0, 0.0, 0.0]]), (4, 1))
+    pred = np.zeros((4, 5, 7), dtype=float)
+    pred[..., 3] = actual
+    pred[..., 1] = actual + 0.02
+    pred[..., 5] = actual - 0.02
+    pred[..., 0] = actual - 0.03
+    pred[..., 2] = actual - 0.01
+    pred[..., 4] = actual + 0.01
+    pred[..., 6] = actual + 0.03
+
+    metrics = compute_weekly_metrics(actual, pred, horizon=5)
+
+    assert metrics["weekly_quantile_crossing_rate"] > 0.0
+    assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
+    assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_pi80_width"] >= 0.0

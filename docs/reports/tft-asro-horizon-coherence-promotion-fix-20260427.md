@@ -307,3 +307,62 @@ Bu nedenle 27 Nisan'daki başarısız koşunun aynı mekanizma ile tekrar produc
 ---
 
 *Son güncelleme: 27 Nisan 2026 — Kod düzeltmeleri ve hedefli testler tamamlandı.*
+
+---
+
+## 9. Devam Sonuclari (28 Nisan 2026)
+
+Bu raporda tanimlanan duzeltmeler sonrasi gelen TFT training kosusunda workflow zinciri tamamlandi ve model HF Hub'a promote edildi.
+
+### 9.1 Hyperopt Ozet
+
+```text
+status: completed
+n_trials: 15
+completed: 3
+pruned: 12
+best_trial: 2
+best_value: 0.895160767264129
+```
+
+Pruning dagilimi:
+
+```text
+crossing_prune: 12
+sharpe_prune: 0
+fold_sharpe_prune: 0
+median_prune: 0
+error: 0
+```
+
+### 9.2 Final Training Metrikleri
+
+```text
+mae: 0.0316
+rmse: 0.0353
+directional_accuracy: 0.5283
+tail_capture_rate: 0.5455
+sharpe_ratio: 0.8169
+sortino_ratio: 1.4776
+pred_std: 0.0063
+actual_std: 0.0175
+variance_ratio: 0.3617
+ensemble_size: 3
+```
+
+### 9.3 Kabul Kriteri Kontrolu
+
+| Metrik | Esik | Sonuc | Durum |
+| --- | ---: | ---: | --- |
+| Directional Accuracy | >= 0.49 | 0.5283 | PASS |
+| Sharpe Ratio | >= -0.30 | 0.8169 | PASS |
+| Variance Ratio | 0.20-2.50 | 0.3617 | PASS |
+| Tail Capture | >= 0.35 | 0.5455 | PASS |
+
+Not: VR gate'i geciyor ancak hedef bandin (`0.70-1.20`) altinda. Directional ve Sharpe kuvvetli oldugu icin promote acisindan engel yok, fakat amplitude kalibrasyonu Sprint 2 backlog'unda kalmali.
+
+### 9.4 Sonuc
+
+- `quality gate` basariyla gecildi.
+- Model checkpoint HF Hub'a yuklendi.
+- `no_finite_completed_trials` ve quality gate import-path gibi onceki kritik kirilmalar bu kosuda tekrar etmedi.

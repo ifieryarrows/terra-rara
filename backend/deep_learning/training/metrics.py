@@ -139,6 +139,32 @@ def directional_accuracy(
     return float(matches.mean())
 
 
+def directional_accuracy_count(
+    y_actual: np.ndarray,
+    y_pred: np.ndarray,
+) -> tuple[int, int]:
+    """Return ``(matches, n)`` for directional accuracy confidence intervals."""
+    actual_sign = np.sign(y_actual)
+    pred_sign = np.sign(y_pred)
+    matches = (actual_sign == pred_sign) | ((actual_sign == 0) & (pred_sign == 0))
+    return int(matches.sum()), int(matches.size)
+
+
+def wilson_interval(
+    successes: int,
+    n: int,
+    z: float = 1.959963984540054,
+) -> tuple[float, float]:
+    """Two-sided Wilson confidence interval for a binomial proportion."""
+    if n <= 0:
+        return 0.0, 0.0
+    phat = successes / n
+    denom = 1.0 + z * z / n
+    centre = phat + z * z / (2.0 * n)
+    margin = z * np.sqrt((phat * (1.0 - phat) + z * z / (4.0 * n)) / n)
+    return float((centre - margin) / denom), float((centre + margin) / denom)
+
+
 def tail_capture_rate(
     y_actual: np.ndarray,
     y_pred: np.ndarray,
@@ -217,14 +243,27 @@ def compute_all_metrics(
     # This is the correct series to compute Sharpe/Sortino on — not the raw predictions.
     # Using y_pred_median directly produces an inflated ratio because pred_std << actual_std.
     strategy_returns = np.sign(y_pred_median) * y_actual
+    direction_hits, direction_n = directional_accuracy_count(y_actual, y_pred_median)
+    da_ci_low, da_ci_high = wilson_interval(direction_hits, direction_n)
+    zero_mae = float(np.abs(y_actual).mean())
+    zero_rmse = float(np.sqrt((y_actual ** 2).mean()))
 
     metrics: dict[str, float] = {
         "mae": float(np.abs(y_actual - y_pred_median).mean()),
         "rmse": float(np.sqrt(((y_actual - y_pred_median) ** 2).mean())),
         "directional_accuracy": directional_accuracy(y_actual, y_pred_median),
+        "directional_accuracy_ci_low": da_ci_low,
+        "directional_accuracy_ci_high": da_ci_high,
+        "directional_accuracy_n": float(direction_n),
         "tail_capture_rate": tail_capture_rate(y_actual, y_pred_median, tail_threshold),
         "sharpe_ratio": sharpe_ratio(strategy_returns),
         "sortino_ratio": sortino_ratio(strategy_returns),
+        "naive_zero_mae": zero_mae,
+        "naive_zero_rmse": zero_rmse,
+        "mae_vs_naive_zero": float(np.abs(y_actual - y_pred_median).mean() / (zero_mae + 1e-12)),
+        "rmse_vs_naive_zero": float(
+            np.sqrt(((y_actual - y_pred_median) ** 2).mean()) / (zero_rmse + 1e-12)
+        ),
     }
 
     pred_std = float(y_pred_median.std())
@@ -238,19 +277,29 @@ def compute_all_metrics(
         q90 = np.asarray(y_pred_q90, dtype=np.float64)
         metrics["pi80_coverage"] = prediction_interval_coverage(y_actual, q10, q90)
         metrics["pi80_width"] = prediction_interval_width(q10, q90)
+        metrics["pi80_interval_score"] = interval_score(y_actual, q10, q90, alpha=0.20)
 
     if y_pred_q02 is not None and y_pred_q98 is not None:
         q02 = np.asarray(y_pred_q02, dtype=np.float64)
         q98 = np.asarray(y_pred_q98, dtype=np.float64)
         metrics["pi96_coverage"] = prediction_interval_coverage(y_actual, q02, q98)
         metrics["pi96_width"] = prediction_interval_width(q02, q98)
+        metrics["pi96_interval_score"] = interval_score(y_actual, q02, q98, alpha=0.04)
 
     if y_pred_quantiles is not None:
         q_arr = np.asarray(y_pred_quantiles, dtype=np.float64)
-        metrics["quantile_crossing_rate"] = quantile_crossing_rate(q_arr)
+        sorted_q = np.sort(q_arr, axis=-1)
+        raw_crossing = quantile_crossing_rate(q_arr)
+        sorted_crossing = quantile_crossing_rate(sorted_q)
+        metrics["quantile_crossing_rate"] = raw_crossing
+        metrics["raw_quantile_crossing_rate"] = raw_crossing
+        metrics["sorted_quantile_crossing_rate"] = sorted_crossing
         gap_mean, gap_max = quantile_median_sort_gap(q_arr)
         metrics["median_sort_gap_mean"] = gap_mean
         metrics["median_sort_gap_max"] = gap_max
+        sorted_gap_mean, sorted_gap_max = quantile_median_sort_gap(sorted_q)
+        metrics["sorted_median_sort_gap_mean"] = sorted_gap_mean
+        metrics["sorted_median_sort_gap_max"] = sorted_gap_max
 
     return metrics
 
@@ -268,7 +317,8 @@ def compute_weekly_metrics(
     to simple returns happens only during inference formatting.
     """
     weekly_actual = cumulative_horizon(y_actual_path, horizon=horizon)
-    weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=horizon)
+    approx_weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=horizon)
+    weekly_quantiles = np.sort(approx_weekly_quantiles, axis=-1)
 
     median_idx = len(quantiles) // 2
     q10_idx = quantiles.index(0.10)
@@ -290,11 +340,18 @@ def compute_weekly_metrics(
         y_pred_q90=weekly_quantiles[:, q90_idx],
         y_pred_q02=weekly_quantiles[:, q02_idx],
         y_pred_q98=weekly_quantiles[:, q98_idx],
-        y_pred_quantiles=weekly_quantiles,
+        y_pred_quantiles=approx_weekly_quantiles,
         tail_threshold=tail_threshold,
     )
 
     weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}
+    weekly_metrics["weekly_interval_quantile_source"] = 1.0
+    weekly_metrics["weekly_approx_quantile_crossing_rate"] = quantile_crossing_rate(
+        approx_weekly_quantiles
+    )
+    approx_gap_mean, approx_gap_max = quantile_median_sort_gap(approx_weekly_quantiles)
+    weekly_metrics["weekly_approx_median_sort_gap_mean"] = approx_gap_mean
+    weekly_metrics["weekly_approx_median_sort_gap_max"] = approx_gap_max
     weekly_metrics["weekly_magnitude_ratio"] = magnitude_ratio(weekly_actual, weekly_pred)
     weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
     weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))
@@ -310,6 +367,12 @@ def compute_weekly_metrics(
         weekly_quantiles[:, q10_idx],
         weekly_quantiles[:, q90_idx],
         alpha=0.20,
+    )
+    weekly_metrics["weekly_interval_score_96"] = interval_score(
+        weekly_actual,
+        weekly_quantiles[:, q02_idx],
+        weekly_quantiles[:, q98_idx],
+        alpha=0.04,
     )
     weekly_metrics["weekly_sample_count"] = int(len(weekly_actual))
     return weekly_metrics

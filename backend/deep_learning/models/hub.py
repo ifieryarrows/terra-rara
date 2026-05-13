@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -24,16 +26,94 @@ _ARTIFACTS = [
     "conformal_calibration.json",
     "pca_finbert.joblib",
     "optuna_results.json",
+    "artifact_manifest.json",
 ]
 
 _REQUIRED_ARTIFACTS = [
     "best_tft_asro.ckpt",
     "tft_metadata.json",
+    "artifact_manifest.json",
 ]
 
 
 def _get_token() -> Optional[str]:
     return os.environ.get(_HF_TOKEN_ENV)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_artifact_manifest(local_dir: str | Path) -> dict:
+    """Build a SHA256 manifest for every present TFT artifact except itself."""
+    local_dir = Path(local_dir)
+    artifacts = {}
+    for name in _ARTIFACTS:
+        if name == "artifact_manifest.json":
+            continue
+        path = local_dir / name
+        if not path.exists():
+            continue
+        artifacts[name] = {
+            "sha256": _sha256_file(path),
+            "size_bytes": path.stat().st_size,
+            "required": name in {"best_tft_asro.ckpt", "tft_metadata.json"},
+        }
+
+    return {
+        "manifest_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "artifacts": artifacts,
+    }
+
+
+def write_artifact_manifest(local_dir: str | Path) -> Path:
+    """Write the artifact integrity manifest next to TFT artifacts."""
+    local_dir = Path(local_dir)
+    manifest_path = local_dir / "artifact_manifest.json"
+    manifest = build_artifact_manifest(local_dir)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    return manifest_path
+
+
+def validate_artifact_manifest(local_dir: str | Path) -> bool:
+    """Verify artifact_manifest.json hashes before loading checkpoint/joblib files."""
+    local_dir = Path(local_dir)
+    manifest_path = local_dir / "artifact_manifest.json"
+    if not manifest_path.exists():
+        logger.warning("TFT artifact manifest missing in %s", local_dir)
+        return False
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        artifacts = data.get("artifacts") or {}
+        for required in ("best_tft_asro.ckpt", "tft_metadata.json"):
+            if required not in artifacts:
+                logger.warning("TFT artifact manifest missing required entry: %s", required)
+                return False
+
+        for name, meta in artifacts.items():
+            path = local_dir / name
+            if not path.exists():
+                logger.warning("TFT artifact listed in manifest is missing: %s", name)
+                return False
+            expected = str(meta.get("sha256", "")).lower()
+            actual = _sha256_file(path).lower()
+            if not expected or actual != expected:
+                logger.warning("TFT artifact hash mismatch for %s", name)
+                return False
+            expected_size = meta.get("size_bytes")
+            if expected_size is not None and int(expected_size) != path.stat().st_size:
+                logger.warning("TFT artifact size mismatch for %s", name)
+                return False
+        return True
+    except Exception as exc:
+        logger.warning("TFT artifact manifest validation failed: %s", exc)
+        return False
 
 
 def _metadata_contract_valid(metadata_path: Path) -> bool:
@@ -94,6 +174,9 @@ def validate_tft_artifact_set(local_dir: str | Path) -> bool:
         logger.warning("TFT artifact set has incompatible metadata in %s", local_dir)
         return False
 
+    if not validate_artifact_manifest(local_dir):
+        return False
+
     return True
 
 
@@ -114,11 +197,16 @@ def upload_tft_artifacts(
         return False
 
     local_dir = Path(local_dir)
-    if not validate_tft_artifact_set(local_dir):
+    if not _metadata_contract_valid(local_dir / "tft_metadata.json"):
         logger.warning(
             "TFT artifact set in %s is not contract-complete; upload skipped",
             local_dir,
         )
+        return False
+
+    write_artifact_manifest(local_dir)
+    if not validate_tft_artifact_set(local_dir):
+        logger.warning("TFT artifact manifest validation failed before upload")
         return False
 
     files_to_upload = [
@@ -175,6 +263,9 @@ def download_tft_artifacts(
     metadata_path = local_dir / "tft_metadata.json"
     if metadata_path.exists() and not _metadata_contract_valid(metadata_path):
         force_download.add("tft_metadata.json")
+    manifest_path = local_dir / "artifact_manifest.json"
+    if manifest_path.exists() and not validate_artifact_manifest(local_dir):
+        force_download.update(_ARTIFACTS)
 
     try:
         from huggingface_hub import hf_hub_download

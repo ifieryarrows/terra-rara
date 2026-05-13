@@ -8,6 +8,7 @@ Endpoints:
 """
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 
 # Suppress httpx request logging to prevent API keys in URLs from appearing in logs
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
@@ -100,10 +101,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _resolve_cors_origins() -> list[str]:
+    settings = get_settings()
+    origins = settings.cors_allowed_origins_list
+    if "*" in origins and settings.environment.lower() in {"prod", "production"}:
+        raise RuntimeError("CORS wildcard is forbidden in production")
+    return origins
+
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this
+    allow_origins=_resolve_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1150,7 +1159,32 @@ async def api_root():
 # =============================================================================
 
 
-def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
+_PIPELINE_AUTH_FAILURES: dict[str, list[datetime]] = defaultdict(list)
+
+
+def _pipeline_auth_key(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _record_pipeline_auth_failure(key: str) -> None:
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=10)
+    recent = [ts for ts in _PIPELINE_AUTH_FAILURES[key] if ts >= cutoff]
+    recent.append(now)
+    _PIPELINE_AUTH_FAILURES[key] = recent
+    if len(recent) > 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many invalid pipeline trigger attempts",
+        )
+
+
+def verify_pipeline_secret(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> None:
     """
     Verify the pipeline trigger secret from Authorization header.
     
@@ -1158,9 +1192,12 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
     """
     settings = get_settings()
     
+    auth_key = _pipeline_auth_key(request)
+
     # If no secret is configured, reject all requests (fail secure)
     if not settings.pipeline_trigger_secret:
         logger.warning("Pipeline trigger attempted but PIPELINE_TRIGGER_SECRET not configured")
+        _record_pipeline_auth_failure(auth_key)
         raise HTTPException(
             status_code=401,
             detail="Pipeline trigger authentication not configured. Set PIPELINE_TRIGGER_SECRET."
@@ -1168,6 +1205,7 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
     
     # Check Authorization header
     if not authorization:
+        _record_pipeline_auth_failure(auth_key)
         raise HTTPException(
             status_code=401,
             detail="Missing Authorization header. Expected: Bearer <token>"
@@ -1176,6 +1214,7 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
     # Parse Bearer token
     parts = authorization.split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
+        _record_pipeline_auth_failure(auth_key)
         raise HTTPException(
             status_code=401,
             detail="Invalid Authorization format. Expected: Bearer <token>"
@@ -1187,11 +1226,13 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
     import secrets
     if not secrets.compare_digest(token, settings.pipeline_trigger_secret):
         logger.warning("Pipeline trigger attempted with invalid token")
+        _record_pipeline_auth_failure(auth_key)
         raise HTTPException(
             status_code=401,
             detail="Invalid pipeline trigger token"
         )
-    
+
+    _PIPELINE_AUTH_FAILURES.pop(auth_key, None)
     logger.info("Pipeline trigger authorized successfully")
 
 
@@ -1208,7 +1249,12 @@ def verify_pipeline_secret(authorization: Optional[str] = Header(None)) -> None:
 )
 async def trigger_pipeline(
     train_model: bool = Query(default=False, description="Train/retrain XGBoost model"),
-    trigger_source: str = Query(default="api", description="Source of trigger (api, cron, manual)"),
+    trigger_source: str = Query(
+        default="api",
+        max_length=32,
+        pattern="^(api|cron|manual|github-actions)$",
+        description="Source of trigger (api, cron, manual, github-actions)",
+    ),
     _auth: None = Depends(verify_pipeline_secret),
 ):
     """
@@ -1386,7 +1432,11 @@ async def get_tft_summary(
         weekly_mr = metrics.get("weekly_magnitude_ratio")
         weekly_tail = metrics.get("weekly_tail_capture_rate")
         weekly_pi80 = metrics.get("weekly_pi80_coverage")
+        weekly_pi80_width_ratio = metrics.get("weekly_pi80_width_ratio")
+        weekly_pi96 = metrics.get("weekly_pi96_coverage")
+        weekly_pi96_width_ratio = metrics.get("weekly_pi96_width_ratio")
         weekly_qcross = metrics.get("weekly_quantile_crossing_rate")
+        weekly_sorted_qcross = metrics.get("weekly_sorted_quantile_crossing_rate")
         weekly_gap = metrics.get("weekly_median_sort_gap_max")
         weekly_samples = metrics.get("weekly_sample_count")
         
@@ -1401,7 +1451,11 @@ async def get_tft_summary(
             weekly_magnitude_ratio=weekly_mr,
             weekly_tail_capture_rate=weekly_tail,
             weekly_pi80_coverage=weekly_pi80,
+            weekly_pi80_width_ratio=weekly_pi80_width_ratio,
+            weekly_pi96_coverage=weekly_pi96,
+            weekly_pi96_width_ratio=weekly_pi96_width_ratio,
             weekly_quantile_crossing_rate=weekly_qcross,
+            weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
             weekly_median_sort_gap_max=weekly_gap,
             weekly_sample_count=weekly_samples,
         )
@@ -1422,7 +1476,11 @@ async def get_tft_summary(
             "weekly_magnitude_ratio": weekly_mr,
             "weekly_tail_capture_rate": weekly_tail,
             "weekly_pi80_coverage": weekly_pi80,
+            "weekly_pi80_width_ratio": weekly_pi80_width_ratio,
+            "weekly_pi96_coverage": weekly_pi96,
+            "weekly_pi96_width_ratio": weekly_pi96_width_ratio,
             "weekly_quantile_crossing_rate": weekly_qcross,
+            "weekly_sorted_quantile_crossing_rate": weekly_sorted_qcross,
             "weekly_median_sort_gap_max": weekly_gap,
             "weekly_sample_count": weekly_samples,
         }.items():

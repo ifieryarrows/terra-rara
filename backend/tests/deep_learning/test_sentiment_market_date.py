@@ -49,3 +49,34 @@ def test_days_since_last_material_news_increments(monkeypatch):
 
     out = build_market_date_sentiment_frame(Session(), pd.Timestamp("2026-05-01"), pd.Timestamp("2026-05-10"))
     assert out["days_since_last_material_news"].tolist() == [0, 1, 2]
+
+
+def test_late_available_article_uses_availability_market_date():
+    rows = [
+        SimpleNamespace(
+            published_at=datetime(2026, 5, 4, 10, tzinfo=NY),
+            fetched_at=datetime(2026, 5, 8, 10, tzinfo=NY),
+            available_at=None,
+            final_score=0.7,
+            confidence_calibrated=0.9,
+            relevance_score=0.9,
+            event_type="supply_disruption",
+        ),
+    ]
+
+    class Query:
+        def join(self, *args, **kwargs):
+            return self
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return rows
+
+    class Session:
+        def query(self, *args, **kwargs):
+            return Query()
+
+    out = build_market_date_sentiment_frame(Session(), pd.Timestamp("2026-05-01"), pd.Timestamp("2026-05-10"))
+    assert out.index[0].date().isoformat() == "2026-05-08"

@@ -9,12 +9,12 @@ def test_forecast_contract_defaults_are_weekly():
     assert cfg.forecast.primary_target_col == "target_5d_log_return"
     assert cfg.forecast.model_daily_target_col == "target"
     assert cfg.forecast.target_return_type == "log_return"
-    assert cfg.weekly_loss.lambda_weekly_quantile == 0.55
-    assert cfg.weekly_loss.lambda_magnitude == 0.35
-    assert cfg.weekly_loss.lambda_crossing == 5.0
-    assert cfg.weekly_loss.lambda_sanity == 0.10
-    assert cfg.weekly_loss.lambda_width == 0.25
-    assert cfg.weekly_loss.lambda_tail_width == 0.05
+    assert cfg.weekly_loss.lambda_weekly_quantile == 0.60
+    assert cfg.weekly_loss.lambda_magnitude == 0.55
+    assert cfg.weekly_loss.lambda_crossing == 7.0
+    assert cfg.weekly_loss.lambda_sanity == 0.20
+    assert cfg.weekly_loss.lambda_width == 0.50
+    assert cfg.weekly_loss.lambda_tail_width == 0.30
     assert TARGET_RETURN_TYPE == "log_return"
     assert FORECAST_CONTRACT_VERSION == "weekly_log_v1"
 

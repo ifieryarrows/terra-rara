@@ -104,3 +104,23 @@ degerinden gelir ve ekranda `*100` ile gosterilir.
 
 Bu deger `format_prediction()` icinde medyan quantile'in (gerekiyorsa anomaly bound sonrasinda) T+1 return'u olarak uretilir.  
 Ayni satirin fiyat karsiligi da `daily_forecasts[0].price_median` oldugu icin yuzde ve fiyat ayni kaynaktan gelir.
+
+---
+
+## 7. Devam Sonucu (Training Run Sonrasi)
+
+Kullanici tarafindan paylasilan son training kosusunda:
+
+```text
+Quality gate: PASS
+HF upload: SUCCESS
+DA: 0.5283
+Sharpe: 0.8169
+VR: 0.3617
+```
+
+Bu run sonrasinda `models page 500` ve stale snapshot fallback duzeltmeleri birlikte degerlendirildiginde beklenen davranis su sekildedir:
+
+1. `/api/models/tft/summary` artik numeric olmayan/null metric alanlari yuzunden 500 vermemelidir.
+2. Snapshot yeni modelden eskiyse veya reference close tarihi stale ise endpoint otomatik `live` fallback ile guncel payload donmelidir.
+3. Frontend T+1 yuzdesi `daily_forecasts[0].daily_return * 100` olarak ayni kaynakla (T+1 fiyat) hizali kalir.

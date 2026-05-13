@@ -31,6 +31,8 @@ def test_download_refreshes_missing_companion_artifacts_when_checkpoint_exists(t
         path = tmp_path / "tft" / filename
         if filename == "tft_metadata.json":
             path.write_text(json.dumps(_valid_metadata()), encoding="utf-8")
+        elif filename == "artifact_manifest.json":
+            hub.write_artifact_manifest(path.parent)
         else:
             path.write_text("artifact", encoding="utf-8")
         return str(path)
@@ -44,6 +46,7 @@ def test_download_refreshes_missing_companion_artifacts_when_checkpoint_exists(t
     assert hub.download_tft_artifacts(local_dir, "org/model") is True
     assert "tft_metadata.json" in calls
     assert "conformal_calibration.json" in calls
+    assert "artifact_manifest.json" in calls
     assert hub.validate_tft_artifact_set(local_dir) is True
 
 
@@ -80,3 +83,16 @@ def test_upload_includes_metadata_and_conformal_artifacts(tmp_path, monkeypatch)
     assert hub.upload_tft_artifacts(local_dir, "org/model") is True
     assert "tft_metadata.json" in uploaded
     assert "conformal_calibration.json" in uploaded
+    assert "artifact_manifest.json" in uploaded
+
+
+def test_validate_artifact_set_rejects_hash_mismatch(tmp_path):
+    local_dir = tmp_path / "tft"
+    local_dir.mkdir()
+    (local_dir / "best_tft_asro.ckpt").write_bytes(b"checkpoint")
+    (local_dir / "tft_metadata.json").write_text(json.dumps(_valid_metadata()), encoding="utf-8")
+    hub.write_artifact_manifest(local_dir)
+
+    (local_dir / "best_tft_asro.ckpt").write_bytes(b"tampered")
+
+    assert hub.validate_tft_artifact_set(local_dir) is False

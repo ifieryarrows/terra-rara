@@ -25,7 +25,11 @@ def evaluate_quality_gate(
     weekly_magnitude_ratio: Optional[float] = None,
     weekly_tail_capture_rate: Optional[float] = None,
     weekly_pi80_coverage: Optional[float] = None,
+    weekly_pi80_width_ratio: Optional[float] = None,
+    weekly_pi96_coverage: Optional[float] = None,
+    weekly_pi96_width_ratio: Optional[float] = None,
     weekly_quantile_crossing_rate: Optional[float] = None,
+    weekly_sorted_quantile_crossing_rate: Optional[float] = None,
     weekly_median_sort_gap_max: Optional[float] = None,
     weekly_sample_count: Optional[int] = None,
 ) -> Tuple[bool, List[str]]:
@@ -64,10 +68,32 @@ def evaluate_quality_gate(
     elif weekly_pi80_coverage < 0.74 or weekly_pi80_coverage > 0.86:
         reasons.append(f"WeeklyPI80={weekly_pi80_coverage:.4f} outside [0.74, 0.86]")
 
+    if weekly_pi80_width_ratio is None:
+        reasons.append("Missing weekly_pi80_width_ratio")
+    elif weekly_pi80_width_ratio > 2.0 and weekly_pi80_coverage is not None and weekly_pi80_coverage > 0.86:
+        reasons.append(
+            f"WeeklyPI80Overwide={weekly_pi80_width_ratio:.4f} with coverage={weekly_pi80_coverage:.4f}"
+        )
+
+    if weekly_pi96_coverage is None:
+        reasons.append("Missing weekly_pi96_coverage")
+
+    if weekly_pi96_width_ratio is None:
+        reasons.append("Missing weekly_pi96_width_ratio")
+    elif weekly_pi96_width_ratio > 3.0:
+        reasons.append(f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio:.4f} > 3.0")
+
     if weekly_quantile_crossing_rate is None:
         reasons.append("Missing weekly_quantile_crossing_rate")
-    elif weekly_quantile_crossing_rate > 0.10:
-        reasons.append(f"WeeklyQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.10")
+    elif weekly_quantile_crossing_rate > 0.05:
+        reasons.append(f"WeeklyQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.05")
+
+    if weekly_sorted_quantile_crossing_rate is None:
+        reasons.append("Missing weekly_sorted_quantile_crossing_rate")
+    elif weekly_sorted_quantile_crossing_rate > 0.0:
+        reasons.append(
+            f"WeeklySortedQuantileCrossing={weekly_sorted_quantile_crossing_rate:.4f} > 0.0"
+        )
 
     if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.005:
         reasons.append(f"WeeklyMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.005")

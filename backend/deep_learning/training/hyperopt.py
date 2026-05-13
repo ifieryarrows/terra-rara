@@ -38,7 +38,7 @@ from deep_learning.config import (
 
 logger = logging.getLogger(__name__)
 
-MIN_COMPLETED_TRIALS = 3
+MIN_COMPLETED_TRIALS = 10
 SHARPE_PRUNE_THRESHOLD = -0.3
 FOLD_SHARPE_PRUNE_THRESHOLD = -1.0
 
@@ -55,10 +55,14 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.60,
-    "lambda_t1_quantile": 0.15,
+    "lambda_t1_quantile": 0.10,
     "lambda_directional": 0.10,
-    "lambda_magnitude": 0.40,
+    "lambda_magnitude": 0.55,
     "weekly_lambda_vol": 0.35,
+    "lambda_width": 0.50,
+    "lambda_tail_width": 0.30,
+    "lambda_sanity": 0.20,
+    "lambda_crossing": 7.0,
     "batch_size": 32,
 }
 
@@ -129,6 +133,8 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "weekly_magnitude_collapse": 0,
         "weekly_magnitude_explosion": 0,
         "weekly_interval_width_explosion": 0,
+        "weekly_tail_width_explosion": 0,
+        "weekly_raw_crossing_prune": 0,
         "weekly_overcoverage_width_explosion": 0,
         "error": 0,
     }
@@ -142,7 +148,11 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "avg_weekly_magnitude_ratio",
         "avg_weekly_pi80_coverage",
         "avg_weekly_pi80_width_ratio",
+        "avg_weekly_pi96_width_ratio",
+        "avg_weekly_raw_crossing_rate",
+        "avg_weekly_sorted_crossing_rate",
         "avg_weekly_interval_score_80",
+        "avg_weekly_interval_score_96",
         "fold_score_std",
     )
 
@@ -217,32 +227,32 @@ def _enqueue_known_good_trial(study, base_cfg: TFTASROConfig) -> bool:
 def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     """Map an Optuna trial to a TFT-ASRO configuration."""
     model_cfg = TFTModelConfig(
-        max_encoder_length=trial.suggest_int("max_encoder_length", 30, 90, step=10),
+        max_encoder_length=trial.suggest_categorical("max_encoder_length", [40, 50, 60, 75, 90]),
         max_prediction_length=base_cfg.model.max_prediction_length,
         # Post-MRMR pruning (~60-80 features), smaller models generalise better.
         # 24 is viable now that feature count dropped from 200+ to ~60-80.
-        hidden_size=trial.suggest_int("hidden_size", 24, 48, step=8),
-        attention_head_size=trial.suggest_int("attention_head_size", 1, 2),
+        hidden_size=trial.suggest_categorical("hidden_size", [24, 32, 48]),
+        attention_head_size=trial.suggest_categorical("attention_head_size", [1, 2]),
         # Floor at 0.20: 313 samples with dropout<0.20 causes co-adaptation
         # and memorization (REG-2026-001).  Cap at 0.35: dropout>0.35 with
         # small hidden_size collapses the output range.
-        dropout=trial.suggest_float("dropout", 0.20, 0.35, step=0.05),
+        dropout=trial.suggest_categorical("dropout", [0.20, 0.25, 0.30, 0.35]),
         # Paired reduction: with hidden=24-48 and ~60-80 features,
         # 8-16 is the sweet spot for continuous variable processing.
-        hidden_continuous_size=trial.suggest_int("hidden_continuous_size", 8, 16, step=8),
+        hidden_continuous_size=trial.suggest_categorical("hidden_continuous_size", [8, 16]),
         quantiles=base_cfg.model.quantiles,
         # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
         # LR > 1e-3 causes 1-epoch divergence. This band is the stable zone.
-        learning_rate=trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True),
+        learning_rate=trial.suggest_float("learning_rate", 1e-4, 6e-4, log=True),
         reduce_on_plateau_patience=4,
-        gradient_clip_val=trial.suggest_float("gradient_clip_val", 0.5, 2.0, step=0.5),
-        weight_decay=trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True),
+        gradient_clip_val=trial.suggest_categorical("gradient_clip_val", [0.5, 1.0, 1.5]),
+        weight_decay=trial.suggest_float("weight_decay", 1e-5, 5e-4, log=True),
     )
 
     asro_cfg = ASROConfig(
         # Floor at 0.25: three Optuna runs consistently selected 0.30-0.35.
         # Lower values let the model collapse to near-zero pred_std.
-        lambda_vol=trial.suggest_float("lambda_vol", 0.30, 0.45, step=0.05),
+        lambda_vol=trial.suggest_float("lambda_vol", 0.25, 0.40, step=0.05),
         # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
         # Capped at 0.40 to ensure Sharpe (directional) component always has
         # ≥60% weight.  Higher values caused the "perfect calibration, coin-flip
@@ -250,20 +260,20 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         # expense of directional signal.
         lambda_quantile=trial.suggest_float("lambda_quantile", 0.25, 0.4, step=0.05),
         # MADL weight: how much the directional loss contributes relative to Sharpe.
-        lambda_madl=trial.suggest_float("lambda_madl", 0.3, 0.5, step=0.1),
+        lambda_madl=trial.suggest_float("lambda_madl", 0.35, 0.60, step=0.05),
         risk_free_rate=0.0,
     )
 
     weekly_loss_cfg = WeeklyLossConfig(
-        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.55, 0.70, step=0.05),
-        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.10, 0.20, step=0.05),
-        lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.15, step=0.05),
-        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.35, 0.55, step=0.05),
+        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.60, 0.75, step=0.05),
+        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.05, 0.15, step=0.05),
+        lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.12, step=0.01),
+        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.50, 0.80, step=0.05),
         lambda_vol=trial.suggest_float("weekly_lambda_vol", 0.25, 0.45, step=0.05),
-        lambda_crossing=base_cfg.weekly_loss.lambda_crossing,
-        lambda_sanity=base_cfg.weekly_loss.lambda_sanity,
-        lambda_width=base_cfg.weekly_loss.lambda_width,
-        lambda_tail_width=base_cfg.weekly_loss.lambda_tail_width,
+        lambda_crossing=trial.suggest_float("lambda_crossing", 5.0, 10.0, step=1.0),
+        lambda_sanity=trial.suggest_float("lambda_sanity", 0.10, 0.30, step=0.05),
+        lambda_width=trial.suggest_float("lambda_width", 0.40, 0.90, step=0.05),
+        lambda_tail_width=trial.suggest_float("lambda_tail_width", 0.25, 0.75, step=0.05),
     )
 
     training_cfg = TrainingConfig(
@@ -360,7 +370,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_weekly_mr_list: list[float] = []
     fold_weekly_pi80_coverage_list: list[float] = []
     fold_weekly_pi80_width_ratio_list: list[float] = []
+    fold_weekly_pi96_width_ratio_list: list[float] = []
+    fold_weekly_raw_crossing_list: list[float] = []
+    fold_weekly_sorted_crossing_list: list[float] = []
     fold_weekly_interval_score_80_list: list[float] = []
+    fold_weekly_interval_score_96_list: list[float] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
         # ---- setup ----
@@ -430,7 +444,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_mr = 1.0
         fold_weekly_pi80_coverage = 0.0
         fold_weekly_pi80_width_ratio = 1.0
+        fold_weekly_pi96_width_ratio = 1.0
+        fold_weekly_raw_crossing = 0.0
+        fold_weekly_sorted_crossing = 0.0
         fold_weekly_interval_score_80 = 0.0
+        fold_weekly_interval_score_96 = 0.0
 
         try:
             pred_tensor = model.predict(fold_val_dl, mode="quantiles")
@@ -494,19 +512,31 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
             fold_weekly_pi80_coverage = float(weekly.get("weekly_pi80_coverage", 0.0))
             fold_weekly_pi80_width_ratio = float(weekly.get("weekly_pi80_width_ratio", 1.0))
+            fold_weekly_pi96_width_ratio = float(weekly.get("weekly_pi96_width_ratio", 1.0))
+            fold_weekly_raw_crossing = float(weekly.get("weekly_quantile_crossing_rate", 0.0))
+            fold_weekly_sorted_crossing = float(
+                weekly.get("weekly_sorted_quantile_crossing_rate", 0.0)
+            )
             fold_weekly_interval_score_80 = float(weekly.get("weekly_interval_score_80", 0.0))
+            fold_weekly_interval_score_96 = float(weekly.get("weekly_interval_score_96", 0.0))
             weekly_actual_std = float(weekly.get("weekly_actual_std", 0.0))
             interval_score_penalty = fold_weekly_interval_score_80 / (weekly_actual_std + 1e-8)
+            interval_score_96_penalty = fold_weekly_interval_score_96 / (weekly_actual_std + 1e-8)
             coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)
-            width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 2.0)
+            width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)
+            tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)
+            raw_crossing_penalty = max(0.0, fold_weekly_raw_crossing - 0.05)
             fold_weekly_objective = (
                 0.35 * weekly_pinball
                 + 0.15 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
-                + 0.30 * abs(np.log(fold_weekly_mr + 1e-8))
+                + 0.50 * abs(np.log(fold_weekly_mr + 1e-8))
                 + 0.20 * coverage_penalty
                 + 0.25 * width_penalty
+                + 0.35 * tail_width_penalty
                 + 0.10 * interval_score_penalty
-                + 0.20 * float(weekly.get("weekly_quantile_crossing_rate", 0.0))
+                + 0.05 * interval_score_96_penalty
+                + 0.50 * raw_crossing_penalty
+                + 0.25 * fold_weekly_sorted_crossing
             )
         except Exception as exc:
             logger.warning(
@@ -523,7 +553,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_mr_list.append(fold_weekly_mr)
         fold_weekly_pi80_coverage_list.append(fold_weekly_pi80_coverage)
         fold_weekly_pi80_width_ratio_list.append(fold_weekly_pi80_width_ratio)
+        fold_weekly_pi96_width_ratio_list.append(fold_weekly_pi96_width_ratio)
+        fold_weekly_raw_crossing_list.append(fold_weekly_raw_crossing)
+        fold_weekly_sorted_crossing_list.append(fold_weekly_sorted_crossing)
         fold_weekly_interval_score_80_list.append(fold_weekly_interval_score_80)
+        fold_weekly_interval_score_96_list.append(fold_weekly_interval_score_96)
 
         # Incorporate DA directly into fold_score as a reward (not just penalty).
         # DA > 50% (coin-flip) is rewarded, < 50% penalised.
@@ -584,6 +618,22 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_interval_width_explosion")
             raise optuna.exceptions.TrialPruned()
 
+        if fold_weekly_pi96_width_ratio > 3.0 and fold_idx >= 1 and not protect_trial:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly_pi96_width_ratio=%.4f > 3.0",
+                trial.number, fold_idx + 1, fold_weekly_pi96_width_ratio,
+            )
+            trial.set_user_attr("prune_reason", "weekly_tail_width_explosion")
+            raise optuna.exceptions.TrialPruned()
+
+        if fold_weekly_raw_crossing > 0.05 and fold_idx >= 1 and not protect_trial:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly raw crossing=%.4f > 0.05",
+                trial.number, fold_idx + 1, fold_weekly_raw_crossing,
+            )
+            trial.set_user_attr("prune_reason", "weekly_raw_crossing_prune")
+            raise optuna.exceptions.TrialPruned()
+
         if (
             fold_weekly_pi80_coverage >= 0.98
             and fold_weekly_pi80_width_ratio > 3.0
@@ -628,9 +678,29 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         if fold_weekly_pi80_width_ratio_list
         else 1.0
     )
+    avg_weekly_pi96_width_ratio = (
+        float(np.mean(fold_weekly_pi96_width_ratio_list))
+        if fold_weekly_pi96_width_ratio_list
+        else 1.0
+    )
+    avg_weekly_raw_crossing = (
+        float(np.mean(fold_weekly_raw_crossing_list))
+        if fold_weekly_raw_crossing_list
+        else 0.0
+    )
+    avg_weekly_sorted_crossing = (
+        float(np.mean(fold_weekly_sorted_crossing_list))
+        if fold_weekly_sorted_crossing_list
+        else 0.0
+    )
     avg_weekly_interval_score_80 = (
         float(np.mean(fold_weekly_interval_score_80_list))
         if fold_weekly_interval_score_80_list
+        else 0.0
+    )
+    avg_weekly_interval_score_96 = (
+        float(np.mean(fold_weekly_interval_score_96_list))
+        if fold_weekly_interval_score_96_list
         else 0.0
     )
 
@@ -647,7 +717,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_weekly_magnitude_ratio", round(avg_weekly_mr, 4))
     trial.set_user_attr("avg_weekly_pi80_coverage", round(avg_weekly_pi80_coverage, 4))
     trial.set_user_attr("avg_weekly_pi80_width_ratio", round(avg_weekly_pi80_width_ratio, 4))
+    trial.set_user_attr("avg_weekly_pi96_width_ratio", round(avg_weekly_pi96_width_ratio, 4))
+    trial.set_user_attr("avg_weekly_raw_crossing_rate", round(avg_weekly_raw_crossing, 4))
+    trial.set_user_attr("avg_weekly_sorted_crossing_rate", round(avg_weekly_sorted_crossing, 4))
     trial.set_user_attr("avg_weekly_interval_score_80", round(avg_weekly_interval_score_80, 4))
+    trial.set_user_attr("avg_weekly_interval_score_96", round(avg_weekly_interval_score_96, 4))
     trial.set_user_attr(
         "fold_score_std",
         round(float(np.std(fold_scores)) if len(fold_scores) > 1 else 0.0, 4),
@@ -668,6 +742,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.number, avg_crossing, avg_median_gap,
         )
         trial.set_user_attr("prune_reason", "crossing_prune")
+        raise optuna.exceptions.TrialPruned()
+
+    if (avg_weekly_raw_crossing > 0.05 or avg_weekly_sorted_crossing > 0.0) and not protect_trial:
+        logger.warning(
+            "Trial %d PRUNED: weekly quantile incoherence raw=%.3f sorted=%.3f",
+            trial.number, avg_weekly_raw_crossing, avg_weekly_sorted_crossing,
+        )
+        trial.set_user_attr("prune_reason", "weekly_raw_crossing_prune")
         raise optuna.exceptions.TrialPruned()
 
     # Soft penalty: avg DA below coin-flip

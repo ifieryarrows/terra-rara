@@ -46,6 +46,7 @@ warnings.filterwarnings(
 logger = logging.getLogger(__name__)
 
 KNOWN_GOOD_CONFIG = {
+    "max_encoder_length": 60,
     "hidden_size": 48,
     "attention_head_size": 2,
     "dropout": 0.30,
@@ -56,12 +57,14 @@ KNOWN_GOOD_CONFIG = {
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.60,
-    "lambda_t1_quantile": 0.15,
+    "lambda_t1_quantile": 0.10,
     "lambda_directional": 0.10,
-    "lambda_magnitude": 0.40,
+    "lambda_magnitude": 0.55,
     "weekly_lambda_vol": 0.35,
-    "lambda_width": 0.25,
-    "lambda_tail_width": 0.05,
+    "lambda_width": 0.50,
+    "lambda_tail_width": 0.30,
+    "lambda_sanity": 0.20,
+    "lambda_crossing": 7.0,
     "batch_size": 32,
 }
 
@@ -70,9 +73,14 @@ REQUIRED_PROMOTABLE_METRICS = (
     "weekly_magnitude_ratio",
     "weekly_tail_capture_rate",
     "weekly_pi80_coverage",
+    "weekly_pi80_width_ratio",
+    "weekly_pi96_coverage",
+    "weekly_pi96_width_ratio",
     "weekly_sample_count",
     "weekly_quantile_crossing_rate",
+    "weekly_sorted_quantile_crossing_rate",
     "quantile_crossing_rate",
+    "sorted_quantile_crossing_rate",
 )
 
 
@@ -451,8 +459,17 @@ def train_tft_model(
     # Write metadata JSON to disk for CI quality gate
     meta_json_path = Path(cfg.training.best_model_path).parent / "tft_metadata.json"
     try:
+        result["artifact_manifest_path"] = str(meta_json_path.parent / "artifact_manifest.json")
         meta_json_path.write_text(json.dumps(result, indent=2, default=str))
         logger.info("Training metadata written to %s", meta_json_path)
+        try:
+            from deep_learning.models.hub import write_artifact_manifest
+
+            manifest_path = write_artifact_manifest(meta_json_path.parent)
+            result["artifact_manifest_path"] = str(manifest_path)
+            logger.info("Artifact manifest written to %s", manifest_path)
+        except Exception as exc:
+            logger.warning("Could not write artifact manifest: %s", exc)
     except Exception as exc:
         logger.warning("Could not write metadata JSON: %s", exc)
 
@@ -515,7 +532,10 @@ def _write_conformal_calibration_artifact(
             return None
 
         weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=cfg.forecast.primary_horizon_days)
-        weekly_quantiles = cumulative_quantiles(pred_np[:n], horizon=cfg.forecast.primary_horizon_days)
+        weekly_quantiles = np.sort(
+            cumulative_quantiles(pred_np[:n], horizon=cfg.forecast.primary_horizon_days),
+            axis=-1,
+        )
         q = tuple(cfg.model.quantiles)
         q10_idx = q.index(0.10)
         q90_idx = q.index(0.90)
@@ -606,6 +626,28 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_quantile"] = min(max(float(params["lambda_quantile"]), 0.25), 0.40)
         if "lambda_madl" in params:
             params["lambda_madl"] = max(float(params["lambda_madl"]), 0.30)
+        if "max_encoder_length" in params and int(params["max_encoder_length"]) < 40:
+            logger.warning(
+                "Optuna max_encoder_length=%s is below weekly-safe floor; clamping to 40",
+                params["max_encoder_length"],
+            )
+            params["max_encoder_length"] = 40
+        if "learning_rate" in params:
+            params["learning_rate"] = min(float(params["learning_rate"]), 6e-4)
+        if "weight_decay" in params:
+            params["weight_decay"] = min(float(params["weight_decay"]), 5e-4)
+        if "lambda_magnitude" in params:
+            params["lambda_magnitude"] = max(float(params["lambda_magnitude"]), 0.50)
+        if "lambda_directional" in params:
+            params["lambda_directional"] = min(float(params["lambda_directional"]), 0.12)
+        if "lambda_width" in params:
+            params["lambda_width"] = max(float(params["lambda_width"]), 0.40)
+        if "lambda_tail_width" in params:
+            params["lambda_tail_width"] = max(float(params["lambda_tail_width"]), 0.25)
+        if "lambda_sanity" in params:
+            params["lambda_sanity"] = max(float(params["lambda_sanity"]), 0.10)
+        if "lambda_crossing" in params:
+            params["lambda_crossing"] = max(float(params["lambda_crossing"]), 5.0)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",

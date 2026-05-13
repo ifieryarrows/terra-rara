@@ -23,7 +23,11 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
             "weekly_magnitude_ratio": 1.0,
             "weekly_tail_capture_rate": 0.50,
             "weekly_pi80_coverage": 0.80,
+            "weekly_pi80_width_ratio": 1.0,
+            "weekly_pi96_coverage": 0.96,
+            "weekly_pi96_width_ratio": 1.0,
             "weekly_quantile_crossing_rate": 0.0,
+            "weekly_sorted_quantile_crossing_rate": 0.0,
             "weekly_median_sort_gap_max": 0.0,
             "weekly_sample_count": 120,
         }

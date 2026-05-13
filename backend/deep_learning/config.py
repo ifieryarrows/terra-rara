@@ -136,15 +136,15 @@ class ASROConfig:
 
 @dataclass(frozen=True)
 class WeeklyLossConfig:
-    lambda_weekly_quantile: float = 0.55
+    lambda_weekly_quantile: float = 0.60
     lambda_t1_quantile: float = 0.10
-    lambda_directional: float = 0.15
-    lambda_magnitude: float = 0.35
-    lambda_vol: float = 0.15
-    lambda_crossing: float = 5.0
-    lambda_sanity: float = 0.10
-    lambda_width: float = 0.25
-    lambda_tail_width: float = 0.05
+    lambda_directional: float = 0.10
+    lambda_magnitude: float = 0.55
+    lambda_vol: float = 0.35
+    lambda_crossing: float = 7.0
+    lambda_sanity: float = 0.20
+    lambda_width: float = 0.50
+    lambda_tail_width: float = 0.30
 
 
 @dataclass(frozen=True)
@@ -167,7 +167,7 @@ class TrainingConfig:
     num_workers: int = 0
     # 25→15: CI budget fix. 15 trials × 3 folds × 25 epochs ≈ 108 min;
     # final trainer adds ~40-50 min → total ~155 min < 180 min limit.
-    optuna_n_trials: int = 15
+    optuna_n_trials: int = 30
     # Walk-Forward temporal CV folds for hyperopt (REG-2026-001 P2).
     # Set to 1 to disable CV and fall back to single-split behaviour.
     cv_n_folds: int = 3

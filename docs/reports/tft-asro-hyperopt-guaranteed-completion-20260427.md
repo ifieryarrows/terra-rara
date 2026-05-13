@@ -145,3 +145,75 @@ Plan dışına çıkılmadı:
 - CI workflow dosyaları değiştirilmedi.
 - Remote training workflow tetiklenmedi.
 - Production checkpoint veya HF Hub artifact'i güncellenmedi.
+
+---
+
+## 6. Devam Sonuclari (Workflow Run)
+
+Bu raporun ardindan gercek GitHub Actions kosusu calistirildi ve `hyperopt -> train -> quality gate -> HF upload` zinciri tamamlandi.
+
+### 6.1 Hyperopt Sonucu
+
+```text
+status: completed
+n_trials: 15
+trial_state_counts: complete=3, pruned=12
+best_trial: 2
+best_value: 0.895160767264129
+```
+
+Best parametreler:
+
+```text
+max_encoder_length: 80
+hidden_size: 24
+attention_head_size: 2
+dropout: 0.2
+hidden_continuous_size: 16
+learning_rate: 0.0001354695030423695
+gradient_clip_val: 1.5
+weight_decay: 0.000300292314455518
+lambda_vol: 0.3
+lambda_quantile: 0.35
+lambda_madl: 0.5
+batch_size: 16
+```
+
+Prune reason dagilimi:
+
+```text
+crossing_prune: 12
+sharpe_prune: 0
+fold_sharpe_prune: 0
+median_prune: 0
+error: 0
+```
+
+### 6.2 Final Training Sonucu
+
+```text
+TFT-ASRO TRAINING COMPLETE
+  mae: 0.0316
+  rmse: 0.0353
+  directional_accuracy: 0.5283
+  tail_capture_rate: 0.5455
+  sharpe_ratio: 0.8169
+  sortino_ratio: 1.4776
+  pred_std: 0.0063
+  actual_std: 0.0175
+  variance_ratio: 0.3617
+  ensemble_size: 3
+```
+
+Kalite kapisi ve artifact sonucu:
+
+```text
+Quality gate: PASS
+HF Hub upload: SUCCESS
+```
+
+### 6.3 Degerlendirme
+
+1. `no_finite_completed_trials` sorunu bu kosuda tekrar etmedi.
+2. DA/Sharpe/Tail metrikleri gate seviyesinde guclu ve promote tamamlandi.
+3. Variance ratio `0.3617` gate minimumunu gecse de hedef bant (`0.70-1.20`) altinda; amplitude kalibrasyonu izlenmeli.
