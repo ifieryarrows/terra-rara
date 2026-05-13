@@ -86,6 +86,7 @@ def _build_commentary_template_fallback(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int,
+    model_status_note: str | None = None,
 ) -> str:
     """Deterministic fallback commentary used when LLM is unavailable."""
     direction = "upside" if predicted_return >= 0 else "downside"
@@ -93,8 +94,7 @@ def _build_commentary_template_fallback(
     while len(top_driver_names) < 3:
         top_driver_names.append("unknown_driver")
 
-    return "\n".join(
-        [
+    lines = [
             "Risks:",
             f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
             f"2. Sentiment regime is {sentiment_label} with score {sentiment_index:.3f}, which can reverse quickly.",
@@ -105,9 +105,11 @@ def _build_commentary_template_fallback(
             f"3. Secondary drivers `{top_driver_names[1]}` and `{top_driver_names[2]}` provide confirmation checkpoints.",
             f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
             "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
-            "This is NOT financial advice.",
-        ]
-    )
+    ]
+    if model_status_note:
+        lines.append(f"Model status note: {model_status_note}")
+    lines.append("This is NOT financial advice.")
+    return "\n".join(lines)
 
 
 def _detect_stance_from_keywords(text: str) -> str:
@@ -198,6 +200,7 @@ async def _generate_commentary_and_stance(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int,
+    model_status_note: str | None = None,
 ) -> tuple[str, str]:
     settings = get_settings()
     deterministic_stance = _deterministic_stance_from_inputs(predicted_return, sentiment_index)
@@ -209,6 +212,7 @@ async def _generate_commentary_and_stance(
         sentiment_label=sentiment_label,
         top_influencers=top_influencers,
         news_count=news_count,
+        model_status_note=model_status_note,
     )
 
     if not settings.openrouter_api_key:
@@ -231,6 +235,7 @@ DATA INPUTS:
 - Sentiment Index: {sentiment_index:.6f}
 - Sentiment Label: {sentiment_label}
 - News Count: {news_count}
+- Model Status Note: {model_status_note or "No degraded model inputs excluded."}
 - Top Influencers & Their Signals:
 {influencers_text}
 
@@ -397,6 +402,7 @@ async def generate_commentary(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int = 0,
+    model_status_note: str | None = None,
 ) -> Optional[str]:
     """
     Generate AI commentary text.
@@ -409,6 +415,7 @@ async def generate_commentary(
         sentiment_label=sentiment_label,
         top_influencers=top_influencers,
         news_count=news_count,
+        model_status_note=model_status_note,
     )
     return commentary
 
@@ -493,6 +500,7 @@ async def generate_and_save_commentary(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int = 0,
+    model_status_note: str | None = None,
 ) -> Optional[str]:
     """
     Generate commentary and save to database.
@@ -506,6 +514,7 @@ async def generate_and_save_commentary(
         sentiment_label=sentiment_label,
         top_influencers=top_influencers,
         news_count=news_count,
+        model_status_note=model_status_note,
     )
 
     if commentary:

@@ -85,8 +85,20 @@ class TFTPredictor:
             return
         self._hub_checked = True
 
+        try:
+            from deep_learning.models.hub import validate_tft_artifact_set
+
+            if validate_tft_artifact_set(Path(self._checkpoint_path).parent):
+                return
+        except Exception as exc:
+            logger.debug("TFT artifact validation skipped before Hub download: %s", exc)
+
         if Path(self._checkpoint_path).exists():
-            return
+            logger.info(
+                "TFT checkpoint exists but companion artifacts are incomplete; attempting HF Hub refresh"
+            )
+        else:
+            logger.info("TFT checkpoint not present locally; attempting HF Hub download")
 
         try:
             from deep_learning.models.hub import download_tft_artifacts
@@ -97,9 +109,10 @@ class TFTPredictor:
                 repo_id=self.cfg.training.hf_model_repo,
             )
             if downloaded:
-                logger.info("TFT checkpoint downloaded from HF Hub")
+                logger.info("TFT artifact set downloaded/refreshed from HF Hub")
             else:
-                logger.warning("TFT checkpoint not available on HF Hub")
+                logger.warning("TFT artifact set not available on HF Hub")
+            return
         except Exception as exc:
             logger.warning("HF Hub download attempt failed: %s", exc)
 
@@ -323,10 +336,23 @@ class TFTPredictor:
     @staticmethod
     def _degraded_retrain_required(message: str) -> Dict[str, Any]:
         return {
+            "symbol": TARGET_SYMBOL,
+            "model_type": "TFT-ASRO",
             "model_state": "retrain_required",
             "quality_state": "degraded",
+            "is_forecast_healthy": False,
+            "primary_horizon": None,
+            "primary_forecast_return": None,
+            "primary_forecast_q10": None,
+            "primary_forecast_q90": None,
+            "t1_impulse": None,
+            "t1_return": None,
+            "weekly_forecast": None,
+            "prediction": None,
+            "reference_price_date": None,
             "message": message,
             "return_space": RETURN_SPACE,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     def _conformal_adjustment_for_latest_regime(self, master_df: pd.DataFrame) -> float:
@@ -621,6 +647,7 @@ def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any
 
     prediction = predictor.predict(session, symbol)
     if prediction.get("model_state") == "retrain_required":
+        prediction["symbol"] = symbol
         return prediction
     if "error" in prediction:
         return prediction
@@ -667,6 +694,9 @@ def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
+        "model_state": "ok",
+        "quality_state": "ok",
+        "is_forecast_healthy": True,
         "direction": direction,
         "weekly_trend": direction,
         "primary_horizon": "5D",

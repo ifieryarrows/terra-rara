@@ -106,12 +106,37 @@ def _sentiment_qc(sentiment: pd.Series, close: pd.Series) -> None:
     """Log lagged correlation between sentiment and next-day returns."""
     try:
         returns = close.pct_change(fill_method=None).shift(-1)
-        aligned = pd.DataFrame({"sentiment": sentiment, "return": returns}).dropna()
+        raw_aligned = pd.DataFrame({"sentiment": sentiment, "return": returns})
+        raw_values = raw_aligned[["sentiment", "return"]].to_numpy(dtype=float)
+        if np.isinf(raw_values).any():
+            logger.warning("Sentiment QC skipped: non-finite values detected")
+            return
+
+        aligned = raw_aligned
+        aligned = aligned.replace([np.inf, -np.inf], np.nan).dropna()
         if len(aligned) < 30:
+            return
+
+        values = aligned[["sentiment", "return"]].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            logger.warning("Sentiment QC skipped: non-finite values detected")
+            return
+
+        sentiment_std = float(aligned["sentiment"].std(ddof=0) or 0.0)
+        if sentiment_std < 1e-9:
+            logger.warning("Sentiment QC skipped: sentiment has insufficient variance")
+            return
+
+        return_std = float(aligned["return"].std(ddof=0) or 0.0)
+        if return_std < 1e-9:
+            logger.warning("Sentiment QC skipped: return has insufficient variance")
             return
 
         corr_0 = aligned["sentiment"].corr(aligned["return"])
         corr_1 = aligned["sentiment"].shift(1).corr(aligned["return"])
+        if not np.isfinite([corr_0, corr_1]).all():
+            logger.warning("Sentiment QC skipped: correlation produced non-finite values")
+            return
 
         logger.info(
             "Sentiment QC: corr(sent, ret_t+1)=%.4f  corr(sent_t-1, ret_t+1)=%.4f  n=%d",

@@ -225,3 +225,32 @@ def test_generate_and_save_commentary_uses_deterministic_stance_fallback(monkeyp
     assert commentary is not None
     assert "Risks:" in commentary
     assert captured["ai_stance"] == "BULLISH"
+
+
+def test_generate_and_save_commentary_includes_degraded_model_note(monkeypatch):
+    fake_settings = SimpleNamespace(
+        openrouter_api_key=None,
+        resolved_commentary_model="stepfun/step-3.5-flash:free",
+        openrouter_max_retries=3,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(commentary_module, "save_commentary_to_db", lambda **_kwargs: None)
+
+    async def run_call():
+        return await commentary_module.generate_and_save_commentary(
+            session=object(),
+            symbol="HG=F",
+            current_price=4.1,
+            predicted_price=4.2,
+            predicted_return=0.02,
+            sentiment_index=0.1,
+            sentiment_label="Bullish",
+            top_influencers=[],
+            news_count=4,
+            model_status_note="TFT weekly model unavailable; commentary excludes TFT signal.",
+        )
+
+    commentary = asyncio.run(run_call())
+    assert "commentary excludes TFT signal" in commentary

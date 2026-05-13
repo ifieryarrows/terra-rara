@@ -1110,7 +1110,11 @@ class TestV2ScoringBundleShape:
             del settings, articles, horizon_days
             # Simulate fast model hitting daily limit; reliable still healthy.
             if model_name == "fast-model":
-                return {}, [11], 0, True
+                return {}, [11], {
+                    "parse_fail_raw_count": 0,
+                    "repair_success_count": 0,
+                    "final_unresolved_count": 1,
+                }, True
             return (
                 {11: {
                     "id": 11,
@@ -1122,7 +1126,11 @@ class TestV2ScoringBundleShape:
                     "reasoning": "test",
                 }},
                 [],
-                0,
+                {
+                    "parse_fail_raw_count": 0,
+                    "repair_success_count": 0,
+                    "final_unresolved_count": 0,
+                },
                 False,
             )
 
@@ -1149,3 +1157,142 @@ class TestV2ScoringBundleShape:
         # Backward-compat aggregate: only true when BOTH are exhausted.
         assert bundle["rate_limited"] is False
 
+    def test_score_batch_retries_only_missing_ids_and_clears_final_parse_fail(self, monkeypatch):
+        from app import ai_engine
+
+        async def fake_subset(*, settings, model_name, articles, horizon_days):
+            del settings, horizon_days
+            ids = [int(item["id"]) for item in articles]
+            if model_name == "fast-model":
+                assert ids == [21, 22]
+                return (
+                    {
+                        21: {
+                            "id": 21,
+                            "label": "BULLISH",
+                            "impact_score": 0.3,
+                            "confidence": 0.6,
+                            "relevance": 0.7,
+                            "event_type": "supply_disruption",
+                            "reasoning": "fast ok",
+                        }
+                    },
+                    [22],
+                    {
+                        "parse_fail_raw_count": 0,
+                        "repair_success_count": 0,
+                        "final_unresolved_count": 1,
+                    },
+                    False,
+                )
+            assert ids == [22]
+            return (
+                {
+                    22: {
+                        "id": 22,
+                        "label": "BEARISH",
+                        "impact_score": -0.3,
+                        "confidence": 0.6,
+                        "relevance": 0.7,
+                        "event_type": "demand_decrease",
+                        "reasoning": "recovered",
+                    }
+                },
+                [],
+                {
+                    "parse_fail_raw_count": 0,
+                    "repair_success_count": 0,
+                    "final_unresolved_count": 0,
+                },
+                False,
+            )
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="sk-test",
+            resolved_scoring_fast_model="fast-model",
+            resolved_scoring_reliable_model="reliable-model",
+            sentiment_escalate_conflict_threshold=0.55,
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(ai_engine, "_score_subset_with_model_v2", fake_subset)
+
+        bundle = asyncio.run(
+            ai_engine.score_batch_with_llm_v2(
+                [
+                    {"id": 21, "title": "a", "description": "b", "text": "x" * 100},
+                    {"id": 22, "title": "c", "description": "d", "text": "y" * 100},
+                ],
+                horizon_days=5,
+            )
+        )
+
+        assert [item["id"] for item in bundle["results"]] == [21, 22]
+        assert bundle["parse_fail_count"] == 0
+        assert bundle["missing_id_retry_count"] == 1
+        assert bundle["missing_id_recovered_count"] == 1
+        assert bundle["final_unresolved_count"] == 0
+        assert bundle["fallback_count"] == 0
+
+
+class TestSentimentV2Aggregation:
+    def test_aggregate_daily_sentiment_v2_handles_old_fetch_lag_without_overflow(self, monkeypatch):
+        from app import ai_engine
+
+        rows = [
+            (
+                datetime(2020, 1, 2, 12, tzinfo=timezone.utc),
+                datetime(2026, 5, 13, 0, tzinfo=timezone.utc),
+                0.4,
+                0.8,
+                0.9,
+                "supply_disruption",
+            )
+        ]
+
+        class Query:
+            def join(self, *args, **kwargs):
+                return self
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def all(self):
+                return rows
+
+            def first(self):
+                return None
+
+        class Session:
+            def __init__(self):
+                self.added = []
+
+            def query(self, *args, **kwargs):
+                return Query()
+
+            def add(self, obj):
+                self.added.append(obj)
+
+            def commit(self):
+                return None
+
+        monkeypatch.setattr(
+            ai_engine,
+            "get_settings",
+            lambda: SimpleNamespace(
+                sentiment_tau_hours=12.0,
+                sentiment_horizon_days=5,
+                sentiment_relevance_min=0.35,
+            ),
+        )
+
+        session = Session()
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            count = ai_engine.aggregate_daily_sentiment_v2(session)
+
+        assert count == 1
+        assert len(session.added) == 1
+        assert np.isfinite(session.added[0].sentiment_index)
+        assert not any("overflow encountered in exp" in str(w.message) for w in caught)

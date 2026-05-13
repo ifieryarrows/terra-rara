@@ -517,6 +517,7 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 5: Generate snapshot")
     snapshot_report = None  # Will be used by Stage 6
+    tft_commentary_note = None
     try:
         from app.inference import generate_analysis_report, save_analysis_snapshot
         
@@ -538,6 +539,11 @@ async def _execute_pipeline_stages_v2(
             session.commit()
         else:
             result["snapshot_generated"] = False
+            result["snapshot_degraded_reason"] = "legacy_xgb_unavailable_or_metadata_incomplete"
+            logger.warning(
+                f"[run_id={run_id}] XGBoost snapshot unavailable or metadata incomplete; "
+                "leaving legacy snapshot degraded without guessing target_type"
+            )
             
     except Exception as e:
         logger.error(f"[run_id={run_id}] Stage 5 failed: {e}")
@@ -556,14 +562,29 @@ async def _execute_pipeline_stages_v2(
 
         tft_cfg = get_tft_config()
         ckpt = Path(tft_cfg.training.best_model_path)
+        tft_dir = ckpt.parent
 
-        # If checkpoint is not cached locally, try to pull from HF Hub first
-        if not ckpt.exists():
+        artifact_set_valid = False
+        try:
+            from deep_learning.models.hub import validate_tft_artifact_set
+
+            artifact_set_valid = validate_tft_artifact_set(tft_dir)
+        except Exception as artifact_exc:
+            logger.warning(
+                f"[run_id={run_id}] TFT artifact validation failed before inference: {artifact_exc}"
+            )
+
+        # A checkpoint alone is not a healthy artifact set. Refresh missing
+        # companion files before inference.
+        if not artifact_set_valid:
             try:
                 from deep_learning.models.hub import download_tft_artifacts
-                logger.info(f"[run_id={run_id}] TFT checkpoint not found locally – attempting HF Hub download")
-                download_tft_artifacts(
-                    local_dir=ckpt.parent,
+                logger.info(
+                    f"[run_id={run_id}] TFT artifact set incomplete "
+                    f"(checkpoint_exists={ckpt.exists()}) - attempting HF Hub download"
+                )
+                artifact_set_valid = download_tft_artifacts(
+                    local_dir=tft_dir,
                     repo_id=tft_cfg.training.hf_model_repo,
                 )
             except Exception as hub_exc:
@@ -577,24 +598,29 @@ async def _execute_pipeline_stages_v2(
                     from deep_learning.contract import RETURN_SPACE
 
                     prediction = tft_report.get("prediction") or {}
+                    is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))
                     tft_report["return_space"] = RETURN_SPACE
-                    tft_report["primary_horizon"] = tft_report.get("primary_horizon", "5D")
+                    tft_report["is_forecast_healthy"] = is_forecast_healthy
+                    tft_report["primary_horizon"] = tft_report.get(
+                        "primary_horizon",
+                        "5D" if is_forecast_healthy else None,
+                    )
                     tft_report["primary_forecast_return"] = tft_report.get(
                         "primary_forecast_return",
-                        prediction.get("weekly_return"),
+                        prediction.get("weekly_return") if is_forecast_healthy else None,
                     )
                     tft_report["primary_forecast_q10"] = tft_report.get(
                         "primary_forecast_q10",
-                        prediction.get("weekly_return_q10_calibrated"),
+                        prediction.get("weekly_return_q10_calibrated") if is_forecast_healthy else None,
                     )
                     tft_report["primary_forecast_q90"] = tft_report.get(
                         "primary_forecast_q90",
-                        prediction.get("weekly_return_q90_calibrated"),
+                        prediction.get("weekly_return_q90_calibrated") if is_forecast_healthy else None,
                     )
                     tft_report["t1_impulse"] = tft_report.get("t1_impulse")
                     tft_report["t1_return"] = tft_report.get(
                         "t1_return",
-                        prediction.get("predicted_return_median"),
+                        prediction.get("predicted_return_median") if is_forecast_healthy else None,
                     )
                 except Exception:
                     pass
@@ -629,16 +655,30 @@ async def _execute_pipeline_stages_v2(
                     )
                     session.rollback()
 
-                result["tft_snapshot_generated"] = True
-                update_run_metrics(session, run_id, tft_snapshot_generated=True)
-                session.commit()
-                logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
+                is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))
+                result["tft_snapshot_generated"] = is_forecast_healthy
+                if is_forecast_healthy:
+                    update_run_metrics(session, run_id, tft_snapshot_generated=True)
+                    session.commit()
+                    logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
+                else:
+                    result["tft_snapshot_degraded"] = True
+                    tft_commentary_note = (
+                        "TFT weekly model unavailable due to incompatible checkpoint metadata; "
+                        "commentary excludes TFT signal."
+                    )
+                    update_run_metrics(session, run_id, tft_snapshot_generated=False)
+                    session.commit()
+                    logger.warning(
+                        f"[run_id={run_id}] TFT degraded snapshot persisted: "
+                        f"{tft_report.get('model_state', 'degraded')}"
+                    )
 
                 # Fallback to TFT data for commentary if XGBoost failed or
                 # wasn't generated. The commentary layer consumes a flat
                 # structure so we expose top-level price/return fields
                 # derived from the TFT `prediction` block here.
-                if not snapshot_report:
+                if is_forecast_healthy and not snapshot_report:
                     snapshot_report = tft_report
             else:
                 result["tft_snapshot_generated"] = False
@@ -666,6 +706,20 @@ async def _execute_pipeline_stages_v2(
             from app.commentary import generate_and_save_commentary
 
             report = snapshot_report or {}
+            report_is_degraded = (
+                report.get("quality_state") == "degraded"
+                or report.get("model_state") == "retrain_required"
+                or report.get("is_forecast_healthy") is False
+            )
+            if report_is_degraded:
+                tft_commentary_note = (
+                    tft_commentary_note
+                    or "TFT weekly model unavailable due to incompatible checkpoint metadata; commentary excludes TFT signal."
+                )
+                logger.warning(
+                    f"[run_id={run_id}] Excluding degraded TFT payload from commentary inputs"
+                )
+                report = {}
             
             # Default XGBoost Variable Extraction
             current_price = report.get("current_price", 0.0)
@@ -726,6 +780,7 @@ async def _execute_pipeline_stages_v2(
                 sentiment_label=sentiment_label,
                 top_influencers=top_influencers,
                 news_count=news_count,
+                model_status_note=tft_commentary_note,
             )
             session.commit()
 

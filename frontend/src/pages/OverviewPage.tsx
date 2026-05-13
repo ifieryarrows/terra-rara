@@ -299,6 +299,12 @@ export const OverviewPage = () => {
     ?? tftAnalysis?.weekly_forecast?.expected_return
     ?? tftAnalysis?.prediction?.weekly_return
     ?? null;
+  const tftDegraded = !!tftAnalysis && (
+    tftAnalysis.quality_state === 'degraded' ||
+    tftAnalysis.model_state === 'retrain_required' ||
+    tftAnalysis.is_forecast_healthy === false
+  );
+  const tftDegradedMessage = tftAnalysis?.message || 'TFT weekly forecast is unavailable until the weekly model artifacts are refreshed.';
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
   const tftDirection = tftAnalysis?.direction;
@@ -413,7 +419,21 @@ export const OverviewPage = () => {
 
           {/* Deep Learning Forecast — primary T+1 forecast */}
           <GlassCard title="Deep Learning Weekly Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
-            {tftAnalysis?.prediction ? (() => {
+            {tftDegraded ? (
+              <div className="flex flex-col justify-center h-full py-10 gap-4">
+                <div className="flex items-center gap-2 text-amber-300">
+                  <AlertTriangle size={18} />
+                  <span className="text-xs font-bold uppercase tracking-widest">Forecast Degraded</span>
+                </div>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                  {tftDegradedMessage}
+                </p>
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                  <span className="block text-[10px] text-amber-300 uppercase tracking-wider">Required action</span>
+                  <span className="text-xs text-gray-300">Run the weekly TFT training workflow and refresh HF artifacts.</span>
+                </div>
+              </div>
+            ) : tftAnalysis?.prediction ? (() => {
               const prediction = tftAnalysis.prediction;
               const weeklyQ10 = tftAnalysis.primary_forecast_q10 ?? tftAnalysis.weekly_forecast?.q10_return ?? prediction.weekly_return_q10_calibrated;
               const weeklyQ90 = tftAnalysis.primary_forecast_q90 ?? tftAnalysis.weekly_forecast?.q90_return ?? prediction.weekly_return_q90_calibrated;

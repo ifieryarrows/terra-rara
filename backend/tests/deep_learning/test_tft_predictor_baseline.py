@@ -134,3 +134,6 @@ def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):
     assert result is not None
     assert result["model_state"] == "retrain_required"
     assert result["quality_state"] == "degraded"
+    assert result["is_forecast_healthy"] is False
+    assert result["primary_forecast_return"] is None
+    assert result["reference_price_date"] is None

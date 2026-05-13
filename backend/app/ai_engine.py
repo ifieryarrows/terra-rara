@@ -1044,15 +1044,27 @@ async def _score_subset_with_model_v2(
     model_name: str,
     articles: list[dict],
     horizon_days: int,
-) -> tuple[dict[int, dict], list[int], int]:
+) -> tuple[dict[int, dict], list[int], dict[str, int], bool]:
     """
     Score subset with one model.
 
     Returns:
-        (valid_results_by_id, failed_ids, parse_fail_count)
+        (valid_results_by_id, failed_ids, metrics, rate_limited)
     """
+    def _metrics(
+        *,
+        raw_parse_fail: int = 0,
+        repair_success: int = 0,
+        final_unresolved: int = 0,
+    ) -> dict[str, int]:
+        return {
+            "parse_fail_raw_count": int(raw_parse_fail),
+            "repair_success_count": int(repair_success),
+            "final_unresolved_count": int(final_unresolved),
+        }
+
     if not articles:
-        return {}, [], 0
+        return {}, [], _metrics(), False
 
     expected_ids = [int(article["id"]) for article in articles]
     user_prompt = _build_llm_v2_user_prompt(articles, horizon_days=horizon_days)
@@ -1079,17 +1091,16 @@ async def _score_subset_with_model_v2(
             request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT_V2
         return await create_chat_completion(**request_kwargs)
 
-    parse_fail_count = 0
     rate_limited = False
     try:
         data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
     except OpenRouterRateLimitError:
         logger.warning("V2 scoring rate-limited for model=%s, skipping batch (%d articles)", model_name, len(articles))
         rate_limited = True
-        return {}, expected_ids, len(expected_ids), rate_limited
+        return {}, expected_ids, _metrics(final_unresolved=len(expected_ids)), rate_limited
     except Exception as exc:
         logger.warning("V2 scoring failed for model=%s: %s", model_name, exc)
-        return {}, expected_ids, len(expected_ids), False
+        return {}, expected_ids, _metrics(raw_parse_fail=len(expected_ids), final_unresolved=len(expected_ids)), False
 
     content = _extract_chat_message_content(data)
     if not content:
@@ -1098,7 +1109,7 @@ async def _score_subset_with_model_v2(
             data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
             content = _extract_chat_message_content(data)
         if not content:
-            return {}, expected_ids, len(expected_ids), False
+            return {}, expected_ids, _metrics(raw_parse_fail=len(expected_ids), final_unresolved=len(expected_ids)), False
 
     try:
         raw_results = json.loads(_clean_json_content(content))
@@ -1107,14 +1118,12 @@ async def _score_subset_with_model_v2(
             expected_ids=expected_ids,
             model_name=model_name,
         )
-        parse_fail_count += len(failed)
-        return valid, failed, parse_fail_count, False
+        return valid, failed, _metrics(final_unresolved=len(failed)), False
     except Exception as exc:
         logger.warning(
             "V2 JSON parse failed for model=%s: %s | response_preview=%.500s",
             model_name, exc, content,
         )
-        parse_fail_count += len(expected_ids)
 
     try:
         repaired = await _repair_json_response_v2(
@@ -1129,9 +1138,26 @@ async def _score_subset_with_model_v2(
             expected_ids=expected_ids,
             model_name=model_name,
         )
-        return valid, failed, parse_fail_count, False
+        return (
+            valid,
+            failed,
+            _metrics(
+                raw_parse_fail=len(expected_ids),
+                repair_success=len(valid),
+                final_unresolved=len(failed),
+            ),
+            False,
+        )
     except Exception:
-        return {}, expected_ids, parse_fail_count, False
+        return (
+            {},
+            expected_ids,
+            _metrics(
+                raw_parse_fail=len(expected_ids),
+                final_unresolved=len(expected_ids),
+            ),
+            False,
+        )
 
 
 async def score_batch_with_llm_v2(
@@ -1166,7 +1192,7 @@ async def score_batch_with_llm_v2(
     expected_ids = [item["id"] for item in normalized_articles]
     article_by_id = {item["id"]: item for item in normalized_articles}
 
-    fast_valid, fast_failed, parse_fail_fast, fast_rate_limited = await _score_subset_with_model_v2(
+    fast_valid, fast_failed, fast_metrics, fast_rate_limited = await _score_subset_with_model_v2(
         settings=settings,
         model_name=fast_model,
         articles=normalized_articles,
@@ -1174,7 +1200,8 @@ async def score_batch_with_llm_v2(
     )
 
     results_by_id = dict(fast_valid)
-    parse_fail_total = int(parse_fail_fast)
+    parse_fail_raw_count = int(fast_metrics.get("parse_fail_raw_count", 0))
+    repair_success_count = int(fast_metrics.get("repair_success_count", 0))
 
     conflict_ids: list[int] = []
     for article_id, item in fast_valid.items():
@@ -1192,22 +1219,28 @@ async def score_batch_with_llm_v2(
 
     escalation_ids = sorted(set(fast_failed).union(conflict_ids))
     escalation_count = len(escalation_ids)
+    missing_retry_ids = set(fast_failed)
+    missing_id_retry_count = 0
+    missing_id_recovered_count = 0
 
     reliable_rate_limited = False
     if escalation_ids and not fast_rate_limited:
+        missing_id_retry_count = len(missing_retry_ids)
         reliable_subset = [
             article_by_id[article_id]
             for article_id in escalation_ids
             if article_id in article_by_id
         ]
-        reliable_valid, _reliable_failed, parse_fail_reliable, reliable_rate_limited = await _score_subset_with_model_v2(
+        reliable_valid, _reliable_failed, reliable_metrics, reliable_rate_limited = await _score_subset_with_model_v2(
             settings=settings,
             model_name=reliable_model,
             articles=reliable_subset,
             horizon_days=horizon_days,
         )
+        missing_id_recovered_count = len(set(reliable_valid).intersection(missing_retry_ids))
         results_by_id.update(reliable_valid)
-        parse_fail_total += int(parse_fail_reliable)
+        parse_fail_raw_count += int(reliable_metrics.get("parse_fail_raw_count", 0))
+        repair_success_count += int(reliable_metrics.get("repair_success_count", 0))
     elif fast_rate_limited and escalation_ids:
         logger.info(
             "Skipping escalation to %s: fast model was rate-limited (%d articles → direct FinBERT fallback)",
@@ -1217,11 +1250,17 @@ async def score_batch_with_llm_v2(
     results = [results_by_id[article_id] for article_id in expected_ids if article_id in results_by_id]
     failed_ids = [article_id for article_id in expected_ids if article_id not in results_by_id]
     fallback_count = len(failed_ids)
+    final_unresolved_count = len(failed_ids)
 
     return {
         "results": results,
         "failed_ids": failed_ids,
-        "parse_fail_count": parse_fail_total,
+        "parse_fail_count": final_unresolved_count,
+        "parse_fail_raw_count": parse_fail_raw_count,
+        "repair_success_count": repair_success_count,
+        "missing_id_retry_count": missing_id_retry_count,
+        "missing_id_recovered_count": missing_id_recovered_count,
+        "final_unresolved_count": final_unresolved_count,
         "escalation_count": escalation_count,
         "fallback_count": fallback_count,
         "model_fast": fast_model,
@@ -1393,6 +1432,11 @@ def score_unscored_processed_articles(
 
     scored_count = 0
     parse_fail_count = 0
+    parse_fail_raw_count = 0
+    repair_success_count = 0
+    missing_id_retry_count = 0
+    missing_id_recovered_count = 0
+    final_unresolved_count = 0
     escalation_count = 0
     fallback_count = 0
     finbert_used = 0
@@ -1474,6 +1518,11 @@ def score_unscored_processed_articles(
                 for item in llm_bundle.get("results", []):
                     llm_results_by_id[int(item["id"])] = item
                 parse_fail_count += int(llm_bundle.get("parse_fail_count", 0))
+                parse_fail_raw_count += int(llm_bundle.get("parse_fail_raw_count", 0))
+                repair_success_count += int(llm_bundle.get("repair_success_count", 0))
+                missing_id_retry_count += int(llm_bundle.get("missing_id_retry_count", 0))
+                missing_id_recovered_count += int(llm_bundle.get("missing_id_recovered_count", 0))
+                final_unresolved_count += int(llm_bundle.get("final_unresolved_count", 0))
                 escalation_count += int(llm_bundle.get("escalation_count", 0))
                 fast_model = str(llm_bundle.get("model_fast", fast_model))
                 reliable_model = str(llm_bundle.get("model_reliable", reliable_model))
@@ -1508,6 +1557,8 @@ def score_unscored_processed_articles(
             except Exception as exc:
                 logger.warning("V2 LLM scoring failed for chunk starting at %s: %s", chunk_idx, exc)
                 parse_fail_count += len(llm_candidates)
+                parse_fail_raw_count += len(llm_candidates)
+                final_unresolved_count += len(llm_candidates)
 
         for article in chunk_items:
             article_id = int(article["id"])
@@ -1586,9 +1637,16 @@ def score_unscored_processed_articles(
         session.commit()
 
     logger.info(
-        "V2 scoring summary: scored=%s parse_fail=%s escalations=%s fallback=%s finbert_used=%s",
+        "V2 scoring summary: scored=%s parse_fail=%s raw_parse_fail=%s "
+        "repair_success=%s missing_retry=%s missing_recovered=%s "
+        "final_unresolved=%s escalations=%s fallback=%s finbert_used=%s",
         scored_count,
         parse_fail_count,
+        parse_fail_raw_count,
+        repair_success_count,
+        missing_id_retry_count,
+        missing_id_recovered_count,
+        final_unresolved_count,
         escalation_count,
         fallback_count,
         finbert_used,
@@ -1596,6 +1654,11 @@ def score_unscored_processed_articles(
     return {
         "scored_count": scored_count,
         "parse_fail_count": parse_fail_count,
+        "parse_fail_raw_count": parse_fail_raw_count,
+        "repair_success_count": repair_success_count,
+        "missing_id_retry_count": missing_id_retry_count,
+        "missing_id_recovered_count": missing_id_recovered_count,
+        "final_unresolved_count": final_unresolved_count,
         "escalation_count": escalation_count,
         "fallback_count": fallback_count,
         "finbert_used": finbert_used,
@@ -1610,6 +1673,7 @@ def aggregate_daily_sentiment_v2(
     """Aggregate V2 article scores into daily_sentiments_v2."""
     settings = get_settings()
     tau_hours = tau_hours or settings.sentiment_tau_hours
+    max_age_hours = 24.0 * 30.0
     horizon_days = max(1, int(getattr(settings, "sentiment_horizon_days", 5)))
     relevance_min = _clip(float(getattr(settings, "sentiment_relevance_min", 0.35)), 0.0, 1.0)
 
@@ -1655,12 +1719,50 @@ def aggregate_daily_sentiment_v2(
     ).astype(int)
     df["after_close"] = df["published_at"].apply(lambda ts: int(is_after_close_news(ts)))
 
+    age_audit = {
+        "min_age_hours": None,
+        "max_age_hours": None,
+        "num_negative_age": 0,
+        "num_age_over_30d": 0,
+        "num_nonfinite_weight": 0,
+    }
+
+    def _update_age_audit(raw_age_hours: pd.Series, weights: pd.Series) -> None:
+        finite_age = raw_age_hours[np.isfinite(raw_age_hours)]
+        if not finite_age.empty:
+            min_age = float(finite_age.min())
+            max_age = float(finite_age.max())
+            age_audit["min_age_hours"] = (
+                min_age
+                if age_audit["min_age_hours"] is None
+                else min(float(age_audit["min_age_hours"]), min_age)
+            )
+            age_audit["max_age_hours"] = (
+                max_age
+                if age_audit["max_age_hours"] is None
+                else max(float(age_audit["max_age_hours"]), max_age)
+            )
+        age_audit["num_negative_age"] += int((raw_age_hours < 0).sum())
+        age_audit["num_age_over_30d"] += int((raw_age_hours > max_age_hours).sum())
+        age_audit["num_nonfinite_weight"] += int((~np.isfinite(weights)).sum())
+
     def calc_weights(group):
         published = pd.to_datetime(group["published_at"], utc=True)
         available = pd.to_datetime(group["fetched_at"].fillna(group["published_at"]), utc=True)
-        hours = (available - published).dt.total_seconds().clip(lower=0.0) / 3600.0
-        weights = np.exp(hours / tau_hours)
-        return weights / weights.sum()
+        as_of = available.max()
+        raw_age_hours = (as_of - published).dt.total_seconds() / 3600.0
+        bounded_age_hours = raw_age_hours.clip(lower=0.0, upper=max_age_hours)
+        weights = pd.Series(
+            np.exp(-bounded_age_hours.astype(float) / float(tau_hours)),
+            index=group.index,
+        )
+        _update_age_audit(raw_age_hours.astype(float), weights.astype(float))
+
+        finite_weights = weights.where(np.isfinite(weights), 0.0)
+        weight_sum = float(finite_weights.sum())
+        if weight_sum <= 1e-12:
+            return pd.Series(1.0 / len(group), index=group.index)
+        return finite_weights / weight_sum
 
     daily_rows = []
     for date, group in df.groupby("date"):
@@ -1677,6 +1779,20 @@ def aggregate_daily_sentiment_v2(
                 "avg_relevance": float(group["relevance_score"].mean()),
             }
         )
+
+    logger.info(
+        "V2 sentiment aggregation age audit: min_age_hours=%s max_age_hours=%s "
+        "num_negative_age=%s num_age_over_30d=%s num_nonfinite_weight=%s",
+        None
+        if age_audit["min_age_hours"] is None
+        else round(float(age_audit["min_age_hours"]), 2),
+        None
+        if age_audit["max_age_hours"] is None
+        else round(float(age_audit["max_age_hours"]), 2),
+        age_audit["num_negative_age"],
+        age_audit["num_age_over_30d"],
+        age_audit["num_nonfinite_weight"],
+    )
 
     last_material = None
     for row in daily_rows:
