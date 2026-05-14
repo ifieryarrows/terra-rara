@@ -130,5 +130,9 @@ def test_compute_all_metrics_includes_quantile_coherence_fields():
 
     m = compute_all_metrics(actual, pred, y_pred_quantiles=quantiles)
 
-    assert m["quantile_crossing_rate"] > 0
-    assert m["median_sort_gap_max"] > 0
+    assert m["raw_quantile_crossing_rate"] > 0
+    assert m["raw_median_sort_gap_max"] > 0
+    assert m["quantile_crossing_rate"] == 0.0
+    assert m["ordered_quantile_crossing_rate"] == 0.0
+    assert m["public_quantile_crossing_rate"] == 0.0
+    assert m["median_sort_gap_max"] == 0.0

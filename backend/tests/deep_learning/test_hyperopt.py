@@ -158,13 +158,14 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 
 
 def test_known_good_trial_includes_weekly_loss_search_params():
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.60
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.10
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.55
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.15
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.20
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.10
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.55
-    assert KNOWN_GOOD_TRIAL_PARAMS["weekly_lambda_vol"] == 0.35
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_width"] == 0.50
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_tail_width"] == 0.30
+    assert "lambda_magnitude" not in KNOWN_GOOD_TRIAL_PARAMS
+    assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
+    assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
+    assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS
 
 
 def test_hyperopt_reports_weekly_objective_label():

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +38,16 @@ from deep_learning.config import (
 )
 from deep_learning.logging_utils import configure_cli_logging, suppress_lightning_noise
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.hyperopt_diagnostics import (
+    best_trial_preflight_check,
+    compute_structural_invalidity_report,
+    compute_trial_distribution_summary,
+)
+
 logger = logging.getLogger(__name__)
 
 MIN_COMPLETED_TRIALS = 10
@@ -55,15 +66,10 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
-    "lambda_weekly_quantile": 0.60,
-    "lambda_t1_quantile": 0.10,
+    "lambda_weekly_quantile": 0.55,
+    "lambda_t1_quantile": 0.15,
+    "lambda_dispersion": 0.20,
     "lambda_directional": 0.10,
-    "lambda_magnitude": 0.55,
-    "weekly_lambda_vol": 0.35,
-    "lambda_width": 0.50,
-    "lambda_tail_width": 0.30,
-    "lambda_sanity": 0.20,
-    "lambda_crossing": 7.0,
     "batch_size": 32,
 }
 
@@ -144,7 +150,9 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "avg_variance_ratio",
         "avg_directional_accuracy",
         "avg_val_sharpe",
+        "avg_raw_quantile_crossing_rate",
         "avg_quantile_crossing_rate",
+        "avg_raw_median_sort_gap",
         "avg_median_sort_gap",
         "avg_weekly_magnitude_ratio",
         "avg_weekly_pi80_coverage",
@@ -180,6 +188,8 @@ def _build_result_payload(study) -> dict:
     trial_state_counts = _trial_state_counts(study)
     best = _best_finite_completed_trial(study)
     prune_reasons, fold_diagnostics = _build_prune_diagnostics(study)
+    structural_report = compute_structural_invalidity_report(fold_diagnostics)
+    distribution_summary = compute_trial_distribution_summary(fold_diagnostics)
 
     if best is None:
         return {
@@ -191,6 +201,9 @@ def _build_result_payload(study) -> dict:
             "trial_state_counts": trial_state_counts,
             "prune_reasons": prune_reasons,
             "fold_diagnostics": fold_diagnostics,
+            "structural_invalidity_report": structural_report,
+            "trial_distribution_summary": distribution_summary,
+            "best_trial_preflight": None,
             "message": (
                 "No Optuna trials completed with a finite objective value; "
                 "final training will use the known-good fallback config "
@@ -198,6 +211,11 @@ def _build_result_payload(study) -> dict:
             ),
         }
 
+    best_diagnostics = next(
+        (d for d in fold_diagnostics if d.get("trial") == best.number),
+        {},
+    )
+    preflight = best_trial_preflight_check(best_diagnostics)
     return {
         "status": "completed",
         "best_trial": best.number,
@@ -207,6 +225,9 @@ def _build_result_payload(study) -> dict:
         "trial_state_counts": trial_state_counts,
         "prune_reasons": prune_reasons,
         "fold_diagnostics": fold_diagnostics,
+        "structural_invalidity_report": structural_report,
+        "trial_distribution_summary": distribution_summary,
+        "best_trial_preflight": preflight,
     }
 
 
@@ -266,15 +287,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     )
 
     weekly_loss_cfg = WeeklyLossConfig(
-        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.60, 0.75, step=0.05),
-        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.05, 0.15, step=0.05),
+        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.45, 0.65, step=0.05),
+        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.05, 0.20, step=0.05),
+        lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.15, 0.35, step=0.05),
         lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.12, step=0.01),
-        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.50, 0.80, step=0.05),
-        lambda_vol=trial.suggest_float("weekly_lambda_vol", 0.25, 0.45, step=0.05),
-        lambda_crossing=trial.suggest_float("lambda_crossing", 5.0, 10.0, step=1.0),
-        lambda_sanity=trial.suggest_float("lambda_sanity", 0.10, 0.30, step=0.05),
-        lambda_width=trial.suggest_float("lambda_width", 0.40, 0.90, step=0.05),
-        lambda_tail_width=trial.suggest_float("lambda_tail_width", 0.25, 0.75, step=0.05),
     )
 
     training_cfg = TrainingConfig(
@@ -343,6 +359,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     from deep_learning.training.callbacks import CurriculumLossScheduler
     from deep_learning.training.metrics import (
         compute_weekly_metrics,
+        monotonic_quantiles_np,
         quantile_crossing_rate,
         quantile_median_sort_gap,
         select_prediction_horizon,
@@ -367,7 +384,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_sharpe_list: list[float] = []
     fold_vr_list: list[float] = []
     fold_crossing_list: list[float] = []
+    fold_raw_crossing_list: list[float] = []
     fold_median_gap_list: list[float] = []
+    fold_raw_median_gap_list: list[float] = []
     fold_weekly_objectives: list[float] = []
     fold_weekly_mr_list: list[float] = []
     fold_weekly_pi80_coverage_list: list[float] = []
@@ -469,10 +488,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 raise ValueError(
                     f"Prediction horizon too short: {pred_np.shape[1]} < {trial_cfg.forecast.primary_horizon_days}"
                 )
-            pred_t1 = pred_np[:, 0, :]
+            ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+            raw_pred_t1 = pred_np[:, 0, :]
+            pred_t1 = ordered_pred_np[:, 0, :]
             y_pred = pred_t1[:, median_idx]
             fold_crossing_rate = quantile_crossing_rate(pred_t1)
+            fold_raw_crossing_rate = quantile_crossing_rate(raw_pred_t1)
             _, fold_median_gap = quantile_median_sort_gap(pred_t1, median_idx)
+            _, fold_raw_median_gap = quantile_median_sort_gap(raw_pred_t1, median_idx)
 
             y_actual_parts = []
             for batch in fold_val_dl:
@@ -510,7 +533,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             )
             weekly_pinball = _weekly_pinball_loss(
                 y_actual_path[:n_path],
-                pred_np[:n_path],
+                ordered_pred_np[:n_path],
                 tuple(trial_cfg.model.quantiles),
                 horizon=trial_cfg.forecast.primary_horizon_days,
             )
@@ -518,9 +541,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             fold_weekly_pi80_coverage = float(weekly.get("weekly_pi80_coverage", 0.0))
             fold_weekly_pi80_width_ratio = float(weekly.get("weekly_pi80_width_ratio", 1.0))
             fold_weekly_pi96_width_ratio = float(weekly.get("weekly_pi96_width_ratio", 1.0))
-            fold_weekly_raw_crossing = float(weekly.get("weekly_quantile_crossing_rate", 0.0))
+            fold_weekly_raw_crossing = float(weekly.get("weekly_raw_quantile_crossing_rate", 0.0))
             fold_weekly_sorted_crossing = float(
-                weekly.get("weekly_sorted_quantile_crossing_rate", 0.0)
+                weekly.get("weekly_ordered_quantile_crossing_rate", 0.0)
             )
             fold_weekly_interval_score_80 = float(weekly.get("weekly_interval_score_80", 0.0))
             fold_weekly_interval_score_96 = float(weekly.get("weekly_interval_score_96", 0.0))
@@ -530,7 +553,6 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)
             width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)
             tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)
-            raw_crossing_penalty = max(0.0, fold_weekly_raw_crossing - 0.05)
             fold_weekly_objective = (
                 0.35 * weekly_pinball
                 + 0.15 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
@@ -540,7 +562,6 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 + 0.35 * tail_width_penalty
                 + 0.10 * interval_score_penalty
                 + 0.05 * interval_score_96_penalty
-                + 0.50 * raw_crossing_penalty
                 + 0.25 * fold_weekly_sorted_crossing
             )
         except Exception as exc:
@@ -553,7 +574,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_da_list.append(fold_da)
         fold_sharpe_list.append(fold_sharpe)
         fold_crossing_list.append(fold_crossing_rate)
+        fold_raw_crossing_list.append(fold_raw_crossing_rate)
         fold_median_gap_list.append(fold_median_gap)
+        fold_raw_median_gap_list.append(fold_raw_median_gap)
         fold_weekly_objectives.append(fold_weekly_objective)
         fold_weekly_mr_list.append(fold_weekly_mr)
         fold_weekly_pi80_coverage_list.append(fold_weekly_pi80_coverage)
@@ -671,7 +694,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     avg_sharpe = float(np.mean(fold_sharpe_list)) if fold_sharpe_list else 0.0
     avg_vr = float(np.mean(fold_vr_list)) if fold_vr_list else 0.0
     avg_crossing = float(np.mean(fold_crossing_list)) if fold_crossing_list else 0.0
+    avg_raw_crossing = (
+        float(np.mean(fold_raw_crossing_list)) if fold_raw_crossing_list else 0.0
+    )
     avg_median_gap = float(np.mean(fold_median_gap_list)) if fold_median_gap_list else 0.0
+    avg_raw_median_gap = (
+        float(np.mean(fold_raw_median_gap_list)) if fold_raw_median_gap_list else 0.0
+    )
     avg_weekly_mr = float(np.mean(fold_weekly_mr_list)) if fold_weekly_mr_list else 1.0
     avg_weekly_pi80_coverage = (
         float(np.mean(fold_weekly_pi80_coverage_list))
@@ -717,7 +746,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_variance_ratio", round(avg_vr, 4))
     trial.set_user_attr("avg_directional_accuracy", round(avg_da, 4))
     trial.set_user_attr("avg_val_sharpe", round(avg_sharpe, 4))
+    trial.set_user_attr("avg_raw_quantile_crossing_rate", round(avg_raw_crossing, 4))
     trial.set_user_attr("avg_quantile_crossing_rate", round(avg_crossing, 4))
+    trial.set_user_attr("avg_raw_median_sort_gap", round(avg_raw_median_gap, 4))
     trial.set_user_attr("avg_median_sort_gap", round(avg_median_gap, 4))
     trial.set_user_attr("avg_weekly_magnitude_ratio", round(avg_weekly_mr, 4))
     trial.set_user_attr("avg_weekly_pi80_coverage", round(avg_weekly_pi80_coverage, 4))
@@ -741,21 +772,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         trial.set_user_attr("prune_reason", "sharpe_prune")
         raise optuna.exceptions.TrialPruned()
 
-    if (avg_crossing > 0.20 or avg_median_gap > 0.01) and not protect_trial:
-        logger.warning(
-            "Trial %d PRUNED: quantile incoherence crossing=%.3f median_gap=%.4f",
-            trial.number, avg_crossing, avg_median_gap,
+    if avg_crossing > 0.001 or avg_weekly_sorted_crossing > 0.001:
+        raise RuntimeError(
+            "Monotonic quantile transform produced public crossings: "
+            f"daily={avg_crossing:.6f}, weekly={avg_weekly_sorted_crossing:.6f}"
         )
-        trial.set_user_attr("prune_reason", "crossing_prune")
-        raise optuna.exceptions.TrialPruned()
-
-    if (avg_weekly_raw_crossing > 0.05 or avg_weekly_sorted_crossing > 0.0) and not protect_trial:
-        logger.warning(
-            "Trial %d PRUNED: weekly quantile incoherence raw=%.3f sorted=%.3f",
-            trial.number, avg_weekly_raw_crossing, avg_weekly_sorted_crossing,
-        )
-        trial.set_user_attr("prune_reason", "weekly_raw_crossing_prune")
-        raise optuna.exceptions.TrialPruned()
 
     # Soft penalty: avg DA below coin-flip
     da_penalty = 2.0 * max(0.0, 0.50 - avg_da) if avg_da < 0.50 else 0.0
@@ -825,6 +846,15 @@ def run_hyperopt(
     results_path.parent.mkdir(parents=True, exist_ok=True)
     result = _build_result_payload(study)
     results_path.write_text(json.dumps(result, indent=2, allow_nan=False))
+    logger.info(
+        "Optuna structural invalidity report: %s",
+        result.get("structural_invalidity_report"),
+    )
+    logger.info(
+        "Optuna trial distribution summary: %s",
+        result.get("trial_distribution_summary"),
+    )
+    logger.info("Optuna best trial preflight: %s", result.get("best_trial_preflight"))
 
     if result["best_trial"] is None:
         logger.warning(
@@ -840,6 +870,10 @@ def run_hyperopt(
             result["best_value"],
         )
         logger.info("Best params: %s", result["best_params"])
+
+    structural_report = result.get("structural_invalidity_report") or {}
+    if structural_report.get("verdict") == "STRUCTURAL_FAILURE":
+        raise RuntimeError(structural_report.get("next_action", "Structural failure in hyperopt."))
 
     return result
 

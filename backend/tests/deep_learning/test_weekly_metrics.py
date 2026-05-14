@@ -5,6 +5,7 @@ from deep_learning.training.metrics import (
     cumulative_horizon,
     cumulative_quantiles,
     interval_score,
+    monotonic_quantiles_np,
 )
 
 
@@ -72,8 +73,9 @@ def test_weekly_width_ratios_match_expected_formulas():
 
     metrics = compute_weekly_metrics(actual, pred, horizon=5)
     weekly_actual = cumulative_horizon(actual, horizon=5)
-    expected_pi80_width = 0.004 * 5
-    expected_pi96_width = 0.008 * 5
+    weekly_quantiles = cumulative_quantiles(monotonic_quantiles_np(pred), horizon=5)
+    expected_pi80_width = np.mean(weekly_quantiles[:, 5] - weekly_quantiles[:, 1])
+    expected_pi96_width = np.mean(weekly_quantiles[:, 6] - weekly_quantiles[:, 0])
 
     assert np.isclose(
         metrics["weekly_pi80_width_ratio"],
@@ -118,7 +120,9 @@ def test_weekly_metrics_preserve_raw_crossing_and_promote_sorted_quantiles():
 
     metrics = compute_weekly_metrics(actual, pred, horizon=5)
 
-    assert metrics["weekly_quantile_crossing_rate"] > 0.0
+    assert metrics["weekly_quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_ordered_quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_public_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
     assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_pi80_width"] >= 0.0

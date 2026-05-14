@@ -136,15 +136,10 @@ class ASROConfig:
 
 @dataclass(frozen=True)
 class WeeklyLossConfig:
-    lambda_weekly_quantile: float = 0.60
-    lambda_t1_quantile: float = 0.10
+    lambda_weekly_quantile: float = 0.55
+    lambda_t1_quantile: float = 0.15
+    lambda_dispersion: float = 0.20
     lambda_directional: float = 0.10
-    lambda_magnitude: float = 0.55
-    lambda_vol: float = 0.35
-    lambda_crossing: float = 7.0
-    lambda_sanity: float = 0.20
-    lambda_width: float = 0.50
-    lambda_tail_width: float = 0.30
 
 
 @dataclass(frozen=True)

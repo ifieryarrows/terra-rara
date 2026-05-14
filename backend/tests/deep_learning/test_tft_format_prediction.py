@@ -16,6 +16,10 @@ def test_format_prediction_sorts_crossed_quantiles_and_flags_audit_fields():
     raw_quantiles = list(result["raw_quantiles"].values())
 
     assert result["quantile_crossing_detected"] is True
+    assert result["raw_quantile_crossing_rate"] > 0.0
+    assert result["quantile_crossing_rate"] == 0.0
+    assert result["ordered_quantile_crossing_rate"] == 0.0
+    assert result["public_quantile_crossing_rate"] == 0.0
     assert result["anomaly_detected"] is True
     assert quantiles == sorted(quantiles)
     assert raw_quantiles != quantiles
@@ -32,6 +36,7 @@ def test_format_prediction_keeps_monotonic_quantiles_unflagged():
 
     assert result["quantile_crossing_detected"] is False
     assert result["quantile_crossing_rate"] == 0.0
+    assert result["raw_quantile_crossing_rate"] == 0.0
     assert result["anomaly_detected"] is False
 
 

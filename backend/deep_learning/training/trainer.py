@@ -47,7 +47,7 @@ warnings.filterwarnings(
 logger = logging.getLogger(__name__)
 
 KNOWN_GOOD_CONFIG = {
-    "max_encoder_length": 60,
+    "max_encoder_length": 50,
     "hidden_size": 48,
     "attention_head_size": 2,
     "dropout": 0.30,
@@ -57,17 +57,14 @@ KNOWN_GOOD_CONFIG = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
-    "lambda_weekly_quantile": 0.60,
-    "lambda_t1_quantile": 0.10,
+    "lambda_weekly_quantile": 0.55,
+    "lambda_t1_quantile": 0.15,
+    "lambda_dispersion": 0.20,
     "lambda_directional": 0.10,
-    "lambda_magnitude": 0.55,
-    "weekly_lambda_vol": 0.35,
-    "lambda_width": 0.50,
-    "lambda_tail_width": 0.30,
-    "lambda_sanity": 0.20,
-    "lambda_crossing": 7.0,
     "batch_size": 32,
 }
+
+DETERMINISTIC_WEEKLY_CONFIG = dict(KNOWN_GOOD_CONFIG)
 
 REQUIRED_PROMOTABLE_METRICS = (
     "weekly_directional_accuracy",
@@ -126,13 +123,22 @@ def _compute_test_metrics_from_quantiles(
     pred_np: np.ndarray,
     cfg: TFTASROConfig,
 ) -> dict[str, float]:
-    from deep_learning.training.metrics import compute_all_metrics, compute_weekly_metrics, select_prediction_horizon
+    from deep_learning.training.metrics import (
+        compute_all_metrics,
+        compute_weekly_metrics,
+        monotonic_quantiles_np,
+        quantile_crossing_rate,
+        quantile_median_sort_gap,
+        select_prediction_horizon,
+    )
 
     pred_np = np.asarray(pred_np)
     _validate_quantile_prediction_shape(pred_np, cfg)
 
     median_idx = len(cfg.model.quantiles) // 2
-    pred_t1 = pred_np[:, 0, :]
+    ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+    raw_pred_t1 = pred_np[:, 0, :]
+    pred_t1 = ordered_pred_np[:, 0, :]
     y_pred_median = pred_t1[:, median_idx]
     y_pred_q10 = pred_t1[:, 1]
     y_pred_q90 = pred_t1[:, -2]
@@ -150,6 +156,10 @@ def _compute_test_metrics_from_quantiles(
         y_pred_q98=y_pred_q98[:n],
         y_pred_quantiles=pred_t1[:n],
     )
+    raw_gap_mean, raw_gap_max = quantile_median_sort_gap(raw_pred_t1[:n], median_idx)
+    test_metrics["raw_quantile_crossing_rate"] = quantile_crossing_rate(raw_pred_t1[:n])
+    test_metrics["raw_median_sort_gap_mean"] = raw_gap_mean
+    test_metrics["raw_median_sort_gap_max"] = raw_gap_max
 
     n_path = min(len(y_actual_path), len(pred_np))
     weekly_metrics = compute_weekly_metrics(
@@ -167,6 +177,7 @@ def train_tft_model(
     cfg: Optional[TFTASROConfig] = None,
     use_asro: bool = True,
     upload_to_hub: bool = False,
+    deterministic_weekly_validation: bool = False,
 ) -> dict:
     """
     End-to-end TFT-ASRO training.
@@ -189,16 +200,23 @@ def train_tft_model(
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
-    from deep_learning.training.callbacks import CurriculumLossScheduler, SWACallback
+    from deep_learning.training.callbacks import (
+        CurriculumLossScheduler,
+        SWACallback,
+        WeeklyLossComponentLogger,
+    )
 
     if cfg is None:
         cfg = get_tft_config()
 
-    # ---- 0a. Load Optuna best params if available ----
-    # When the hyperopt step ran before this trainer, it writes best params to
-    # optuna_results.json. We apply those params over the default config so that
-    # the final training run actually benefits from the search.
-    cfg = _apply_optuna_results(cfg)
+    # ---- 0a. Load training params ----
+    # Deterministic validation bypasses Optuna so structural changes can be
+    # measured before investing in search.
+    if deterministic_weekly_validation:
+        cfg = _overlay_training_config(cfg, DETERMINISTIC_WEEKLY_CONFIG)
+        logger.info("Using deterministic weekly validation config: %s", DETERMINISTIC_WEEKLY_CONFIG)
+    else:
+        cfg = _apply_optuna_results(cfg)
 
     # ---- 0b. ASRO loss sanity check (runs before any training) ----
     try:
@@ -260,19 +278,11 @@ def train_tft_model(
             cfg.training.early_stopping_patience,
         )
         logger.info(
-            "Weekly loss   | weekly_q=%.2f t1_q=%.2f directional=%.2f magnitude=%.2f vol=%.2f",
+            "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f directional=%.2f monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
+            cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_directional,
-            cfg.weekly_loss.lambda_magnitude,
-            cfg.weekly_loss.lambda_vol,
-        )
-        logger.info(
-            "Weekly guards | width=%.2f tail_width=%.2f crossing=%.2f sanity=%.2f",
-            cfg.weekly_loss.lambda_width,
-            cfg.weekly_loss.lambda_tail_width,
-            cfg.weekly_loss.lambda_crossing,
-            cfg.weekly_loss.lambda_sanity,
         )
     else:
         logger.info(
@@ -308,6 +318,7 @@ def train_tft_model(
             save_top_k=3,
             save_last=True,
         ),
+        WeeklyLossComponentLogger(),
     ]
 
     if use_asro and cfg.forecast.primary_horizon_days != 5:
@@ -430,12 +441,8 @@ def train_tft_model(
             "lambda_weekly_quantile": cfg.weekly_loss.lambda_weekly_quantile,
             "lambda_t1_quantile": cfg.weekly_loss.lambda_t1_quantile,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
-            "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
-            "weekly_lambda_vol": cfg.weekly_loss.lambda_vol,
-            "weekly_lambda_crossing": cfg.weekly_loss.lambda_crossing,
-            "lambda_sanity": cfg.weekly_loss.lambda_sanity,
-            "lambda_width": cfg.weekly_loss.lambda_width,
-            "lambda_tail_width": cfg.weekly_loss.lambda_tail_width,
+            "lambda_dispersion": cfg.weekly_loss.lambda_dispersion,
+            "monotonic_quantile_transform": True,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
@@ -518,7 +525,11 @@ def _write_conformal_calibration_artifact(
         import torch
 
         from deep_learning.calibration.conformal import rolling_conformal_adjustment
-        from deep_learning.training.metrics import cumulative_horizon, cumulative_quantiles
+        from deep_learning.training.metrics import (
+            cumulative_horizon,
+            cumulative_quantiles,
+            monotonic_quantiles_np,
+        )
 
         y_parts = []
         for batch in val_dl:
@@ -534,9 +545,13 @@ def _write_conformal_calibration_artifact(
             return None
 
         weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=cfg.forecast.primary_horizon_days)
-        weekly_quantiles = np.sort(
-            cumulative_quantiles(pred_np[:n], horizon=cfg.forecast.primary_horizon_days),
-            axis=-1,
+        ordered_pred_np = monotonic_quantiles_np(
+            pred_np[:n],
+            median_idx=len(cfg.model.quantiles) // 2,
+        )
+        weekly_quantiles = cumulative_quantiles(
+            ordered_pred_np,
+            horizon=cfg.forecast.primary_horizon_days,
         )
         q = tuple(cfg.model.quantiles)
         q10_idx = q.index(0.10)
@@ -638,18 +653,10 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["learning_rate"] = min(float(params["learning_rate"]), 6e-4)
         if "weight_decay" in params:
             params["weight_decay"] = min(float(params["weight_decay"]), 5e-4)
-        if "lambda_magnitude" in params:
-            params["lambda_magnitude"] = max(float(params["lambda_magnitude"]), 0.50)
         if "lambda_directional" in params:
             params["lambda_directional"] = min(float(params["lambda_directional"]), 0.12)
-        if "lambda_width" in params:
-            params["lambda_width"] = max(float(params["lambda_width"]), 0.40)
-        if "lambda_tail_width" in params:
-            params["lambda_tail_width"] = max(float(params["lambda_tail_width"]), 0.25)
-        if "lambda_sanity" in params:
-            params["lambda_sanity"] = max(float(params["lambda_sanity"]), 0.10)
-        if "lambda_crossing" in params:
-            params["lambda_crossing"] = max(float(params["lambda_crossing"]), 5.0)
+        if "lambda_dispersion" in params:
+            params["lambda_dispersion"] = max(float(params["lambda_dispersion"]), 0.20)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",
@@ -685,12 +692,9 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_magnitude", "lambda_crossing", "lambda_sanity",
-            "lambda_width", "lambda_tail_width",
+            "lambda_dispersion",
         ) if k in params
     }
-    if "weekly_lambda_vol" in params:
-        weekly_loss_overrides["lambda_vol"] = params["weekly_lambda_vol"]
 
     new_model = replace(cfg.model, **model_overrides) if model_overrides else cfg.model
     new_asro = replace(cfg.asro, **asro_overrides) if asro_overrides else cfg.asro
@@ -744,10 +748,20 @@ if __name__ == "__main__":
     parser.add_argument("--symbol", default="HG=F")
     parser.add_argument("--no-asro", action="store_true", help="Use standard QuantileLoss instead of ASRO")
     parser.add_argument("--upload-hub", action="store_true", help="Upload artifacts to HF Hub after training")
+    parser.add_argument(
+        "--deterministic-weekly-validation",
+        action="store_true",
+        help="Bypass Optuna overlays and run the fixed monotonic weekly validation config",
+    )
     args = parser.parse_args()
 
     cfg = get_tft_config()
-    result = train_tft_model(cfg, use_asro=not args.no_asro, upload_to_hub=args.upload_hub)
+    result = train_tft_model(
+        cfg,
+        use_asro=not args.no_asro,
+        upload_to_hub=args.upload_hub,
+        deterministic_weekly_validation=args.deterministic_weekly_validation,
+    )
 
     print("\n" + "=" * 60)
     print("TFT-ASRO TRAINING COMPLETE")

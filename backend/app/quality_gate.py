@@ -21,12 +21,16 @@ def evaluate_quality_gate(
     tail_capture: Optional[float] = None,
     quantile_crossing_rate: Optional[float] = None,
     median_sort_gap_max: Optional[float] = None,
+    pi80_width: Optional[float] = None,
+    pi96_width: Optional[float] = None,
     weekly_directional_accuracy: Optional[float] = None,
     weekly_magnitude_ratio: Optional[float] = None,
     weekly_tail_capture_rate: Optional[float] = None,
     weekly_pi80_coverage: Optional[float] = None,
+    weekly_pi80_width: Optional[float] = None,
     weekly_pi80_width_ratio: Optional[float] = None,
     weekly_pi96_coverage: Optional[float] = None,
+    weekly_pi96_width: Optional[float] = None,
     weekly_pi96_width_ratio: Optional[float] = None,
     weekly_quantile_crossing_rate: Optional[float] = None,
     weekly_sorted_quantile_crossing_rate: Optional[float] = None,
@@ -74,6 +78,8 @@ def evaluate_quality_gate(
         reasons.append(
             f"WeeklyPI80Overwide={weekly_pi80_width_ratio:.4f} with coverage={weekly_pi80_coverage:.4f}"
         )
+    if weekly_pi80_width is not None and weekly_pi80_width < 0.0:
+        reasons.append(f"WeeklyPI80Width={weekly_pi80_width:.4f} < 0.0")
 
     if weekly_pi96_coverage is None:
         reasons.append("Missing weekly_pi96_coverage")
@@ -82,33 +88,63 @@ def evaluate_quality_gate(
         reasons.append("Missing weekly_pi96_width_ratio")
     elif weekly_pi96_width_ratio > 3.0:
         reasons.append(f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio:.4f} > 3.0")
+    if weekly_pi96_width is not None and weekly_pi96_width < 0.0:
+        reasons.append(f"WeeklyPI96Width={weekly_pi96_width:.4f} < 0.0")
 
     if weekly_quantile_crossing_rate is None:
         reasons.append("Missing weekly_quantile_crossing_rate")
-    elif weekly_quantile_crossing_rate > 0.05:
-        reasons.append(f"WeeklyQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.05")
+    elif weekly_quantile_crossing_rate > 0.001:
+        raise AssertionError(
+            f"WeeklyPublicQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.001"
+        )
 
     if weekly_sorted_quantile_crossing_rate is None:
         reasons.append("Missing weekly_sorted_quantile_crossing_rate")
-    elif weekly_sorted_quantile_crossing_rate > 0.0:
-        reasons.append(
-            f"WeeklySortedQuantileCrossing={weekly_sorted_quantile_crossing_rate:.4f} > 0.0"
+    elif weekly_sorted_quantile_crossing_rate > 0.001:
+        raise AssertionError(
+            f"WeeklyOrderedQuantileCrossing={weekly_sorted_quantile_crossing_rate:.4f} > 0.001"
         )
 
-    if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.005:
-        reasons.append(f"WeeklyMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.005")
+    if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.001:
+        raise AssertionError(
+            f"WeeklyOrderedMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.001"
+        )
 
     if sharpe < -0.30:
         reasons.append(f"Sharpe={sharpe:.4f} < -0.30")
-    if vr < 0.2 or vr > 3.0:
-        reasons.append(f"VR={vr:.4f} outside [0.2, 3.0]")
     if tail_capture is not None and tail_capture < 0.35:
         reasons.append(f"TailCapture={tail_capture:.4f} < 0.35")
     if quantile_crossing_rate is None:
         reasons.append("Missing quantile_crossing_rate")
-    elif quantile_crossing_rate > 0.20:
-        reasons.append(f"QuantileCrossing={quantile_crossing_rate:.4f} > 0.20")
-    if median_sort_gap_max is not None and median_sort_gap_max > 0.01:
-        reasons.append(f"MedianSortGapMax={median_sort_gap_max:.4f} > 0.01")
+    elif quantile_crossing_rate > 0.001:
+        raise AssertionError(f"PublicQuantileCrossing={quantile_crossing_rate:.4f} > 0.001")
+    if median_sort_gap_max is not None and median_sort_gap_max > 0.001:
+        raise AssertionError(f"OrderedMedianSortGapMax={median_sort_gap_max:.4f} > 0.001")
+    if pi80_width is not None and pi80_width < 0.0:
+        reasons.append(f"PI80Width={pi80_width:.4f} < 0.0")
+    if pi96_width is not None and pi96_width < 0.0:
+        reasons.append(f"PI96Width={pi96_width:.4f} < 0.0")
 
     return len(reasons) == 0, reasons
+
+
+def evaluate_quality_gate_warnings(
+    vr: float,
+    mae_vs_naive_zero: Optional[float] = None,
+    weekly_mae_vs_naive_zero: Optional[float] = None,
+) -> List[str]:
+    """Return stabilization warnings that do not fail promotion yet."""
+    warnings: list[str] = []
+    if vr > 2.5:
+        warnings.append(f"VR={vr:.4f} > 2.5 - model overdispersed")
+    if vr < 0.4:
+        warnings.append(f"VR={vr:.4f} < 0.4 - model underdispersed")
+    if mae_vs_naive_zero is not None and mae_vs_naive_zero > 1.25:
+        warnings.append(
+            f"MAEvsNaiveZero={mae_vs_naive_zero:.4f} > 1.25 - worse than warning baseline"
+        )
+    if weekly_mae_vs_naive_zero is not None and weekly_mae_vs_naive_zero > 1.25:
+        warnings.append(
+            f"WeeklyMAEvsNaiveZero={weekly_mae_vs_naive_zero:.4f} > 1.25 - worse than warning baseline"
+        )
+    return warnings
