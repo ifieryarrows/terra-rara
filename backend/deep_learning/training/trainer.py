@@ -61,8 +61,8 @@ KNOWN_GOOD_CONFIG = {
     "lambda_t1_quantile": 0.20,
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.50,
-    "lambda_naive": 0.50,
-    "lambda_directional": 0.00,
+    "lambda_naive": 0.35,
+    "lambda_directional": 0.05,
     "batch_size": 32,
 }
 

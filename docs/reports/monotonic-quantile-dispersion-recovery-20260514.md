@@ -27,8 +27,8 @@ This patch moves quantile ordering from soft loss pressure into a structural mon
   - `lambda_t1_quantile=0.20`
   - `lambda_dispersion=0.35`
   - `lambda_magnitude=0.50`
-  - `lambda_naive=0.50`
-  - `lambda_directional=0.00`
+  - `lambda_naive=0.35`
+  - `lambda_directional=0.05`
 - Removed weekly `lambda_crossing`, `lambda_width`, `lambda_tail_width`, `lambda_sanity`, and `lambda_vol`.
 - `WeeklyASROPFLoss` now applies the monotonic transform before all loss computation.
 - Added batch-level dispersion calibration, median magnitude calibration, naive-zero relative loss, and smooth tanh directional loss logging.
@@ -128,7 +128,25 @@ weekly_tail_capture_rate: 0.5
 quality_gate_passed: false
 ```
 
-Decision: do not proceed to expanded hyperopt. The second deterministic patch keeps monotonic ordering structural, raises public gap scale consistently to `0.02`, disables directional pressure by default, and adds explicit median-scale plus naive-zero relative losses.
+Decision: do not proceed to expanded hyperopt. The second deterministic patch kept monotonic ordering structural, raised public gap scale consistently to `0.02`, initially disabled directional pressure, and added explicit median-scale plus naive-zero relative losses.
+
+The second deterministic training run showed the median-scale and naive-zero recovery terms are working, while directional and tail quality still need controlled recovery:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+variance_ratio: 1.1288
+weekly_variance_ratio: 0.9118
+weekly_magnitude_ratio: 1.6282
+weekly_pi80_width_ratio: 0.7517
+weekly_pi80_coverage: 0.3889
+weekly_directional_accuracy: 0.4259
+weekly_tail_capture_rate: 0.2857
+weekly_mae_vs_naive_zero: 1.8857
+quality_gate_passed: false
+```
+
+Decision: do not proceed to expanded hyperopt. The directional reintroduction patch keeps magnitude and dispersion controls intact, reduces `lambda_naive` from `0.50` to `0.35`, and re-enables `lambda_directional` at `0.05` to test whether weekly direction and tail capture recover without reintroducing magnitude explosion.
 
 The deterministic training run was not executed in this local development environment because required training dependencies are missing:
 
@@ -179,3 +197,16 @@ py -m deep_learning.training.trainer --deterministic-weekly-validation
 ```
 
 Only proceed to expanded hyperopt if public crossing is zero, interval widths are positive, variance ratio falls below the observed `4.71` floor, and naive-zero / weekly-tail metrics improve.
+
+For the directional reintroduction run, the specific improvement targets are:
+
+```text
+ordered/public crossing = 0.0
+variance_ratio < 1.8
+weekly_variance_ratio < 1.5
+weekly_magnitude_ratio <= 1.5, or at least not worse than 1.6282
+weekly_directional_accuracy > 0.50
+weekly_tail_capture_rate > 0.40
+weekly_mae_vs_naive_zero < 1.5, or clear improvement from 1.8857
+weekly_pi80_coverage > 0.50
+```
