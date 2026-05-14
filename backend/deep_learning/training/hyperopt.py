@@ -66,10 +66,12 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
-    "lambda_weekly_quantile": 0.55,
-    "lambda_t1_quantile": 0.15,
-    "lambda_dispersion": 0.20,
-    "lambda_directional": 0.10,
+    "lambda_weekly_quantile": 0.70,
+    "lambda_t1_quantile": 0.20,
+    "lambda_dispersion": 0.35,
+    "lambda_magnitude": 0.50,
+    "lambda_naive": 0.50,
+    "lambda_directional": 0.00,
     "batch_size": 32,
 }
 
@@ -287,10 +289,12 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     )
 
     weekly_loss_cfg = WeeklyLossConfig(
-        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.45, 0.65, step=0.05),
-        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.05, 0.20, step=0.05),
-        lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.15, 0.35, step=0.05),
-        lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.12, step=0.01),
+        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.60, 0.80, step=0.05),
+        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.10, 0.25, step=0.05),
+        lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.25, 0.45, step=0.05),
+        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.25, 0.75, step=0.05),
+        lambda_naive=trial.suggest_float("lambda_naive", 0.25, 0.75, step=0.05),
+        lambda_directional=trial.suggest_float("lambda_directional", 0.00, 0.08, step=0.02),
     )
 
     training_cfg = TrainingConfig(

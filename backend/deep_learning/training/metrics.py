@@ -15,7 +15,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
+from deep_learning.models.monotonic_quantiles import (
+    DEFAULT_MONOTONIC_GAP_SCALE,
+    enforce_monotonic_quantiles,
+)
 
 
 def select_prediction_horizon(values: np.ndarray, horizon_idx: int = 0) -> np.ndarray:
@@ -71,7 +74,7 @@ def monotonic_quantiles_np(
         tensor,
         median_idx=median_idx,
         min_gap=1e-5,
-        gap_scale=0.01,
+        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
         init_bias=-3.0,
     )
     return ordered.detach().cpu().numpy()

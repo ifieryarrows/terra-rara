@@ -158,11 +158,12 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 
 
 def test_known_good_trial_includes_weekly_loss_search_params():
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.55
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.15
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.10
-    assert "lambda_magnitude" not in KNOWN_GOOD_TRIAL_PARAMS
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.70
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.20
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.35
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.50
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.50
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.00
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS

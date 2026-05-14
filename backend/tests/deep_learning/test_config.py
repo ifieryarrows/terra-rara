@@ -52,24 +52,27 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.model.hidden_size == 48
     assert updated.asro.lambda_quantile == 0.25
     assert updated.asro.lambda_madl == 0.40
-    assert updated.weekly_loss.lambda_weekly_quantile == 0.55
-    assert updated.weekly_loss.lambda_t1_quantile == 0.15
-    assert updated.weekly_loss.lambda_dispersion == 0.20
-    assert updated.weekly_loss.lambda_directional == 0.10
+    assert updated.weekly_loss.lambda_weekly_quantile == 0.70
+    assert updated.weekly_loss.lambda_t1_quantile == 0.20
+    assert updated.weekly_loss.lambda_dispersion == 0.35
+    assert updated.weekly_loss.lambda_magnitude == 0.50
+    assert updated.weekly_loss.lambda_naive == 0.50
+    assert updated.weekly_loss.lambda_directional == 0.00
     assert updated.training.batch_size == 32
 
 
 def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     cfg = get_tft_config()
-    assert cfg.weekly_loss.lambda_weekly_quantile == 0.55
-    assert cfg.weekly_loss.lambda_t1_quantile == 0.15
-    assert cfg.weekly_loss.lambda_dispersion == 0.20
-    assert cfg.weekly_loss.lambda_directional == 0.10
+    assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
+    assert cfg.weekly_loss.lambda_t1_quantile == 0.20
+    assert cfg.weekly_loss.lambda_dispersion == 0.35
+    assert cfg.weekly_loss.lambda_magnitude == 0.50
+    assert cfg.weekly_loss.lambda_naive == 0.50
+    assert cfg.weekly_loss.lambda_directional == 0.00
     assert not hasattr(cfg.weekly_loss, "lambda_crossing")
     assert not hasattr(cfg.weekly_loss, "lambda_width")
     assert not hasattr(cfg.weekly_loss, "lambda_tail_width")
     assert not hasattr(cfg.weekly_loss, "lambda_sanity")
-    assert not hasattr(cfg.weekly_loss, "lambda_magnitude")
     assert not hasattr(cfg.weekly_loss, "lambda_vol")
 
 

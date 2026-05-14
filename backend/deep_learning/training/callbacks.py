@@ -101,11 +101,14 @@ class WeeklyLossComponentLogger(pl.Callback):
         epoch = getattr(trainer, "current_epoch", 0)
         logger.info(
             "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f "
-            "dispersion=%.6f directional=%.6f total=%.6f dominant=%s",
+            "dispersion=%.6f magnitude=%.6f naive=%.6f directional=%.6f "
+            "total=%.6f dominant=%s",
             epoch,
             stats["weekly_q_loss_mean"],
             stats["t1_q_loss_mean"],
             stats["dispersion_loss_mean"],
+            stats.get("magnitude_loss_mean", 0.0),
+            stats.get("naive_loss_mean", 0.0),
             stats["directional_loss_mean"],
             stats["total_loss_mean"],
             stats["dominant_component"],
@@ -115,7 +118,11 @@ class WeeklyLossComponentLogger(pl.Callback):
                 "Weekly dispersion loss is dominating weekly quantile loss; "
                 "lambda_dispersion may need to be reduced."
             )
-        if stats["directional_loss_mean"] < 0.05 * max(stats["total_loss_mean"], 1e-12):
+        lambda_directional = float(getattr(loss, "lambda_directional", 0.0))
+        directional_is_tiny = (
+            stats["directional_loss_mean"] < 0.05 * max(stats["total_loss_mean"], 1e-12)
+        )
+        if lambda_directional > 0.0 and directional_is_tiny:
             logger.warning(
                 "Weekly directional loss is below 5%% of total loss; "
                 "lambda_directional may need to increase."

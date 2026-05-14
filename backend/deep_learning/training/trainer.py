@@ -57,10 +57,12 @@ KNOWN_GOOD_CONFIG = {
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
-    "lambda_weekly_quantile": 0.55,
-    "lambda_t1_quantile": 0.15,
-    "lambda_dispersion": 0.20,
-    "lambda_directional": 0.10,
+    "lambda_weekly_quantile": 0.70,
+    "lambda_t1_quantile": 0.20,
+    "lambda_dispersion": 0.35,
+    "lambda_magnitude": 0.50,
+    "lambda_naive": 0.50,
+    "lambda_directional": 0.00,
     "batch_size": 32,
 }
 
@@ -278,10 +280,13 @@ def train_tft_model(
             cfg.training.early_stopping_patience,
         )
         logger.info(
-            "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f directional=%.2f monotonic_transform=true",
+            "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
+            "magnitude=%.2f naive=%.2f directional=%.2f monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_dispersion,
+            cfg.weekly_loss.lambda_magnitude,
+            cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_directional,
         )
     else:
@@ -440,8 +445,10 @@ def train_tft_model(
             "lambda_crossing": cfg.asro.lambda_crossing,
             "lambda_weekly_quantile": cfg.weekly_loss.lambda_weekly_quantile,
             "lambda_t1_quantile": cfg.weekly_loss.lambda_t1_quantile,
-            "lambda_directional": cfg.weekly_loss.lambda_directional,
             "lambda_dispersion": cfg.weekly_loss.lambda_dispersion,
+            "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
+            "lambda_naive": cfg.weekly_loss.lambda_naive,
+            "lambda_directional": cfg.weekly_loss.lambda_directional,
             "monotonic_quantile_transform": True,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
@@ -657,6 +664,10 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_directional"] = min(float(params["lambda_directional"]), 0.12)
         if "lambda_dispersion" in params:
             params["lambda_dispersion"] = max(float(params["lambda_dispersion"]), 0.20)
+        if "lambda_magnitude" in params:
+            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.0), 0.80)
+        if "lambda_naive" in params:
+            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.0), 0.80)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",
@@ -692,7 +703,7 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_dispersion",
+            "lambda_dispersion", "lambda_magnitude", "lambda_naive",
         ) if k in params
     }
 

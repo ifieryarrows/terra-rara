@@ -4,11 +4,14 @@ import torch
 import torch.nn.functional as F
 
 
+DEFAULT_MONOTONIC_GAP_SCALE = 0.02
+
+
 def enforce_monotonic_quantiles(
     y_pred: torch.Tensor,
     median_idx: int = 3,
     min_gap: float = 1e-5,
-    gap_scale: float = 0.01,
+    gap_scale: float = DEFAULT_MONOTONIC_GAP_SCALE,
     init_bias: float = -3.0,
 ) -> torch.Tensor:
     """

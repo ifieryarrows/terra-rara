@@ -21,6 +21,7 @@ import numpy as np
 from deep_learning.contract import RETURN_SPACE, log_to_simple_return
 from deep_learning.config import TFTASROConfig, get_tft_config
 from deep_learning.models.monotonic_quantiles import (
+    DEFAULT_MONOTONIC_GAP_SCALE,
     enforce_monotonic_quantiles,
     validate_monotonicity,
 )
@@ -136,10 +137,12 @@ try:
         def __init__(
             self,
             quantiles: list,
-            lambda_weekly_quantile: float = 0.55,
-            lambda_t1_quantile: float = 0.15,
-            lambda_dispersion: float = 0.20,
-            lambda_directional: float = 0.10,
+            lambda_weekly_quantile: float = 0.70,
+            lambda_t1_quantile: float = 0.20,
+            lambda_dispersion: float = 0.35,
+            lambda_directional: float = 0.00,
+            lambda_magnitude: float = 0.50,
+            lambda_naive: float = 0.50,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
         ):
@@ -148,6 +151,8 @@ try:
             self.lambda_t1_quantile = lambda_t1_quantile
             self.lambda_dispersion = lambda_dispersion
             self.lambda_directional = lambda_directional
+            self.lambda_magnitude = lambda_magnitude
+            self.lambda_naive = lambda_naive
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
@@ -158,6 +163,8 @@ try:
                 "weekly_q": 0.0,
                 "t1_q": 0.0,
                 "dispersion": 0.0,
+                "magnitude": 0.0,
+                "naive": 0.0,
                 "directional": 0.0,
                 "total": 0.0,
             }
@@ -168,12 +175,16 @@ try:
             weekly_q_loss: torch.Tensor,
             t1_q_loss: torch.Tensor,
             dispersion_loss: torch.Tensor,
+            magnitude_loss: torch.Tensor,
+            naive_relative_loss: torch.Tensor,
             directional_loss: torch.Tensor,
             total_loss: torch.Tensor,
         ) -> None:
             self._component_sums["weekly_q"] += float(weekly_q_loss.detach().mean().cpu())
             self._component_sums["t1_q"] += float(t1_q_loss.detach().mean().cpu())
             self._component_sums["dispersion"] += float(dispersion_loss.detach().mean().cpu())
+            self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
+            self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
             self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
             self._component_sums["total"] += float(total_loss.detach().mean().cpu())
             self._component_batches += 1
@@ -186,6 +197,8 @@ try:
                     "weekly_q_loss_mean": 0.0,
                     "t1_q_loss_mean": 0.0,
                     "dispersion_loss_mean": 0.0,
+                    "magnitude_loss_mean": 0.0,
+                    "naive_loss_mean": 0.0,
                     "directional_loss_mean": 0.0,
                     "total_loss_mean": 0.0,
                     "dominant_component": None,
@@ -195,6 +208,8 @@ try:
                 "weekly_q": self._component_sums["weekly_q"],
                 "t1_q": self._component_sums["t1_q"],
                 "dispersion": self._component_sums["dispersion"],
+                "magnitude": self._component_sums["magnitude"],
+                "naive": self._component_sums["naive"],
                 "directional": self._component_sums["directional"],
             }
             return {
@@ -202,6 +217,8 @@ try:
                 "weekly_q_loss_mean": self._component_sums["weekly_q"] / n_batches,
                 "t1_q_loss_mean": self._component_sums["t1_q"] / n_batches,
                 "dispersion_loss_mean": self._component_sums["dispersion"] / n_batches,
+                "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
+                "naive_loss_mean": self._component_sums["naive"] / n_batches,
                 "directional_loss_mean": self._component_sums["directional"] / n_batches,
                 "total_loss_mean": self._component_sums["total"] / n_batches,
                 "dominant_component": max(components, key=components.get),
@@ -225,7 +242,7 @@ try:
                 y_pred,
                 median_idx=self.median_idx,
                 min_gap=1e-5,
-                gap_scale=0.01,
+                gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
                 init_bias=-3.0,
             )
             if self.debug_mode:
@@ -258,7 +275,11 @@ try:
             pred_abs_med = pred_weekly_median.abs().median() + eps
             actual_abs_med = actual_weekly.abs().median() + eps
             magnitude_loss = torch.abs(torch.log(pred_abs_med / actual_abs_med))
-            combined_calibration_loss = 0.5 * dispersion_loss + 0.5 * magnitude_loss
+
+            # Naive-zero baseline loss:
+            model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
+            zero_mae = torch.mean(torch.abs(actual_weekly)) + eps
+            naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
 
             pred_direction = torch.tanh(median_path * 10.0)
             actual_direction = torch.sign(y_actual)
@@ -272,18 +293,25 @@ try:
 
             weekly_q_loss = _to_scalar(weekly_q_loss)
             t1_q_loss = _to_scalar(t1_q_loss)
-            combined_calibration_loss = _to_scalar(combined_calibration_loss)
+            magnitude_loss = _to_scalar(magnitude_loss)
+            naive_relative_loss = _to_scalar(naive_relative_loss)
             directional_loss = _to_scalar(directional_loss)
+
             total_loss = (
                 self.lambda_weekly_quantile * _to_scalar(weekly_q_loss)
                 + self.lambda_t1_quantile * _to_scalar(t1_q_loss)
-                + self.lambda_dispersion * _to_scalar(combined_calibration_loss)
+                + self.lambda_dispersion * _to_scalar(dispersion_loss)
+                + self.lambda_magnitude * _to_scalar(magnitude_loss)
+                + self.lambda_naive * _to_scalar(naive_relative_loss)
                 + self.lambda_directional * _to_scalar(directional_loss)
             )
+
             self._record_components(
                 weekly_q_loss,
                 t1_q_loss,
-                combined_calibration_loss,
+                dispersion_loss,
+                magnitude_loss,
+                naive_relative_loss,
                 directional_loss,
                 total_loss,
             )
@@ -324,14 +352,20 @@ def create_tft_model(
             lambda_weekly_quantile=cfg.weekly_loss.lambda_weekly_quantile,
             lambda_t1_quantile=cfg.weekly_loss.lambda_t1_quantile,
             lambda_dispersion=cfg.weekly_loss.lambda_dispersion,
+            lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
+            lambda_naive=cfg.weekly_loss.lambda_naive,
             lambda_directional=cfg.weekly_loss.lambda_directional,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f dir=%.2f monotonic_transform=true",
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
+            "magnitude=%.2f naive=%.2f dir=%.2f monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_dispersion,
+            cfg.weekly_loss.lambda_magnitude,
+            cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_directional,
+            DEFAULT_MONOTONIC_GAP_SCALE,
         )
     elif use_asro and ASROPFLoss is not None:
         loss = ASROPFLoss(
@@ -513,7 +547,7 @@ def _format_prediction_legacy_simple_return(
         torch.as_tensor(raw_pred, dtype=torch.float64),
         median_idx=median_idx,
         min_gap=1e-5,
-        gap_scale=0.01,
+        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
         init_bias=-3.0,
     )
     pred = ordered_tensor.detach().cpu().numpy()
@@ -674,7 +708,7 @@ def format_prediction(
         torch.as_tensor(raw_pred, dtype=torch.float64),
         median_idx=median_idx,
         min_gap=1e-5,
-        gap_scale=0.01,
+        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
         init_bias=-3.0,
     )
     pred = ordered_tensor.detach().cpu().numpy()

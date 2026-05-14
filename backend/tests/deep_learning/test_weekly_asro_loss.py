@@ -42,10 +42,36 @@ def test_dispersion_loss_prefers_matching_weekly_median_scale():
         lambda_weekly_quantile=0.0,
         lambda_t1_quantile=0.0,
         lambda_dispersion=1.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
         lambda_directional=0.0,
     )
 
     assert loss.loss(pred_matched, actual) < loss.loss(pred_overdispersed, actual)
+
+
+def test_naive_relative_loss_penalizes_worse_than_zero_weekly_median():
+    actual = torch.tensor(
+        [
+            [0.010, 0.005, 0.000, 0.000, 0.000],
+            [-0.010, -0.005, 0.000, 0.000, 0.000],
+            [0.020, 0.005, 0.000, 0.000, 0.000],
+            [-0.020, -0.005, 0.000, 0.000, 0.000],
+        ]
+    )
+    pred_matched = _path_from_median(actual)
+    pred_bad = _path_from_median(actual * -5.0)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=1.0,
+        lambda_directional=0.0,
+    )
+
+    assert loss.loss(pred_matched, actual) < loss.loss(pred_bad, actual)
 
 
 def test_weekly_loss_rejects_removed_soft_guard_parameters():
@@ -72,6 +98,15 @@ def test_weekly_loss_tracks_component_means():
     assert means["weekly_q_loss_mean"] >= 0.0
     assert means["t1_q_loss_mean"] >= 0.0
     assert means["dispersion_loss_mean"] >= 0.0
+    assert means["magnitude_loss_mean"] >= 0.0
+    assert means["naive_loss_mean"] >= 0.0
     assert means["directional_loss_mean"] >= 0.0
     assert means["total_loss_mean"] == pytest.approx(float(total.detach()))
-    assert means["dominant_component"] in {"weekly_q", "t1_q", "dispersion", "directional"}
+    assert means["dominant_component"] in {
+        "weekly_q",
+        "t1_q",
+        "dispersion",
+        "magnitude",
+        "naive",
+        "directional",
+    }

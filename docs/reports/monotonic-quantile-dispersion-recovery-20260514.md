@@ -16,20 +16,22 @@ This patch moves quantile ordering from soft loss pressure into a structural mon
 1. Structural monotonic quantile transform
 
 - Added `backend/deep_learning/models/monotonic_quantiles.py`.
-- Added `enforce_monotonic_quantiles()` with `gap_scale=0.01` and `init_bias=-3.0` for log-return scale compatibility.
+- Added `enforce_monotonic_quantiles()` with `gap_scale=0.02` and `init_bias=-3.0` for log-return scale compatibility after deterministic validation showed positive but too-narrow public intervals.
 - Added `validate_monotonicity()` for debug/evaluation checks.
 - Added unit coverage proving random `[64, 5, 7]` raw outputs become monotonic and preserve q50 exactly.
 
 2. Weekly loss redesign
 
-- Replaced weekly soft guard terms with four terms:
-  - `lambda_weekly_quantile=0.55`
-  - `lambda_t1_quantile=0.15`
-  - `lambda_dispersion=0.20`
-  - `lambda_directional=0.10`
-- Removed weekly `lambda_crossing`, `lambda_width`, `lambda_tail_width`, `lambda_sanity`, `lambda_magnitude`, and `lambda_vol`.
+- Replaced weekly soft guard terms with six recovery terms:
+  - `lambda_weekly_quantile=0.70`
+  - `lambda_t1_quantile=0.20`
+  - `lambda_dispersion=0.35`
+  - `lambda_magnitude=0.50`
+  - `lambda_naive=0.50`
+  - `lambda_directional=0.00`
+- Removed weekly `lambda_crossing`, `lambda_width`, `lambda_tail_width`, `lambda_sanity`, and `lambda_vol`.
 - `WeeklyASROPFLoss` now applies the monotonic transform before all loss computation.
-- Added batch-level dispersion/magnitude calibration and smooth tanh directional loss.
+- Added batch-level dispersion calibration, median magnitude calibration, naive-zero relative loss, and smooth tanh directional loss logging.
 - Added loss component accumulators and validation-epoch component logging.
 
 3. Evaluation and public-output contract
@@ -88,9 +90,47 @@ py -m pytest backend/tests -q -m "not online"
 419 passed, 6 skipped
 ```
 
+Second deterministic recovery patch validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_metrics.py backend/tests/deep_learning/test_tft_format_prediction.py -q
+26 passed, 5 skipped
+
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hub_artifacts.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+20 passed
+
+py -m pytest backend/tests -q -m "not online"
+419 passed, 7 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+```
+
 ## Deterministic Training Status
 
-The deterministic training run was not executed in this local environment because required training dependencies are missing:
+The first deterministic training run in the training environment proved the structural monotonic fix works, but did not produce a promotable model:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+weekly_ordered_quantile_crossing_rate: 0.0
+weekly_public_quantile_crossing_rate: 0.0
+pi80_width: 0.0030409098069930068
+pi96_width: 0.004415266469298083
+weekly_pi80_width: 0.015095555772430545
+weekly_pi96_width: 0.021998214256075826
+variance_ratio: 3.4537061248499867
+mae_vs_naive_zero: 3.367233609415377
+weekly_mae_vs_naive_zero: 4.065073084058982
+weekly_magnitude_ratio: 4.16903637631012
+weekly_pi80_coverage: 0.07407407407407407
+weekly_tail_capture_rate: 0.5
+quality_gate_passed: false
+```
+
+Decision: do not proceed to expanded hyperopt. The second deterministic patch keeps monotonic ordering structural, raises public gap scale consistently to `0.02`, disables directional pressure by default, and adds explicit median-scale plus naive-zero relative losses.
+
+The deterministic training run was not executed in this local development environment because required training dependencies are missing:
 
 ```text
 py -c "import pytorch_forecasting; print(pytorch_forecasting.__version__)"
@@ -98,6 +138,10 @@ ModuleNotFoundError: No module named 'pytorch_forecasting'
 
 py -c "import lightning; print(lightning.__version__)"
 ModuleNotFoundError: No module named 'lightning'
+
+py -m deep_learning.training.trainer --deterministic-weekly-validation
+ModuleNotFoundError: No module named 'lightning'
+ModuleNotFoundError: No module named 'pytorch_lightning'
 
 py -c "import torch; print(torch.__version__)"
 2.7.1+cpu
