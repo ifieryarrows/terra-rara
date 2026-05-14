@@ -33,6 +33,7 @@ from deep_learning.contract import (
     RETURN_SPACE,
     TARGET_RETURN_TYPE,
 )
+from deep_learning.logging_utils import configure_cli_logging, suppress_lightning_noise
 
 # pytorch_forecasting prescalers are fit on DataFrames but transform numpy arrays
 # internally on every batch — this produces thousands of identical sklearn warnings.
@@ -176,6 +177,7 @@ def train_tft_model(
     # pytorch_forecasting >=1.0 uses the unified `lightning` package.
     # Importing from `pytorch_lightning` gives a different LightningModule
     # base class, causing "model must be a LightningModule" at trainer.fit().
+    suppress_lightning_noise()
     try:
         import lightning.pytorch as pl
         from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
@@ -736,7 +738,7 @@ def _persist_tft_metadata(symbol: str, result: dict) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_cli_logging(logging.INFO)
 
     parser = argparse.ArgumentParser(description="Train TFT-ASRO model")
     parser.add_argument("--symbol", default="HG=F")

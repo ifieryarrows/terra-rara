@@ -35,6 +35,7 @@ from deep_learning.config import (
     WeeklyLossConfig,
     get_tft_config,
 )
+from deep_learning.logging_utils import configure_cli_logging, suppress_lightning_noise
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     the MedianPruner can kill clearly-bad trials early (after 1 fold
     instead of waiting for all 3).
     """
+    suppress_lightning_noise()
     try:
         import lightning.pytorch as pl
         from lightning.pytorch.callbacks import EarlyStopping
@@ -411,6 +413,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         ckpt_dir = Path(trial_cfg.training.checkpoint_dir) / f"fold_{fold_idx}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+        log_steps = max(1, min(5, len(fold_train_dl)))
+
         trainer = pl.Trainer(
             max_epochs=trial_cfg.training.max_epochs,
             accelerator="auto",
@@ -418,7 +422,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             callbacks=callbacks,
             enable_progress_bar=False,
             enable_model_summary=False,
-            log_every_n_steps=20,
+            logger=False,
+            log_every_n_steps=log_steps,
         )
 
         # ---- train ----
@@ -778,6 +783,7 @@ def run_hyperopt(
         Dict with best params, best value, and study summary.
     """
     import optuna
+    suppress_lightning_noise()
     try:
         import lightning.pytorch as pl
     except ImportError:
@@ -843,7 +849,7 @@ def run_hyperopt(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_cli_logging(logging.INFO)
 
     parser = argparse.ArgumentParser(description="TFT-ASRO hyperparameter optimisation")
     parser.add_argument("--n-trials", type=int, default=50)
