@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import torch
+
+from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
 
 
 def select_prediction_horizon(values: np.ndarray, horizon_idx: int = 0) -> np.ndarray:
@@ -51,6 +54,27 @@ def cumulative_quantiles(pred: np.ndarray, horizon: int = 5) -> np.ndarray:
     if arr.shape[1] < horizon:
         raise ValueError(f"Need at least {horizon} horizons, got {arr.shape[1]}")
     return arr[:, :horizon, :].sum(axis=1)
+
+
+def monotonic_quantiles_np(
+    pred: np.ndarray,
+    median_idx: int | None = None,
+) -> np.ndarray:
+    """Apply the production monotonic quantile transform to a numpy tensor."""
+    arr = np.asarray(pred, dtype=np.float64)
+    if arr.shape[-1] == 0:
+        return arr.copy()
+    if median_idx is None:
+        median_idx = arr.shape[-1] // 2
+    tensor = torch.as_tensor(arr, dtype=torch.float64)
+    ordered = enforce_monotonic_quantiles(
+        tensor,
+        median_idx=median_idx,
+        min_gap=1e-5,
+        gap_scale=0.01,
+        init_bias=-3.0,
+    )
+    return ordered.detach().cpu().numpy()
 
 
 def magnitude_ratio(y_actual: np.ndarray, y_pred: np.ndarray) -> float:
@@ -288,18 +312,24 @@ def compute_all_metrics(
 
     if y_pred_quantiles is not None:
         q_arr = np.asarray(y_pred_quantiles, dtype=np.float64)
-        sorted_q = np.sort(q_arr, axis=-1)
+        ordered_q = monotonic_quantiles_np(q_arr)
         raw_crossing = quantile_crossing_rate(q_arr)
-        sorted_crossing = quantile_crossing_rate(sorted_q)
-        metrics["quantile_crossing_rate"] = raw_crossing
+        ordered_crossing = quantile_crossing_rate(ordered_q)
+        metrics["quantile_crossing_rate"] = ordered_crossing
         metrics["raw_quantile_crossing_rate"] = raw_crossing
-        metrics["sorted_quantile_crossing_rate"] = sorted_crossing
+        metrics["ordered_quantile_crossing_rate"] = ordered_crossing
+        metrics["public_quantile_crossing_rate"] = ordered_crossing
+        metrics["sorted_quantile_crossing_rate"] = ordered_crossing
         gap_mean, gap_max = quantile_median_sort_gap(q_arr)
-        metrics["median_sort_gap_mean"] = gap_mean
-        metrics["median_sort_gap_max"] = gap_max
-        sorted_gap_mean, sorted_gap_max = quantile_median_sort_gap(sorted_q)
-        metrics["sorted_median_sort_gap_mean"] = sorted_gap_mean
-        metrics["sorted_median_sort_gap_max"] = sorted_gap_max
+        metrics["raw_median_sort_gap_mean"] = gap_mean
+        metrics["raw_median_sort_gap_max"] = gap_max
+        ordered_gap_mean, ordered_gap_max = quantile_median_sort_gap(ordered_q)
+        metrics["median_sort_gap_mean"] = ordered_gap_mean
+        metrics["median_sort_gap_max"] = ordered_gap_max
+        metrics["ordered_median_sort_gap_mean"] = ordered_gap_mean
+        metrics["ordered_median_sort_gap_max"] = ordered_gap_max
+        metrics["sorted_median_sort_gap_mean"] = ordered_gap_mean
+        metrics["sorted_median_sort_gap_max"] = ordered_gap_max
 
     return metrics
 
@@ -317,8 +347,10 @@ def compute_weekly_metrics(
     to simple returns happens only during inference formatting.
     """
     weekly_actual = cumulative_horizon(y_actual_path, horizon=horizon)
-    approx_weekly_quantiles = cumulative_quantiles(y_pred_quantiles_path, horizon=horizon)
-    weekly_quantiles = np.sort(approx_weekly_quantiles, axis=-1)
+    raw_path = np.asarray(y_pred_quantiles_path, dtype=np.float64)
+    ordered_path = monotonic_quantiles_np(raw_path, median_idx=len(quantiles) // 2)
+    raw_weekly_quantiles = cumulative_quantiles(raw_path, horizon=horizon)
+    weekly_quantiles = cumulative_quantiles(ordered_path, horizon=horizon)
 
     median_idx = len(quantiles) // 2
     q10_idx = quantiles.index(0.10)
@@ -340,18 +372,27 @@ def compute_weekly_metrics(
         y_pred_q90=weekly_quantiles[:, q90_idx],
         y_pred_q02=weekly_quantiles[:, q02_idx],
         y_pred_q98=weekly_quantiles[:, q98_idx],
-        y_pred_quantiles=approx_weekly_quantiles,
+        y_pred_quantiles=weekly_quantiles,
         tail_threshold=tail_threshold,
     )
 
     weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}
     weekly_metrics["weekly_interval_quantile_source"] = 1.0
     weekly_metrics["weekly_approx_quantile_crossing_rate"] = quantile_crossing_rate(
-        approx_weekly_quantiles
+        raw_weekly_quantiles
     )
-    approx_gap_mean, approx_gap_max = quantile_median_sort_gap(approx_weekly_quantiles)
+    approx_gap_mean, approx_gap_max = quantile_median_sort_gap(raw_weekly_quantiles)
     weekly_metrics["weekly_approx_median_sort_gap_mean"] = approx_gap_mean
     weekly_metrics["weekly_approx_median_sort_gap_max"] = approx_gap_max
+    weekly_metrics["weekly_raw_quantile_crossing_rate"] = quantile_crossing_rate(
+        raw_weekly_quantiles
+    )
+    weekly_metrics["weekly_ordered_quantile_crossing_rate"] = quantile_crossing_rate(
+        weekly_quantiles
+    )
+    weekly_metrics["weekly_public_quantile_crossing_rate"] = weekly_metrics[
+        "weekly_ordered_quantile_crossing_rate"
+    ]
     weekly_metrics["weekly_magnitude_ratio"] = magnitude_ratio(weekly_actual, weekly_pred)
     weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
     weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))

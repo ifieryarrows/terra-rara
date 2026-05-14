@@ -15,10 +15,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 from deep_learning.contract import RETURN_SPACE, log_to_simple_return
 from deep_learning.config import TFTASROConfig, get_tft_config
+from deep_learning.models.monotonic_quantiles import (
+    enforce_monotonic_quantiles,
+    validate_monotonicity,
+)
 from deep_learning.models.losses import (
     AdaptiveSharpeRatioLoss,
     CombinedQuantileLoss,
@@ -131,38 +136,76 @@ try:
         def __init__(
             self,
             quantiles: list,
-            lambda_weekly_quantile: float = 0.60,
-            lambda_t1_quantile: float = 0.10,
+            lambda_weekly_quantile: float = 0.55,
+            lambda_t1_quantile: float = 0.15,
+            lambda_dispersion: float = 0.20,
             lambda_directional: float = 0.10,
-            lambda_magnitude: float = 0.55,
-            lambda_vol: float = 0.35,
-            lambda_crossing: float = 7.0,
-            lambda_sanity: float = 0.20,
-            lambda_width: float = 0.50,
-            lambda_tail_width: float = 0.30,
-            sharpe_eps: float = 1e-6,
-            daily_log_return_bound: float = 0.08,
-            weekly_log_return_bound: float = 0.20,
+            sharpe_eps: float = 1e-8,
+            debug_mode: bool = False,
         ):
             super().__init__(quantiles=quantiles)
             self.lambda_weekly_quantile = lambda_weekly_quantile
             self.lambda_t1_quantile = lambda_t1_quantile
+            self.lambda_dispersion = lambda_dispersion
             self.lambda_directional = lambda_directional
-            self.lambda_magnitude = lambda_magnitude
-            self.lambda_vol = lambda_vol
-            self.lambda_crossing = lambda_crossing
-            self.lambda_sanity = lambda_sanity
-            self.lambda_width = lambda_width
-            self.lambda_tail_width = lambda_tail_width
             self.sharpe_eps = sharpe_eps
-            self.daily_log_return_bound = daily_log_return_bound
-            self.weekly_log_return_bound = weekly_log_return_bound
+            self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
-            q = list(quantiles)
-            self._q02_idx = q.index(0.02) if 0.02 in q else 0
-            self._q10_idx = q.index(0.10) if 0.10 in q else 1
-            self._q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
-            self._q98_idx = q.index(0.98) if 0.98 in q else len(q) - 1
+            self.reset_component_accumulators()
+
+        def reset_component_accumulators(self) -> None:
+            self._component_sums = {
+                "weekly_q": 0.0,
+                "t1_q": 0.0,
+                "dispersion": 0.0,
+                "directional": 0.0,
+                "total": 0.0,
+            }
+            self._component_batches = 0
+
+        def _record_components(
+            self,
+            weekly_q_loss: torch.Tensor,
+            t1_q_loss: torch.Tensor,
+            dispersion_loss: torch.Tensor,
+            directional_loss: torch.Tensor,
+            total_loss: torch.Tensor,
+        ) -> None:
+            self._component_sums["weekly_q"] += float(weekly_q_loss.detach().mean().cpu())
+            self._component_sums["t1_q"] += float(t1_q_loss.detach().mean().cpu())
+            self._component_sums["dispersion"] += float(dispersion_loss.detach().mean().cpu())
+            self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
+            self._component_sums["total"] += float(total_loss.detach().mean().cpu())
+            self._component_batches += 1
+
+        def component_means(self) -> dict:
+            n_batches = self._component_batches
+            if n_batches <= 0:
+                return {
+                    "n_batches": 0,
+                    "weekly_q_loss_mean": 0.0,
+                    "t1_q_loss_mean": 0.0,
+                    "dispersion_loss_mean": 0.0,
+                    "directional_loss_mean": 0.0,
+                    "total_loss_mean": 0.0,
+                    "dominant_component": None,
+                }
+
+            components = {
+                "weekly_q": self._component_sums["weekly_q"],
+                "t1_q": self._component_sums["t1_q"],
+                "dispersion": self._component_sums["dispersion"],
+                "directional": self._component_sums["directional"],
+            }
+            return {
+                "n_batches": n_batches,
+                "weekly_q_loss_mean": self._component_sums["weekly_q"] / n_batches,
+                "t1_q_loss_mean": self._component_sums["t1_q"] / n_batches,
+                "dispersion_loss_mean": self._component_sums["dispersion"] / n_batches,
+                "directional_loss_mean": self._component_sums["directional"] / n_batches,
+                "total_loss_mean": self._component_sums["total"] / n_batches,
+                "dominant_component": max(components, key=components.get),
+            }
 
         def _pinball(self, pred: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
             q = torch.tensor(self.quantiles, device=pred.device, dtype=pred.dtype).view(1, -1)
@@ -178,70 +221,48 @@ try:
             y_actual = y_actual.float()
             y_pred = y_pred.float()
 
-            median_path = y_pred[..., self.median_idx]
-            pred_weekly_quantiles = y_pred.sum(dim=1)
+            ordered_pred = enforce_monotonic_quantiles(
+                y_pred,
+                median_idx=self.median_idx,
+                min_gap=1e-5,
+                gap_scale=0.01,
+                init_bias=-3.0,
+            )
+            if self.debug_mode:
+                ordered_diagnostics = validate_monotonicity(ordered_pred)
+                assert ordered_diagnostics["is_valid"], (
+                    f"Monotonic transform produced crossings: "
+                    f"rate={ordered_diagnostics['crossing_rate']}, "
+                    f"max_violation={ordered_diagnostics['max_violation']}"
+                )
+                assert torch.allclose(
+                    ordered_pred[..., self.median_idx],
+                    y_pred[..., self.median_idx],
+                    rtol=1e-6,
+                    atol=1e-7,
+                ), "Monotonic transform must preserve the median quantile exactly"
+
+            median_path = ordered_pred[..., self.median_idx]
+            pred_weekly_quantiles = ordered_pred.sum(dim=1)
             actual_weekly = y_actual.sum(dim=1)
 
             weekly_q_loss = self._pinball(pred_weekly_quantiles, actual_weekly)
-            t1_q_loss = super().loss(y_pred[:, 0:1, :], y_actual[:, 0:1])
+            t1_q_loss = super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1])
 
             pred_weekly_median = median_path.sum(dim=1)
-            signal = torch.tanh(pred_weekly_median * 20.0)
-            weekly_directional = -(signal * actual_weekly).mean() / (
-                (signal * actual_weekly).std() + self.sharpe_eps
-            )
+            eps = self.sharpe_eps
+            pred_std = pred_weekly_median.std() + eps
+            actual_std = actual_weekly.std() + eps
+            dispersion_loss = torch.abs(torch.log(pred_std / actual_std))
 
-            abs_actual = actual_weekly.abs()
-            material_mask = abs_actual > (abs_actual.median() + self.sharpe_eps)
-            global_magnitude_loss = torch.abs(
-                torch.log(
-                    (pred_weekly_median.abs() + self.sharpe_eps)
-                    / (actual_weekly.abs() + self.sharpe_eps)
-                )
-            ).mean()
-            if material_mask.any():
-                pred_abs = pred_weekly_median[material_mask].abs()
-                true_abs = actual_weekly[material_mask].abs()
-                material_magnitude_loss = torch.abs(
-                    torch.log((pred_abs + self.sharpe_eps) / (true_abs + self.sharpe_eps))
-                ).mean()
-            else:
-                material_magnitude_loss = y_pred.new_tensor(0.0)
-            magnitude_loss = 0.5 * global_magnitude_loss + 0.5 * material_magnitude_loss
+            pred_abs_med = pred_weekly_median.abs().median() + eps
+            actual_abs_med = actual_weekly.abs().median() + eps
+            magnitude_loss = torch.abs(torch.log(pred_abs_med / actual_abs_med))
+            combined_calibration_loss = 0.5 * dispersion_loss + 0.5 * magnitude_loss
 
-            weekly_spread = (
-                pred_weekly_quantiles[:, self._q90_idx]
-                - pred_weekly_quantiles[:, self._q10_idx]
-            )
-            actual_weekly_std = actual_weekly.std() + self.sharpe_eps
-            target_spread = 2.56 * actual_weekly_std
-            mean_weekly_spread = weekly_spread.mean()
-            vol_loss = torch.abs(mean_weekly_spread - target_spread)
-            width_ratio = mean_weekly_spread / (target_spread + self.sharpe_eps)
-            safe_width_ratio = torch.clamp(width_ratio + self.sharpe_eps, min=1e-6)
-            width_loss = torch.abs(torch.log(safe_width_ratio))
-            width_loss = width_loss + torch.relu(width_ratio - 2.0).pow(2)
-
-            weekly_tail_spread = (
-                pred_weekly_quantiles[:, self._q98_idx]
-                - pred_weekly_quantiles[:, self._q02_idx]
-            )
-            target_tail_spread = 4.10 * actual_weekly_std
-            tail_width_ratio = weekly_tail_spread.mean() / (target_tail_spread + self.sharpe_eps)
-            safe_tail_width_ratio = torch.clamp(tail_width_ratio + self.sharpe_eps, min=1e-6)
-            tail_width_loss = torch.abs(torch.log(safe_tail_width_ratio))
-            tail_width_loss = tail_width_loss + torch.relu(tail_width_ratio - 3.0).pow(2)
-            daily_crossing_loss = quantile_crossing_penalty(y_pred)
-            weekly_crossing_loss = quantile_crossing_penalty(pred_weekly_quantiles.unsqueeze(1))
-            crossing_loss = daily_crossing_loss + weekly_crossing_loss
-
-            daily_bound_loss = torch.relu(
-                median_path.abs() - self.daily_log_return_bound
-            ).pow(2).mean()
-            weekly_bound_loss = torch.relu(
-                pred_weekly_median.abs() - self.weekly_log_return_bound
-            ).pow(2).mean()
-            sanity_loss = daily_bound_loss + weekly_bound_loss
+            pred_direction = torch.tanh(median_path * 10.0)
+            actual_direction = torch.sign(y_actual)
+            directional_loss = F.mse_loss(pred_direction, actual_direction.float())
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
                 # pytorch_forecasting metrics can return per-sample tensors;
@@ -249,17 +270,24 @@ try:
                 # boolean comparisons in tests and stable optimizer behaviour.
                 return x.mean() if x.ndim > 0 else x
 
-            return (
+            weekly_q_loss = _to_scalar(weekly_q_loss)
+            t1_q_loss = _to_scalar(t1_q_loss)
+            combined_calibration_loss = _to_scalar(combined_calibration_loss)
+            directional_loss = _to_scalar(directional_loss)
+            total_loss = (
                 self.lambda_weekly_quantile * _to_scalar(weekly_q_loss)
                 + self.lambda_t1_quantile * _to_scalar(t1_q_loss)
-                + self.lambda_directional * _to_scalar(weekly_directional)
-                + self.lambda_magnitude * _to_scalar(magnitude_loss)
-                + self.lambda_vol * _to_scalar(vol_loss)
-                + self.lambda_width * _to_scalar(width_loss)
-                + self.lambda_tail_width * _to_scalar(tail_width_loss)
-                + self.lambda_crossing * _to_scalar(crossing_loss)
-                + self.lambda_sanity * _to_scalar(sanity_loss)
+                + self.lambda_dispersion * _to_scalar(combined_calibration_loss)
+                + self.lambda_directional * _to_scalar(directional_loss)
             )
+            self._record_components(
+                weekly_q_loss,
+                t1_q_loss,
+                combined_calibration_loss,
+                directional_loss,
+                total_loss,
+            )
+            return total_loss
 
 except ImportError:
     ASROPFLoss = None  # type: ignore[assignment,misc]
@@ -295,25 +323,15 @@ def create_tft_model(
             quantiles=quantiles,
             lambda_weekly_quantile=cfg.weekly_loss.lambda_weekly_quantile,
             lambda_t1_quantile=cfg.weekly_loss.lambda_t1_quantile,
+            lambda_dispersion=cfg.weekly_loss.lambda_dispersion,
             lambda_directional=cfg.weekly_loss.lambda_directional,
-            lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
-            lambda_vol=cfg.weekly_loss.lambda_vol,
-            lambda_crossing=cfg.weekly_loss.lambda_crossing,
-            lambda_sanity=cfg.weekly_loss.lambda_sanity,
-            lambda_width=cfg.weekly_loss.lambda_width,
-            lambda_tail_width=cfg.weekly_loss.lambda_tail_width,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dir=%.2f mag=%.2f vol=%.2f width=%.2f tail_width=%.2f crossing=%.2f sanity=%.2f",
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f dir=%.2f monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
+            cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_directional,
-            cfg.weekly_loss.lambda_magnitude,
-            cfg.weekly_loss.lambda_vol,
-            cfg.weekly_loss.lambda_width,
-            cfg.weekly_loss.lambda_tail_width,
-            cfg.weekly_loss.lambda_crossing,
-            cfg.weekly_loss.lambda_sanity,
         )
     elif use_asro and ASROPFLoss is not None:
         loss = ASROPFLoss(
@@ -490,20 +508,28 @@ def _format_prediction_legacy_simple_return(
     quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
     crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
     quantile_crossing_detected = bool(crossing_mask.any())
-    quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
-    sorted_pred = np.sort(raw_pred, axis=-1)
+    raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+    ordered_tensor = enforce_monotonic_quantiles(
+        torch.as_tensor(raw_pred, dtype=torch.float64),
+        median_idx=median_idx,
+        min_gap=1e-5,
+        gap_scale=0.01,
+        init_bias=-3.0,
+    )
+    pred = ordered_tensor.detach().cpu().numpy()
+    quantile_crossing_rate = 0.0
+    sorted_pred = pred
     median_sort_gap = float(
         np.max(np.abs(raw_pred[..., median_idx] - sorted_pred[..., median_idx]))
     )
     if quantile_crossing_detected:
         logger.error(
             "format_prediction: non-monotonic quantiles detected "
-            "(crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
-            "will use monotonic sorted quantiles and expose raw_quantiles for audit.",
-            quantile_crossing_rate,
+            "(raw_crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
+            "uses the structural monotonic transform and exposes raw_quantiles for audit.",
+            raw_quantile_crossing_rate,
             median_sort_gap,
         )
-        pred = sorted_pred
 
     if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
         logger.warning(
@@ -643,18 +669,42 @@ def format_prediction(
     quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
     crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
     quantile_crossing_detected = bool(crossing_mask.any())
-    quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
-    sorted_pred = np.sort(raw_pred, axis=-1)
-    median_sort_gap = float(np.max(np.abs(raw_pred[..., median_idx] - sorted_pred[..., median_idx])))
+    raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+    ordered_tensor = enforce_monotonic_quantiles(
+        torch.as_tensor(raw_pred, dtype=torch.float64),
+        median_idx=median_idx,
+        min_gap=1e-5,
+        gap_scale=0.01,
+        init_bias=-3.0,
+    )
+    pred = ordered_tensor.detach().cpu().numpy()
+    ordered_diffs = np.diff(pred, axis=-1) if pred.shape[-1] > 1 else np.array([])
+    ordered_crossing_mask = (
+        ordered_diffs < -1e-12 if ordered_diffs.size else np.array([], dtype=bool)
+    )
+    ordered_quantile_crossing_rate = (
+        float(ordered_crossing_mask.mean()) if ordered_crossing_mask.size else 0.0
+    )
+    if ordered_quantile_crossing_rate > 0.0:
+        raise AssertionError(
+            "Monotonic quantile transform produced public crossings: "
+            f"{ordered_quantile_crossing_rate:.6f}"
+        )
+    sorted_raw = np.sort(raw_pred, axis=-1)
+    raw_median_sort_gap = float(
+        np.max(np.abs(raw_pred[..., median_idx] - sorted_raw[..., median_idx]))
+    )
+    ordered_median_sort_gap = float(
+        np.max(np.abs(pred[..., median_idx] - np.sort(pred, axis=-1)[..., median_idx]))
+    )
     if quantile_crossing_detected:
         logger.error(
             "format_prediction: non-monotonic quantiles detected "
-            "(crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
-            "will use monotonic sorted quantiles and expose raw_quantiles for audit.",
-            quantile_crossing_rate,
-            median_sort_gap,
+            "(raw_crossing_rate=%.3f, raw_max_median_sort_gap=%.4f); public output "
+            "uses the structural monotonic transform and exposes raw_quantiles for audit.",
+            raw_quantile_crossing_rate,
+            raw_median_sort_gap,
         )
-        pred = sorted_pred
 
     if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
         logger.warning(
@@ -750,8 +800,13 @@ def format_prediction(
         "quantiles_log": {f"q{q:.2f}": float(bounded_pred[0, i]) for i, q in enumerate(q_list)},
         "raw_quantiles": {f"q{q:.2f}": float(raw_pred[0, i]) for i, q in enumerate(q_list)},
         "quantile_crossing_detected": quantile_crossing_detected,
-        "quantile_crossing_rate": quantile_crossing_rate,
-        "median_sort_gap": median_sort_gap,
+        "quantile_crossing_rate": ordered_quantile_crossing_rate,
+        "raw_quantile_crossing_rate": raw_quantile_crossing_rate,
+        "ordered_quantile_crossing_rate": ordered_quantile_crossing_rate,
+        "public_quantile_crossing_rate": ordered_quantile_crossing_rate,
+        "median_sort_gap": ordered_median_sort_gap,
+        "raw_median_sort_gap": raw_median_sort_gap,
+        "ordered_median_sort_gap": ordered_median_sort_gap,
         "weekly_return": log_to_simple_return(weekly_log_return),
         "weekly_log_return": weekly_log_return,
         "weekly_price": _price(weekly_log_return),

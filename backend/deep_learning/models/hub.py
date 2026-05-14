@@ -48,6 +48,108 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Could not read JSON artifact %s: %s", path, exc)
+        return {}
+
+
+def build_artifact_health(local_dir: str | Path) -> dict:
+    """Build promotion/inference health metadata for the TFT artifact set."""
+    local_dir = Path(local_dir)
+    metadata_path = local_dir / "tft_metadata.json"
+    checkpoint_present = (local_dir / "best_tft_asro.ckpt").exists()
+    metadata_present = metadata_path.exists()
+    conformal_present = (local_dir / "conformal_calibration.json").exists()
+
+    metadata = _load_json(metadata_path)
+    config = metadata.get("config") or {}
+    metrics = metadata.get("test_metrics") or {}
+    optuna = _load_json(local_dir / "optuna_results.json")
+    structural_report = optuna.get("structural_invalidity_report") or {}
+    best_preflight = optuna.get("best_trial_preflight") or {}
+
+    quality_gate_passed = False
+    gate_error = None
+    if metrics:
+        try:
+            from app.quality_gate import evaluate_quality_gate
+
+            quality_gate_passed, reasons = evaluate_quality_gate(
+                da=float(metrics.get("directional_accuracy", 0.5)),
+                sharpe=float(metrics.get("sharpe_ratio", 0.0)),
+                vr=float(metrics.get("variance_ratio", 1.0)),
+                tail_capture=metrics.get("tail_capture_rate"),
+                quantile_crossing_rate=metrics.get("quantile_crossing_rate"),
+                median_sort_gap_max=metrics.get("median_sort_gap_max"),
+                pi80_width=metrics.get("pi80_width"),
+                pi96_width=metrics.get("pi96_width"),
+                weekly_directional_accuracy=metrics.get("weekly_directional_accuracy"),
+                weekly_magnitude_ratio=metrics.get("weekly_magnitude_ratio"),
+                weekly_tail_capture_rate=metrics.get("weekly_tail_capture_rate"),
+                weekly_pi80_coverage=metrics.get("weekly_pi80_coverage"),
+                weekly_pi80_width=metrics.get("weekly_pi80_width"),
+                weekly_pi80_width_ratio=metrics.get("weekly_pi80_width_ratio"),
+                weekly_pi96_coverage=metrics.get("weekly_pi96_coverage"),
+                weekly_pi96_width=metrics.get("weekly_pi96_width"),
+                weekly_pi96_width_ratio=metrics.get("weekly_pi96_width_ratio"),
+                weekly_quantile_crossing_rate=metrics.get("weekly_quantile_crossing_rate"),
+                weekly_sorted_quantile_crossing_rate=metrics.get(
+                    "weekly_sorted_quantile_crossing_rate"
+                ),
+                weekly_median_sort_gap_max=metrics.get("weekly_median_sort_gap_max"),
+                weekly_sample_count=metrics.get("weekly_sample_count"),
+            )
+            if not quality_gate_passed:
+                gate_error = "; ".join(reasons)
+        except Exception as exc:
+            gate_error = str(exc)
+            quality_gate_passed = False
+    else:
+        gate_error = "missing test_metrics"
+
+    safe = bool(quality_gate_passed and checkpoint_present and metadata_present)
+    next_required_action = "No action required; artifact is promotable."
+    if not safe:
+        next_required_action = (
+            gate_error
+            or "Run deterministic validation and pass the weekly quality gate before upload."
+        )
+
+    return {
+        "forecast_contract_version": (
+            metadata.get("forecast_contract_version")
+            or config.get("forecast_contract_version")
+        ),
+        "monotonic_quantile_transform": bool(
+            config.get("monotonic_quantile_transform")
+            or metadata.get("monotonic_quantile_transform")
+        ),
+        "checkpoint_present": checkpoint_present,
+        "metadata_present": metadata_present,
+        "conformal_present": conformal_present,
+        "quality_gate_passed": quality_gate_passed,
+        "best_trial_preflight_passed": bool(best_preflight.get("preflight_passed", False)),
+        "structural_invalidity_verdict": structural_report.get("verdict", "UNKNOWN"),
+        "safe_to_upload_to_hub": safe,
+        "safe_for_inference": safe,
+        "raw_quantile_crossing_rate": metrics.get("raw_quantile_crossing_rate"),
+        "ordered_quantile_crossing_rate": metrics.get("ordered_quantile_crossing_rate"),
+        "public_quantile_crossing_rate": metrics.get(
+            "public_quantile_crossing_rate",
+            metrics.get("quantile_crossing_rate"),
+        ),
+        "variance_ratio": metrics.get("variance_ratio"),
+        "mae_vs_naive_zero": metrics.get("mae_vs_naive_zero"),
+        "weekly_mae_vs_naive_zero": metrics.get("weekly_mae_vs_naive_zero"),
+        "next_required_action": next_required_action,
+    }
+
+
 def build_artifact_manifest(local_dir: str | Path) -> dict:
     """Build a SHA256 manifest for every present TFT artifact except itself."""
     local_dir = Path(local_dir)
@@ -68,6 +170,7 @@ def build_artifact_manifest(local_dir: str | Path) -> dict:
         "manifest_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "artifacts": artifacts,
+        "artifact_health": build_artifact_health(local_dir),
     }
 
 
@@ -180,6 +283,12 @@ def validate_tft_artifact_set(local_dir: str | Path) -> bool:
     return True
 
 
+def _manifest_safe_to_upload(local_dir: str | Path) -> bool:
+    manifest = _load_json(Path(local_dir) / "artifact_manifest.json")
+    health = manifest.get("artifact_health") or {}
+    return bool(health.get("safe_to_upload_to_hub"))
+
+
 def upload_tft_artifacts(
     local_dir: str | Path,
     repo_id: str,
@@ -207,6 +316,9 @@ def upload_tft_artifacts(
     write_artifact_manifest(local_dir)
     if not validate_tft_artifact_set(local_dir):
         logger.warning("TFT artifact manifest validation failed before upload")
+        return False
+    if not _manifest_safe_to_upload(local_dir):
+        logger.warning("TFT artifact health is not safe for Hub upload; upload skipped")
         return False
 
     files_to_upload = [

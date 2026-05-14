@@ -81,6 +81,47 @@ class CurriculumLossScheduler(pl.Callback):
             )
 
 
+class WeeklyLossComponentLogger(pl.Callback):
+    """Log weekly loss component scales at validation epoch boundaries."""
+
+    def on_validation_epoch_start(self, trainer, pl_module):
+        loss = getattr(pl_module, "loss", None)
+        if hasattr(loss, "reset_component_accumulators"):
+            loss.reset_component_accumulators()
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        loss = getattr(pl_module, "loss", None)
+        if not hasattr(loss, "component_means"):
+            return
+
+        stats = loss.component_means()
+        if not stats.get("n_batches"):
+            return
+
+        epoch = getattr(trainer, "current_epoch", 0)
+        logger.info(
+            "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f "
+            "dispersion=%.6f directional=%.6f total=%.6f dominant=%s",
+            epoch,
+            stats["weekly_q_loss_mean"],
+            stats["t1_q_loss_mean"],
+            stats["dispersion_loss_mean"],
+            stats["directional_loss_mean"],
+            stats["total_loss_mean"],
+            stats["dominant_component"],
+        )
+        if stats["dispersion_loss_mean"] > 3.0 * max(stats["weekly_q_loss_mean"], 1e-12):
+            logger.warning(
+                "Weekly dispersion loss is dominating weekly quantile loss; "
+                "lambda_dispersion may need to be reduced."
+            )
+        if stats["directional_loss_mean"] < 0.05 * max(stats["total_loss_mean"], 1e-12):
+            logger.warning(
+                "Weekly directional loss is below 5%% of total loss; "
+                "lambda_directional may need to increase."
+            )
+
+
 class SWACallback(pl.Callback):
     """
     Stochastic Weight Averaging over the last ``swa_pct`` of training.

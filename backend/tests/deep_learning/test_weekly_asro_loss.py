@@ -26,75 +26,52 @@ def test_correct_weekly_direction_has_lower_loss_than_anti_direction():
     assert loss.loss(pred_good, actual) < loss.loss(pred_bad, actual)
 
 
-def test_material_move_prefers_larger_correct_magnitude():
-    actual = torch.tensor([[0.02, 0.02, 0.01, 0.0, 0.0], [-0.02, -0.02, -0.01, 0.0, 0.0]])
-    pred_tiny = _path_from_median(torch.sign(actual) * 0.001)
-    pred_scaled = _path_from_median(actual * 0.8)
-    loss = tft_copper.WeeklyASROPFLoss(QUANTILES)
-    assert loss.loss(pred_scaled, actual) < loss.loss(pred_tiny, actual)
+def test_dispersion_loss_prefers_matching_weekly_median_scale():
+    actual = torch.tensor(
+        [
+            [0.010, 0.005, 0.000, 0.000, 0.000],
+            [-0.010, -0.005, 0.000, 0.000, 0.000],
+            [0.020, 0.005, 0.000, 0.000, 0.000],
+            [-0.020, -0.005, 0.000, 0.000, 0.000],
+        ]
+    )
+    pred_matched = _path_from_median(actual)
+    pred_overdispersed = _path_from_median(actual * 5.0)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_dispersion=1.0,
+        lambda_directional=0.0,
+    )
+
+    assert loss.loss(pred_matched, actual) < loss.loss(pred_overdispersed, actual)
 
 
-def test_quantile_crossing_increases_loss():
+def test_weekly_loss_rejects_removed_soft_guard_parameters():
+    with pytest.raises(TypeError):
+        tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_crossing=10.0)
+    with pytest.raises(TypeError):
+        tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_width=10.0)
+    with pytest.raises(TypeError):
+        tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_tail_width=10.0)
+    with pytest.raises(TypeError):
+        tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_sanity=10.0)
+
+
+def test_weekly_loss_tracks_component_means():
     actual = torch.tensor([[0.01, 0.01, 0.0, 0.0, 0.0], [-0.01, -0.01, 0.0, 0.0, 0.0]])
     pred = _path_from_median(actual)
-    crossed = pred.clone()
-    crossed[..., 1], crossed[..., 5] = crossed[..., 5].clone(), crossed[..., 1].clone()
-    loss = tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_crossing=10.0)
-    assert loss.loss(crossed, actual) > loss.loss(pred, actual)
+    loss = tft_copper.WeeklyASROPFLoss(QUANTILES)
 
+    loss.reset_component_accumulators()
+    total = loss.loss(pred, actual)
+    means = loss.component_means()
 
-def test_sanity_penalty_discourages_implausible_log_returns():
-    actual = torch.tensor([[0.01, 0.01, 0.0, 0.0, 0.0], [-0.01, -0.01, 0.0, 0.0, 0.0]])
-    pred_normal = _path_from_median(actual)
-    pred_huge = _path_from_median(torch.sign(actual + 1e-6) * 0.25)
-    loss = tft_copper.WeeklyASROPFLoss(
-        QUANTILES,
-        lambda_weekly_quantile=0.0,
-        lambda_t1_quantile=0.0,
-        lambda_directional=0.0,
-        lambda_magnitude=0.0,
-        lambda_vol=0.0,
-        lambda_crossing=0.0,
-        lambda_sanity=10.0,
-    )
-    assert loss.loss(pred_huge, actual) > loss.loss(pred_normal, actual)
-
-
-def test_excess_weekly_width_increases_loss():
-    actual = torch.tensor([[0.02, 0.0, 0.0, 0.0, 0.0], [-0.02, 0.0, 0.0, 0.0, 0.0]])
-    pred_normal = _path_from_median(actual, spread=0.005)
-    pred_wide = _path_from_median(actual, spread=0.020)
-    loss = tft_copper.WeeklyASROPFLoss(
-        QUANTILES,
-        lambda_weekly_quantile=0.0,
-        lambda_t1_quantile=0.0,
-        lambda_directional=0.0,
-        lambda_magnitude=0.0,
-        lambda_vol=0.0,
-        lambda_crossing=0.0,
-        lambda_sanity=0.0,
-        lambda_width=10.0,
-        lambda_tail_width=0.0,
-    )
-    assert loss.loss(pred_wide, actual) > loss.loss(pred_normal, actual)
-
-
-def test_excess_tail_width_increases_loss():
-    actual = torch.tensor([[0.02, 0.0, 0.0, 0.0, 0.0], [-0.02, 0.0, 0.0, 0.0, 0.0]])
-    pred_normal = _path_from_median(actual, spread=0.005)
-    pred_tail = pred_normal.clone()
-    pred_tail[..., 0] = pred_tail[..., 3] - 0.20
-    pred_tail[..., 6] = pred_tail[..., 3] + 0.20
-    loss = tft_copper.WeeklyASROPFLoss(
-        QUANTILES,
-        lambda_weekly_quantile=0.0,
-        lambda_t1_quantile=0.0,
-        lambda_directional=0.0,
-        lambda_magnitude=0.0,
-        lambda_vol=0.0,
-        lambda_crossing=0.0,
-        lambda_sanity=0.0,
-        lambda_width=0.0,
-        lambda_tail_width=10.0,
-    )
-    assert loss.loss(pred_tail, actual) > loss.loss(pred_normal, actual)
+    assert means["n_batches"] == 1
+    assert means["weekly_q_loss_mean"] >= 0.0
+    assert means["t1_q_loss_mean"] >= 0.0
+    assert means["dispersion_loss_mean"] >= 0.0
+    assert means["directional_loss_mean"] >= 0.0
+    assert means["total_loss_mean"] == pytest.approx(float(total.detach()))
+    assert means["dominant_component"] in {"weekly_q", "t1_q", "dispersion", "directional"}
