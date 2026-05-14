@@ -1,0 +1,68 @@
+name: TFT Deterministic Weekly Validation
+
+on:
+  workflow_dispatch:
+
+env:
+  PYTHONPATH: backend
+  MODEL_DIR: /tmp/models
+
+jobs:
+  deterministic-weekly-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create model directory
+        run: |
+          mkdir -p /tmp/models/tft/checkpoints
+
+      - name: Run deterministic weekly validation
+        working-directory: backend
+        run: |
+          python -m deep_learning.training.trainer --deterministic-weekly-validation
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TOKENIZERS_PARALLELISM: "false"
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tft-deterministic-validation-${{ github.run_id }}
+          path: /tmp/models/tft/
+          retention-days: 14
+
+      - name: Show artifact directory
+        if: always()
+        run: |
+          echo "=== /tmp/models/tft ==="
+          ls -la /tmp/models/tft/ || true
+          echo ""
+          echo "=== /tmp/models/tft/checkpoints ==="
+          ls -la /tmp/models/tft/checkpoints/ || true
+
+      - name: Show metadata if present
+        if: always()
+        run: |
+          echo "=== tft_metadata.json ==="
+          cat /tmp/models/tft/tft_metadata.json || true
+          echo ""
+          echo "=== artifact_manifest.json ==="
+          cat /tmp/models/tft/artifact_manifest.json || true
