@@ -4,6 +4,7 @@ import pytest
 from deep_learning.config import get_tft_config
 from deep_learning.training.trainer import (
     _compute_test_metrics_from_quantiles,
+    _log_weekly_alignment_sample,
     _predict_quantiles_to_np,
     _require_promotable_metrics,
 )
@@ -53,6 +54,22 @@ def test_compute_test_metrics_from_quantiles_emits_t1_and_weekly_metrics():
     assert metrics["weekly_directional_accuracy"] == 1.0
     assert metrics["weekly_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_sample_count"] == len(actual)
+
+
+def test_log_weekly_alignment_sample_emits_first_rows(caplog):
+    caplog.set_level("INFO")
+    cfg = get_tft_config()
+    actual, pred = _prediction_fixture(n=3)
+
+    _log_weekly_alignment_sample(actual, pred, cfg, max_rows=2)
+
+    assert "WEEKLY ALIGNMENT SAMPLE:" in caplog.text
+    assert "sample=0" in caplog.text
+    assert "actual_weekly=" in caplog.text
+    assert "pred_weekly=" in caplog.text
+    assert "actual_sign=" in caplog.text
+    assert "pred_sign=" in caplog.text
+    assert "sample=2" not in caplog.text
 
 
 @pytest.mark.parametrize(

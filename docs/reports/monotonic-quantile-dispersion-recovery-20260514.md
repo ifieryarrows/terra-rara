@@ -166,6 +166,28 @@ quality_gate_passed: false
 
 Decision: do not proceed to expanded hyperopt. Add flipped-direction diagnostics to weekly metrics and align `WeeklyASROPFLoss` directional pressure with the weekly cumulative target instead of per-day signs. Keep the current weights unchanged while testing whether weekly direction recovers.
 
+The sign-alignment diagnostic run confirmed the weekly prediction is systematically inverted relative to the weekly actual target:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+variance_ratio: 1.6087
+weekly_variance_ratio: 1.2461
+weekly_magnitude_ratio: 1.4417
+weekly_pi80_coverage: 0.3148
+weekly_directional_accuracy: 0.3148
+weekly_directional_accuracy_flipped: 0.6852
+weekly_sharpe_ratio: -8.1774
+weekly_sharpe_ratio_flipped: 8.1774
+weekly_tail_capture_rate: 0.0714
+weekly_tail_capture_rate_flipped: 0.9286
+weekly_sign_correlation: -0.5616
+weekly_mae_vs_naive_zero: 2.0840
+quality_gate_passed: false
+```
+
+Decision: do not proceed to expanded hyperopt. Add weekly sign-bias diagnostics, an explicit weekly directional loss sign unit test, and a trainer alignment sample log so the next deterministic run can distinguish systematic sign inversion from target/prediction alignment drift.
+
 The deterministic training run was not executed in this local development environment because required training dependencies are missing:
 
 ```text
@@ -236,6 +258,18 @@ weekly_directional_accuracy_flipped
 weekly_sharpe_ratio_flipped
 weekly_tail_capture_rate_flipped
 weekly_sign_correlation
+weekly_pred_positive_rate
+weekly_actual_positive_rate
+weekly_pred_mean
+weekly_actual_mean
+weekly_pred_median
+weekly_actual_median
 ```
 
 If flipped weekly metrics are materially better than the public weekly metrics, inspect target/prediction sign convention and weekly actual alignment before any hyperopt expansion.
+
+The training log also emits `WEEKLY ALIGNMENT SAMPLE` rows for the first ten test samples:
+
+```text
+sample=<idx> actual_weekly=<sum_actual_path> pred_weekly=<sum_ordered_median_path> actual_sign=<sign> pred_sign=<sign>
+```

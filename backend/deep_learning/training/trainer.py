@@ -171,8 +171,42 @@ def _compute_test_metrics_from_quantiles(
         horizon=cfg.forecast.primary_horizon_days,
     )
     test_metrics.update(weekly_metrics)
+    _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
     return test_metrics
+
+
+def _log_weekly_alignment_sample(
+    y_actual_path: np.ndarray,
+    pred_np: np.ndarray,
+    cfg: TFTASROConfig,
+    max_rows: int = 10,
+) -> None:
+    from deep_learning.training.metrics import cumulative_horizon, monotonic_quantiles_np
+
+    pred_np = np.asarray(pred_np)
+    y_actual_path = np.asarray(y_actual_path)
+    if len(y_actual_path) == 0 or len(pred_np) == 0:
+        return
+
+    _validate_quantile_prediction_shape(pred_np, cfg)
+    n = min(len(y_actual_path), len(pred_np))
+    median_idx = len(cfg.model.quantiles) // 2
+    horizon = cfg.forecast.primary_horizon_days
+    weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=horizon)
+    ordered_pred_np = monotonic_quantiles_np(pred_np[:n], median_idx=median_idx)
+    weekly_pred = ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
+
+    logger.info("WEEKLY ALIGNMENT SAMPLE:")
+    for i in range(min(max_rows, len(weekly_actual))):
+        logger.info(
+            "sample=%d actual_weekly=%.5f pred_weekly=%.5f actual_sign=%+.0f pred_sign=%+.0f",
+            i,
+            weekly_actual[i],
+            weekly_pred[i],
+            np.sign(weekly_actual[i]),
+            np.sign(weekly_pred[i]),
+        )
 
 
 def train_tft_model(

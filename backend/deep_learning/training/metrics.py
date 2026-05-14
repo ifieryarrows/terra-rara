@@ -380,6 +380,20 @@ def compute_weekly_metrics(
     )
 
     weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}
+    if len(weekly_pred):
+        weekly_metrics["weekly_pred_positive_rate"] = float(np.mean(weekly_pred > 0))
+        weekly_metrics["weekly_actual_positive_rate"] = float(np.mean(weekly_actual > 0))
+        weekly_metrics["weekly_pred_mean"] = float(np.mean(weekly_pred))
+        weekly_metrics["weekly_actual_mean"] = float(np.mean(weekly_actual))
+        weekly_metrics["weekly_pred_median"] = float(np.median(weekly_pred))
+        weekly_metrics["weekly_actual_median"] = float(np.median(weekly_actual))
+    else:
+        weekly_metrics["weekly_pred_positive_rate"] = 0.0
+        weekly_metrics["weekly_actual_positive_rate"] = 0.0
+        weekly_metrics["weekly_pred_mean"] = 0.0
+        weekly_metrics["weekly_actual_mean"] = 0.0
+        weekly_metrics["weekly_pred_median"] = 0.0
+        weekly_metrics["weekly_actual_median"] = 0.0
     weekly_metrics["weekly_directional_accuracy_flipped"] = directional_accuracy(
         weekly_actual,
         -weekly_pred,
