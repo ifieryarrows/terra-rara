@@ -281,9 +281,12 @@ try:
             zero_mae = torch.mean(torch.abs(actual_weekly)) + eps
             naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
 
-            pred_direction = torch.tanh(median_path * 10.0)
-            actual_direction = torch.sign(y_actual)
-            directional_loss = F.mse_loss(pred_direction, actual_direction.float())
+            weekly_pred_direction = torch.tanh(pred_weekly_median * 10.0)
+            weekly_actual_direction = torch.sign(actual_weekly)
+            directional_loss = F.mse_loss(
+                weekly_pred_direction,
+                weekly_actual_direction.float(),
+            )
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
                 # pytorch_forecasting metrics can return per-sample tensors;

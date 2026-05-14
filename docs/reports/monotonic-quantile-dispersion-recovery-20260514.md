@@ -148,6 +148,24 @@ quality_gate_passed: false
 
 Decision: do not proceed to expanded hyperopt. The directional reintroduction patch keeps magnitude and dispersion controls intact, reduces `lambda_naive` from `0.50` to `0.35`, and re-enables `lambda_directional` at `0.05` to test whether weekly direction and tail capture recover without reintroducing magnitude explosion.
 
+The directional reintroduction run kept structural calibration usable but direction and tail metrics degraded, which suggests a sign-alignment or objective-alignment problem rather than a crossing or interval architecture problem:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+variance_ratio: 1.7660
+weekly_variance_ratio: 1.6156
+weekly_magnitude_ratio: 1.5268
+weekly_pi80_coverage: 0.4444
+weekly_directional_accuracy: 0.3519
+weekly_tail_capture_rate: 0.2143
+weekly_sharpe_ratio: -5.2951
+weekly_mae_vs_naive_zero: 2.1431
+quality_gate_passed: false
+```
+
+Decision: do not proceed to expanded hyperopt. Add flipped-direction diagnostics to weekly metrics and align `WeeklyASROPFLoss` directional pressure with the weekly cumulative target instead of per-day signs. Keep the current weights unchanged while testing whether weekly direction recovers.
+
 The deterministic training run was not executed in this local development environment because required training dependencies are missing:
 
 ```text
@@ -210,3 +228,14 @@ weekly_tail_capture_rate > 0.40
 weekly_mae_vs_naive_zero < 1.5, or clear improvement from 1.8857
 weekly_pi80_coverage > 0.50
 ```
+
+For the sign-alignment diagnostic run, inspect these additional metrics:
+
+```text
+weekly_directional_accuracy_flipped
+weekly_sharpe_ratio_flipped
+weekly_tail_capture_rate_flipped
+weekly_sign_correlation
+```
+
+If flipped weekly metrics are materially better than the public weekly metrics, inspect target/prediction sign convention and weekly actual alignment before any hyperopt expansion.

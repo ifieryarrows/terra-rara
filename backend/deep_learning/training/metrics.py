@@ -380,6 +380,23 @@ def compute_weekly_metrics(
     )
 
     weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}
+    weekly_metrics["weekly_directional_accuracy_flipped"] = directional_accuracy(
+        weekly_actual,
+        -weekly_pred,
+    )
+    flipped_strategy_returns = np.sign(-weekly_pred) * weekly_actual
+    weekly_metrics["weekly_sharpe_ratio_flipped"] = sharpe_ratio(flipped_strategy_returns)
+    weekly_metrics["weekly_tail_capture_rate_flipped"] = tail_capture_rate(
+        weekly_actual,
+        -weekly_pred,
+        tail_threshold=tail_threshold,
+    )
+    if np.std(weekly_pred) > 1e-9 and np.std(weekly_actual) > 1e-9:
+        weekly_metrics["weekly_sign_correlation"] = float(
+            np.corrcoef(weekly_pred, weekly_actual)[0, 1]
+        )
+    else:
+        weekly_metrics["weekly_sign_correlation"] = 0.0
     weekly_metrics["weekly_interval_quantile_source"] = 1.0
     weekly_metrics["weekly_approx_quantile_crossing_rate"] = quantile_crossing_rate(
         raw_weekly_quantiles

@@ -29,6 +29,39 @@ def test_compute_weekly_metrics_returns_sample_count():
     assert metrics["weekly_sample_count"] == 40
     assert metrics["weekly_directional_accuracy"] == 1.0
     assert "weekly_magnitude_ratio" in metrics
+    assert "weekly_directional_accuracy_flipped" in metrics
+    assert "weekly_sharpe_ratio_flipped" in metrics
+    assert "weekly_tail_capture_rate_flipped" in metrics
+    assert "weekly_sign_correlation" in metrics
+
+
+def test_weekly_metrics_report_flipped_direction_diagnostics():
+    actual = np.array(
+        [
+            [0.020, 0.000, 0.000, 0.000, 0.000],
+            [-0.030, 0.000, 0.000, 0.000, 0.000],
+            [0.040, 0.000, 0.000, 0.000, 0.000],
+            [-0.050, 0.000, 0.000, 0.000, 0.000],
+        ]
+    )
+    median = -actual
+    pred = np.zeros((4, 5, 7), dtype=float)
+    pred[..., 3] = median
+    pred[..., 1] = median - 0.01
+    pred[..., 5] = median + 0.01
+    pred[..., 0] = median - 0.02
+    pred[..., 2] = median - 0.005
+    pred[..., 4] = median + 0.005
+    pred[..., 6] = median + 0.02
+
+    metrics = compute_weekly_metrics(actual, pred)
+
+    assert metrics["weekly_directional_accuracy"] == 0.0
+    assert metrics["weekly_directional_accuracy_flipped"] == 1.0
+    assert metrics["weekly_tail_capture_rate"] == 0.0
+    assert metrics["weekly_tail_capture_rate_flipped"] == 1.0
+    assert metrics["weekly_sharpe_ratio_flipped"] > metrics["weekly_sharpe_ratio"]
+    assert metrics["weekly_sign_correlation"] < -0.99
 
 
 def test_compute_weekly_metrics_uses_configured_horizon():
