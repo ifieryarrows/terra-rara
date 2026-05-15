@@ -141,8 +141,8 @@ try:
             lambda_t1_quantile: float = 0.20,
             lambda_dispersion: float = 0.35,
             lambda_directional: float = 0.00,
-            lambda_magnitude: float = 0.50,
-            lambda_naive: float = 0.50,
+            lambda_magnitude: float = 0.55,
+            lambda_naive: float = 0.40,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
         ):

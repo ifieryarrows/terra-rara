@@ -273,3 +273,80 @@ The training log also emits `WEEKLY ALIGNMENT SAMPLE` rows for the first ten tes
 ```text
 sample=<idx> actual_weekly=<sum_actual_path> pred_weekly=<sum_ordered_median_path> actual_sign=<sign> pred_sign=<sign>
 ```
+
+## 2026-05-15 Direction Recovery Follow-Up
+
+The latest deterministic training run showed that the weekly sign inversion is no longer the dominant failure mode:
+
+```text
+weekly_directional_accuracy: 0.5556
+weekly_directional_accuracy_flipped: 0.4444
+weekly_sharpe_ratio: 1.6267
+weekly_sharpe_ratio_flipped: -1.6267
+weekly_tail_capture_rate: 0.5000
+weekly_sign_correlation: 0.0507
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+```
+
+Decision: do not flip predictions and do not start expanded hyperopt yet. The remaining deterministic failure is now interval/magnitude calibration:
+
+```text
+weekly_magnitude_ratio: 1.3999
+weekly_pi80_coverage: 0.2963
+weekly_pi80_width_ratio: 0.4756
+weekly_mae_vs_naive_zero: 1.4626
+quality_gate_passed: false
+next_required_action: WeeklyMagnitudeRatio=1.3999 outside [0.65, 1.35]; WeeklyPI80=0.2963 outside [0.74, 0.86]
+```
+
+The follow-up deterministic patch keeps weekly direction pressure unchanged while tightening magnitude/naive pressure and widening the structural quantile gaps:
+
+```text
+lambda_weekly_quantile = 0.70
+lambda_t1_quantile = 0.20
+lambda_dispersion = 0.35
+lambda_magnitude = 0.55
+lambda_naive = 0.40
+lambda_directional = 0.05
+DEFAULT_MONOTONIC_GAP_SCALE = 0.03
+```
+
+Expected next deterministic run targets:
+
+```text
+weekly_directional_accuracy >= 0.53
+weekly_tail_capture_rate >= 0.45
+weekly_magnitude_ratio <= 1.35
+weekly_pi80_coverage improves toward 0.45-0.55
+weekly_mae_vs_naive_zero improves toward 1.25-1.35
+ordered/public crossing = 0.0
+```
+
+Local validation for the deterministic patch:
+
+```text
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_monotonic_quantiles.py -q
+23 passed
+
+py -m pytest backend/tests/deep_learning/test_monotonic_quantiles.py backend/tests/deep_learning/test_metrics.py backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_weekly_direction_alignment.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hub_artifacts.py backend/tests/deep_learning/test_tft_format_prediction.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/test_quality_gate.py backend/tests/test_quality_gate_weekly.py backend/tests/test_tft_quality_gate_script.py -q
+72 passed, 6 skipped
+
+py -m pytest backend/tests -q -m "not online"
+423 passed, 8 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+```
+
+The deterministic training command still cannot run in this local development environment because trainer runtime dependencies are missing:
+
+```text
+cd backend
+py -m deep_learning.training.trainer --deterministic-weekly-validation
+ModuleNotFoundError: No module named 'lightning'
+ModuleNotFoundError: No module named 'pytorch_lightning'
+
+py -c "import pytorch_forecasting; print(pytorch_forecasting.__version__)"
+ModuleNotFoundError: No module named 'pytorch_forecasting'
+```

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 
 
-DEFAULT_MONOTONIC_GAP_SCALE = 0.02
+DEFAULT_MONOTONIC_GAP_SCALE = 0.03
 
 
 def enforce_monotonic_quantiles(

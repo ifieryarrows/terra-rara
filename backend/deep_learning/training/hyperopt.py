@@ -69,8 +69,8 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
     "lambda_dispersion": 0.35,
-    "lambda_magnitude": 0.50,
-    "lambda_naive": 0.35,
+    "lambda_magnitude": 0.55,
+    "lambda_naive": 0.40,
     "lambda_directional": 0.05,
     "batch_size": 32,
 }
