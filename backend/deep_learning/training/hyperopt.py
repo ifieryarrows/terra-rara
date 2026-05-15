@@ -71,6 +71,7 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
+    "lambda_bias": 0.25,
     "lambda_directional": 0.05,
     "batch_size": 32,
 }
@@ -294,6 +295,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.25, 0.45, step=0.05),
         lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.25, 0.75, step=0.05),
         lambda_naive=trial.suggest_float("lambda_naive", 0.25, 0.75, step=0.05),
+        lambda_bias=trial.suggest_float("lambda_bias", 0.00, 0.40, step=0.05),
         lambda_directional=trial.suggest_float("lambda_directional", 0.00, 0.08, step=0.02),
     )
 

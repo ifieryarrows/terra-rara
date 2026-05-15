@@ -350,3 +350,85 @@ ModuleNotFoundError: No module named 'pytorch_lightning'
 py -c "import pytorch_forecasting; print(pytorch_forecasting.__version__)"
 ModuleNotFoundError: No module named 'pytorch_forecasting'
 ```
+
+## 2026-05-15 Bias Calibration Follow-Up
+
+The next deterministic run preserved the sign/crossing recovery and widened intervals, but shifted into a positive median-bias failure:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+weekly_directional_accuracy: 0.5556
+weekly_tail_capture_rate: 0.5000
+weekly_sharpe_ratio: 1.6267
+weekly_variance_ratio: 0.6666
+weekly_pi80_width_ratio: 0.8458
+weekly_pi80_coverage: 0.4074
+weekly_magnitude_ratio: 1.8722
+weekly_mae_vs_naive_zero: 1.7451
+weekly_pred_positive_rate: 0.9630
+weekly_actual_positive_rate: 0.5556
+weekly_pred_mean: 0.0462
+weekly_actual_mean: 0.0038
+quality_gate_passed: false
+next_required_action: WeeklyMagnitudeRatio=1.8722 outside [0.65, 1.35]; WeeklyPI80=0.4074 outside [0.74, 0.86]
+```
+
+Decision: keep the interval widening and directional settings unchanged. The failure is no longer sign inversion or crossing; the weekly median is centered too far above the actual weekly mean.
+
+The follow-up patch adds a scale-normalized weekly mean-bias term to `WeeklyASROPFLoss`:
+
+```text
+bias_loss = abs((pred_weekly_median.mean() - actual_weekly.mean()) / (actual_weekly.abs().mean() + eps))
+lambda_bias = 0.25
+```
+
+The deterministic config remains:
+
+```text
+lambda_weekly_quantile = 0.70
+lambda_t1_quantile = 0.20
+lambda_dispersion = 0.35
+lambda_magnitude = 0.55
+lambda_naive = 0.40
+lambda_bias = 0.25
+lambda_directional = 0.05
+DEFAULT_MONOTONIC_GAP_SCALE = 0.03
+```
+
+Expected next deterministic run targets:
+
+```text
+weekly_pred_positive_rate moves down from 0.96 toward 0.60-0.75
+weekly_pred_mean moves down from 0.046 toward 0.015-0.025
+weekly_magnitude_ratio <= 1.35
+weekly_pi80_coverage >= 0.50
+weekly_directional_accuracy >= 0.53
+weekly_tail_capture_rate >= 0.45
+ordered/public crossing = 0.0
+```
+
+Local validation for the bias calibration patch:
+
+```text
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_weekly_asro_loss.py -q
+21 passed, 6 skipped
+
+py -m pytest backend/tests/deep_learning/test_monotonic_quantiles.py backend/tests/deep_learning/test_metrics.py backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_weekly_direction_alignment.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hub_artifacts.py backend/tests/deep_learning/test_tft_format_prediction.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/test_quality_gate.py backend/tests/test_quality_gate_weekly.py backend/tests/test_tft_quality_gate_script.py -q
+72 passed, 7 skipped
+
+py -m pytest backend/tests -q -m "not online"
+423 passed, 9 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+```
+
+The deterministic training command remains blocked in this local environment by missing trainer runtime dependencies:
+
+```text
+cd backend
+py -m deep_learning.training.trainer --deterministic-weekly-validation
+ModuleNotFoundError: No module named 'lightning'
+ModuleNotFoundError: No module named 'pytorch_lightning'
+```

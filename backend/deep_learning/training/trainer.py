@@ -62,6 +62,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
+    "lambda_bias": 0.25,
     "lambda_directional": 0.05,
     "batch_size": 32,
 }
@@ -482,6 +483,7 @@ def train_tft_model(
             "lambda_dispersion": cfg.weekly_loss.lambda_dispersion,
             "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
             "lambda_naive": cfg.weekly_loss.lambda_naive,
+            "lambda_bias": cfg.weekly_loss.lambda_bias,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
             "monotonic_quantile_transform": True,
             "max_encoder_length": cfg.model.max_encoder_length,
@@ -702,6 +704,8 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.0), 0.80)
         if "lambda_naive" in params:
             params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.0), 0.80)
+        if "lambda_bias" in params:
+            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.0), 0.80)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",
@@ -737,7 +741,7 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_dispersion", "lambda_magnitude", "lambda_naive",
+            "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
         ) if k in params
     }
 

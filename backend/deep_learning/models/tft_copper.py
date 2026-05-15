@@ -143,6 +143,7 @@ try:
             lambda_directional: float = 0.00,
             lambda_magnitude: float = 0.55,
             lambda_naive: float = 0.40,
+            lambda_bias: float = 0.25,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
         ):
@@ -153,6 +154,7 @@ try:
             self.lambda_directional = lambda_directional
             self.lambda_magnitude = lambda_magnitude
             self.lambda_naive = lambda_naive
+            self.lambda_bias = lambda_bias
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
@@ -165,6 +167,7 @@ try:
                 "dispersion": 0.0,
                 "magnitude": 0.0,
                 "naive": 0.0,
+                "bias": 0.0,
                 "directional": 0.0,
                 "total": 0.0,
             }
@@ -177,6 +180,7 @@ try:
             dispersion_loss: torch.Tensor,
             magnitude_loss: torch.Tensor,
             naive_relative_loss: torch.Tensor,
+            bias_loss: torch.Tensor,
             directional_loss: torch.Tensor,
             total_loss: torch.Tensor,
         ) -> None:
@@ -185,6 +189,7 @@ try:
             self._component_sums["dispersion"] += float(dispersion_loss.detach().mean().cpu())
             self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
             self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
+            self._component_sums["bias"] += float(bias_loss.detach().mean().cpu())
             self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
             self._component_sums["total"] += float(total_loss.detach().mean().cpu())
             self._component_batches += 1
@@ -199,6 +204,7 @@ try:
                     "dispersion_loss_mean": 0.0,
                     "magnitude_loss_mean": 0.0,
                     "naive_loss_mean": 0.0,
+                    "bias_loss_mean": 0.0,
                     "directional_loss_mean": 0.0,
                     "total_loss_mean": 0.0,
                     "dominant_component": None,
@@ -210,6 +216,7 @@ try:
                 "dispersion": self._component_sums["dispersion"],
                 "magnitude": self._component_sums["magnitude"],
                 "naive": self._component_sums["naive"],
+                "bias": self._component_sums["bias"],
                 "directional": self._component_sums["directional"],
             }
             return {
@@ -219,6 +226,7 @@ try:
                 "dispersion_loss_mean": self._component_sums["dispersion"] / n_batches,
                 "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
                 "naive_loss_mean": self._component_sums["naive"] / n_batches,
+                "bias_loss_mean": self._component_sums["bias"] / n_batches,
                 "directional_loss_mean": self._component_sums["directional"] / n_batches,
                 "total_loss_mean": self._component_sums["total"] / n_batches,
                 "dominant_component": max(components, key=components.get),
@@ -280,6 +288,9 @@ try:
             model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
             zero_mae = torch.mean(torch.abs(actual_weekly)) + eps
             naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
+            bias_loss = torch.abs(
+                (pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae
+            )
 
             weekly_pred_direction = torch.tanh(pred_weekly_median * 10.0)
             weekly_actual_direction = torch.sign(actual_weekly)
@@ -298,6 +309,7 @@ try:
             t1_q_loss = _to_scalar(t1_q_loss)
             magnitude_loss = _to_scalar(magnitude_loss)
             naive_relative_loss = _to_scalar(naive_relative_loss)
+            bias_loss = _to_scalar(bias_loss)
             directional_loss = _to_scalar(directional_loss)
 
             total_loss = (
@@ -306,6 +318,7 @@ try:
                 + self.lambda_dispersion * _to_scalar(dispersion_loss)
                 + self.lambda_magnitude * _to_scalar(magnitude_loss)
                 + self.lambda_naive * _to_scalar(naive_relative_loss)
+                + self.lambda_bias * _to_scalar(bias_loss)
                 + self.lambda_directional * _to_scalar(directional_loss)
             )
 
@@ -315,6 +328,7 @@ try:
                 dispersion_loss,
                 magnitude_loss,
                 naive_relative_loss,
+                bias_loss,
                 directional_loss,
                 total_loss,
             )
@@ -357,16 +371,18 @@ def create_tft_model(
             lambda_dispersion=cfg.weekly_loss.lambda_dispersion,
             lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
             lambda_naive=cfg.weekly_loss.lambda_naive,
+            lambda_bias=cfg.weekly_loss.lambda_bias,
             lambda_directional=cfg.weekly_loss.lambda_directional,
         )
         logger.info(
             "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f dir=%.2f monotonic_transform=true gap_scale=%.3f",
+            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
+            cfg.weekly_loss.lambda_bias,
             cfg.weekly_loss.lambda_directional,
             DEFAULT_MONOTONIC_GAP_SCALE,
         )
