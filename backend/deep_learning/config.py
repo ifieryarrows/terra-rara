@@ -141,8 +141,8 @@ class WeeklyLossConfig:
     lambda_dispersion: float = 0.35
     lambda_magnitude: float = 0.55
     lambda_naive: float = 0.40
-    lambda_bias: float = 0.25
-    lambda_directional: float = 0.05
+    lambda_bias: float = 0.10
+    lambda_directional: float = 0.08
 
 
 @dataclass(frozen=True)

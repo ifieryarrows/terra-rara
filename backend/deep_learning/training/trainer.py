@@ -62,8 +62,8 @@ KNOWN_GOOD_CONFIG = {
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
-    "lambda_bias": 0.25,
-    "lambda_directional": 0.05,
+    "lambda_bias": 0.10,
+    "lambda_directional": 0.08,
     "batch_size": 32,
 }
 
