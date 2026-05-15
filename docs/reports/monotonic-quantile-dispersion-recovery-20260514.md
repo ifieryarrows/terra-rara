@@ -506,3 +506,83 @@ py -m deep_learning.training.trainer --deterministic-weekly-validation
 ModuleNotFoundError: No module named 'lightning'
 ModuleNotFoundError: No module named 'pytorch_lightning'
 ```
+
+## 2026-05-15 Bias-Direction Midpoint Follow-Up
+
+The `lambda_bias=0.10` / `lambda_directional=0.08` deterministic run restored direction, but pushed the weekly median too far positive and inflated magnitude:
+
+```text
+ordered_quantile_crossing_rate: 0.0
+public_quantile_crossing_rate: 0.0
+weekly_directional_accuracy: 0.5556
+weekly_tail_capture_rate: 0.5000
+weekly_sharpe_ratio: 1.6267
+weekly_magnitude_ratio: 2.9960
+weekly_mae_vs_naive_zero: 2.4880
+weekly_pi80_coverage: 0.1852
+weekly_pi80_width_ratio: 0.6404
+weekly_pred_positive_rate: 0.9630
+weekly_actual_positive_rate: 0.5556
+weekly_pred_mean: 0.0699
+weekly_actual_mean: 0.0038
+quality_gate_passed: false
+next_required_action: WeeklyMagnitudeRatio=2.9960 outside [0.65, 1.35]; WeeklyPI80=0.1852 outside [0.74, 0.86]
+```
+
+Decision: do not start hyperopt. The deterministic runs now bracket the bias-direction trade-off:
+
+```text
+lambda_bias = 0.10, lambda_directional = 0.08 -> too positive, magnitude explodes
+lambda_bias = 0.25, lambda_directional = 0.05 -> too negative, direction collapses
+```
+
+The next deterministic midpoint config is:
+
+```text
+lambda_weekly_quantile = 0.70
+lambda_t1_quantile = 0.20
+lambda_dispersion = 0.35
+lambda_magnitude = 0.55
+lambda_naive = 0.40
+lambda_bias = 0.17
+lambda_directional = 0.06
+DEFAULT_MONOTONIC_GAP_SCALE = 0.03
+```
+
+Expected next deterministic run targets:
+
+```text
+weekly_directional_accuracy >= 0.51
+weekly_tail_capture_rate >= 0.45
+weekly_magnitude_ratio <= 1.35, or at least < 1.60
+weekly_pi80_coverage >= 0.50
+weekly_pred_positive_rate moves toward 0.60-0.75
+weekly_pred_mean moves toward 0.01-0.03
+weekly_mae_vs_naive_zero < 1.40 if possible, and at least < 1.50
+ordered/public crossing = 0.0
+```
+
+Local validation for the bias-direction midpoint patch:
+
+```text
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py -q
+13 passed
+
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+20 passed, 6 skipped
+
+py -m pytest backend/tests -q -m "not online"
+423 passed, 9 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+```
+
+The deterministic training command remains blocked in this local environment by missing trainer runtime dependencies:
+
+```text
+cd backend
+py -m deep_learning.training.trainer --deterministic-weekly-validation
+ModuleNotFoundError: No module named 'lightning'
+ModuleNotFoundError: No module named 'pytorch_lightning'
+```
