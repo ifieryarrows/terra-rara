@@ -33,6 +33,61 @@ from deep_learning.models.losses import (
 
 logger = logging.getLogger(__name__)
 
+
+def _weekly_scale_losses(
+    pred_weekly_median: torch.Tensor,
+    actual_weekly: torch.Tensor,
+    eps: float = 1e-8,
+) -> dict[str, torch.Tensor]:
+    """
+    Scale diagnostics used by WeeklyASROPFLoss.
+
+    Hyperopt promotes on weekly_magnitude_ratio, so the loss must penalize the
+    same failure mode directly instead of relying only on slowly growing
+    log-ratio pressure.
+    """
+    pred_abs_median = pred_weekly_median.abs().median() + eps
+    actual_abs_median = actual_weekly.abs().median() + eps
+    magnitude_ratio = pred_abs_median / actual_abs_median
+
+    pred_abs_mean = pred_weekly_median.abs().mean() + eps
+    actual_abs_mean = actual_weekly.abs().mean() + eps
+    mean_magnitude_ratio = pred_abs_mean / actual_abs_mean
+
+    def _bounded_scale_loss(ratio: torch.Tensor) -> torch.Tensor:
+        quality_band_excess = torch.relu(ratio - 1.35)
+        quality_band_deficit = torch.relu(0.65 - ratio)
+        structural_explosion = torch.relu(ratio - 3.0)
+        return (
+            torch.abs(torch.log(ratio))
+            + 2.0 * quality_band_excess.pow(2)
+            + 2.0 * quality_band_deficit.pow(2)
+            + 4.0 * structural_explosion.pow(2)
+        )
+
+    magnitude_loss = _bounded_scale_loss(magnitude_ratio) + 0.5 * _bounded_scale_loss(
+        mean_magnitude_ratio
+    )
+
+    pred_std = pred_weekly_median.std(unbiased=False) + eps
+    actual_std = actual_weekly.std(unbiased=False) + eps
+    dispersion_loss = torch.abs(torch.log(pred_std / actual_std))
+
+    model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
+    zero_mae = actual_abs_mean
+    naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
+    bias_loss = torch.abs((pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae)
+
+    return {
+        "dispersion_loss": dispersion_loss,
+        "magnitude_loss": magnitude_loss,
+        "magnitude_ratio": magnitude_ratio,
+        "mean_magnitude_ratio": mean_magnitude_ratio,
+        "naive_relative_loss": naive_relative_loss,
+        "bias_loss": bias_loss,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Module-level ASRO loss class (must be at module level for pickle / checkpoint)
 # ---------------------------------------------------------------------------
@@ -276,21 +331,11 @@ try:
 
             pred_weekly_median = median_path.sum(dim=1)
             eps = self.sharpe_eps
-            pred_std = pred_weekly_median.std() + eps
-            actual_std = actual_weekly.std() + eps
-            dispersion_loss = torch.abs(torch.log(pred_std / actual_std))
-
-            pred_abs_med = pred_weekly_median.abs().median() + eps
-            actual_abs_med = actual_weekly.abs().median() + eps
-            magnitude_loss = torch.abs(torch.log(pred_abs_med / actual_abs_med))
-
-            # Naive-zero baseline loss:
-            model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
-            zero_mae = torch.mean(torch.abs(actual_weekly)) + eps
-            naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
-            bias_loss = torch.abs(
-                (pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae
-            )
+            scale_losses = _weekly_scale_losses(pred_weekly_median, actual_weekly, eps=eps)
+            dispersion_loss = scale_losses["dispersion_loss"]
+            magnitude_loss = scale_losses["magnitude_loss"]
+            naive_relative_loss = scale_losses["naive_relative_loss"]
+            bias_loss = scale_losses["bias_loss"]
 
             weekly_pred_direction = torch.tanh(pred_weekly_median * 10.0)
             weekly_actual_direction = torch.sign(actual_weekly)

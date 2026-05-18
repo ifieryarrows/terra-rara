@@ -666,6 +666,22 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
     try:
         data = json.loads(results_path.read_text())
         params = data.get("best_params", {})
+        structural_report = data.get("structural_invalidity_report") or {}
+        preflight = data.get("best_trial_preflight") or {}
+        if (
+            structural_report.get("verdict") == "STRUCTURAL_FAILURE"
+            or preflight.get("preflight_passed") is False
+        ):
+            logger.warning(
+                "Optuna results at %s failed structural preflight "
+                "(verdict=%s, best_trial=%s); using known-good fallback config: %s",
+                results_path,
+                structural_report.get("verdict", "unknown"),
+                data.get("best_trial", "unknown"),
+                KNOWN_GOOD_CONFIG,
+            )
+            return _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
+
         if not params:
             logger.warning(
                 "Optuna results did not contain finite best params (status=%s); "
@@ -697,15 +713,15 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "weight_decay" in params:
             params["weight_decay"] = min(float(params["weight_decay"]), 5e-4)
         if "lambda_directional" in params:
-            params["lambda_directional"] = min(float(params["lambda_directional"]), 0.12)
+            params["lambda_directional"] = min(max(float(params["lambda_directional"]), 0.04), 0.08)
         if "lambda_dispersion" in params:
-            params["lambda_dispersion"] = max(float(params["lambda_dispersion"]), 0.20)
+            params["lambda_dispersion"] = max(float(params["lambda_dispersion"]), 0.35)
         if "lambda_magnitude" in params:
-            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.0), 0.80)
+            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.55), 0.85)
         if "lambda_naive" in params:
-            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.0), 0.80)
+            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.40), 0.80)
         if "lambda_bias" in params:
-            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.0), 0.80)
+            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.12), 0.25)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",

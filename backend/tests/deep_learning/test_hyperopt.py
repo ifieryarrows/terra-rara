@@ -163,8 +163,8 @@ def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.35
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.55
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.40
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.25
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.05
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.17
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.06
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS

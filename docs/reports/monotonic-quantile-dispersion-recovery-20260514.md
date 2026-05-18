@@ -586,3 +586,65 @@ py -m deep_learning.training.trainer --deterministic-weekly-validation
 ModuleNotFoundError: No module named 'lightning'
 ModuleNotFoundError: No module named 'pytorch_lightning'
 ```
+
+## 2026-05-18 Hyperopt Structural Failure Remediation
+
+The 30-trial hyperopt run stopped correctly with a structural failure instead of promoting a weak best trial:
+
+```text
+completed_trials: 10
+weekly_magnitude_le_3_0: 0
+public_crossing_le_0_001: 10
+weekly_pi80_width_ratio_le_4_0: 10
+best_trial: 9
+best_value: 6.004787
+best_trial_failed_checks: weekly_magnitude_le_3_0
+RuntimeError: Do not run additional hyperopt. Fix quantile head architecture and loss function before any further search.
+```
+
+Diagnosis:
+
+- Public quantile ordering is no longer the active failure; public crossing passed for every completed trial.
+- The shared failure is median scale: every completed trial exceeded `weekly_magnitude_ratio > 3.0`.
+- The prior weekly magnitude loss used mostly log-ratio pressure, which grows too slowly once weekly median magnitude is already structurally exploded.
+- The trainer overlay path could still consume a failed `optuna_results.json` best trial in a later final-training command if `run_hyperopt=false` was used after the failed search artifact was written.
+
+Changes applied:
+
+- Added `_weekly_scale_losses()` as a reusable loss helper that directly targets quality-gate-aligned weekly scale.
+- Strengthened `magnitude_loss` with explicit `[0.65, 1.35]` band pressure and an additional `> 3.0` structural explosion penalty.
+- Preserved mean-absolute and median-absolute scale pressure so outlier-heavy and median-heavy explosions are both penalized.
+- Updated hyperopt warm-start parameters to the deterministic midpoint: `lambda_bias=0.17`, `lambda_directional=0.06`.
+- Narrowed weekly-loss search away from the failed low-control region: magnitude now starts at `0.55`, naive at `0.40`, bias at `0.12`, and direction at `0.04`.
+- Hardened `_apply_optuna_results()` so `STRUCTURAL_FAILURE` or failed best-trial preflight falls back to the known-good config instead of applying the failed best params.
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py -q
+1 passed
+
+py -m pytest backend/tests/deep_learning/test_trainer_optuna_overlay.py -q
+1 passed
+
+py -m pytest backend/tests/deep_learning/test_hyperopt.py -q
+8 passed
+
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+30 passed, 6 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+425 passed, 9 skipped
+```
+
+The deterministic training command remains blocked in this local environment by missing trainer runtime dependencies:
+
+```text
+cd backend
+py -m deep_learning.training.trainer --deterministic-weekly-validation
+ModuleNotFoundError: No module named 'lightning'
+ModuleNotFoundError: No module named 'pytorch_lightning'
+```
