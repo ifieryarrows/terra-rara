@@ -60,10 +60,10 @@ KNOWN_GOOD_CONFIG = {
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
     "lambda_dispersion": 0.35,
-    "lambda_magnitude": 0.55,
+    "lambda_magnitude": 0.60,
     "lambda_naive": 0.40,
-    "lambda_bias": 0.17,
-    "lambda_directional": 0.06,
+    "lambda_bias": 0.21,
+    "lambda_directional": 0.05,
     "batch_size": 32,
 }
 

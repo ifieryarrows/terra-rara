@@ -433,6 +433,68 @@ ModuleNotFoundError: No module named 'lightning'
 ModuleNotFoundError: No module named 'pytorch_lightning'
 ```
 
+## 2026-05-18 Deterministic Positive-Bias Follow-Up
+
+The deterministic weekly validation run after the magnitude recovery patch no longer shows a sign-inversion failure, but it still fails the promotion gate on positive bias, weekly magnitude, and interval coverage:
+
+```text
+weekly_directional_accuracy: 0.5741
+weekly_tail_capture_rate: 0.6429
+weekly_sharpe_ratio: 2.7561
+weekly_variance_ratio: 0.8347
+weekly_magnitude_ratio: 1.8894
+weekly_pi80_coverage: 0.2037
+weekly_pred_positive_rate: 1.0000
+weekly_actual_positive_rate: 0.5741
+weekly_pred_mean: 0.0545
+weekly_actual_mean: 0.0065
+weekly_mae_vs_naive_zero: 1.8896
+quality_gate_passed: false
+next_required_action: WeeklyMagnitudeRatio=1.8894 outside [0.65, 1.35]; WeeklyPI80=0.2037 outside [0.74, 0.86]
+```
+
+Decision: do not start another hyperopt run yet. Direction and tail behavior are good enough to preserve, while the median remains too bullish and too large. The next deterministic config tightens magnitude pressure, raises the bias penalty inside the previously bracketed `0.17` to `0.25` range, and slightly reduces directional pressure:
+
+```text
+lambda_weekly_quantile = 0.70
+lambda_t1_quantile = 0.20
+lambda_dispersion = 0.35
+lambda_magnitude = 0.60
+lambda_naive = 0.40
+lambda_bias = 0.21
+lambda_directional = 0.05
+```
+
+Expected next deterministic run targets:
+
+```text
+weekly_pred_positive_rate moves from 1.00 toward 0.65-0.80
+weekly_magnitude_ratio moves from 1.89 toward 1.35-1.55
+weekly_pi80_coverage improves from 0.20 toward 0.40+
+weekly_directional_accuracy stays >= 0.53
+weekly_tail_capture_rate stays >= 0.45
+ordered/public crossing stays 0.0
+```
+
+Local validation for the positive-bias follow-up patch:
+
+```text
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py -q
+13 passed
+
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+30 passed, 6 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+git diff --check
+passed with existing CRLF normalization warnings only
+
+py -m pytest backend/tests -q -m "not online"
+425 passed, 9 skipped
+```
+
 ## 2026-05-15 Bias Weight Rebalance Follow-Up
 
 The `lambda_bias=0.25` deterministic run fixed magnitude and improved coverage, but overcorrected the median center into a negative weekly bias:
