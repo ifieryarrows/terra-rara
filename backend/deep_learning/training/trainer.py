@@ -60,10 +60,10 @@ KNOWN_GOOD_CONFIG = {
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
     "lambda_dispersion": 0.35,
-    "lambda_magnitude": 0.60,
+    "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
-    "lambda_bias": 0.21,
-    "lambda_directional": 0.05,
+    "lambda_bias": 0.17,
+    "lambda_directional": 0.06,
     "batch_size": 32,
 }
 
@@ -713,15 +713,15 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "weight_decay" in params:
             params["weight_decay"] = min(float(params["weight_decay"]), 5e-4)
         if "lambda_directional" in params:
-            params["lambda_directional"] = min(max(float(params["lambda_directional"]), 0.04), 0.08)
+            params["lambda_directional"] = min(max(float(params["lambda_directional"]), 0.05), 0.07)
         if "lambda_dispersion" in params:
             params["lambda_dispersion"] = max(float(params["lambda_dispersion"]), 0.35)
         if "lambda_magnitude" in params:
-            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.55), 0.85)
+            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
         if "lambda_naive" in params:
-            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.40), 0.80)
+            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.35), 0.45)
         if "lambda_bias" in params:
-            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.12), 0.25)
+            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.14), 0.19)
 
         logger.info(
             "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",

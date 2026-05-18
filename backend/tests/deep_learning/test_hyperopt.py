@@ -11,7 +11,9 @@ from deep_learning.training.hyperopt import (
     _enqueue_known_good_trial,
     _finite_completed_trial_count,
     _is_startup_protected,
+    create_trial_config,
 )
+from deep_learning.config import get_tft_config
 
 
 def _trial(number: int, state: str, value=None, params=None, user_attrs=None):
@@ -26,6 +28,25 @@ def _trial(number: int, state: str, value=None, params=None, user_attrs=None):
 
 def _study(*trials):
     return SimpleNamespace(trials=list(trials))
+
+
+class _RecordingTrial:
+    number = 0
+
+    def __init__(self):
+        self.float_ranges = {}
+
+    def suggest_categorical(self, name, choices):
+        return choices[0]
+
+    def suggest_float(self, name, low, high, step=None, log=False):
+        self.float_ranges[name] = {
+            "low": low,
+            "high": high,
+            "step": step,
+            "log": log,
+        }
+        return low
 
 
 def test_build_result_payload_handles_all_pruned_trials():
@@ -50,6 +71,9 @@ def test_build_result_payload_handles_all_pruned_trials():
         "fold_sharpe_prune": 0,
         "weekly_magnitude_collapse": 0,
         "weekly_magnitude_explosion": 0,
+        "weekly_positive_rate_explosion": 0,
+        "weekly_pi80_undercoverage": 0,
+        "weekly_mae_vs_naive_explosion": 0,
         "weekly_interval_width_explosion": 0,
         "weekly_tail_width_explosion": 0,
         "weekly_raw_crossing_prune": 0,
@@ -189,3 +213,49 @@ def test_hyperopt_objective_penalizes_interval_width_and_overcoverage():
     assert "weekly_tail_width_explosion" in source
     assert "weekly_raw_crossing_prune" in source
     assert "weekly_overcoverage_width_explosion" in source
+
+
+def test_controlled_hyperopt_search_stays_near_midpoint_weights():
+    trial = _RecordingTrial()
+
+    create_trial_config(trial, get_tft_config())
+
+    assert trial.float_ranges["lambda_magnitude"] == {
+        "low": 0.50,
+        "high": 0.58,
+        "step": 0.01,
+        "log": False,
+    }
+    assert trial.float_ranges["lambda_naive"] == {
+        "low": 0.35,
+        "high": 0.45,
+        "step": 0.05,
+        "log": False,
+    }
+    assert trial.float_ranges["lambda_bias"] == {
+        "low": 0.14,
+        "high": 0.19,
+        "step": 0.01,
+        "log": False,
+    }
+    assert trial.float_ranges["lambda_directional"] == {
+        "low": 0.05,
+        "high": 0.07,
+        "step": 0.01,
+        "log": False,
+    }
+
+
+def test_hyperopt_objective_penalizes_positive_rate_and_prunes_explosions():
+    source = inspect.getsource(hyperopt_module)
+
+    assert "positive_rate_penalty = abs(" in source
+    assert "weekly_pred_positive_rate" in source
+    assert "weekly_actual_positive_rate" in source
+    assert "fold_weekly_pred_positive_rate > 0.90" in source
+    assert "fold_weekly_actual_positive_rate < 0.75" in source
+    assert "weekly_positive_rate_explosion" in source
+    assert "fold_weekly_pi80_coverage < 0.15" in source
+    assert "weekly_pi80_undercoverage" in source
+    assert "fold_weekly_mae_vs_naive_zero > 3.0" in source
+    assert "weekly_mae_vs_naive_explosion" in source

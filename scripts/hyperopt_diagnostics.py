@@ -3,6 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 
+def _weekly_positive_rate_exploded(diagnostic: dict) -> bool:
+    return (
+        diagnostic.get("avg_weekly_pred_positive_rate", 1.0) > 0.90
+        and diagnostic.get("avg_weekly_actual_positive_rate", 0.0) < 0.75
+    )
+
+
 def compute_structural_invalidity_report(fold_diagnostics: list) -> dict:
     completed = [d for d in fold_diagnostics if d["state"] == "COMPLETE"]
     n = len(completed)
@@ -21,6 +28,15 @@ def compute_structural_invalidity_report(fold_diagnostics: list) -> dict:
         "weekly_pi80_width_ratio_le_4_0": sum(
             1 for d in completed if d.get("avg_weekly_pi80_width_ratio", 999) <= 4.0
         ),
+        "weekly_positive_rate_not_exploded": sum(
+            1 for d in completed if not _weekly_positive_rate_exploded(d)
+        ),
+        "weekly_pi80_coverage_ge_0_15": sum(
+            1 for d in completed if d.get("avg_weekly_pi80_coverage", 0.0) >= 0.15
+        ),
+        "weekly_mae_vs_naive_zero_le_3_0": sum(
+            1 for d in completed if d.get("avg_weekly_mae_vs_naive_zero", 999) <= 3.0
+        ),
         "variance_ratio_le_3_0": sum(
             1 for d in completed if d.get("avg_variance_ratio", 999) <= 3.0
         ),
@@ -36,6 +52,9 @@ def compute_structural_invalidity_report(fold_diagnostics: list) -> dict:
             d.get("avg_quantile_crossing_rate", 1.0) <= 0.001
             and d.get("avg_weekly_magnitude_ratio", 999) <= 3.0
             and d.get("avg_weekly_pi80_width_ratio", 999) <= 4.0
+            and not _weekly_positive_rate_exploded(d)
+            and d.get("avg_weekly_pi80_coverage", 0.0) >= 0.15
+            and d.get("avg_weekly_mae_vs_naive_zero", 999) <= 3.0
             and d.get("avg_variance_ratio", 999) <= 3.0
         )
     )
@@ -79,6 +98,11 @@ def compute_trial_distribution_summary(fold_diagnostics: list) -> dict:
         "avg_raw_quantile_crossing_rate",
         "avg_weekly_raw_crossing_rate",
         "avg_weekly_magnitude_ratio",
+        "avg_weekly_pi80_coverage",
+        "avg_weekly_pred_positive_rate",
+        "avg_weekly_actual_positive_rate",
+        "avg_weekly_positive_rate_gap",
+        "avg_weekly_mae_vs_naive_zero",
         "avg_weekly_pi80_width_ratio",
         "avg_weekly_pi96_width_ratio",
         "fold_score_std",
@@ -115,6 +139,17 @@ def best_trial_preflight_check(best_trial_diagnostics: dict) -> dict:
             "avg_weekly_pi80_width_ratio", 999
         )
         <= 4.0,
+        "weekly_positive_rate_not_exploded": not _weekly_positive_rate_exploded(
+            best_trial_diagnostics
+        ),
+        "weekly_pi80_coverage_ge_0_15": best_trial_diagnostics.get(
+            "avg_weekly_pi80_coverage", 0.0
+        )
+        >= 0.15,
+        "weekly_mae_vs_naive_zero_le_3_0": best_trial_diagnostics.get(
+            "avg_weekly_mae_vs_naive_zero", 999
+        )
+        <= 3.0,
         "variance_ratio_le_3_0": best_trial_diagnostics.get(
             "avg_variance_ratio", 999
         )

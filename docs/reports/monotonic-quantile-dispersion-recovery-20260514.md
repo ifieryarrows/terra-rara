@@ -710,3 +710,76 @@ passed with existing CRLF normalization warnings only
 py -m pytest backend/tests -q -m "not online"
 425 passed, 9 skipped
 ```
+
+## 2026-05-18 Deterministic Explosion Rollback and Controlled Hyperopt Guard
+
+The follow-up deterministic run with `lambda_magnitude=0.60`, `lambda_bias=0.21`, and `lambda_directional=0.05` regressed sharply. Direction and tail metrics stayed positive, but the model became structurally unusable because every weekly median moved positive and the weekly scale exploded:
+
+```text
+weekly_directional_accuracy: 0.5741
+weekly_tail_capture_rate: 0.6429
+weekly_sharpe_ratio: 2.7561
+weekly_magnitude_ratio: 8.4054
+weekly_pred_positive_rate: 1.0000
+weekly_actual_positive_rate: 0.5741
+weekly_pred_mean: 0.2228
+weekly_actual_mean: 0.0065
+weekly_pi80_coverage: 0.0000
+weekly_mae_vs_naive_zero: 7.0725
+quality_gate_passed: false
+next_required_action: WeeklyMagnitudeRatio=8.4054 outside [0.65, 1.35]; WeeklyMagnitudeExplosion=8.4054 > 3.0; WeeklyPI80=0.0000 outside [0.74, 0.86]
+```
+
+Decision: abandon this deterministic branch and stop manual weight stepping. The stable fallback returns to the previous midpoint:
+
+```text
+lambda_weekly_quantile = 0.70
+lambda_t1_quantile = 0.20
+lambda_dispersion = 0.35
+lambda_magnitude = 0.55
+lambda_naive = 0.40
+lambda_bias = 0.17
+lambda_directional = 0.06
+```
+
+The next search path is narrow controlled hyperopt around the midpoint, not broad manual tuning:
+
+```text
+lambda_magnitude: 0.50-0.58
+lambda_naive: 0.35-0.45
+lambda_bias: 0.14-0.19
+lambda_directional: 0.05-0.07
+```
+
+The hyperopt objective now records and penalizes the positive-rate gap:
+
+```text
+positive_rate_penalty = abs(weekly_pred_positive_rate - weekly_actual_positive_rate)
+```
+
+Hard guardrails were added so this failure mode cannot look promotable as a completed trial:
+
+```text
+weekly_magnitude_ratio > 3.0 -> weekly_magnitude_explosion
+weekly_pred_positive_rate > 0.90 and weekly_actual_positive_rate < 0.75 -> weekly_positive_rate_explosion
+weekly_pi80_coverage < 0.15 -> weekly_pi80_undercoverage
+weekly_mae_vs_naive_zero > 3.0 -> weekly_mae_vs_naive_explosion
+```
+
+The same fields are now included in `fold_diagnostics`, `trial_distribution_summary`, and `best_trial_preflight_check`, so a completed trial with positive-rate explosion, PI80 collapse, or naive-baseline explosion is blocked before final training consumes it.
+
+Local validation for the rollback and controlled-hyperopt guard patch:
+
+```text
+py -m pytest backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hyperopt_diagnostics.py backend/tests/deep_learning/test_trainer_optuna_overlay.py -q
+28 passed
+
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hyperopt_diagnostics.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+36 passed, 6 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+428 passed, 9 skipped
+```

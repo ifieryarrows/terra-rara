@@ -142,6 +142,9 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "fold_sharpe_prune": 0,
         "weekly_magnitude_collapse": 0,
         "weekly_magnitude_explosion": 0,
+        "weekly_positive_rate_explosion": 0,
+        "weekly_pi80_undercoverage": 0,
+        "weekly_mae_vs_naive_explosion": 0,
         "weekly_interval_width_explosion": 0,
         "weekly_tail_width_explosion": 0,
         "weekly_raw_crossing_prune": 0,
@@ -159,6 +162,10 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "avg_median_sort_gap",
         "avg_weekly_magnitude_ratio",
         "avg_weekly_pi80_coverage",
+        "avg_weekly_pred_positive_rate",
+        "avg_weekly_actual_positive_rate",
+        "avg_weekly_positive_rate_gap",
+        "avg_weekly_mae_vs_naive_zero",
         "avg_weekly_pi80_width_ratio",
         "avg_weekly_pi96_width_ratio",
         "avg_weekly_raw_crossing_rate",
@@ -293,10 +300,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.70, 0.80, step=0.05),
         lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.15, 0.25, step=0.05),
         lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.35, 0.50, step=0.05),
-        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.55, 0.85, step=0.05),
-        lambda_naive=trial.suggest_float("lambda_naive", 0.40, 0.80, step=0.05),
-        lambda_bias=trial.suggest_float("lambda_bias", 0.12, 0.25, step=0.01),
-        lambda_directional=trial.suggest_float("lambda_directional", 0.04, 0.08, step=0.02),
+        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.50, 0.58, step=0.01),
+        lambda_naive=trial.suggest_float("lambda_naive", 0.35, 0.45, step=0.05),
+        lambda_bias=trial.suggest_float("lambda_bias", 0.14, 0.19, step=0.01),
+        lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.07, step=0.01),
     )
 
     training_cfg = TrainingConfig(
@@ -396,6 +403,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_weekly_objectives: list[float] = []
     fold_weekly_mr_list: list[float] = []
     fold_weekly_pi80_coverage_list: list[float] = []
+    fold_weekly_pred_positive_rate_list: list[float] = []
+    fold_weekly_actual_positive_rate_list: list[float] = []
+    fold_weekly_mae_vs_naive_zero_list: list[float] = []
     fold_weekly_pi80_width_ratio_list: list[float] = []
     fold_weekly_pi96_width_ratio_list: list[float] = []
     fold_weekly_raw_crossing_list: list[float] = []
@@ -473,6 +483,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_objective = fold_val_loss
         fold_weekly_mr = 1.0
         fold_weekly_pi80_coverage = 0.0
+        fold_weekly_pred_positive_rate = 0.5
+        fold_weekly_actual_positive_rate = 0.5
+        fold_weekly_mae_vs_naive_zero = 1.0
         fold_weekly_pi80_width_ratio = 1.0
         fold_weekly_pi96_width_ratio = 1.0
         fold_weekly_raw_crossing = 0.0
@@ -545,6 +558,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             )
             fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
             fold_weekly_pi80_coverage = float(weekly.get("weekly_pi80_coverage", 0.0))
+            fold_weekly_pred_positive_rate = float(weekly.get("weekly_pred_positive_rate", 0.5))
+            fold_weekly_actual_positive_rate = float(weekly.get("weekly_actual_positive_rate", 0.5))
+            fold_weekly_mae_vs_naive_zero = float(weekly.get("weekly_mae_vs_naive_zero", 1.0))
             fold_weekly_pi80_width_ratio = float(weekly.get("weekly_pi80_width_ratio", 1.0))
             fold_weekly_pi96_width_ratio = float(weekly.get("weekly_pi96_width_ratio", 1.0))
             fold_weekly_raw_crossing = float(weekly.get("weekly_raw_quantile_crossing_rate", 0.0))
@@ -557,6 +573,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             interval_score_penalty = fold_weekly_interval_score_80 / (weekly_actual_std + 1e-8)
             interval_score_96_penalty = fold_weekly_interval_score_96 / (weekly_actual_std + 1e-8)
             coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)
+            positive_rate_penalty = abs(
+                fold_weekly_pred_positive_rate - fold_weekly_actual_positive_rate
+            )
             width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)
             tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)
             fold_weekly_objective = (
@@ -564,6 +583,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 + 0.15 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
                 + 0.50 * abs(np.log(fold_weekly_mr + 1e-8))
                 + 0.20 * coverage_penalty
+                + 0.35 * positive_rate_penalty
                 + 0.25 * width_penalty
                 + 0.35 * tail_width_penalty
                 + 0.10 * interval_score_penalty
@@ -586,6 +606,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_objectives.append(fold_weekly_objective)
         fold_weekly_mr_list.append(fold_weekly_mr)
         fold_weekly_pi80_coverage_list.append(fold_weekly_pi80_coverage)
+        fold_weekly_pred_positive_rate_list.append(fold_weekly_pred_positive_rate)
+        fold_weekly_actual_positive_rate_list.append(fold_weekly_actual_positive_rate)
+        fold_weekly_mae_vs_naive_zero_list.append(fold_weekly_mae_vs_naive_zero)
         fold_weekly_pi80_width_ratio_list.append(fold_weekly_pi80_width_ratio)
         fold_weekly_pi96_width_ratio_list.append(fold_weekly_pi96_width_ratio)
         fold_weekly_raw_crossing_list.append(fold_weekly_raw_crossing)
@@ -642,6 +665,37 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 trial.number, fold_idx + 1, fold_weekly_mr,
             )
             trial.set_user_attr("prune_reason", "weekly_magnitude_explosion")
+            raise optuna.exceptions.TrialPruned()
+
+        if (
+            fold_weekly_pred_positive_rate > 0.90
+            and fold_weekly_actual_positive_rate < 0.75
+            and fold_idx >= 1
+            and not protect_trial
+        ):
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly_pred_positive_rate=%.4f "
+                "while weekly_actual_positive_rate=%.4f",
+                trial.number, fold_idx + 1,
+                fold_weekly_pred_positive_rate, fold_weekly_actual_positive_rate,
+            )
+            trial.set_user_attr("prune_reason", "weekly_positive_rate_explosion")
+            raise optuna.exceptions.TrialPruned()
+
+        if fold_weekly_pi80_coverage < 0.15 and fold_idx >= 1 and not protect_trial:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly_pi80_coverage=%.4f < 0.15",
+                trial.number, fold_idx + 1, fold_weekly_pi80_coverage,
+            )
+            trial.set_user_attr("prune_reason", "weekly_pi80_undercoverage")
+            raise optuna.exceptions.TrialPruned()
+
+        if fold_weekly_mae_vs_naive_zero > 3.0 and fold_idx >= 1 and not protect_trial:
+            logger.warning(
+                "Trial %d PRUNED at fold %d: weekly_mae_vs_naive_zero=%.4f > 3.0",
+                trial.number, fold_idx + 1, fold_weekly_mae_vs_naive_zero,
+            )
+            trial.set_user_attr("prune_reason", "weekly_mae_vs_naive_explosion")
             raise optuna.exceptions.TrialPruned()
 
         if fold_weekly_pi80_width_ratio > 4.0 and fold_idx >= 1 and not protect_trial:
@@ -713,6 +767,24 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         if fold_weekly_pi80_coverage_list
         else 0.0
     )
+    avg_weekly_pred_positive_rate = (
+        float(np.mean(fold_weekly_pred_positive_rate_list))
+        if fold_weekly_pred_positive_rate_list
+        else 0.5
+    )
+    avg_weekly_actual_positive_rate = (
+        float(np.mean(fold_weekly_actual_positive_rate_list))
+        if fold_weekly_actual_positive_rate_list
+        else 0.5
+    )
+    avg_weekly_positive_rate_gap = abs(
+        avg_weekly_pred_positive_rate - avg_weekly_actual_positive_rate
+    )
+    avg_weekly_mae_vs_naive_zero = (
+        float(np.mean(fold_weekly_mae_vs_naive_zero_list))
+        if fold_weekly_mae_vs_naive_zero_list
+        else 1.0
+    )
     avg_weekly_pi80_width_ratio = (
         float(np.mean(fold_weekly_pi80_width_ratio_list))
         if fold_weekly_pi80_width_ratio_list
@@ -758,6 +830,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_median_sort_gap", round(avg_median_gap, 4))
     trial.set_user_attr("avg_weekly_magnitude_ratio", round(avg_weekly_mr, 4))
     trial.set_user_attr("avg_weekly_pi80_coverage", round(avg_weekly_pi80_coverage, 4))
+    trial.set_user_attr("avg_weekly_pred_positive_rate", round(avg_weekly_pred_positive_rate, 4))
+    trial.set_user_attr("avg_weekly_actual_positive_rate", round(avg_weekly_actual_positive_rate, 4))
+    trial.set_user_attr("avg_weekly_positive_rate_gap", round(avg_weekly_positive_rate_gap, 4))
+    trial.set_user_attr("avg_weekly_mae_vs_naive_zero", round(avg_weekly_mae_vs_naive_zero, 4))
     trial.set_user_attr("avg_weekly_pi80_width_ratio", round(avg_weekly_pi80_width_ratio, 4))
     trial.set_user_attr("avg_weekly_pi96_width_ratio", round(avg_weekly_pi96_width_ratio, 4))
     trial.set_user_attr("avg_weekly_raw_crossing_rate", round(avg_weekly_raw_crossing, 4))
