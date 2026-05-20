@@ -59,6 +59,7 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.weekly_loss.lambda_naive == 0.40
     assert updated.weekly_loss.lambda_bias == 0.17
     assert updated.weekly_loss.lambda_directional == 0.06
+    assert updated.weekly_loss.lambda_saturation == 0.25
     assert updated.training.batch_size == 32
 
 
@@ -71,6 +72,10 @@ def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     assert cfg.weekly_loss.lambda_naive == 0.40
     assert cfg.weekly_loss.lambda_bias == 0.17
     assert cfg.weekly_loss.lambda_directional == 0.06
+    assert cfg.weekly_loss.lambda_saturation == 0.25
+    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
+    assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
+    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
     assert not hasattr(cfg.weekly_loss, "lambda_crossing")
     assert not hasattr(cfg.weekly_loss, "lambda_width")
     assert not hasattr(cfg.weekly_loss, "lambda_tail_width")

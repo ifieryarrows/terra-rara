@@ -191,6 +191,12 @@ def _fold_scale_diagnostic(
         "weekly_median_bound_applied_rate": _rounded_finite(
             weekly_metrics.get("weekly_median_bound_applied_rate", 0.0)
         ),
+        "cap_to_actual_abs_median_ratio": _rounded_finite(
+            weekly_metrics.get("cap_to_actual_abs_median_ratio", 0.0)
+        ),
+        "cap_to_actual_mean_abs_ratio": _rounded_finite(
+            weekly_metrics.get("cap_to_actual_mean_abs_ratio", 0.0)
+        ),
         "weekly_mae_vs_naive_zero": _rounded_finite(
             weekly_metrics.get("weekly_mae_vs_naive_zero", 0.0)
         ),
@@ -540,7 +546,12 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             )
             weekly_median_cap = resolve_weekly_median_cap(
                 train_scale_audit,
-                floor=trial_cfg.weekly_loss.weekly_median_cap_floor,
+                abs_median_multiple=(
+                    trial_cfg.weekly_loss.weekly_median_cap_abs_median_multiple
+                ),
+                mean_abs_multiple=(
+                    trial_cfg.weekly_loss.weekly_median_cap_mean_abs_multiple
+                ),
                 std_multiple=trial_cfg.weekly_loss.weekly_median_cap_std_multiple,
             )
             fold_cfg = replace(
@@ -740,7 +751,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             logger.info(
                 "Trial %d fold %d scale: train=%d val=%d cap=%.6f actual_abs_mean=%.6f "
                 "raw_pred_abs_mean=%.6f pred_abs_mean=%.6f raw_mr=%.6f mr=%.6f "
-                "mae_vs_naive=%.6f pred_range=[%.6f, %.6f] actual_range=[%.6f, %.6f]",
+                "mae_vs_naive=%.6f cap_to_median=%.6f cap_to_mean=%.6f "
+                "pred_range=[%.6f, %.6f] actual_range=[%.6f, %.6f]",
                 trial.number,
                 fold_idx + 1,
                 scale_diagnostic["train_samples"],
@@ -752,6 +764,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 scale_diagnostic["weekly_raw_magnitude_ratio"],
                 scale_diagnostic["weekly_magnitude_ratio"],
                 scale_diagnostic["weekly_mae_vs_naive_zero"],
+                scale_diagnostic["cap_to_actual_abs_median_ratio"],
+                scale_diagnostic["cap_to_actual_mean_abs_ratio"],
                 scale_diagnostic["weekly_pred_min"],
                 scale_diagnostic["weekly_pred_max"],
                 scale_diagnostic["weekly_actual_min"],

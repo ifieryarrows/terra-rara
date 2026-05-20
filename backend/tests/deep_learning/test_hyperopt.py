@@ -271,6 +271,8 @@ def test_fold_scale_diagnostic_includes_target_audit_and_raw_bounded_scale():
             "weekly_raw_pred_max": 1.0,
             "weekly_bounded_pred_min": -0.08,
             "weekly_bounded_pred_max": 0.08,
+            "cap_to_actual_abs_median_ratio": 3.2,
+            "cap_to_actual_mean_abs_ratio": 2.667,
         },
         raw_weekly_pred=raw_weekly_pred,
         train_scale_audit=train_audit,
@@ -282,6 +284,8 @@ def test_fold_scale_diagnostic_includes_target_audit_and_raw_bounded_scale():
     assert diagnostic["weekly_raw_magnitude_ratio"] == 22.22
     assert diagnostic["weekly_bounded_magnitude_ratio"] == 1.777
     assert diagnostic["weekly_median_bound_applied_rate"] == 1.0
+    assert diagnostic["cap_to_actual_abs_median_ratio"] == 3.2
+    assert diagnostic["cap_to_actual_mean_abs_ratio"] == 2.667
     assert diagnostic["raw_pred_weekly_mean_abs"] == 0.95
     assert diagnostic["pred_weekly_mean_abs"] == 0.08
     assert diagnostic["train_target_decoder_std"] == 0.012
@@ -386,8 +390,10 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_dispersion == 0.35
     assert cfg.weekly_loss.weekly_median_cap is None
-    assert cfg.weekly_loss.weekly_median_cap_floor == 0.08
-    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 4.0
+    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
+    assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
+    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
+    assert cfg.weekly_loss.lambda_saturation == 0.25
 
     assert trial.float_ranges == {}
     assert trial.categorical_choices == {

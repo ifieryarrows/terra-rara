@@ -126,6 +126,7 @@ def test_weekly_loss_tracks_component_means():
     assert means["magnitude_loss_mean"] >= 0.0
     assert means["naive_loss_mean"] >= 0.0
     assert means["bias_loss_mean"] >= 0.0
+    assert means["saturation_loss_mean"] >= 0.0
     assert means["directional_loss_mean"] >= 0.0
     assert means["total_loss_mean"] == pytest.approx(float(total.detach()))
     assert means["dominant_component"] in {
@@ -135,6 +136,7 @@ def test_weekly_loss_tracks_component_means():
         "magnitude",
         "naive",
         "bias",
+        "saturation",
         "directional",
     }
 
@@ -170,3 +172,28 @@ def test_weekly_loss_applies_median_cap_before_monotonic_transform():
     total = loss.loss(raw_pred, actual)
     total.backward()
     assert torch.isfinite(raw_pred.grad).all()
+
+
+def test_weekly_loss_penalizes_raw_q50_saturation_before_bounding():
+    actual = torch.tensor(
+        [
+            [0.004, 0.004, 0.004, 0.004, 0.004],
+            [-0.004, -0.004, -0.004, -0.004, -0.004],
+        ]
+    )
+    pred_in_range = _path_from_median(actual * 2.0, spread=0.001)
+    pred_saturated = _path_from_median(actual * 12.5, spread=0.001)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=1.0,
+        weekly_median_cap=0.05,
+    )
+
+    assert loss.loss(pred_saturated, actual) > loss.loss(pred_in_range, actual)

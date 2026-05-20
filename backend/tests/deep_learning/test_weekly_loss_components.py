@@ -2,6 +2,7 @@ import torch
 
 from deep_learning.models.tft_copper import (
     _bound_weekly_median_path,
+    _weekly_saturation_loss,
     _weekly_scale_losses,
 )
 
@@ -37,3 +38,15 @@ def test_weekly_median_cap_bounds_exploded_paths_and_keeps_gradients():
     bounded.sum().backward()
     assert pred.grad is not None
     assert torch.isfinite(pred.grad).all()
+
+
+def test_weekly_saturation_loss_penalizes_raw_paths_near_and_above_cap():
+    in_range = torch.tensor([0.030, -0.035])
+    near_cap = torch.tensor([0.046, -0.047])
+    above_cap = torch.tensor([0.120, -0.130])
+
+    assert _weekly_saturation_loss(in_range, weekly_median_cap=0.05).item() == 0.0
+    assert _weekly_saturation_loss(near_cap, weekly_median_cap=0.05).item() > 0.0
+    assert _weekly_saturation_loss(above_cap, weekly_median_cap=0.05).item() > (
+        _weekly_saturation_loss(near_cap, weekly_median_cap=0.05).item() * 10.0
+    )

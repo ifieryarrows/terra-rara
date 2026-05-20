@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from deep_learning.training.metrics import (
@@ -152,6 +153,33 @@ def test_evaluate_quantile_predictions_reports_raw_and_bounded_scale_paths():
     assert metrics["weekly_quantile_crossing_rate"] == 0.0
 
 
+def test_bounded_weekly_median_cannot_remain_seven_to_ten_x_actual_scale():
+    weekly_actual = np.array([0.020, -0.020, 0.025, -0.025], dtype=float)
+    actual = np.repeat((weekly_actual / 5.0).reshape(-1, 1), 5, axis=1)
+    cap = 2.0 * np.median(np.abs(weekly_actual))
+    pred = np.zeros((4, 5, 7), dtype=float)
+    raw_daily_median = np.sign(weekly_actual).reshape(-1, 1) * 0.20
+    offsets = np.array([-0.030, -0.020, -0.010, 0.000, 0.010, 0.020, 0.030])
+    for q_idx, offset in enumerate(offsets):
+        pred[:, :, q_idx] = raw_daily_median + offset
+
+    metrics = evaluate_quantile_predictions(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=cap,
+    )
+
+    assert metrics["weekly_raw_magnitude_ratio"] > 40.0
+    assert metrics["weekly_magnitude_ratio"] < 3.0
+    assert metrics["weekly_bounded_magnitude_ratio"] < 3.0
+    assert metrics["weekly_median_bound_applied_rate"] == 1.0
+    assert metrics["cap_to_actual_abs_median_ratio"] == pytest.approx(2.0)
+    assert metrics["cap_to_actual_mean_abs_ratio"] == pytest.approx(2.0)
+    assert metrics["quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_quantile_crossing_rate"] == 0.0
+
+
 def test_apply_weekly_median_cap_np_bounds_only_the_median_path():
     pred = np.zeros((1, 5, 7), dtype=float)
     pred[:, :, 3] = 0.20
@@ -187,14 +215,52 @@ def test_scale_audit_resolves_training_only_weekly_median_cap():
     audit = summarize_dataloader_target_scale(dataloader, horizon=5)
     cap = resolve_weekly_median_cap(
         audit,
-        floor=0.08,
-        std_multiple=4.0,
+        abs_median_multiple=2.0,
+        mean_abs_multiple=1.6,
+        std_multiple=1.2,
     )
 
     assert audit["target_decoder_finite_rate"] == 1.0
     assert audit["target_scale_present"] is True
     assert audit["actual_weekly_std"] > 0.0
-    assert cap == max(0.08, 4.0 * audit["actual_weekly_std"])
+    assert cap == min(
+        2.0 * audit["actual_weekly_abs_median"],
+        1.6 * audit["actual_weekly_mean_abs"],
+        1.2 * audit["actual_weekly_std"],
+    )
+
+
+def test_data_driven_weekly_median_cap_uses_train_actual_scale():
+    audit = {
+        "actual_weekly_abs_median": 0.022,
+        "actual_weekly_mean_abs": 0.030,
+        "actual_weekly_std": 0.052,
+    }
+
+    cap = resolve_weekly_median_cap(
+        audit,
+        abs_median_multiple=2.0,
+        mean_abs_multiple=1.6,
+        std_multiple=1.2,
+    )
+
+    assert cap == np.float64(0.044)
+    assert cap / audit["actual_weekly_abs_median"] == np.float64(2.0)
+    assert cap < 0.08
+
+
+def test_data_driven_weekly_median_cap_requires_positive_training_scale():
+    with pytest.raises(ValueError, match="positive finite weekly actual scale"):
+        resolve_weekly_median_cap(
+            {
+                "actual_weekly_abs_median": 0.0,
+                "actual_weekly_mean_abs": 0.0,
+                "actual_weekly_std": 0.0,
+            },
+            abs_median_multiple=2.0,
+            mean_abs_multiple=1.6,
+            std_multiple=1.2,
+        )
 
 
 def test_weekly_metrics_report_flipped_direction_diagnostics():

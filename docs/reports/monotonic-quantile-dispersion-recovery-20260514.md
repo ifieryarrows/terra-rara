@@ -824,6 +824,44 @@ py -m pytest backend/tests -q -m "not online"
 430 passed, 9 skipped
 ```
 
+## 2026-05-21 Data-Driven Median Cap Follow-Up
+
+The latest TFT-ASRO training run confirmed that the first bounded-output patch moved the right failure mode but left the cap too loose. Weekly magnitude fell from roughly `23-27` to `8.3-8.6`, and public crossing stayed solved, but `weekly_median_bound_applied_rate` remained `0.82-1.00` across most folds. The model was therefore still saturating the bound instead of learning a realistic weekly return range.
+
+The decisive scale evidence came from `fold_scale_diagnostics`: the resolved `weekly_median_cap` was still around `0.16-0.19`, while fold `actual_weekly_abs_median` was only around `0.017-0.025`. That made the cap roughly `7-10x` too loose against the median actual move, so bounded predictions could still fail `weekly_magnitude_le_3_0`, `weekly_mae_vs_naive_zero_le_3_0`, and `weekly_pi80_coverage_ge_0_15` even after raw q50 clipping.
+
+Change applied:
+
+- `resolve_weekly_median_cap()` now derives the cap from training weekly actual scale only, using the smallest positive finite candidate from `2.0x train_actual_weekly_abs_median`, `1.6x train_actual_weekly_mean_abs`, and `1.2x train_actual_weekly_std`.
+- The old loose absolute floor was removed from cap resolution; missing or non-positive training scale now fails cap resolution instead of silently falling back to `0.08`.
+- `WeeklyASROPFLoss` now adds a fixed `lambda_saturation=0.25` term that penalizes raw weekly q50 paths near and above the resolved cap before the bounded q50 is passed through the monotonic quantile transform.
+- Shared evaluation and hyperopt fold diagnostics now report `cap_to_actual_abs_median_ratio` and `cap_to_actual_mean_abs_ratio` alongside the existing raw/bounded magnitude and `weekly_median_bound_applied_rate` fields.
+- The controlled Optuna contract remains unchanged: only `lambda_magnitude`, `lambda_naive`, `lambda_bias`, and `lambda_directional` are search knobs. No quality-gate threshold was weakened.
+
+First-stage validation target after this patch is not a full promotion pass. Run final training with hyperopt disabled, then inspect only:
+
+```text
+gh workflow run tft-training.yml --ref main -f use_asro=true -f run_hyperopt=false -f hyperopt_trials=30
+
+weekly_magnitude_ratio           target: < 3.0
+weekly_mae_vs_naive_zero         target: < 3.0
+weekly_pi80_coverage             first useful threshold: > 0.15
+weekly_median_bound_applied_rate must fall meaningfully from the current near-saturation range
+```
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py backend/tests/deep_learning/test_config.py -q
+53 passed, 8 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+443 passed, 11 skipped
+```
+
 ## 2026-05-20 Median Scale Explosion Root-Cause Patch
 
 The post-alignment 3-trial TFT-ASRO smoke run proved the remaining failure is not a trainer/hyperopt evaluation mismatch. `fold_scale_diagnostics` showed normal weekly actual scale, with `actual_weekly_mean_abs` around `0.02-0.04`, while model q50 weekly predictions reached `0.19-1.06`. Public quantile crossing stayed solved, but weekly magnitude, PI80 coverage, naive-zero, variance, and directional checks remained structurally bad.

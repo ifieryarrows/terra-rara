@@ -64,6 +64,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_naive": 0.40,
     "lambda_bias": 0.17,
     "lambda_directional": 0.06,
+    "lambda_saturation": 0.25,
     "batch_size": 32,
 }
 
@@ -292,7 +293,8 @@ def train_tft_model(
     )
     weekly_median_cap = resolve_weekly_median_cap(
         train_scale_audit,
-        floor=cfg.weekly_loss.weekly_median_cap_floor,
+        abs_median_multiple=cfg.weekly_loss.weekly_median_cap_abs_median_multiple,
+        mean_abs_multiple=cfg.weekly_loss.weekly_median_cap_mean_abs_multiple,
         std_multiple=cfg.weekly_loss.weekly_median_cap_std_multiple,
     )
     cfg = replace(
@@ -347,7 +349,8 @@ def train_tft_model(
         )
         logger.info(
             "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f directional=%.2f median_cap=%.6f "
+            "magnitude=%.2f naive=%.2f directional=%.2f saturation=%.2f "
+            "median_cap=%.6f "
             "monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
@@ -355,6 +358,7 @@ def train_tft_model(
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_directional,
+            cfg.weekly_loss.lambda_saturation,
             cfg.weekly_loss.weekly_median_cap or 0.0,
         )
     else:
@@ -518,7 +522,13 @@ def train_tft_model(
             "lambda_naive": cfg.weekly_loss.lambda_naive,
             "lambda_bias": cfg.weekly_loss.lambda_bias,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
-            "weekly_median_cap_floor": cfg.weekly_loss.weekly_median_cap_floor,
+            "lambda_saturation": cfg.weekly_loss.lambda_saturation,
+            "weekly_median_cap_abs_median_multiple": (
+                cfg.weekly_loss.weekly_median_cap_abs_median_multiple
+            ),
+            "weekly_median_cap_mean_abs_multiple": (
+                cfg.weekly_loss.weekly_median_cap_mean_abs_multiple
+            ),
             "weekly_median_cap_std_multiple": cfg.weekly_loss.weekly_median_cap_std_multiple,
             "weekly_median_cap": cfg.weekly_loss.weekly_median_cap,
             "monotonic_quantile_transform": True,
@@ -809,6 +819,8 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
             "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
+            "lambda_saturation", "weekly_median_cap_abs_median_multiple",
+            "weekly_median_cap_mean_abs_multiple", "weekly_median_cap_std_multiple",
         ) if k in params
     }
 

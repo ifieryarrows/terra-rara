@@ -247,14 +247,28 @@ def summarize_dataloader_target_scale(
 def resolve_weekly_median_cap(
     scale_audit: dict,
     *,
-    floor: float = 0.08,
-    std_multiple: float = 4.0,
+    abs_median_multiple: float = 2.0,
+    mean_abs_multiple: float = 1.6,
+    std_multiple: float = 1.2,
 ) -> float:
     """Resolve the structural weekly median cap from training-target scale only."""
-    weekly_std = float(scale_audit.get("actual_weekly_std", 0.0) or 0.0)
-    if not np.isfinite(weekly_std) or weekly_std < 0.0:
-        weekly_std = 0.0
-    return float(max(float(floor), float(std_multiple) * weekly_std))
+    scale_candidates = (
+        (scale_audit.get("actual_weekly_abs_median", 0.0), abs_median_multiple),
+        (scale_audit.get("actual_weekly_mean_abs", 0.0), mean_abs_multiple),
+        (scale_audit.get("actual_weekly_std", 0.0), std_multiple),
+    )
+    cap_candidates: list[float] = []
+    for base_value, multiple in scale_candidates:
+        base = float(base_value or 0.0)
+        multiplier = float(multiple or 0.0)
+        if np.isfinite(base) and np.isfinite(multiplier) and base > 0.0 and multiplier > 0.0:
+            cap_candidates.append(base * multiplier)
+
+    if not cap_candidates:
+        raise ValueError(
+            "Cannot resolve weekly median cap without positive finite weekly actual scale"
+        )
+    return float(min(cap_candidates))
 
 
 def magnitude_ratio(y_actual: np.ndarray, y_pred: np.ndarray) -> float:
@@ -705,11 +719,21 @@ def evaluate_quantile_predictions(
         bounded_ordered_pred_np = ordered_pred_np[:n_path]
         raw_weekly_pred = raw_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
         bounded_weekly_pred = bounded_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
+        weekly_abs = np.abs(weekly_actual)
+        actual_abs_median = float(np.median(weekly_abs)) if weekly_abs.size else 0.0
+        actual_mean_abs = float(np.mean(weekly_abs)) if weekly_abs.size else 0.0
+        cap_value = float(weekly_median_cap)
         metrics.update(cap_diagnostics)
         metrics["weekly_raw_magnitude_ratio"] = magnitude_ratio(weekly_actual, raw_weekly_pred)
         metrics["weekly_bounded_magnitude_ratio"] = magnitude_ratio(
             weekly_actual,
             bounded_weekly_pred,
+        )
+        metrics["cap_to_actual_abs_median_ratio"] = (
+            cap_value / actual_abs_median if actual_abs_median > 1e-12 else 0.0
+        )
+        metrics["cap_to_actual_mean_abs_ratio"] = (
+            cap_value / actual_mean_abs if actual_mean_abs > 1e-12 else 0.0
         )
         metrics["weekly_magnitude_ratio"] = metrics["weekly_bounded_magnitude_ratio"]
     return metrics

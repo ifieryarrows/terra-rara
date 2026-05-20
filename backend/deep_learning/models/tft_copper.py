@@ -70,6 +70,29 @@ def _bound_weekly_median_path(
     )
 
 
+def _weekly_saturation_loss(
+    raw_pred_weekly_median: torch.Tensor,
+    *,
+    weekly_median_cap: Optional[float],
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Penalize raw weekly q50 paths that rely on clipping at the median cap."""
+    if weekly_median_cap is None or float(weekly_median_cap) <= 0.0:
+        return raw_pred_weekly_median.sum() * 0.0
+
+    cap = torch.as_tensor(
+        float(weekly_median_cap),
+        device=raw_pred_weekly_median.device,
+        dtype=raw_pred_weekly_median.dtype,
+    )
+    raw_abs = raw_pred_weekly_median.abs()
+    near_threshold = 0.90 * cap
+    near_band = torch.clamp(cap - near_threshold, min=eps)
+    near_cap_excess = torch.relu(raw_abs - near_threshold) / near_band
+    above_cap_excess = torch.relu(raw_abs - cap) / cap.clamp_min(eps)
+    return 0.10 * near_cap_excess.pow(2).mean() + 2.0 * above_cap_excess.pow(2).mean()
+
+
 def _weekly_scale_losses(
     pred_weekly_median: torch.Tensor,
     actual_weekly: torch.Tensor,
@@ -235,6 +258,7 @@ try:
             lambda_magnitude: float = 0.55,
             lambda_naive: float = 0.40,
             lambda_bias: float = 0.25,
+            lambda_saturation: float = 0.25,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
@@ -247,6 +271,7 @@ try:
             self.lambda_magnitude = lambda_magnitude
             self.lambda_naive = lambda_naive
             self.lambda_bias = lambda_bias
+            self.lambda_saturation = lambda_saturation
             self.weekly_median_cap = weekly_median_cap
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
@@ -261,6 +286,7 @@ try:
                 "magnitude": 0.0,
                 "naive": 0.0,
                 "bias": 0.0,
+                "saturation": 0.0,
                 "directional": 0.0,
                 "total": 0.0,
             }
@@ -274,6 +300,7 @@ try:
             magnitude_loss: torch.Tensor,
             naive_relative_loss: torch.Tensor,
             bias_loss: torch.Tensor,
+            saturation_loss: torch.Tensor,
             directional_loss: torch.Tensor,
             total_loss: torch.Tensor,
         ) -> None:
@@ -283,6 +310,7 @@ try:
             self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
             self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
             self._component_sums["bias"] += float(bias_loss.detach().mean().cpu())
+            self._component_sums["saturation"] += float(saturation_loss.detach().mean().cpu())
             self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
             self._component_sums["total"] += float(total_loss.detach().mean().cpu())
             self._component_batches += 1
@@ -298,6 +326,7 @@ try:
                     "magnitude_loss_mean": 0.0,
                     "naive_loss_mean": 0.0,
                     "bias_loss_mean": 0.0,
+                    "saturation_loss_mean": 0.0,
                     "directional_loss_mean": 0.0,
                     "total_loss_mean": 0.0,
                     "dominant_component": None,
@@ -310,6 +339,7 @@ try:
                 "magnitude": self._component_sums["magnitude"],
                 "naive": self._component_sums["naive"],
                 "bias": self._component_sums["bias"],
+                "saturation": self._component_sums["saturation"],
                 "directional": self._component_sums["directional"],
             }
             return {
@@ -320,6 +350,7 @@ try:
                 "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
                 "naive_loss_mean": self._component_sums["naive"] / n_batches,
                 "bias_loss_mean": self._component_sums["bias"] / n_batches,
+                "saturation_loss_mean": self._component_sums["saturation"] / n_batches,
                 "directional_loss_mean": self._component_sums["directional"] / n_batches,
                 "total_loss_mean": self._component_sums["total"] / n_batches,
                 "dominant_component": max(components, key=components.get),
@@ -338,6 +369,14 @@ try:
 
             y_actual = y_actual.float()
             y_pred = y_pred.float()
+            raw_median_path = y_pred[..., self.median_idx]
+            raw_horizon = min(int(y_actual.shape[1]), int(raw_median_path.shape[1]))
+            raw_pred_weekly_median = raw_median_path[:, :raw_horizon].sum(dim=1)
+            saturation_loss = _weekly_saturation_loss(
+                raw_pred_weekly_median,
+                weekly_median_cap=self.weekly_median_cap,
+                eps=self.sharpe_eps,
+            )
 
             bounded_pred = _bound_weekly_median_path(
                 y_pred,
@@ -400,6 +439,7 @@ try:
             magnitude_loss = _to_scalar(magnitude_loss)
             naive_relative_loss = _to_scalar(naive_relative_loss)
             bias_loss = _to_scalar(bias_loss)
+            saturation_loss = _to_scalar(saturation_loss)
             directional_loss = _to_scalar(directional_loss)
 
             total_loss = (
@@ -409,6 +449,7 @@ try:
                 + self.lambda_magnitude * _to_scalar(magnitude_loss)
                 + self.lambda_naive * _to_scalar(naive_relative_loss)
                 + self.lambda_bias * _to_scalar(bias_loss)
+                + self.lambda_saturation * _to_scalar(saturation_loss)
                 + self.lambda_directional * _to_scalar(directional_loss)
             )
 
@@ -419,6 +460,7 @@ try:
                 magnitude_loss,
                 naive_relative_loss,
                 bias_loss,
+                saturation_loss,
                 directional_loss,
                 total_loss,
             )
@@ -463,11 +505,13 @@ def create_tft_model(
             lambda_naive=cfg.weekly_loss.lambda_naive,
             lambda_bias=cfg.weekly_loss.lambda_bias,
             lambda_directional=cfg.weekly_loss.lambda_directional,
+            lambda_saturation=cfg.weekly_loss.lambda_saturation,
             weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
         )
         logger.info(
             "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f median_cap=%s "
+            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f saturation=%.2f "
+            "median_cap=%s "
             "monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
@@ -476,6 +520,7 @@ def create_tft_model(
             cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_bias,
             cfg.weekly_loss.lambda_directional,
+            cfg.weekly_loss.lambda_saturation,
             (
                 f"{cfg.weekly_loss.weekly_median_cap:.6f}"
                 if cfg.weekly_loss.weekly_median_cap is not None
