@@ -1,7 +1,7 @@
 """
 Optuna-based Hyperparameter Optimization for TFT-ASRO.
 
-Searches across model architecture, training, and ASRO loss parameters
+Runs a controlled weekly-loss search around the stable TFT-ASRO baseline
 using Tree-structured Parzen Estimator (TPE) with early pruning.
 
 Usage:
@@ -251,7 +251,7 @@ def _enqueue_known_good_trial(study, base_cfg: TFTASROConfig) -> bool:
     Start a fresh Optuna study from the It.4 known-good parameter set.
 
     The static warm-start is intentionally a single enqueued trial; the
-    remaining trials still explore the configured search space freely.
+    remaining trials still explore the controlled weekly-loss search space.
     """
     if getattr(study, "trials", []):
         return False
@@ -264,51 +264,53 @@ def _enqueue_known_good_trial(study, base_cfg: TFTASROConfig) -> bool:
 def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     """Map an Optuna trial to a TFT-ASRO configuration."""
     model_cfg = TFTModelConfig(
-        max_encoder_length=trial.suggest_categorical("max_encoder_length", [40, 50, 60, 75, 90]),
+        max_encoder_length=50,
         max_prediction_length=base_cfg.model.max_prediction_length,
-        # Post-MRMR pruning (~60-80 features), smaller models generalise better.
-        # 24 is viable now that feature count dropped from 200+ to ~60-80.
-        hidden_size=trial.suggest_categorical("hidden_size", [24, 32, 48]),
-        attention_head_size=trial.suggest_categorical("attention_head_size", [1, 2]),
-        # Floor at 0.20: 313 samples with dropout<0.20 causes co-adaptation
-        # and memorization (REG-2026-001).  Cap at 0.35: dropout>0.35 with
-        # small hidden_size collapses the output range.
-        dropout=trial.suggest_categorical("dropout", [0.20, 0.25, 0.30, 0.35]),
-        # Paired reduction: with hidden=24-48 and ~60-80 features,
-        # 8-16 is the sweet spot for continuous variable processing.
-        hidden_continuous_size=trial.suggest_categorical("hidden_continuous_size", [8, 16]),
+        # Keep architecture and optimizer fixed; this search only tunes the
+        # weekly loss controls below.
+        hidden_size=48,
+        attention_head_size=2,
+        dropout=0.30,
+        hidden_continuous_size=16,
         quantiles=base_cfg.model.quantiles,
-        # Range [1e-4, 1e-3]: LR < 1e-4 produces near-zero pred_std (VR=0.14);
-        # LR > 1e-3 causes 1-epoch divergence. This band is the stable zone.
-        learning_rate=trial.suggest_float("learning_rate", 1e-4, 6e-4, log=True),
+        learning_rate=2e-4,
         reduce_on_plateau_patience=4,
-        gradient_clip_val=trial.suggest_categorical("gradient_clip_val", [0.5, 1.0, 1.5]),
-        weight_decay=trial.suggest_float("weight_decay", 1e-5, 5e-4, log=True),
+        gradient_clip_val=1.0,
+        weight_decay=5e-5,
     )
 
     asro_cfg = ASROConfig(
-        # Floor at 0.25: three Optuna runs consistently selected 0.30-0.35.
-        # Lower values let the model collapse to near-zero pred_std.
-        lambda_vol=trial.suggest_float("lambda_vol", 0.25, 0.40, step=0.05),
+        lambda_vol=0.30,
         # lambda_quantile is the explicit w_quantile weight (w_sharpe = 1 - w_q)
         # Capped at 0.40 to ensure Sharpe (directional) component always has
         # ≥60% weight.  Higher values caused the "perfect calibration, coin-flip
         # direction" pathology where the model optimised volatility at the
         # expense of directional signal.
-        lambda_quantile=trial.suggest_float("lambda_quantile", 0.25, 0.4, step=0.05),
-        # MADL weight: how much the directional loss contributes relative to Sharpe.
-        lambda_madl=trial.suggest_float("lambda_madl", 0.35, 0.60, step=0.05),
+        lambda_quantile=0.25,
+        lambda_madl=0.40,
         risk_free_rate=0.0,
     )
 
     weekly_loss_cfg = WeeklyLossConfig(
-        lambda_weekly_quantile=trial.suggest_float("lambda_weekly_quantile", 0.70, 0.80, step=0.05),
-        lambda_t1_quantile=trial.suggest_float("lambda_t1_quantile", 0.15, 0.25, step=0.05),
-        lambda_dispersion=trial.suggest_float("lambda_dispersion", 0.35, 0.50, step=0.05),
-        lambda_magnitude=trial.suggest_float("lambda_magnitude", 0.50, 0.58, step=0.01),
-        lambda_naive=trial.suggest_float("lambda_naive", 0.35, 0.45, step=0.05),
-        lambda_bias=trial.suggest_float("lambda_bias", 0.14, 0.19, step=0.01),
-        lambda_directional=trial.suggest_float("lambda_directional", 0.05, 0.07, step=0.01),
+        lambda_weekly_quantile=0.70,
+        lambda_t1_quantile=0.20,
+        lambda_dispersion=0.35,
+        lambda_magnitude=trial.suggest_categorical(
+            "lambda_magnitude",
+            [0.50, 0.55, 0.58],
+        ),
+        lambda_naive=trial.suggest_categorical(
+            "lambda_naive",
+            [0.35, 0.40, 0.45],
+        ),
+        lambda_bias=trial.suggest_categorical(
+            "lambda_bias",
+            [0.14, 0.17, 0.19],
+        ),
+        lambda_directional=trial.suggest_categorical(
+            "lambda_directional",
+            [0.05, 0.06, 0.07],
+        ),
     )
 
     training_cfg = TrainingConfig(
@@ -319,7 +321,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         early_stopping_patience=4,
         # 16 gives 19 batches/epoch, 32 gives ~10.  64 produced only 4
         # batches/epoch with noisy gradients — removed after REG-2026-001.
-        batch_size=trial.suggest_categorical("batch_size", [16, 32]),
+        batch_size=32,
         val_ratio=base_cfg.training.val_ratio,
         test_ratio=base_cfg.training.test_ratio,
         lookback_days=base_cfg.training.lookback_days,

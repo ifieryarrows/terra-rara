@@ -67,6 +67,13 @@ KNOWN_GOOD_CONFIG = {
     "batch_size": 32,
 }
 
+CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
+    "lambda_magnitude",
+    "lambda_naive",
+    "lambda_bias",
+    "lambda_directional",
+)
+
 DETERMINISTIC_WEEKLY_CONFIG = dict(KNOWN_GOOD_CONFIG)
 
 REQUIRED_PROMOTABLE_METRICS = (
@@ -723,13 +730,20 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "lambda_bias" in params:
             params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.14), 0.19)
 
+        controlled_params = dict(KNOWN_GOOD_CONFIG)
+        controlled_params.update({
+            key: params[key]
+            for key in CONTROLLED_WEEKLY_OPTUNA_PARAMS
+            if key in params
+        })
+
         logger.info(
-            "Loaded Optuna best params (trial #%d, weekly_objective=%.4f): %s",
+            "Loaded controlled Optuna weekly params (trial #%d, weekly_objective=%.4f): %s",
             data.get("best_trial", -1),
             data.get("best_value", float("nan")),
-            params,
+            controlled_params,
         )
-        return _overlay_training_config(cfg, params)
+        return _overlay_training_config(cfg, controlled_params)
 
     except Exception as exc:
         logger.warning("Could not apply Optuna results: %s", exc)

@@ -47,7 +47,7 @@ def test_apply_optuna_results_falls_back_on_structural_failure(tmp_path, monkeyp
     assert resolved.weekly_loss.lambda_bias == 0.19
 
 
-def test_apply_optuna_results_preserves_controlled_weekly_search_bounds(tmp_path):
+def test_apply_optuna_results_uses_controlled_baseline_with_weekly_search_params(tmp_path):
     model_root = tmp_path / "tft"
     model_root.mkdir()
     results_path = model_root / "optuna_results.json"
@@ -58,6 +58,10 @@ def test_apply_optuna_results_preserves_controlled_weekly_search_bounds(tmp_path
                 "best_trial": 2,
                 "best_value": 0.5,
                 "best_params": {
+                    "max_encoder_length": 90,
+                    "hidden_size": 24,
+                    "learning_rate": 3.2e-4,
+                    "batch_size": 16,
                     "lambda_magnitude": 0.50,
                     "lambda_naive": 0.35,
                     "lambda_bias": 0.14,
@@ -84,6 +88,10 @@ def test_apply_optuna_results_preserves_controlled_weekly_search_bounds(tmp_path
 
     resolved = trainer_module._apply_optuna_results(cfg)
 
+    assert resolved.model.max_encoder_length == 50
+    assert resolved.model.hidden_size == 48
+    assert resolved.model.learning_rate == 2e-4
+    assert resolved.training.batch_size == 32
     assert resolved.weekly_loss.lambda_magnitude == 0.50
     assert resolved.weekly_loss.lambda_naive == 0.35
     assert resolved.weekly_loss.lambda_bias == 0.14

@@ -34,9 +34,11 @@ class _RecordingTrial:
     number = 0
 
     def __init__(self):
+        self.categorical_choices = {}
         self.float_ranges = {}
 
     def suggest_categorical(self, name, choices):
+        self.categorical_choices[name] = list(choices)
         return choices[0]
 
     def suggest_float(self, name, low, high, step=None, log=False):
@@ -244,34 +246,36 @@ def test_hyperopt_objective_penalizes_interval_width_and_overcoverage():
     assert "weekly_overcoverage_width_explosion" in source
 
 
-def test_controlled_hyperopt_search_stays_near_midpoint_weights():
+def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     trial = _RecordingTrial()
 
-    create_trial_config(trial, get_tft_config())
+    cfg = create_trial_config(trial, get_tft_config())
 
-    assert trial.float_ranges["lambda_magnitude"] == {
-        "low": 0.50,
-        "high": 0.58,
-        "step": 0.01,
-        "log": False,
-    }
-    assert trial.float_ranges["lambda_naive"] == {
-        "low": 0.35,
-        "high": 0.45,
-        "step": 0.05,
-        "log": False,
-    }
-    assert trial.float_ranges["lambda_bias"] == {
-        "low": 0.14,
-        "high": 0.19,
-        "step": 0.01,
-        "log": False,
-    }
-    assert trial.float_ranges["lambda_directional"] == {
-        "low": 0.05,
-        "high": 0.07,
-        "step": 0.01,
-        "log": False,
+    assert cfg.model.max_encoder_length == 50
+    assert cfg.model.hidden_size == 48
+    assert cfg.model.attention_head_size == 2
+    assert cfg.model.dropout == 0.30
+    assert cfg.model.hidden_continuous_size == 16
+    assert cfg.model.learning_rate == 2e-4
+    assert cfg.model.gradient_clip_val == 1.0
+    assert cfg.model.weight_decay == 5e-5
+
+    assert cfg.asro.lambda_vol == 0.30
+    assert cfg.asro.lambda_quantile == 0.25
+    assert cfg.asro.lambda_madl == 0.40
+
+    assert cfg.training.batch_size == 32
+
+    assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
+    assert cfg.weekly_loss.lambda_t1_quantile == 0.20
+    assert cfg.weekly_loss.lambda_dispersion == 0.35
+
+    assert trial.float_ranges == {}
+    assert trial.categorical_choices == {
+        "lambda_magnitude": [0.50, 0.55, 0.58],
+        "lambda_naive": [0.35, 0.40, 0.45],
+        "lambda_bias": [0.14, 0.17, 0.19],
+        "lambda_directional": [0.05, 0.06, 0.07],
     }
 
 

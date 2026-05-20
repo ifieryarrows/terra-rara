@@ -850,3 +850,55 @@ reproduced: 21 known vulnerabilities in 4 packages
 py -m pip_audit -r backend/requirements.txt --ignore-vuln <21 current no-fix IDs>
 No known vulnerabilities found, 21 ignored
 ```
+
+## 2026-05-20 Controlled Hyperopt Search-Space Clamp
+
+The next TFT-ASRO training run persisted a `status: "structural_failure"` artifact, but the `best_params` showed that the supposed controlled hyperopt was still moving architecture, optimizer, ASRO, and batch-size parameters:
+
+```text
+max_encoder_length: 90
+hidden_size: 24
+learning_rate: 0.00032342682681000753
+gradient_clip_val: 1.5
+batch_size: 16
+lambda_vol: 0.4
+lambda_madl: 0.6
+```
+
+The structural summary confirmed that this run should not be promoted:
+
+```text
+completed_trials: 10
+pruned_trials: 5
+weekly_magnitude_le_3_0: 0
+weekly_pi80_coverage_ge_0_15: 0
+weekly_mae_vs_naive_zero_le_3_0: 0
+best_trial avg_weekly_magnitude_ratio: 5.9104
+best_trial avg_weekly_pi80_coverage: 0.0558
+best_trial avg_weekly_mae_vs_naive_zero: 4.2084
+best_trial_preflight_passed: false
+```
+
+Diagnosis: the run was not evidence that a controlled 15-trial search failed. It was evidence that `create_trial_config()` still exposed a broad search space. Public quantile crossing stayed solved, but every completed trial still failed weekly magnitude, PI80 coverage, and naive-baseline checks.
+
+Change applied:
+
+- `backend/deep_learning/training/hyperopt.py` now fixes the controlled baseline at `max_encoder_length=50`, `hidden_size=48`, `dropout=0.30`, `learning_rate=2e-4`, `gradient_clip_val=1.0`, `weight_decay=5e-5`, `batch_size=32`, and the known-good ASRO weights.
+- Hyperopt now searches only four weekly loss categorical controls: `lambda_magnitude in {0.50, 0.55, 0.58}`, `lambda_naive in {0.35, 0.40, 0.45}`, `lambda_bias in {0.14, 0.17, 0.19}`, and `lambda_directional in {0.05, 0.06, 0.07}`.
+- `backend/deep_learning/training/trainer.py` now applies successful Optuna artifacts through the same controlled baseline and only overlays those four weekly loss controls, so a future artifact cannot reintroduce broad architecture or optimizer drift during final training.
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_trainer_optuna_overlay.py -q
+14 passed
+
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hyperopt_diagnostics.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py -q
+30 passed
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+430 passed, 9 skipped
+```
