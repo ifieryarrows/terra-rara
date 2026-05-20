@@ -174,6 +174,49 @@ def test_build_result_payload_records_prune_reasons_and_fold_diagnostics():
     ]
 
 
+def test_build_result_payload_persists_fold_scale_diagnostics():
+    scale_diagnostic = {
+        "trial": 0,
+        "fold": 1,
+        "train_samples": 120,
+        "val_samples": 24,
+        "actual_weekly_std": 0.021,
+        "actual_weekly_mean_abs": 0.018,
+        "actual_weekly_abs_median": 0.015,
+        "pred_weekly_mean_abs": 0.020,
+        "pred_weekly_abs_median": 0.017,
+        "weekly_magnitude_ratio": 1.1333,
+        "weekly_mae_vs_naive_zero": 0.9000,
+        "weekly_pred_min": -0.035,
+        "weekly_pred_max": 0.041,
+        "weekly_actual_min": -0.030,
+        "weekly_actual_max": 0.038,
+    }
+
+    result = _build_result_payload(
+        _study(
+            _trial(
+                0,
+                "COMPLETE",
+                0.42,
+                {"lambda_magnitude": 0.55},
+                {
+                    "avg_quantile_crossing_rate": 0.0,
+                    "avg_weekly_magnitude_ratio": 1.1333,
+                    "avg_weekly_pi80_coverage": 0.80,
+                    "avg_weekly_pi80_width_ratio": 1.0,
+                    "avg_weekly_mae_vs_naive_zero": 0.9,
+                    "avg_variance_ratio": 1.1,
+                    "avg_directional_accuracy": 0.55,
+                    "fold_scale_diagnostics": [scale_diagnostic],
+                },
+            )
+        )
+    )
+
+    assert result["fold_scale_diagnostics"] == [scale_diagnostic]
+
+
 def test_startup_protection_requires_min_finite_completed_trials():
     protected_study = _study(
         _trial(0, "COMPLETE", 0.5),

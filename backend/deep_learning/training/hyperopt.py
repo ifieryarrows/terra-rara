@@ -126,6 +126,57 @@ def _weekly_pinball_loss(
     return float(np.maximum(q * err, (q - 1.0) * err).mean())
 
 
+def _rounded_finite(value: float, digits: int = 6) -> float:
+    value = float(value)
+    if not np.isfinite(value):
+        return 0.0
+    return round(value, digits)
+
+
+def _fold_scale_diagnostic(
+    *,
+    trial_number: int,
+    fold_idx: int,
+    train_samples: int,
+    val_samples: int,
+    weekly_actual: np.ndarray,
+    weekly_pred: np.ndarray,
+    weekly_metrics: dict[str, float],
+) -> dict:
+    actual_abs = np.abs(weekly_actual)
+    pred_abs = np.abs(weekly_pred)
+    actual_std = np.std(weekly_actual) if weekly_actual.size else 0.0
+    actual_mean_abs = np.mean(actual_abs) if actual_abs.size else 0.0
+    actual_abs_median = np.median(actual_abs) if actual_abs.size else 0.0
+    pred_mean_abs = np.mean(pred_abs) if pred_abs.size else 0.0
+    pred_abs_median = np.median(pred_abs) if pred_abs.size else 0.0
+    actual_min = np.min(weekly_actual) if weekly_actual.size else 0.0
+    actual_max = np.max(weekly_actual) if weekly_actual.size else 0.0
+    pred_min = np.min(weekly_pred) if weekly_pred.size else 0.0
+    pred_max = np.max(weekly_pred) if weekly_pred.size else 0.0
+    return {
+        "trial": trial_number,
+        "fold": fold_idx + 1,
+        "train_samples": int(train_samples),
+        "val_samples": int(val_samples),
+        "actual_weekly_std": _rounded_finite(actual_std),
+        "actual_weekly_mean_abs": _rounded_finite(actual_mean_abs),
+        "actual_weekly_abs_median": _rounded_finite(actual_abs_median),
+        "pred_weekly_mean_abs": _rounded_finite(pred_mean_abs),
+        "pred_weekly_abs_median": _rounded_finite(pred_abs_median),
+        "weekly_magnitude_ratio": _rounded_finite(
+            weekly_metrics.get("weekly_magnitude_ratio", 0.0)
+        ),
+        "weekly_mae_vs_naive_zero": _rounded_finite(
+            weekly_metrics.get("weekly_mae_vs_naive_zero", 0.0)
+        ),
+        "weekly_pred_min": _rounded_finite(pred_min),
+        "weekly_pred_max": _rounded_finite(pred_max),
+        "weekly_actual_min": _rounded_finite(actual_min),
+        "weekly_actual_max": _rounded_finite(actual_max),
+    }
+
+
 def _is_startup_protected(trial) -> bool:
     """Protect early trials until Optuna has enough finite completed evidence."""
     study = getattr(trial, "study", None)
@@ -193,11 +244,22 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
     return prune_reasons, fold_diagnostics
 
 
+def _build_fold_scale_diagnostics(study) -> list[dict]:
+    diagnostics: list[dict] = []
+    for trial in study.trials:
+        user_attrs = getattr(trial, "user_attrs", {}) or {}
+        for diagnostic in user_attrs.get("fold_scale_diagnostics", []) or []:
+            if isinstance(diagnostic, dict):
+                diagnostics.append(diagnostic)
+    return diagnostics
+
+
 def _build_result_payload(study) -> dict:
     """Build the persisted hyperopt artifact without assuming a best trial exists."""
     trial_state_counts = _trial_state_counts(study)
     best = _best_finite_completed_trial(study)
     prune_reasons, fold_diagnostics = _build_prune_diagnostics(study)
+    fold_scale_diagnostics = _build_fold_scale_diagnostics(study)
     structural_report = compute_structural_invalidity_report(fold_diagnostics)
     distribution_summary = compute_trial_distribution_summary(fold_diagnostics)
 
@@ -211,6 +273,7 @@ def _build_result_payload(study) -> dict:
             "trial_state_counts": trial_state_counts,
             "prune_reasons": prune_reasons,
             "fold_diagnostics": fold_diagnostics,
+            "fold_scale_diagnostics": fold_scale_diagnostics,
             "structural_invalidity_report": structural_report,
             "trial_distribution_summary": distribution_summary,
             "best_trial_preflight": None,
@@ -240,6 +303,7 @@ def _build_result_payload(study) -> dict:
         "trial_state_counts": trial_state_counts,
         "prune_reasons": prune_reasons,
         "fold_diagnostics": fold_diagnostics,
+        "fold_scale_diagnostics": fold_scale_diagnostics,
         "structural_invalidity_report": structural_report,
         "trial_distribution_summary": distribution_summary,
         "best_trial_preflight": preflight,
@@ -378,11 +442,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     from deep_learning.models.tft_copper import create_tft_model
     from deep_learning.training.callbacks import CurriculumLossScheduler
     from deep_learning.training.metrics import (
-        compute_weekly_metrics,
+        cumulative_horizon,
+        evaluate_quantile_predictions,
         monotonic_quantiles_np,
-        quantile_crossing_rate,
-        quantile_median_sort_gap,
-        select_prediction_horizon,
     )
 
     trial_cfg = create_trial_config(trial, base_cfg)
@@ -419,6 +481,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_weekly_sorted_crossing_list: list[float] = []
     fold_weekly_interval_score_80_list: list[float] = []
     fold_weekly_interval_score_96_list: list[float] = []
+    fold_scale_diagnostics: list[dict] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
         # ---- setup ----
@@ -486,7 +549,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_sharpe = 0.0
         fold_vr = 0.0
         fold_crossing_rate = 0.0
+        fold_raw_crossing_rate = 0.0
         fold_median_gap = 0.0
+        fold_raw_median_gap = 0.0
         fold_weekly_objective = fold_val_loss
         fold_weekly_mr = 1.0
         fold_weekly_pi80_coverage = 0.0
@@ -515,13 +580,6 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                     f"Prediction horizon too short: {pred_np.shape[1]} < {trial_cfg.forecast.primary_horizon_days}"
                 )
             ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
-            raw_pred_t1 = pred_np[:, 0, :]
-            pred_t1 = ordered_pred_np[:, 0, :]
-            y_pred = pred_t1[:, median_idx]
-            fold_crossing_rate = quantile_crossing_rate(pred_t1)
-            fold_raw_crossing_rate = quantile_crossing_rate(raw_pred_t1)
-            _, fold_median_gap = quantile_median_sort_gap(pred_t1, median_idx)
-            _, fold_raw_median_gap = quantile_median_sort_gap(raw_pred_t1, median_idx)
 
             y_actual_parts = []
             for batch in fold_val_dl:
@@ -529,54 +587,85 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                     batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
                 )
             y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
-            y_actual = select_prediction_horizon(y_actual_path, horizon_idx=0)
+            n_path = min(len(y_actual_path), len(pred_np))
+            metrics = evaluate_quantile_predictions(
+                y_actual_path[:n_path],
+                pred_np[:n_path],
+                quantiles=trial_cfg.model.quantiles,
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
 
-            fn = min(len(y_actual), len(y_pred))
-            pred_std = float(y_pred[:fn].std())
-            actual_std = float(y_actual[:fn].std())
-            fold_vr = pred_std / actual_std if actual_std > 1e-9 else 0.0
+            fold_vr = float(metrics.get("variance_ratio", 0.0))
 
             if fold_vr < 0.5:
                 fold_vr_penalty = 2.0 * (1.0 - fold_vr / 0.5)
             elif fold_vr > 1.5:
                 fold_vr_penalty = 0.5 * (fold_vr - 1.5)
 
-            pred_sign = np.sign(y_pred[:fn])
-            actual_sign = np.sign(y_actual[:fn])
-            fold_da = float(np.mean(pred_sign == actual_sign))
+            fold_da = float(metrics.get("directional_accuracy", 0.5))
+            fold_sharpe = float(metrics.get("sharpe_ratio", 0.0))
+            fold_crossing_rate = float(metrics.get("quantile_crossing_rate", 0.0))
+            fold_raw_crossing_rate = float(metrics.get("raw_quantile_crossing_rate", 0.0))
+            fold_median_gap = float(metrics.get("median_sort_gap_max", 0.0))
+            fold_raw_median_gap = float(metrics.get("raw_median_sort_gap_max", 0.0))
 
-            strategy_returns = np.sign(y_pred[:fn]) * y_actual[:fn]
-            sr_mean = float(strategy_returns.mean())
-            sr_std = float(strategy_returns.std()) + 1e-9
-            fold_sharpe = sr_mean / sr_std
-
-            n_path = min(len(y_actual_path), len(pred_np))
-            weekly = compute_weekly_metrics(
-                y_actual_path[:n_path],
-                pred_np[:n_path],
-                quantiles=trial_cfg.model.quantiles,
-                horizon=trial_cfg.forecast.primary_horizon_days,
-            )
             weekly_pinball = _weekly_pinball_loss(
                 y_actual_path[:n_path],
                 ordered_pred_np[:n_path],
                 tuple(trial_cfg.model.quantiles),
                 horizon=trial_cfg.forecast.primary_horizon_days,
             )
-            fold_weekly_mr = float(weekly.get("weekly_magnitude_ratio", 1.0))
-            fold_weekly_pi80_coverage = float(weekly.get("weekly_pi80_coverage", 0.0))
-            fold_weekly_pred_positive_rate = float(weekly.get("weekly_pred_positive_rate", 0.5))
-            fold_weekly_actual_positive_rate = float(weekly.get("weekly_actual_positive_rate", 0.5))
-            fold_weekly_mae_vs_naive_zero = float(weekly.get("weekly_mae_vs_naive_zero", 1.0))
-            fold_weekly_pi80_width_ratio = float(weekly.get("weekly_pi80_width_ratio", 1.0))
-            fold_weekly_pi96_width_ratio = float(weekly.get("weekly_pi96_width_ratio", 1.0))
-            fold_weekly_raw_crossing = float(weekly.get("weekly_raw_quantile_crossing_rate", 0.0))
+            fold_weekly_mr = float(metrics.get("weekly_magnitude_ratio", 1.0))
+            fold_weekly_pi80_coverage = float(metrics.get("weekly_pi80_coverage", 0.0))
+            fold_weekly_pred_positive_rate = float(metrics.get("weekly_pred_positive_rate", 0.5))
+            fold_weekly_actual_positive_rate = float(metrics.get("weekly_actual_positive_rate", 0.5))
+            fold_weekly_mae_vs_naive_zero = float(metrics.get("weekly_mae_vs_naive_zero", 1.0))
+            fold_weekly_pi80_width_ratio = float(metrics.get("weekly_pi80_width_ratio", 1.0))
+            fold_weekly_pi96_width_ratio = float(metrics.get("weekly_pi96_width_ratio", 1.0))
+            fold_weekly_raw_crossing = float(metrics.get("weekly_raw_quantile_crossing_rate", 0.0))
             fold_weekly_sorted_crossing = float(
-                weekly.get("weekly_ordered_quantile_crossing_rate", 0.0)
+                metrics.get("weekly_ordered_quantile_crossing_rate", 0.0)
             )
-            fold_weekly_interval_score_80 = float(weekly.get("weekly_interval_score_80", 0.0))
-            fold_weekly_interval_score_96 = float(weekly.get("weekly_interval_score_96", 0.0))
-            weekly_actual_std = float(weekly.get("weekly_actual_std", 0.0))
+            fold_weekly_interval_score_80 = float(metrics.get("weekly_interval_score_80", 0.0))
+            fold_weekly_interval_score_96 = float(metrics.get("weekly_interval_score_96", 0.0))
+            weekly_actual_std = float(metrics.get("weekly_actual_std", 0.0))
+            weekly_actual = cumulative_horizon(
+                y_actual_path[:n_path],
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
+            weekly_pred = ordered_pred_np[
+                :n_path,
+                :trial_cfg.forecast.primary_horizon_days,
+                median_idx,
+            ].sum(axis=1)
+            scale_diagnostic = _fold_scale_diagnostic(
+                trial_number=trial.number,
+                fold_idx=fold_idx,
+                train_samples=len(fold_train_ds),
+                val_samples=len(fold_val_ds),
+                weekly_actual=weekly_actual,
+                weekly_pred=weekly_pred,
+                weekly_metrics=metrics,
+            )
+            fold_scale_diagnostics.append(scale_diagnostic)
+            trial.set_user_attr("fold_scale_diagnostics", fold_scale_diagnostics)
+            logger.info(
+                "Trial %d fold %d scale: train=%d val=%d actual_abs_mean=%.6f "
+                "pred_abs_mean=%.6f mr=%.6f mae_vs_naive=%.6f pred_range=[%.6f, %.6f] "
+                "actual_range=[%.6f, %.6f]",
+                trial.number,
+                fold_idx + 1,
+                scale_diagnostic["train_samples"],
+                scale_diagnostic["val_samples"],
+                scale_diagnostic["actual_weekly_mean_abs"],
+                scale_diagnostic["pred_weekly_mean_abs"],
+                scale_diagnostic["weekly_magnitude_ratio"],
+                scale_diagnostic["weekly_mae_vs_naive_zero"],
+                scale_diagnostic["weekly_pred_min"],
+                scale_diagnostic["weekly_pred_max"],
+                scale_diagnostic["weekly_actual_min"],
+                scale_diagnostic["weekly_actual_max"],
+            )
             interval_score_penalty = fold_weekly_interval_score_80 / (weekly_actual_std + 1e-8)
             interval_score_96_penalty = fold_weekly_interval_score_96 / (weekly_actual_std + 1e-8)
             coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)
@@ -587,7 +676,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)
             fold_weekly_objective = (
                 0.35 * weekly_pinball
-                + 0.15 * (1.0 - float(weekly.get("weekly_directional_accuracy", 0.5)))
+                + 0.15 * (1.0 - float(metrics.get("weekly_directional_accuracy", 0.5)))
                 + 0.50 * abs(np.log(fold_weekly_mr + 1e-8))
                 + 0.20 * coverage_penalty
                 + 0.35 * positive_rate_penalty

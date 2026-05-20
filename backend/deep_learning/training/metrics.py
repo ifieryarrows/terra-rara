@@ -451,3 +451,66 @@ def compute_weekly_metrics(
     )
     weekly_metrics["weekly_sample_count"] = int(len(weekly_actual))
     return weekly_metrics
+
+
+def evaluate_quantile_predictions(
+    y_actual_path: np.ndarray,
+    y_pred_quantiles_path: np.ndarray,
+    *,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    horizon: int = 5,
+) -> dict[str, float]:
+    """
+    Evaluate multi-horizon quantile predictions through the production metric path.
+
+    Trainer and hyperopt both consume this helper so T+1 and weekly promotion
+    signals are calculated with the same monotonic transform, raw-crossing
+    diagnostics, and weekly cumulative target semantics.
+    """
+    quantiles = tuple(quantiles)
+    pred_np = np.asarray(y_pred_quantiles_path, dtype=np.float64)
+    if pred_np.ndim != 3:
+        raise ValueError(f"Expected quantile prediction tensor [n,horizon,q], got {pred_np.shape}")
+    if pred_np.shape[1] < horizon:
+        raise ValueError(f"Prediction horizon too short: {pred_np.shape[1]} < {horizon}")
+    if pred_np.shape[2] != len(quantiles):
+        raise ValueError(
+            f"Quantile dim mismatch: prediction has {pred_np.shape[2]}, config has {len(quantiles)}"
+        )
+
+    median_idx = len(quantiles) // 2
+    q10_idx = quantiles.index(0.10) if 0.10 in quantiles else 1
+    q90_idx = quantiles.index(0.90) if 0.90 in quantiles else len(quantiles) - 2
+    q02_idx = quantiles.index(0.02) if 0.02 in quantiles else 0
+    q98_idx = quantiles.index(0.98) if 0.98 in quantiles else len(quantiles) - 1
+
+    y_actual_path = np.asarray(y_actual_path, dtype=np.float64)
+    ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+    raw_pred_t1 = pred_np[:, 0, :]
+    pred_t1 = ordered_pred_np[:, 0, :]
+    y_actual_t1 = select_prediction_horizon(y_actual_path, horizon_idx=0)
+
+    n = min(len(y_actual_t1), len(pred_t1))
+    metrics = compute_all_metrics(
+        y_actual_t1[:n],
+        pred_t1[:n, median_idx],
+        y_pred_q10=pred_t1[:n, q10_idx],
+        y_pred_q90=pred_t1[:n, q90_idx],
+        y_pred_q02=pred_t1[:n, q02_idx],
+        y_pred_q98=pred_t1[:n, q98_idx],
+        y_pred_quantiles=pred_t1[:n],
+    )
+    raw_gap_mean, raw_gap_max = quantile_median_sort_gap(raw_pred_t1[:n], median_idx)
+    metrics["raw_quantile_crossing_rate"] = quantile_crossing_rate(raw_pred_t1[:n])
+    metrics["raw_median_sort_gap_mean"] = raw_gap_mean
+    metrics["raw_median_sort_gap_max"] = raw_gap_max
+
+    n_path = min(len(y_actual_path), len(pred_np))
+    weekly_metrics = compute_weekly_metrics(
+        y_actual_path[:n_path],
+        pred_np[:n_path],
+        quantiles=quantiles,
+        horizon=horizon,
+    )
+    metrics.update(weekly_metrics)
+    return metrics

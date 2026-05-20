@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from deep_learning.config import get_tft_config
+from deep_learning.training import metrics as metrics_module
 from deep_learning.training.trainer import (
     _compute_test_metrics_from_quantiles,
     _log_weekly_alignment_sample,
@@ -54,6 +55,39 @@ def test_compute_test_metrics_from_quantiles_emits_t1_and_weekly_metrics():
     assert metrics["weekly_directional_accuracy"] == 1.0
     assert metrics["weekly_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_sample_count"] == len(actual)
+
+
+def test_compute_test_metrics_from_quantiles_uses_shared_evaluator(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    cfg = get_tft_config()
+    actual, pred = _prediction_fixture()
+    calls = []
+    real_evaluator = metrics_module.evaluate_quantile_predictions
+
+    def spy_evaluator(y_actual_path, pred_np, *, quantiles, horizon):
+        calls.append((y_actual_path.shape, pred_np.shape, tuple(quantiles), horizon))
+        return real_evaluator(
+            y_actual_path,
+            pred_np,
+            quantiles=quantiles,
+            horizon=horizon,
+        )
+
+    monkeypatch.setattr(metrics_module, "evaluate_quantile_predictions", spy_evaluator)
+
+    metrics = _compute_test_metrics_from_quantiles(actual, pred, cfg)
+
+    assert calls == [
+        (
+            actual.shape,
+            pred.shape,
+            tuple(cfg.model.quantiles),
+            cfg.forecast.primary_horizon_days,
+        )
+    ]
+    assert "weekly_magnitude_ratio" in metrics
+    assert "weekly_mae_vs_naive_zero" in metrics
+    assert "WEEKLY ALIGNMENT SAMPLE:" in caplog.text
 
 
 def test_log_weekly_alignment_sample_emits_first_rows(caplog):

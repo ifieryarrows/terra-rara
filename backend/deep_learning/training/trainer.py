@@ -133,52 +133,18 @@ def _compute_test_metrics_from_quantiles(
     pred_np: np.ndarray,
     cfg: TFTASROConfig,
 ) -> dict[str, float]:
-    from deep_learning.training.metrics import (
-        compute_all_metrics,
-        compute_weekly_metrics,
-        monotonic_quantiles_np,
-        quantile_crossing_rate,
-        quantile_median_sort_gap,
-        select_prediction_horizon,
-    )
+    from deep_learning.training.metrics import evaluate_quantile_predictions
 
     pred_np = np.asarray(pred_np)
     _validate_quantile_prediction_shape(pred_np, cfg)
 
-    median_idx = len(cfg.model.quantiles) // 2
-    ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
-    raw_pred_t1 = pred_np[:, 0, :]
-    pred_t1 = ordered_pred_np[:, 0, :]
-    y_pred_median = pred_t1[:, median_idx]
-    y_pred_q10 = pred_t1[:, 1]
-    y_pred_q90 = pred_t1[:, -2]
-    y_pred_q02 = pred_t1[:, 0]
-    y_pred_q98 = pred_t1[:, -1]
-
-    y_actual = select_prediction_horizon(y_actual_path, horizon_idx=0)
-    n = min(len(y_actual), len(y_pred_median))
-    test_metrics = compute_all_metrics(
-        y_actual[:n],
-        y_pred_median[:n],
-        y_pred_q10=y_pred_q10[:n],
-        y_pred_q90=y_pred_q90[:n],
-        y_pred_q02=y_pred_q02[:n],
-        y_pred_q98=y_pred_q98[:n],
-        y_pred_quantiles=pred_t1[:n],
-    )
-    raw_gap_mean, raw_gap_max = quantile_median_sort_gap(raw_pred_t1[:n], median_idx)
-    test_metrics["raw_quantile_crossing_rate"] = quantile_crossing_rate(raw_pred_t1[:n])
-    test_metrics["raw_median_sort_gap_mean"] = raw_gap_mean
-    test_metrics["raw_median_sort_gap_max"] = raw_gap_max
-
     n_path = min(len(y_actual_path), len(pred_np))
-    weekly_metrics = compute_weekly_metrics(
+    test_metrics = evaluate_quantile_predictions(
         y_actual_path[:n_path],
         pred_np[:n_path],
         quantiles=cfg.model.quantiles,
         horizon=cfg.forecast.primary_horizon_days,
     )
-    test_metrics.update(weekly_metrics)
     _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
     return test_metrics

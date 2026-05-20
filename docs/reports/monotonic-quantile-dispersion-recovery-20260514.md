@@ -824,6 +824,53 @@ py -m pytest backend/tests -q -m "not online"
 430 passed, 9 skipped
 ```
 
+## 2026-05-20 Controlled Hyperopt CV Evaluation Alignment
+
+The follow-up controlled run confirmed that the search-space clamp worked: `best_params` now contained only the four intended weekly-loss controls:
+
+```text
+lambda_magnitude: 0.58
+lambda_naive: 0.35
+lambda_bias: 0.14
+lambda_directional: 0.05
+```
+
+The result still ended as a real structural failure:
+
+```text
+completed_trials: 10
+pruned_trials: 5
+public_crossing_le_0_001: 10
+weekly_magnitude_le_3_0: 0
+weekly_pi80_coverage_ge_0_15: 0
+weekly_mae_vs_naive_zero_le_3_0: 0
+variance_ratio_le_3_0: 0
+trials_passing_all_checks: 0
+avg_weekly_magnitude_ratio min/median/max: 12.9442 / 21.3726 / 42.6051
+```
+
+Diagnosis: the remaining blocker is no longer broad hyperopt drift or quantile ordering. Public monotonic output is stable, and the controlled search only moved the intended loss weights. Because every completed fold still failed weekly magnitude, PI80 coverage, naive-zero, and variance checks, the next step is to prove that hyperopt CV and final trainer evaluation are measuring the same prediction/target contract before changing architecture or widening search.
+
+Change applied:
+
+- `backend/deep_learning/training/metrics.py` now exposes `evaluate_quantile_predictions()` as the shared T+1 plus weekly quantile metric path.
+- `backend/deep_learning/training/trainer.py` now calls the shared helper from `_compute_test_metrics_from_quantiles()` while keeping promotable-metric enforcement and `WEEKLY ALIGNMENT SAMPLE` logging.
+- `backend/deep_learning/training/hyperopt.py` now uses the same helper for fold metrics and persists `fold_scale_diagnostics` in `optuna_results.json`.
+- `fold_scale_diagnostics` records fold-level train/validation sample counts, weekly actual/predicted absolute scale, magnitude ratio, naive-zero ratio, and weekly prediction/actual ranges so the next failed CV run can be compared directly with deterministic final-trainer metrics.
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py backend/tests/deep_learning/test_hyperopt.py -q
+32 passed
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+434 passed, 9 skipped
+```
+
 ## 2026-05-20 Backend Pip-Audit No-Fix Advisory Policy
 
 The `Tests` workflow backend security audit started failing in the `Audit backend dependencies` step:

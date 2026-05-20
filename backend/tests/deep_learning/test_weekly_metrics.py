@@ -1,11 +1,16 @@
 import numpy as np
 
 from deep_learning.training.metrics import (
+    compute_all_metrics,
     compute_weekly_metrics,
     cumulative_horizon,
     cumulative_quantiles,
+    evaluate_quantile_predictions,
     interval_score,
     monotonic_quantiles_np,
+    quantile_crossing_rate,
+    quantile_median_sort_gap,
+    select_prediction_horizon,
 )
 
 
@@ -39,6 +44,74 @@ def test_compute_weekly_metrics_returns_sample_count():
     assert "weekly_actual_mean" in metrics
     assert "weekly_pred_median" in metrics
     assert "weekly_actual_median" in metrics
+
+
+def test_evaluate_quantile_predictions_matches_existing_metric_paths():
+    actual = np.array(
+        [
+            [0.010, 0.005, -0.002, 0.003, 0.004],
+            [-0.012, -0.004, 0.001, -0.003, -0.002],
+            [0.008, 0.003, 0.001, 0.002, 0.004],
+            [-0.006, -0.003, -0.002, -0.001, -0.002],
+        ],
+        dtype=float,
+    )
+    pred = np.zeros((4, 5, 7), dtype=float)
+    offsets = np.array([-0.020, -0.010, -0.005, 0.000, 0.005, 0.010, 0.020])
+    for q_idx, offset in enumerate(offsets):
+        pred[:, :, q_idx] = actual + offset
+
+    metrics = evaluate_quantile_predictions(actual, pred, horizon=5)
+
+    ordered = monotonic_quantiles_np(pred, median_idx=3)
+    y_actual_t1 = select_prediction_horizon(actual, horizon_idx=0)
+    expected_t1 = compute_all_metrics(
+        y_actual_t1,
+        ordered[:, 0, 3],
+        y_pred_q10=ordered[:, 0, 1],
+        y_pred_q90=ordered[:, 0, 5],
+        y_pred_q02=ordered[:, 0, 0],
+        y_pred_q98=ordered[:, 0, 6],
+        y_pred_quantiles=ordered[:, 0, :],
+    )
+    raw_gap_mean, raw_gap_max = quantile_median_sort_gap(pred[:, 0, :], 3)
+    expected_weekly = compute_weekly_metrics(actual, pred, horizon=5)
+
+    assert np.isclose(metrics["mae"], expected_t1["mae"])
+    assert np.isclose(metrics["variance_ratio"], expected_t1["variance_ratio"])
+    assert metrics["quantile_crossing_rate"] == expected_t1["quantile_crossing_rate"]
+    assert metrics["raw_quantile_crossing_rate"] == quantile_crossing_rate(pred[:, 0, :])
+    assert metrics["raw_median_sort_gap_mean"] == raw_gap_mean
+    assert metrics["raw_median_sort_gap_max"] == raw_gap_max
+    assert np.isclose(
+        metrics["weekly_magnitude_ratio"],
+        expected_weekly["weekly_magnitude_ratio"],
+    )
+    assert np.isclose(
+        metrics["weekly_mae_vs_naive_zero"],
+        expected_weekly["weekly_mae_vs_naive_zero"],
+    )
+
+
+def test_evaluate_quantile_predictions_keeps_raw_and_sorted_crossing_separate():
+    actual = np.tile(np.array([[0.01, 0.0, 0.0, 0.0, 0.0]]), (4, 1))
+    pred = np.zeros((4, 5, 7), dtype=float)
+    pred[..., 3] = actual
+    pred[..., 1] = actual + 0.02
+    pred[..., 5] = actual - 0.02
+    pred[..., 0] = actual - 0.03
+    pred[..., 2] = actual - 0.01
+    pred[..., 4] = actual + 0.01
+    pred[..., 6] = actual + 0.03
+
+    metrics = evaluate_quantile_predictions(actual, pred, horizon=5)
+
+    assert metrics["quantile_crossing_rate"] == 0.0
+    assert metrics["sorted_quantile_crossing_rate"] == 0.0
+    assert metrics["raw_quantile_crossing_rate"] > 0.0
+    assert metrics["weekly_quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
 
 
 def test_weekly_metrics_report_flipped_direction_diagnostics():
