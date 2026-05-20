@@ -99,6 +99,35 @@ def test_build_result_payload_selects_best_finite_completed_trial():
     assert result["trial_state_counts"] == {"complete": 3}
 
 
+def test_build_result_payload_marks_structural_failure_as_artifact_status():
+    result = _build_result_payload(
+        _study(
+            _trial(
+                3,
+                "COMPLETE",
+                21.361586,
+                {"lambda_magnitude": 0.54},
+                {
+                    "avg_quantile_crossing_rate": 0.0,
+                    "avg_weekly_magnitude_ratio": 21.0704,
+                    "avg_weekly_pi80_coverage": 0.0127,
+                    "avg_weekly_pi80_width_ratio": 0.3531,
+                    "avg_weekly_mae_vs_naive_zero": 16.6480,
+                    "avg_variance_ratio": 2.5120,
+                    "avg_directional_accuracy": 0.5209,
+                },
+            )
+        )
+    )
+
+    assert result["status"] == "structural_failure"
+    assert result["best_trial"] == 3
+    assert result["best_value"] == 21.361586
+    assert result["best_params"] == {"lambda_magnitude": 0.54}
+    assert result["structural_invalidity_report"]["verdict"] == "STRUCTURAL_FAILURE"
+    assert result["best_trial_preflight"]["preflight_passed"] is False
+
+
 def test_build_result_payload_records_prune_reasons_and_fold_diagnostics():
     result = _build_result_payload(
         _study(
@@ -259,3 +288,10 @@ def test_hyperopt_objective_penalizes_positive_rate_and_prunes_explosions():
     assert "weekly_pi80_undercoverage" in source
     assert "fold_weekly_mae_vs_naive_zero > 3.0" in source
     assert "weekly_mae_vs_naive_explosion" in source
+
+
+def test_run_hyperopt_persists_structural_failure_without_runtime_raise():
+    source = inspect.getsource(hyperopt_module.run_hyperopt)
+
+    assert "STRUCTURAL_FAILURE" in source
+    assert "raise RuntimeError(structural_report" not in source

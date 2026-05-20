@@ -226,8 +226,13 @@ def _build_result_payload(study) -> dict:
         {},
     )
     preflight = best_trial_preflight_check(best_diagnostics)
+    status = (
+        "structural_failure"
+        if structural_report.get("verdict") == "STRUCTURAL_FAILURE"
+        else "completed"
+    )
     return {
-        "status": "completed",
+        "status": status,
         "best_trial": best.number,
         "best_value": float(best.value),
         "best_params": best.params,
@@ -955,7 +960,11 @@ def run_hyperopt(
 
     structural_report = result.get("structural_invalidity_report") or {}
     if structural_report.get("verdict") == "STRUCTURAL_FAILURE":
-        raise RuntimeError(structural_report.get("next_action", "Structural failure in hyperopt."))
+        logger.error(
+            "Optuna structural failure persisted to artifact; final training "
+            "must reject best_params and use fallback config. next_action=%s",
+            structural_report.get("next_action", "Structural failure in hyperopt."),
+        )
 
     return result
 
@@ -977,6 +986,10 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("HYPEROPT COMPLETE")
     print("=" * 60)
+    if result.get("status") == "structural_failure":
+        print("Status: structural_failure")
+        structural_report = result.get("structural_invalidity_report") or {}
+        print(structural_report.get("next_action", "Structural failure in hyperopt."))
     if result["best_trial"] is None:
         print(f"Status: {result['status']}")
         print(result["message"])

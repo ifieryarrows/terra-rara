@@ -783,3 +783,43 @@ passed
 py -m pytest backend/tests -q -m "not online"
 428 passed, 9 skipped
 ```
+
+## 2026-05-20 Hyperopt Structural-Failure Exit Fix
+
+The controlled hyperopt run correctly identified a structural failure, but the command exited with code `1` after persisting the diagnostic artifact:
+
+```text
+completed_trials: 10
+weekly_magnitude_le_3_0: 0
+weekly_pi80_coverage_ge_0_15: 0
+weekly_mae_vs_naive_zero_le_3_0: 0
+weekly_magnitude_ratio median: 21.0704
+weekly_pi80_coverage median: 0.01265
+weekly_mae_vs_naive_zero median: 16.6480
+best_trial_preflight_passed: false
+RuntimeError: Do not run additional hyperopt. Fix quantile head architecture and loss function before any further search.
+```
+
+Diagnosis: this was a workflow-contract bug, not a reason to apply the failed best params. The structural failure must remain visible in `optuna_results.json`, but the hyperopt process should return normally after writing the artifact so GitHub Actions can upload it and the final trainer can reject it through `_apply_optuna_results()`.
+
+Change applied:
+
+- `optuna_results.json` now uses `status: "structural_failure"` when completed trials exist but the structural report verdict is `STRUCTURAL_FAILURE`.
+- `run_hyperopt()` logs the structural failure and returns the result instead of raising after artifact persistence.
+- The trainer-side preflight behavior remains unchanged: `STRUCTURAL_FAILURE` or failed best-trial preflight still falls back to `KNOWN_GOOD_CONFIG`.
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_hyperopt_diagnostics.py -q
+17 passed
+
+py -m pytest backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_hyperopt_diagnostics.py backend/tests/deep_learning/test_trainer_optuna_overlay.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py -q
+38 passed, 6 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+430 passed, 9 skipped
+```
