@@ -1,6 +1,8 @@
 import numpy as np
+import torch
 
 from deep_learning.training.metrics import (
+    apply_weekly_median_cap_np,
     compute_all_metrics,
     compute_weekly_metrics,
     cumulative_horizon,
@@ -10,7 +12,9 @@ from deep_learning.training.metrics import (
     monotonic_quantiles_np,
     quantile_crossing_rate,
     quantile_median_sort_gap,
+    resolve_weekly_median_cap,
     select_prediction_horizon,
+    summarize_dataloader_target_scale,
 )
 
 
@@ -112,6 +116,85 @@ def test_evaluate_quantile_predictions_keeps_raw_and_sorted_crossing_separate():
     assert metrics["weekly_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
+
+
+def test_evaluate_quantile_predictions_reports_raw_and_bounded_scale_paths():
+    actual = np.array(
+        [
+            [0.008, 0.008, 0.008, 0.008, 0.008],
+            [-0.008, -0.008, -0.008, -0.008, -0.008],
+            [0.010, 0.010, 0.010, 0.010, 0.010],
+            [-0.010, -0.010, -0.010, -0.010, -0.010],
+        ],
+        dtype=float,
+    )
+    pred = np.zeros((4, 5, 7), dtype=float)
+    median = np.sign(actual) * 0.20
+    offsets = np.array([-0.030, -0.020, -0.010, 0.000, 0.010, 0.020, 0.030])
+    for q_idx, offset in enumerate(offsets):
+        pred[:, :, q_idx] = median + offset
+
+    metrics = evaluate_quantile_predictions(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=0.08,
+    )
+
+    assert metrics["weekly_median_cap"] == 0.08
+    assert metrics["weekly_median_bound_applied_rate"] == 1.0
+    assert metrics["weekly_raw_magnitude_ratio"] > 20.0
+    assert metrics["weekly_bounded_magnitude_ratio"] < metrics["weekly_raw_magnitude_ratio"]
+    assert metrics["weekly_magnitude_ratio"] == metrics["weekly_bounded_magnitude_ratio"]
+    assert abs(metrics["weekly_bounded_pred_max"]) <= 0.080001
+    assert abs(metrics["weekly_bounded_pred_min"]) <= 0.080001
+    assert metrics["quantile_crossing_rate"] == 0.0
+    assert metrics["weekly_quantile_crossing_rate"] == 0.0
+
+
+def test_apply_weekly_median_cap_np_bounds_only_the_median_path():
+    pred = np.zeros((1, 5, 7), dtype=float)
+    pred[:, :, 3] = 0.20
+    pred[:, :, 1] = -9.0
+
+    bounded, diagnostics = apply_weekly_median_cap_np(
+        pred,
+        weekly_median_cap=0.08,
+        horizon=5,
+    )
+
+    assert np.isclose(bounded[:, :5, 3].sum(axis=1)[0], 0.08)
+    assert np.all(bounded[:, :, 1] == -9.0)
+    assert diagnostics["weekly_median_bound_applied_rate"] == 1.0
+
+
+def test_scale_audit_resolves_training_only_weekly_median_cap():
+    target = torch.tensor(
+        [
+            [0.010, 0.000, 0.000, 0.000, 0.000],
+            [-0.030, 0.000, 0.000, 0.000, 0.000],
+            [0.040, 0.000, 0.000, 0.000, 0.000],
+        ],
+        dtype=torch.float32,
+    )
+    dataloader = [
+        (
+            {"target_scale": torch.tensor([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]])},
+            (target, None),
+        )
+    ]
+
+    audit = summarize_dataloader_target_scale(dataloader, horizon=5)
+    cap = resolve_weekly_median_cap(
+        audit,
+        floor=0.08,
+        std_multiple=4.0,
+    )
+
+    assert audit["target_decoder_finite_rate"] == 1.0
+    assert audit["target_scale_present"] is True
+    assert audit["actual_weekly_std"] > 0.0
+    assert cap == max(0.08, 4.0 * audit["actual_weekly_std"])
 
 
 def test_weekly_metrics_report_flipped_direction_diagnostics():

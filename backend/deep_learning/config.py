@@ -143,6 +143,9 @@ class WeeklyLossConfig:
     lambda_naive: float = 0.40
     lambda_bias: float = 0.17
     lambda_directional: float = 0.06
+    weekly_median_cap_floor: float = 0.08
+    weekly_median_cap_std_multiple: float = 4.0
+    weekly_median_cap: Optional[float] = None
 
 
 @dataclass(frozen=True)

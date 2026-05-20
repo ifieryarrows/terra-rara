@@ -144,6 +144,7 @@ def _compute_test_metrics_from_quantiles(
         pred_np[:n_path],
         quantiles=cfg.model.quantiles,
         horizon=cfg.forecast.primary_horizon_days,
+        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
     )
     _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
@@ -156,7 +157,11 @@ def _log_weekly_alignment_sample(
     cfg: TFTASROConfig,
     max_rows: int = 10,
 ) -> None:
-    from deep_learning.training.metrics import cumulative_horizon, monotonic_quantiles_np
+    from deep_learning.training.metrics import (
+        apply_weekly_median_cap_np,
+        cumulative_horizon,
+        monotonic_quantiles_np,
+    )
 
     pred_np = np.asarray(pred_np)
     y_actual_path = np.asarray(y_actual_path)
@@ -168,7 +173,13 @@ def _log_weekly_alignment_sample(
     median_idx = len(cfg.model.quantiles) // 2
     horizon = cfg.forecast.primary_horizon_days
     weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=horizon)
-    ordered_pred_np = monotonic_quantiles_np(pred_np[:n], median_idx=median_idx)
+    eval_pred_np, _ = apply_weekly_median_cap_np(
+        pred_np[:n],
+        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+        quantiles=cfg.model.quantiles,
+        horizon=horizon,
+    )
+    ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
     weekly_pred = ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
 
     logger.info("WEEKLY ALIGNMENT SAMPLE:")
@@ -210,6 +221,10 @@ def train_tft_model(
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
+    from deep_learning.training.metrics import (
+        resolve_weekly_median_cap,
+        summarize_dataloader_target_scale,
+    )
     from deep_learning.training.callbacks import (
         CurriculumLossScheduler,
         SWACallback,
@@ -267,6 +282,49 @@ def train_tft_model(
     )
     train_dl, val_dl, test_dl = create_dataloaders(training_ds, validation_ds, test_ds, cfg)
 
+    train_scale_audit = summarize_dataloader_target_scale(
+        train_dl,
+        horizon=cfg.forecast.primary_horizon_days,
+    )
+    val_scale_audit = summarize_dataloader_target_scale(
+        val_dl,
+        horizon=cfg.forecast.primary_horizon_days,
+    )
+    weekly_median_cap = resolve_weekly_median_cap(
+        train_scale_audit,
+        floor=cfg.weekly_loss.weekly_median_cap_floor,
+        std_multiple=cfg.weekly_loss.weekly_median_cap_std_multiple,
+    )
+    cfg = replace(
+        cfg,
+        weekly_loss=replace(cfg.weekly_loss, weekly_median_cap=weekly_median_cap),
+    )
+    target_scale_audit = {
+        "cap_source": "train_decoder_targets",
+        "weekly_median_cap": weekly_median_cap,
+        "train": train_scale_audit,
+        "validation": val_scale_audit,
+    }
+    logger.info(
+        "Target scale audit train | samples=%d target_std=%.6f weekly_std=%.6f "
+        "weekly_abs_median=%.6f cap=%.6f target_scale_present=%s",
+        train_scale_audit["target_decoder_samples"],
+        train_scale_audit["target_decoder_std"],
+        train_scale_audit["actual_weekly_std"],
+        train_scale_audit["actual_weekly_abs_median"],
+        weekly_median_cap,
+        train_scale_audit["target_scale_present"],
+    )
+    logger.info(
+        "Target scale audit val   | samples=%d target_std=%.6f weekly_std=%.6f "
+        "weekly_abs_median=%.6f target_scale_present=%s",
+        val_scale_audit["target_decoder_samples"],
+        val_scale_audit["target_decoder_std"],
+        val_scale_audit["actual_weekly_std"],
+        val_scale_audit["actual_weekly_abs_median"],
+        val_scale_audit["target_scale_present"],
+    )
+
     # ---- 3. Model ----
     model = create_tft_model(training_ds, cfg, use_asro=use_asro)
 
@@ -289,13 +347,15 @@ def train_tft_model(
         )
         logger.info(
             "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f directional=%.2f monotonic_transform=true",
+            "magnitude=%.2f naive=%.2f directional=%.2f median_cap=%.6f "
+            "monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_directional,
+            cfg.weekly_loss.weekly_median_cap or 0.0,
         )
     else:
         logger.info(
@@ -458,6 +518,9 @@ def train_tft_model(
             "lambda_naive": cfg.weekly_loss.lambda_naive,
             "lambda_bias": cfg.weekly_loss.lambda_bias,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
+            "weekly_median_cap_floor": cfg.weekly_loss.weekly_median_cap_floor,
+            "weekly_median_cap_std_multiple": cfg.weekly_loss.weekly_median_cap_std_multiple,
+            "weekly_median_cap": cfg.weekly_loss.weekly_median_cap,
             "monotonic_quantile_transform": True,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
@@ -472,6 +535,7 @@ def train_tft_model(
         "primary_horizon_days": cfg.forecast.primary_horizon_days,
         "public_return_space": PUBLIC_RETURN_SPACE,
         "return_space": RETURN_SPACE,
+        "target_scale_audit": target_scale_audit,
         "conformal_calibration_path": str(calibration_artifact) if calibration_artifact else None,
         "n_unknown_features": len(tv_unknown),
         "n_known_features": len(tv_known),
@@ -542,6 +606,7 @@ def _write_conformal_calibration_artifact(
 
         from deep_learning.calibration.conformal import rolling_conformal_adjustment
         from deep_learning.training.metrics import (
+            apply_weekly_median_cap_np,
             cumulative_horizon,
             cumulative_quantiles,
             monotonic_quantiles_np,
@@ -561,8 +626,14 @@ def _write_conformal_calibration_artifact(
             return None
 
         weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=cfg.forecast.primary_horizon_days)
-        ordered_pred_np = monotonic_quantiles_np(
+        eval_pred_np, _ = apply_weekly_median_cap_np(
             pred_np[:n],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=cfg.model.quantiles,
+            horizon=cfg.forecast.primary_horizon_days,
+        )
+        ordered_pred_np = monotonic_quantiles_np(
+            eval_pred_np,
             median_idx=len(cfg.model.quantiles) // 2,
         )
         weekly_quantiles = cumulative_quantiles(

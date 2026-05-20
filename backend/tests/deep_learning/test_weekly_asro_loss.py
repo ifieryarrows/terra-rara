@@ -137,3 +137,36 @@ def test_weekly_loss_tracks_component_means():
         "bias",
         "directional",
     }
+
+
+def test_weekly_loss_applies_median_cap_before_monotonic_transform():
+    actual = torch.tensor([[0.010, 0.000, 0.000, 0.000, 0.000]])
+    median = torch.full_like(actual, 0.20)
+    raw_pred = _path_from_median(median, spread=0.002).requires_grad_(True)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        weekly_median_cap=0.08,
+        debug_mode=True,
+    )
+
+    bounded = tft_copper._bound_weekly_median_path(
+        raw_pred,
+        median_idx=3,
+        weekly_median_cap=0.08,
+        horizon=5,
+    )
+    ordered = tft_copper.enforce_monotonic_quantiles(
+        bounded,
+        median_idx=3,
+        min_gap=1e-5,
+        gap_scale=tft_copper.DEFAULT_MONOTONIC_GAP_SCALE,
+        init_bias=-3.0,
+    )
+    diagnostics = tft_copper.validate_monotonicity(ordered)
+
+    assert diagnostics["crossing_rate"] == 0.0
+    assert torch.abs(ordered[:, :5, 3].sum(dim=1)).max().item() <= 0.080001
+
+    total = loss.loss(raw_pred, actual)
+    total.backward()
+    assert torch.isfinite(raw_pred.grad).all()

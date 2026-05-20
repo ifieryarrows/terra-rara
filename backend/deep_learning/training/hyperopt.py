@@ -142,19 +142,29 @@ def _fold_scale_diagnostic(
     weekly_actual: np.ndarray,
     weekly_pred: np.ndarray,
     weekly_metrics: dict[str, float],
+    raw_weekly_pred: np.ndarray | None = None,
+    train_scale_audit: dict | None = None,
+    val_scale_audit: dict | None = None,
+    weekly_median_cap: float | None = None,
 ) -> dict:
     actual_abs = np.abs(weekly_actual)
     pred_abs = np.abs(weekly_pred)
+    raw_weekly_pred = weekly_pred if raw_weekly_pred is None else raw_weekly_pred
+    raw_pred_abs = np.abs(raw_weekly_pred)
     actual_std = np.std(weekly_actual) if weekly_actual.size else 0.0
     actual_mean_abs = np.mean(actual_abs) if actual_abs.size else 0.0
     actual_abs_median = np.median(actual_abs) if actual_abs.size else 0.0
     pred_mean_abs = np.mean(pred_abs) if pred_abs.size else 0.0
     pred_abs_median = np.median(pred_abs) if pred_abs.size else 0.0
+    raw_pred_mean_abs = np.mean(raw_pred_abs) if raw_pred_abs.size else 0.0
+    raw_pred_abs_median = np.median(raw_pred_abs) if raw_pred_abs.size else 0.0
     actual_min = np.min(weekly_actual) if weekly_actual.size else 0.0
     actual_max = np.max(weekly_actual) if weekly_actual.size else 0.0
     pred_min = np.min(weekly_pred) if weekly_pred.size else 0.0
     pred_max = np.max(weekly_pred) if weekly_pred.size else 0.0
-    return {
+    raw_pred_min = np.min(raw_weekly_pred) if raw_weekly_pred.size else 0.0
+    raw_pred_max = np.max(raw_weekly_pred) if raw_weekly_pred.size else 0.0
+    diagnostic = {
         "trial": trial_number,
         "fold": fold_idx + 1,
         "train_samples": int(train_samples),
@@ -164,17 +174,45 @@ def _fold_scale_diagnostic(
         "actual_weekly_abs_median": _rounded_finite(actual_abs_median),
         "pred_weekly_mean_abs": _rounded_finite(pred_mean_abs),
         "pred_weekly_abs_median": _rounded_finite(pred_abs_median),
+        "raw_pred_weekly_mean_abs": _rounded_finite(raw_pred_mean_abs),
+        "raw_pred_weekly_abs_median": _rounded_finite(raw_pred_abs_median),
         "weekly_magnitude_ratio": _rounded_finite(
             weekly_metrics.get("weekly_magnitude_ratio", 0.0)
+        ),
+        "weekly_raw_magnitude_ratio": _rounded_finite(
+            weekly_metrics.get("weekly_raw_magnitude_ratio", 0.0)
+        ),
+        "weekly_bounded_magnitude_ratio": _rounded_finite(
+            weekly_metrics.get("weekly_bounded_magnitude_ratio", 0.0)
+        ),
+        "weekly_median_cap": _rounded_finite(
+            weekly_metrics.get("weekly_median_cap", weekly_median_cap or 0.0)
+        ),
+        "weekly_median_bound_applied_rate": _rounded_finite(
+            weekly_metrics.get("weekly_median_bound_applied_rate", 0.0)
         ),
         "weekly_mae_vs_naive_zero": _rounded_finite(
             weekly_metrics.get("weekly_mae_vs_naive_zero", 0.0)
         ),
         "weekly_pred_min": _rounded_finite(pred_min),
         "weekly_pred_max": _rounded_finite(pred_max),
+        "raw_weekly_pred_min": _rounded_finite(raw_pred_min),
+        "raw_weekly_pred_max": _rounded_finite(raw_pred_max),
         "weekly_actual_min": _rounded_finite(actual_min),
         "weekly_actual_max": _rounded_finite(actual_max),
     }
+    for prefix, audit in (("train", train_scale_audit), ("val", val_scale_audit)):
+        if not audit:
+            continue
+        for key, value in audit.items():
+            out_key = f"{prefix}_{key}"
+            if isinstance(value, bool):
+                diagnostic[out_key] = value
+            elif isinstance(value, (int, np.integer)):
+                diagnostic[out_key] = int(value)
+            elif isinstance(value, (float, np.floating)):
+                diagnostic[out_key] = _rounded_finite(float(value))
+    return diagnostic
 
 
 def _is_startup_protected(trial) -> bool:
@@ -442,9 +480,12 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     from deep_learning.models.tft_copper import create_tft_model
     from deep_learning.training.callbacks import CurriculumLossScheduler
     from deep_learning.training.metrics import (
+        apply_weekly_median_cap_np,
         cumulative_horizon,
         evaluate_quantile_predictions,
         monotonic_quantiles_np,
+        resolve_weekly_median_cap,
+        summarize_dataloader_target_scale,
     )
 
     trial_cfg = create_trial_config(trial, base_cfg)
@@ -489,7 +530,37 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             fold_train_dl, fold_val_dl, _ = create_dataloaders(
                 fold_train_ds, fold_val_ds, cfg=trial_cfg,
             )
-            model = create_tft_model(fold_train_ds, trial_cfg, use_asro=True)
+            train_scale_audit = summarize_dataloader_target_scale(
+                fold_train_dl,
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
+            val_scale_audit = summarize_dataloader_target_scale(
+                fold_val_dl,
+                horizon=trial_cfg.forecast.primary_horizon_days,
+            )
+            weekly_median_cap = resolve_weekly_median_cap(
+                train_scale_audit,
+                floor=trial_cfg.weekly_loss.weekly_median_cap_floor,
+                std_multiple=trial_cfg.weekly_loss.weekly_median_cap_std_multiple,
+            )
+            fold_cfg = replace(
+                trial_cfg,
+                weekly_loss=replace(
+                    trial_cfg.weekly_loss,
+                    weekly_median_cap=weekly_median_cap,
+                ),
+            )
+            logger.info(
+                "Trial %d fold %d target scale: train_weekly_std=%.6f "
+                "val_weekly_std=%.6f median_cap=%.6f target_scale_present=%s",
+                trial.number,
+                fold_idx + 1,
+                train_scale_audit["actual_weekly_std"],
+                val_scale_audit["actual_weekly_std"],
+                weekly_median_cap,
+                train_scale_audit["target_scale_present"],
+            )
+            model = create_tft_model(fold_train_ds, fold_cfg, use_asro=True)
         except Exception as exc:
             logger.warning(
                 "Trial %d fold %d setup failed: %s",
@@ -579,7 +650,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 raise ValueError(
                     f"Prediction horizon too short: {pred_np.shape[1]} < {trial_cfg.forecast.primary_horizon_days}"
                 )
-            ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+            eval_pred_np, _ = apply_weekly_median_cap_np(
+                pred_np,
+                weekly_median_cap=fold_cfg.weekly_loss.weekly_median_cap,
+                quantiles=fold_cfg.model.quantiles,
+                horizon=fold_cfg.forecast.primary_horizon_days,
+            )
+            ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
+            raw_ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
 
             y_actual_parts = []
             for batch in fold_val_dl:
@@ -591,8 +669,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             metrics = evaluate_quantile_predictions(
                 y_actual_path[:n_path],
                 pred_np[:n_path],
-                quantiles=trial_cfg.model.quantiles,
-                horizon=trial_cfg.forecast.primary_horizon_days,
+                quantiles=fold_cfg.model.quantiles,
+                horizon=fold_cfg.forecast.primary_horizon_days,
+                weekly_median_cap=fold_cfg.weekly_loss.weekly_median_cap,
             )
 
             fold_vr = float(metrics.get("variance_ratio", 0.0))
@@ -612,8 +691,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             weekly_pinball = _weekly_pinball_loss(
                 y_actual_path[:n_path],
                 ordered_pred_np[:n_path],
-                tuple(trial_cfg.model.quantiles),
-                horizon=trial_cfg.forecast.primary_horizon_days,
+                tuple(fold_cfg.model.quantiles),
+                horizon=fold_cfg.forecast.primary_horizon_days,
             )
             fold_weekly_mr = float(metrics.get("weekly_magnitude_ratio", 1.0))
             fold_weekly_pi80_coverage = float(metrics.get("weekly_pi80_coverage", 0.0))
@@ -631,11 +710,16 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             weekly_actual_std = float(metrics.get("weekly_actual_std", 0.0))
             weekly_actual = cumulative_horizon(
                 y_actual_path[:n_path],
-                horizon=trial_cfg.forecast.primary_horizon_days,
+                horizon=fold_cfg.forecast.primary_horizon_days,
             )
             weekly_pred = ordered_pred_np[
                 :n_path,
-                :trial_cfg.forecast.primary_horizon_days,
+                :fold_cfg.forecast.primary_horizon_days,
+                median_idx,
+            ].sum(axis=1)
+            raw_weekly_pred = raw_ordered_pred_np[
+                :n_path,
+                :fold_cfg.forecast.primary_horizon_days,
                 median_idx,
             ].sum(axis=1)
             scale_diagnostic = _fold_scale_diagnostic(
@@ -646,19 +730,26 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 weekly_actual=weekly_actual,
                 weekly_pred=weekly_pred,
                 weekly_metrics=metrics,
+                raw_weekly_pred=raw_weekly_pred,
+                train_scale_audit=train_scale_audit,
+                val_scale_audit=val_scale_audit,
+                weekly_median_cap=fold_cfg.weekly_loss.weekly_median_cap,
             )
             fold_scale_diagnostics.append(scale_diagnostic)
             trial.set_user_attr("fold_scale_diagnostics", fold_scale_diagnostics)
             logger.info(
-                "Trial %d fold %d scale: train=%d val=%d actual_abs_mean=%.6f "
-                "pred_abs_mean=%.6f mr=%.6f mae_vs_naive=%.6f pred_range=[%.6f, %.6f] "
-                "actual_range=[%.6f, %.6f]",
+                "Trial %d fold %d scale: train=%d val=%d cap=%.6f actual_abs_mean=%.6f "
+                "raw_pred_abs_mean=%.6f pred_abs_mean=%.6f raw_mr=%.6f mr=%.6f "
+                "mae_vs_naive=%.6f pred_range=[%.6f, %.6f] actual_range=[%.6f, %.6f]",
                 trial.number,
                 fold_idx + 1,
                 scale_diagnostic["train_samples"],
                 scale_diagnostic["val_samples"],
+                scale_diagnostic["weekly_median_cap"],
                 scale_diagnostic["actual_weekly_mean_abs"],
+                scale_diagnostic["raw_pred_weekly_mean_abs"],
                 scale_diagnostic["pred_weekly_mean_abs"],
+                scale_diagnostic["weekly_raw_magnitude_ratio"],
                 scale_diagnostic["weekly_magnitude_ratio"],
                 scale_diagnostic["weekly_mae_vs_naive_zero"],
                 scale_diagnostic["weekly_pred_min"],

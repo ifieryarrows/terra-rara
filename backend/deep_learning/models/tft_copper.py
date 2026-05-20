@@ -34,6 +34,42 @@ from deep_learning.models.losses import (
 logger = logging.getLogger(__name__)
 
 
+def _bound_weekly_median_path(
+    y_pred: torch.Tensor,
+    *,
+    median_idx: int,
+    weekly_median_cap: Optional[float],
+    horizon: int = 5,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    Scale each sample's q50 path so its cumulative weekly median stays bounded.
+
+    The cap is resolved from training targets outside the loss. This helper does
+    not inspect validation/test targets and leaves non-median raw channels as the
+    monotonic-distance controls for the structural quantile transform.
+    """
+    if weekly_median_cap is None or float(weekly_median_cap) <= 0.0:
+        return y_pred
+    if y_pred.ndim != 3:
+        raise ValueError(f"Expected prediction tensor [batch,horizon,q], got {tuple(y_pred.shape)}")
+
+    cap = torch.as_tensor(float(weekly_median_cap), device=y_pred.device, dtype=y_pred.dtype)
+    median_path = y_pred[..., median_idx]
+    effective_horizon = min(int(horizon), int(median_path.shape[1]))
+    weekly_median = median_path[:, :effective_horizon].sum(dim=1)
+    scale = torch.clamp(cap / weekly_median.abs().clamp_min(eps), max=1.0)
+    bounded_median = median_path * scale.unsqueeze(-1)
+    return torch.cat(
+        [
+            y_pred[..., :median_idx],
+            bounded_median.unsqueeze(-1),
+            y_pred[..., median_idx + 1:],
+        ],
+        dim=-1,
+    )
+
+
 def _weekly_scale_losses(
     pred_weekly_median: torch.Tensor,
     actual_weekly: torch.Tensor,
@@ -199,6 +235,7 @@ try:
             lambda_magnitude: float = 0.55,
             lambda_naive: float = 0.40,
             lambda_bias: float = 0.25,
+            weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
         ):
@@ -210,6 +247,7 @@ try:
             self.lambda_magnitude = lambda_magnitude
             self.lambda_naive = lambda_naive
             self.lambda_bias = lambda_bias
+            self.weekly_median_cap = weekly_median_cap
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
@@ -301,8 +339,15 @@ try:
             y_actual = y_actual.float()
             y_pred = y_pred.float()
 
-            ordered_pred = enforce_monotonic_quantiles(
+            bounded_pred = _bound_weekly_median_path(
                 y_pred,
+                median_idx=self.median_idx,
+                weekly_median_cap=self.weekly_median_cap,
+                horizon=y_actual.shape[1],
+                eps=self.sharpe_eps,
+            )
+            ordered_pred = enforce_monotonic_quantiles(
+                bounded_pred,
                 median_idx=self.median_idx,
                 min_gap=1e-5,
                 gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
@@ -317,7 +362,7 @@ try:
                 )
                 assert torch.allclose(
                     ordered_pred[..., self.median_idx],
-                    y_pred[..., self.median_idx],
+                    bounded_pred[..., self.median_idx],
                     rtol=1e-6,
                     atol=1e-7,
                 ), "Monotonic transform must preserve the median quantile exactly"
@@ -418,10 +463,12 @@ def create_tft_model(
             lambda_naive=cfg.weekly_loss.lambda_naive,
             lambda_bias=cfg.weekly_loss.lambda_bias,
             lambda_directional=cfg.weekly_loss.lambda_directional,
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
         )
         logger.info(
             "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f monotonic_transform=true gap_scale=%.3f",
+            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f median_cap=%s "
+            "monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_dispersion,
@@ -429,6 +476,11 @@ def create_tft_model(
             cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_bias,
             cfg.weekly_loss.lambda_directional,
+            (
+                f"{cfg.weekly_loss.weekly_median_cap:.6f}"
+                if cfg.weekly_loss.weekly_median_cap is not None
+                else "none"
+            ),
             DEFAULT_MONOTONIC_GAP_SCALE,
         )
     elif use_asro and ASROPFLoss is not None:

@@ -824,6 +824,39 @@ py -m pytest backend/tests -q -m "not online"
 430 passed, 9 skipped
 ```
 
+## 2026-05-20 Median Scale Explosion Root-Cause Patch
+
+The post-alignment 3-trial TFT-ASRO smoke run proved the remaining failure is not a trainer/hyperopt evaluation mismatch. `fold_scale_diagnostics` showed normal weekly actual scale, with `actual_weekly_mean_abs` around `0.02-0.04`, while model q50 weekly predictions reached `0.19-1.06`. Public quantile crossing stayed solved, but weekly magnitude, PI80 coverage, naive-zero, variance, and directional checks remained structurally bad.
+
+Diagnosis: the target contract is raw daily log-return space, but the TFT q50 output is still unbounded. The monotonic quantile transform preserves q50 by design, so it fixes public ordering without constraining the median scale. More lambda search would only re-run the same structural failure.
+
+Change applied:
+
+- `backend/deep_learning/training/metrics.py` now audits dataloader target scale and resolves a training-only weekly median cap as `max(0.08, 4.0 * train_weekly_actual_std)`.
+- `WeeklyASROPFLoss` now applies that resolved cap to the cumulative q50 path before the existing monotonic transform, preserving zero public crossing while preventing weekly q50 explosions from dominating the loss path.
+- Trainer and hyperopt now pass the same train-derived cap into model creation and shared evaluation. Validation/test actuals are logged for comparison but never used to choose the cap.
+- Shared evaluation now reports raw versus bounded weekly prediction scale, including `weekly_raw_magnitude_ratio`, `weekly_bounded_magnitude_ratio`, `weekly_median_cap`, and `weekly_median_bound_applied_rate`.
+- Hyperopt `fold_scale_diagnostics` now includes target-scale audit fields plus raw and bounded prediction-scale fields while keeping the controlled search space limited to the four weekly-loss controls.
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_trainer_weekly_evaluation.py backend/tests/deep_learning/test_hyperopt.py -q
+38 passed, 7 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+439 passed, 10 skipped
+```
+
+Next required validation command after commit/push:
+
+```text
+gh workflow run tft-deterministic-validation.yml --ref main
+```
+
 ## 2026-05-20 Controlled Hyperopt CV Evaluation Alignment
 
 The follow-up controlled run confirmed that the search-space clamp worked: `best_params` now contained only the four intended weekly-loss controls:

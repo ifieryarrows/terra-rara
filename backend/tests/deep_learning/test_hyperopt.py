@@ -3,6 +3,8 @@
 import inspect
 from types import SimpleNamespace
 
+import numpy as np
+
 import deep_learning.training.hyperopt as hyperopt_module
 from deep_learning.training.hyperopt import (
     KNOWN_GOOD_TRIAL_PARAMS,
@@ -10,6 +12,7 @@ from deep_learning.training.hyperopt import (
     _build_result_payload,
     _enqueue_known_good_trial,
     _finite_completed_trial_count,
+    _fold_scale_diagnostic,
     _is_startup_protected,
     create_trial_config,
 )
@@ -217,6 +220,76 @@ def test_build_result_payload_persists_fold_scale_diagnostics():
     assert result["fold_scale_diagnostics"] == [scale_diagnostic]
 
 
+def test_fold_scale_diagnostic_includes_target_audit_and_raw_bounded_scale():
+    weekly_actual = np.array([0.04, -0.04, 0.05, -0.05])
+    raw_weekly_pred = np.array([1.00, -1.00, 0.90, -0.90])
+    bounded_weekly_pred = np.array([0.08, -0.08, 0.08, -0.08])
+    train_audit = {
+        "target_decoder_mean": 0.001,
+        "target_decoder_std": 0.012,
+        "target_decoder_min": -0.03,
+        "target_decoder_max": 0.04,
+        "target_scale_present": True,
+        "target_scale_mean": 0.5,
+        "target_scale_std": 0.5,
+        "target_scale_min": 0.0,
+        "target_scale_max": 1.0,
+        "actual_weekly_std": 0.035,
+        "actual_weekly_mean_abs": 0.03,
+        "actual_weekly_abs_median": 0.025,
+        "actual_weekly_min": -0.06,
+        "actual_weekly_max": 0.07,
+    }
+    val_audit = {
+        "target_decoder_mean": -0.001,
+        "target_decoder_std": 0.010,
+        "target_decoder_min": -0.02,
+        "target_decoder_max": 0.03,
+        "target_scale_present": False,
+        "actual_weekly_std": 0.040,
+        "actual_weekly_mean_abs": 0.045,
+        "actual_weekly_abs_median": 0.045,
+        "actual_weekly_min": -0.05,
+        "actual_weekly_max": 0.05,
+    }
+
+    diagnostic = _fold_scale_diagnostic(
+        trial_number=2,
+        fold_idx=0,
+        train_samples=120,
+        val_samples=24,
+        weekly_actual=weekly_actual,
+        weekly_pred=bounded_weekly_pred,
+        weekly_metrics={
+            "weekly_magnitude_ratio": 1.777,
+            "weekly_mae_vs_naive_zero": 0.95,
+            "weekly_raw_magnitude_ratio": 22.22,
+            "weekly_bounded_magnitude_ratio": 1.777,
+            "weekly_median_cap": 0.08,
+            "weekly_median_bound_applied_rate": 1.0,
+            "weekly_raw_pred_min": -1.0,
+            "weekly_raw_pred_max": 1.0,
+            "weekly_bounded_pred_min": -0.08,
+            "weekly_bounded_pred_max": 0.08,
+        },
+        raw_weekly_pred=raw_weekly_pred,
+        train_scale_audit=train_audit,
+        val_scale_audit=val_audit,
+        weekly_median_cap=0.08,
+    )
+
+    assert diagnostic["weekly_median_cap"] == 0.08
+    assert diagnostic["weekly_raw_magnitude_ratio"] == 22.22
+    assert diagnostic["weekly_bounded_magnitude_ratio"] == 1.777
+    assert diagnostic["weekly_median_bound_applied_rate"] == 1.0
+    assert diagnostic["raw_pred_weekly_mean_abs"] == 0.95
+    assert diagnostic["pred_weekly_mean_abs"] == 0.08
+    assert diagnostic["train_target_decoder_std"] == 0.012
+    assert diagnostic["val_target_decoder_std"] == 0.01
+    assert diagnostic["train_target_scale_present"] is True
+    assert diagnostic["val_target_scale_present"] is False
+
+
 def test_startup_protection_requires_min_finite_completed_trials():
     protected_study = _study(
         _trial(0, "COMPLETE", 0.5),
@@ -312,6 +385,9 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_dispersion == 0.35
+    assert cfg.weekly_loss.weekly_median_cap is None
+    assert cfg.weekly_loss.weekly_median_cap_floor == 0.08
+    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 4.0
 
     assert trial.float_ranges == {}
     assert trial.categorical_choices == {

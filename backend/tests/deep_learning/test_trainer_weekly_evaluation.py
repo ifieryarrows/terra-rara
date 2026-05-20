@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from dataclasses import replace
 
 from deep_learning.config import get_tft_config
 from deep_learning.training import metrics as metrics_module
@@ -60,17 +61,27 @@ def test_compute_test_metrics_from_quantiles_emits_t1_and_weekly_metrics():
 def test_compute_test_metrics_from_quantiles_uses_shared_evaluator(monkeypatch, caplog):
     caplog.set_level("INFO")
     cfg = get_tft_config()
+    cfg = replace(cfg, weekly_loss=replace(cfg.weekly_loss, weekly_median_cap=0.08))
     actual, pred = _prediction_fixture()
     calls = []
     real_evaluator = metrics_module.evaluate_quantile_predictions
 
-    def spy_evaluator(y_actual_path, pred_np, *, quantiles, horizon):
-        calls.append((y_actual_path.shape, pred_np.shape, tuple(quantiles), horizon))
+    def spy_evaluator(y_actual_path, pred_np, *, quantiles, horizon, weekly_median_cap=None):
+        calls.append(
+            (
+                y_actual_path.shape,
+                pred_np.shape,
+                tuple(quantiles),
+                horizon,
+                weekly_median_cap,
+            )
+        )
         return real_evaluator(
             y_actual_path,
             pred_np,
             quantiles=quantiles,
             horizon=horizon,
+            weekly_median_cap=weekly_median_cap,
         )
 
     monkeypatch.setattr(metrics_module, "evaluate_quantile_predictions", spy_evaluator)
@@ -83,6 +94,7 @@ def test_compute_test_metrics_from_quantiles_uses_shared_evaluator(monkeypatch, 
             pred.shape,
             tuple(cfg.model.quantiles),
             cfg.forecast.primary_horizon_days,
+            0.08,
         )
     ]
     assert "weekly_magnitude_ratio" in metrics

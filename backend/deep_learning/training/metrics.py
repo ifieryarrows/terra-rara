@@ -80,6 +80,183 @@ def monotonic_quantiles_np(
     return ordered.detach().cpu().numpy()
 
 
+def apply_weekly_median_cap_np(
+    pred: np.ndarray,
+    *,
+    weekly_median_cap: float | None,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    horizon: int = 5,
+    eps: float = 1e-12,
+) -> tuple[np.ndarray, dict[str, float]]:
+    """
+    Bound the cumulative q50 path without using validation/test targets.
+
+    The cap itself must be resolved from training targets before this helper is
+    called. Lower/upper raw quantile channels are left untouched; the production
+    monotonic transform rebuilds public quantiles around the bounded median.
+    """
+    arr = np.array(pred, dtype=np.float64, copy=True)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected quantile prediction tensor [n,horizon,q], got {arr.shape}")
+    if arr.shape[1] < horizon:
+        raise ValueError(f"Prediction horizon too short: {arr.shape[1]} < {horizon}")
+    if arr.shape[2] != len(quantiles):
+        raise ValueError(
+            f"Quantile dim mismatch: prediction has {arr.shape[2]}, config has {len(quantiles)}"
+        )
+
+    median_idx = len(quantiles) // 2
+    raw_weekly = arr[:, :horizon, median_idx].sum(axis=1)
+    cap_value = 0.0 if weekly_median_cap is None else float(weekly_median_cap)
+    applied = np.zeros_like(raw_weekly, dtype=bool)
+
+    if cap_value > 0.0 and raw_weekly.size:
+        raw_abs = np.abs(raw_weekly)
+        scale = np.minimum(1.0, cap_value / np.maximum(raw_abs, eps))
+        applied = raw_abs > cap_value + eps
+        arr[:, :, median_idx] = arr[:, :, median_idx] * scale.reshape(-1, 1)
+
+    bounded_weekly = arr[:, :horizon, median_idx].sum(axis=1)
+    diagnostics = {
+        "weekly_median_cap": cap_value,
+        "weekly_median_bound_applied_rate": float(np.mean(applied)) if applied.size else 0.0,
+        "weekly_raw_pred_min": float(np.min(raw_weekly)) if raw_weekly.size else 0.0,
+        "weekly_raw_pred_max": float(np.max(raw_weekly)) if raw_weekly.size else 0.0,
+        "weekly_raw_pred_mean_abs": float(np.mean(np.abs(raw_weekly))) if raw_weekly.size else 0.0,
+        "weekly_raw_pred_abs_median": float(np.median(np.abs(raw_weekly))) if raw_weekly.size else 0.0,
+        "weekly_bounded_pred_min": float(np.min(bounded_weekly)) if bounded_weekly.size else 0.0,
+        "weekly_bounded_pred_max": float(np.max(bounded_weekly)) if bounded_weekly.size else 0.0,
+        "weekly_bounded_pred_mean_abs": (
+            float(np.mean(np.abs(bounded_weekly))) if bounded_weekly.size else 0.0
+        ),
+        "weekly_bounded_pred_abs_median": (
+            float(np.median(np.abs(bounded_weekly))) if bounded_weekly.size else 0.0
+        ),
+    }
+    return arr, diagnostics
+
+
+def _target_from_batch(batch) -> np.ndarray:
+    y = batch[1] if isinstance(batch, (tuple, list)) and len(batch) > 1 else batch
+    if isinstance(y, (tuple, list)):
+        y = y[0]
+    if hasattr(y, "detach"):
+        y = y.detach().cpu().numpy()
+    arr = np.asarray(y, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    return arr
+
+
+def _target_scale_from_batch(batch) -> np.ndarray | None:
+    if not isinstance(batch, (tuple, list)) or not batch:
+        return None
+    x = batch[0]
+    if not isinstance(x, dict) or "target_scale" not in x:
+        return None
+    scale = x["target_scale"]
+    if hasattr(scale, "detach"):
+        scale = scale.detach().cpu().numpy()
+    return np.asarray(scale, dtype=np.float64)
+
+
+def _finite_stats(values: np.ndarray) -> dict[str, float]:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "finite_rate": 0.0}
+    finite = np.isfinite(arr)
+    if not finite.any():
+        return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "finite_rate": 0.0}
+    clean = arr[finite]
+    return {
+        "mean": float(np.mean(clean)),
+        "std": float(np.std(clean)),
+        "min": float(np.min(clean)),
+        "max": float(np.max(clean)),
+        "finite_rate": float(np.mean(finite)),
+    }
+
+
+def summarize_dataloader_target_scale(
+    dataloader,
+    *,
+    horizon: int = 5,
+    max_batches: int | None = None,
+) -> dict[str, float | int | bool]:
+    """
+    Summarize target and target-scale tensors emitted by a TFT dataloader.
+
+    This helper is intentionally dataloader-based so trainer and hyperopt can
+    audit the exact encoded decoder target tensors used by PyTorch Forecasting.
+    """
+    target_parts: list[np.ndarray] = []
+    scale_parts: list[np.ndarray] = []
+    for batch_idx, batch in enumerate(dataloader):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+        target_parts.append(_target_from_batch(batch))
+        target_scale = _target_scale_from_batch(batch)
+        if target_scale is not None:
+            scale_parts.append(target_scale)
+
+    target = np.concatenate(target_parts, axis=0) if target_parts else np.empty((0, horizon))
+    target_stats = _finite_stats(target)
+    if target.shape[1] >= horizon:
+        weekly_actual = cumulative_horizon(target, horizon=horizon)
+    else:
+        weekly_actual = np.asarray([], dtype=np.float64)
+    weekly_abs = np.abs(weekly_actual)
+
+    audit: dict[str, float | int | bool] = {
+        "target_decoder_samples": int(target.shape[0]) if target.ndim >= 1 else 0,
+        "target_decoder_horizon": int(target.shape[1]) if target.ndim >= 2 else 0,
+        "target_decoder_mean": target_stats["mean"],
+        "target_decoder_std": target_stats["std"],
+        "target_decoder_min": target_stats["min"],
+        "target_decoder_max": target_stats["max"],
+        "target_decoder_finite_rate": target_stats["finite_rate"],
+        "actual_weekly_std": float(np.std(weekly_actual)) if weekly_actual.size else 0.0,
+        "actual_weekly_mean_abs": float(np.mean(weekly_abs)) if weekly_abs.size else 0.0,
+        "actual_weekly_abs_median": float(np.median(weekly_abs)) if weekly_abs.size else 0.0,
+        "actual_weekly_min": float(np.min(weekly_actual)) if weekly_actual.size else 0.0,
+        "actual_weekly_max": float(np.max(weekly_actual)) if weekly_actual.size else 0.0,
+        "target_scale_present": bool(scale_parts),
+    }
+
+    if scale_parts:
+        target_scale = np.concatenate(scale_parts, axis=0)
+        scale_stats = _finite_stats(target_scale)
+        audit.update({
+            "target_scale_mean": scale_stats["mean"],
+            "target_scale_std": scale_stats["std"],
+            "target_scale_min": scale_stats["min"],
+            "target_scale_max": scale_stats["max"],
+            "target_scale_finite_rate": scale_stats["finite_rate"],
+        })
+    else:
+        audit.update({
+            "target_scale_mean": 0.0,
+            "target_scale_std": 0.0,
+            "target_scale_min": 0.0,
+            "target_scale_max": 0.0,
+            "target_scale_finite_rate": 0.0,
+        })
+    return audit
+
+
+def resolve_weekly_median_cap(
+    scale_audit: dict,
+    *,
+    floor: float = 0.08,
+    std_multiple: float = 4.0,
+) -> float:
+    """Resolve the structural weekly median cap from training-target scale only."""
+    weekly_std = float(scale_audit.get("actual_weekly_std", 0.0) or 0.0)
+    if not np.isfinite(weekly_std) or weekly_std < 0.0:
+        weekly_std = 0.0
+    return float(max(float(floor), float(std_multiple) * weekly_std))
+
+
 def magnitude_ratio(y_actual: np.ndarray, y_pred: np.ndarray) -> float:
     """Median predicted absolute move divided by median actual absolute move."""
     denom = np.median(np.abs(np.asarray(y_actual, dtype=np.float64)))
@@ -431,6 +608,8 @@ def compute_weekly_metrics(
     weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
     weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))
     weekly_std = float(np.std(weekly_actual))
+    weekly_metrics["weekly_actual_std"] = weekly_std
+    weekly_metrics["weekly_pred_std"] = float(np.std(weekly_pred))
     weekly_metrics["weekly_pi80_width_ratio"] = float(
         weekly_metrics.get("weekly_pi80_width", 0.0) / (2.56 * weekly_std + 1e-8)
     )
@@ -459,6 +638,7 @@ def evaluate_quantile_predictions(
     *,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
+    weekly_median_cap: float | None = None,
 ) -> dict[str, float]:
     """
     Evaluate multi-horizon quantile predictions through the production metric path.
@@ -485,7 +665,13 @@ def evaluate_quantile_predictions(
     q98_idx = quantiles.index(0.98) if 0.98 in quantiles else len(quantiles) - 1
 
     y_actual_path = np.asarray(y_actual_path, dtype=np.float64)
-    ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+    eval_pred_np, cap_diagnostics = apply_weekly_median_cap_np(
+        pred_np,
+        weekly_median_cap=weekly_median_cap,
+        quantiles=quantiles,
+        horizon=horizon,
+    )
+    ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
     raw_pred_t1 = pred_np[:, 0, :]
     pred_t1 = ordered_pred_np[:, 0, :]
     y_actual_t1 = select_prediction_horizon(y_actual_path, horizon_idx=0)
@@ -508,9 +694,22 @@ def evaluate_quantile_predictions(
     n_path = min(len(y_actual_path), len(pred_np))
     weekly_metrics = compute_weekly_metrics(
         y_actual_path[:n_path],
-        pred_np[:n_path],
+        eval_pred_np[:n_path],
         quantiles=quantiles,
         horizon=horizon,
     )
     metrics.update(weekly_metrics)
+    if weekly_median_cap is not None:
+        weekly_actual = cumulative_horizon(y_actual_path[:n_path], horizon=horizon)
+        raw_ordered_pred_np = monotonic_quantiles_np(pred_np[:n_path], median_idx=median_idx)
+        bounded_ordered_pred_np = ordered_pred_np[:n_path]
+        raw_weekly_pred = raw_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
+        bounded_weekly_pred = bounded_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
+        metrics.update(cap_diagnostics)
+        metrics["weekly_raw_magnitude_ratio"] = magnitude_ratio(weekly_actual, raw_weekly_pred)
+        metrics["weekly_bounded_magnitude_ratio"] = magnitude_ratio(
+            weekly_actual,
+            bounded_weekly_pred,
+        )
+        metrics["weekly_magnitude_ratio"] = metrics["weekly_bounded_magnitude_ratio"]
     return metrics

@@ -1,6 +1,9 @@
 import torch
 
-from deep_learning.models.tft_copper import _weekly_scale_losses
+from deep_learning.models.tft_copper import (
+    _bound_weekly_median_path,
+    _weekly_scale_losses,
+)
 
 
 def test_weekly_scale_losses_penalize_structural_magnitude_explosion():
@@ -14,3 +17,23 @@ def test_weekly_scale_losses_penalize_structural_magnitude_explosion():
     assert calibrated["magnitude_ratio"].item() < 1.35
     assert exploded["magnitude_ratio"].item() > 3.0
     assert exploded["magnitude_loss"].item() > calibrated["magnitude_loss"].item() * 20.0
+
+
+def test_weekly_median_cap_bounds_exploded_paths_and_keeps_gradients():
+    pred = torch.zeros((2, 5, 7), dtype=torch.float32, requires_grad=True)
+    pred.data[0, :, 3] = 0.20
+    pred.data[1, :, 3] = -0.18
+
+    bounded = _bound_weekly_median_path(
+        pred,
+        median_idx=3,
+        weekly_median_cap=0.08,
+        horizon=5,
+    )
+    weekly_median = bounded[:, :5, 3].sum(dim=1)
+
+    assert torch.max(torch.abs(weekly_median)).item() <= 0.080001
+
+    bounded.sum().backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all()
