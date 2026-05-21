@@ -99,6 +99,67 @@ def test_bias_loss_prefers_matching_weekly_mean():
     assert loss.loss(pred_matched, actual) < loss.loss(pred_biased, actual)
 
 
+def test_positive_rate_penalty_prefers_balanced_weekly_signs_for_mixed_actuals():
+    actual = torch.tensor(
+        [
+            [-0.006, -0.004, 0.000, 0.000, 0.000],
+            [-0.004, -0.004, 0.000, 0.000, 0.000],
+            [0.005, 0.004, 0.000, 0.000, 0.000],
+            [0.006, 0.006, 0.000, 0.000, 0.000],
+        ]
+    )
+    pred_balanced = _path_from_median(actual, spread=0.002)
+    pred_all_positive = _path_from_median(actual.abs() + 0.004, spread=0.002)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=1.0,
+        lambda_interval=0.0,
+    )
+
+    assert loss.loss(pred_balanced, actual) < loss.loss(pred_all_positive, actual)
+
+
+def test_interval_loss_prefers_wider_weekly_pi80_without_changing_q50():
+    actual = torch.tensor(
+        [
+            [-0.008, -0.008, -0.008, -0.008, -0.008],
+            [-0.004, -0.004, -0.004, -0.004, -0.004],
+            [0.004, 0.004, 0.004, 0.004, 0.004],
+            [0.008, 0.008, 0.008, 0.008, 0.008],
+        ]
+    )
+    median = actual * 0.25
+    pred_narrow = _path_from_median(median, spread=0.0002)
+    pred_wide = _path_from_median(median, spread=0.0040)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=1.0,
+    )
+
+    assert torch.equal(pred_narrow[..., 3], pred_wide[..., 3])
+    assert torch.sign(pred_narrow[..., 3].sum(dim=1)).tolist() == torch.sign(
+        pred_wide[..., 3].sum(dim=1)
+    ).tolist()
+    assert loss.loss(pred_wide, actual) < loss.loss(pred_narrow, actual)
+
+
 def test_weekly_loss_rejects_removed_soft_guard_parameters():
     with pytest.raises(TypeError):
         tft_copper.WeeklyASROPFLoss(QUANTILES, lambda_crossing=10.0)
@@ -127,6 +188,8 @@ def test_weekly_loss_tracks_component_means():
     assert means["naive_loss_mean"] >= 0.0
     assert means["bias_loss_mean"] >= 0.0
     assert means["saturation_loss_mean"] >= 0.0
+    assert means["positive_rate_loss_mean"] >= 0.0
+    assert means["interval_loss_mean"] >= 0.0
     assert means["directional_loss_mean"] >= 0.0
     assert means["total_loss_mean"] == pytest.approx(float(total.detach()))
     assert means["dominant_component"] in {
@@ -137,6 +200,8 @@ def test_weekly_loss_tracks_component_means():
         "naive",
         "bias",
         "saturation",
+        "positive_rate",
+        "interval",
         "directional",
     }
 

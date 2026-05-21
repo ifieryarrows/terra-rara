@@ -62,9 +62,11 @@ KNOWN_GOOD_CONFIG = {
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
-    "lambda_bias": 0.17,
+    "lambda_bias": 0.19,
     "lambda_directional": 0.06,
     "lambda_saturation": 0.25,
+    "lambda_positive_rate": 0.20,
+    "lambda_interval": 0.15,
     "batch_size": 32,
 }
 
@@ -349,7 +351,8 @@ def train_tft_model(
         )
         logger.info(
             "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f directional=%.2f saturation=%.2f "
+            "magnitude=%.2f naive=%.2f bias=%.2f directional=%.2f saturation=%.2f "
+            "positive_rate=%.2f interval=%.2f "
             "median_cap=%.6f "
             "monotonic_transform=true",
             cfg.weekly_loss.lambda_weekly_quantile,
@@ -357,8 +360,11 @@ def train_tft_model(
             cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
+            cfg.weekly_loss.lambda_bias,
             cfg.weekly_loss.lambda_directional,
             cfg.weekly_loss.lambda_saturation,
+            cfg.weekly_loss.lambda_positive_rate,
+            cfg.weekly_loss.lambda_interval,
             cfg.weekly_loss.weekly_median_cap or 0.0,
         )
     else:
@@ -523,6 +529,8 @@ def train_tft_model(
             "lambda_bias": cfg.weekly_loss.lambda_bias,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
             "lambda_saturation": cfg.weekly_loss.lambda_saturation,
+            "lambda_positive_rate": cfg.weekly_loss.lambda_positive_rate,
+            "lambda_interval": cfg.weekly_loss.lambda_interval,
             "weekly_median_cap_abs_median_multiple": (
                 cfg.weekly_loss.weekly_median_cap_abs_median_multiple
             ),
@@ -614,7 +622,11 @@ def _write_conformal_calibration_artifact(
     try:
         import torch
 
-        from deep_learning.calibration.conformal import rolling_conformal_adjustment
+        from deep_learning.calibration.conformal import (
+            apply_conformal_interval,
+            interval_coverage,
+            rolling_conformal_adjustment,
+        )
         from deep_learning.training.metrics import (
             apply_weekly_median_cap_np,
             cumulative_horizon,
@@ -655,26 +667,58 @@ def _write_conformal_calibration_artifact(
         q90_idx = q.index(0.90)
         raw_lower = weekly_quantiles[:, q10_idx]
         raw_upper = weekly_quantiles[:, q90_idx]
-        validation_pi80_coverage = float(
-            np.mean((weekly_actual >= raw_lower) & (weekly_actual <= raw_upper))
+        validation_pi80_coverage = interval_coverage(weekly_actual, raw_lower, raw_upper)
+        validation_pi80_width = float(np.mean(raw_upper - raw_lower))
+        validation_weekly_std = float(np.std(weekly_actual))
+        target_min_pi80_width_ratio = 0.70
+        validation_pi80_width_ratio = (
+            validation_pi80_width / (2.56 * validation_weekly_std + 1e-8)
+            if validation_weekly_std > 1e-12
+            else 0.0
+        )
+        target_min_pi80_width = target_min_pi80_width_ratio * 2.56 * validation_weekly_std
+        width_floor_adjustment = max(
+            0.0,
+            (target_min_pi80_width - validation_pi80_width) / 2.0,
         )
 
         calibration_status = "fit"
         if validation_pi80_coverage >= 0.90:
-            global_adj = 0.0
+            conformal_adj = 0.0
             calibration_status = "skipped_interval_already_overcovered"
         else:
-            global_adj = rolling_conformal_adjustment(
+            conformal_adj = rolling_conformal_adjustment(
                 weekly_actual,
                 raw_lower,
                 raw_upper,
                 alpha=0.20,
             )
+        global_adj = max(float(conformal_adj), float(width_floor_adjustment))
+        if width_floor_adjustment > conformal_adj and width_floor_adjustment > 0.0:
+            calibration_status = "fit_width_floor"
+        calibrated_lower, calibrated_upper = apply_conformal_interval(
+            raw_lower,
+            raw_upper,
+            global_adj,
+        )
+        calibrated_validation_pi80_coverage = interval_coverage(
+            weekly_actual,
+            calibrated_lower,
+            calibrated_upper,
+        )
+        calibrated_validation_pi80_width = float(np.mean(calibrated_upper - calibrated_lower))
+        calibrated_validation_pi80_width_ratio = (
+            calibrated_validation_pi80_width / (2.56 * validation_weekly_std + 1e-8)
+            if validation_weekly_std > 1e-12
+            else 0.0
+        )
         artifact = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "target": "weekly_5d_log_return",
             "alpha": 0.20,
             "global_adjustment": float(global_adj),
+            "base_conformal_adjustment": float(conformal_adj),
+            "width_floor_adjustment": float(width_floor_adjustment),
             "bucket_adjustments": {
                 "neutral": float(global_adj),
                 "risk_on": float(global_adj),
@@ -687,6 +731,12 @@ def _write_conformal_calibration_artifact(
             "fit_split": "validation",
             "test_split_used_for_fit": False,
             "validation_pi80_coverage": validation_pi80_coverage,
+            "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
+            "validation_pi80_width": validation_pi80_width,
+            "calibrated_validation_pi80_width": calibrated_validation_pi80_width,
+            "validation_pi80_width_ratio": validation_pi80_width_ratio,
+            "calibrated_validation_pi80_width_ratio": calibrated_validation_pi80_width_ratio,
+            "target_min_pi80_width_ratio": target_min_pi80_width_ratio,
             "calibration_status": calibration_status,
         }
 
@@ -819,7 +869,8 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
             "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
-            "lambda_saturation", "weekly_median_cap_abs_median_multiple",
+            "lambda_saturation", "lambda_positive_rate", "lambda_interval",
+            "weekly_median_cap_abs_median_multiple",
             "weekly_median_cap_mean_abs_multiple", "weekly_median_cap_std_multiple",
         ) if k in params
     }

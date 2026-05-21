@@ -33,6 +33,15 @@ def compute_nonconformity(actual: np.ndarray, lower: np.ndarray, upper: np.ndarr
     return np.maximum(lower - actual, actual - upper)
 
 
+def interval_coverage(actual: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> float:
+    actual_np = np.asarray(actual, dtype=np.float64)
+    lower_np = np.asarray(lower, dtype=np.float64)
+    upper_np = np.asarray(upper, dtype=np.float64)
+    if actual_np.size == 0:
+        return 0.0
+    return float(np.mean((actual_np >= lower_np) & (actual_np <= upper_np)))
+
+
 def rolling_conformal_adjustment(
     actual: np.ndarray,
     lower: np.ndarray,

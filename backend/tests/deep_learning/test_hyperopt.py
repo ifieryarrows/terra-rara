@@ -338,8 +338,10 @@ def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.35
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.55
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.40
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.17
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.19
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.06
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.20
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_interval"] == 0.15
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -394,6 +396,8 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
     assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
     assert cfg.weekly_loss.lambda_saturation == 0.25
+    assert cfg.weekly_loss.lambda_positive_rate == 0.20
+    assert cfg.weekly_loss.lambda_interval == 0.15
 
     assert trial.float_ranges == {}
     assert trial.categorical_choices == {
@@ -402,6 +406,8 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
         "lambda_bias": [0.14, 0.17, 0.19],
         "lambda_directional": [0.05, 0.06, 0.07],
     }
+    assert "lambda_positive_rate" not in trial.categorical_choices
+    assert "lambda_interval" not in trial.categorical_choices
 
 
 def test_hyperopt_objective_penalizes_positive_rate_and_prunes_explosions():

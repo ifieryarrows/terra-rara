@@ -71,8 +71,10 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.55,
     "lambda_naive": 0.40,
-    "lambda_bias": 0.17,
+    "lambda_bias": 0.19,
     "lambda_directional": 0.06,
+    "lambda_positive_rate": 0.20,
+    "lambda_interval": 0.15,
     "batch_size": 32,
 }
 
@@ -419,6 +421,8 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
             "lambda_directional",
             [0.05, 0.06, 0.07],
         ),
+        lambda_positive_rate=0.20,
+        lambda_interval=0.15,
     )
 
     training_cfg = TrainingConfig(

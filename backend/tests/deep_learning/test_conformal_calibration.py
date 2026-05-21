@@ -5,6 +5,7 @@ import json
 
 from deep_learning.calibration.conformal import (
     apply_conformal_interval,
+    interval_coverage,
     rolling_conformal_adjustment,
     select_bucket_adjustment,
 )
@@ -104,3 +105,45 @@ def test_conformal_artifact_fits_positive_adjustment_for_undercoverage(tmp_path)
     assert data["global_adjustment"] > 0.0
     assert data["calibration_status"] == "fit"
     assert data["validation_pi80_coverage"] < 0.90
+
+
+def test_conformal_artifact_applies_width_floor_and_reports_calibrated_coverage(tmp_path):
+    cfg = _cfg_for_tmp_model(tmp_path)
+    weekly_actual = torch.linspace(-0.05, 0.05, 40, dtype=torch.float32)
+    actual = weekly_actual.reshape(-1, 1).repeat(1, 5) / 5.0
+    pred = torch.zeros((40, 5, 7), dtype=torch.float32)
+    pred[..., 0] = -0.006
+    pred[..., 1] = -0.004
+    pred[..., 2] = -0.002
+    pred[..., 3] = 0.0
+    pred[..., 4] = 0.002
+    pred[..., 5] = 0.004
+    pred[..., 6] = 0.006
+
+    path = _write_conformal_calibration_artifact(
+        cfg=cfg,
+        model=_DummyModel(pred),
+        val_dl=[(None, (actual, None))],
+        feature_frame=None,
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    assert data["width_floor_adjustment"] > 0.0
+    assert data["global_adjustment"] >= data["width_floor_adjustment"]
+    assert data["calibrated_validation_pi80_coverage"] >= data["validation_pi80_coverage"]
+    assert data["validation_pi80_width_ratio"] < data["target_min_pi80_width_ratio"]
+
+
+def test_interval_coverage_improves_after_symmetric_widening_without_median_change():
+    actual = np.array([-0.04, -0.02, 0.02, 0.04])
+    median = np.array([-0.01, -0.01, 0.01, 0.01])
+    lower = median - 0.005
+    upper = median + 0.005
+    widened_lower, widened_upper = apply_conformal_interval(lower, upper, 0.04)
+
+    assert np.allclose((widened_lower + widened_upper) / 2.0, median)
+    assert interval_coverage(actual, widened_lower, widened_upper) > interval_coverage(
+        actual,
+        lower,
+        upper,
+    )

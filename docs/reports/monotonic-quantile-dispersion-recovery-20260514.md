@@ -824,6 +824,60 @@ py -m pytest backend/tests -q -m "not online"
 430 passed, 9 skipped
 ```
 
+## 2026-05-21 Bullish Positive-Rate and PI80 Undercoverage Fix
+
+The latest deterministic weekly validation run shows that the q50 scale explosion is now largely controlled, while the remaining blockers moved to sign balance and interval coverage:
+
+```text
+weekly_magnitude_ratio: 1.2049
+weekly_mae_vs_naive_zero: 1.1316
+weekly_median_bound_applied_rate: 0.0741
+weekly_public_quantile_crossing_rate: 0.0000
+weekly_pred_positive_rate: 1.0000
+weekly_actual_positive_rate: 0.5741
+weekly_pred_mean: 0.0285
+weekly_actual_mean: 0.0081
+weekly_pred_median: 0.0304
+weekly_actual_median: 0.0073
+weekly_pi80_coverage: 0.3333
+weekly_pi80_width_ratio: 0.4457
+```
+
+Diagnosis: the bounded median cap is doing its job, so this patch keeps the train-derived q50 cap and the structural monotonic quantile transform intact. The next deterministic fix targets the two remaining failure modes directly: all-positive weekly medians on mixed-sign actual weeks, and PI80 intervals that are too narrow for the observed weekly actual scale.
+
+Change applied:
+
+- `WeeklyASROPFLoss` now includes a fixed `lambda_positive_rate=0.20` penalty that compares smooth weekly predicted positive rate against the actual weekly positive rate.
+- Weekly bias pressure now includes mean gap, median gap, and extra upside-bias pressure so bullish weekly mean/median drift is penalized even when magnitude is near range.
+- `lambda_bias` moves from `0.17` to `0.19`, staying inside the existing controlled range instead of widening hyperopt.
+- `WeeklyASROPFLoss` now includes a fixed `lambda_interval=0.15` PI80 undercoverage term that penalizes q10/q90 misses and a weekly PI80 width ratio below `0.70` after q50 bounding and monotonic ordering.
+- Conformal calibration now keeps the nonconformity adjustment and adds a validation width-floor adjustment targeting calibrated PI80 width ratio `0.70`; the public calibrated interval widens symmetrically without changing q50.
+- The controlled Optuna contract remains unchanged: only `lambda_magnitude`, `lambda_naive`, `lambda_bias`, and `lambda_directional` are search knobs. No quality-gate threshold was weakened.
+
+Expected next deterministic validation targets:
+
+```text
+weekly_pred_positive_rate moves from 1.0000 toward 0.60-0.75
+weekly_magnitude_ratio remains near 1.0-1.35
+weekly_mae_vs_naive_zero remains near 1.1-1.4
+weekly_pi80_coverage improves from 0.3333 toward >=0.50
+public_quantile_crossing_rate remains 0.0
+weekly_public_quantile_crossing_rate remains 0.0
+```
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_conformal_calibration.py backend/tests/deep_learning/test_tft_format_prediction.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_trainer_optuna_overlay.py -q
+47 passed, 10 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+449 passed, 13 skipped
+```
+
 ## 2026-05-21 Data-Driven Median Cap Follow-Up
 
 The latest TFT-ASRO training run confirmed that the first bounded-output patch moved the right failure mode but left the cap too loose. Weekly magnitude fell from roughly `23-27` to `8.3-8.6`, and public crossing stayed solved, but `weekly_median_bound_applied_rate` remained `0.82-1.00` across most folds. The model was therefore still saturating the bound instead of learning a realistic weekly return range.

@@ -2,6 +2,8 @@ import torch
 
 from deep_learning.models.tft_copper import (
     _bound_weekly_median_path,
+    _weekly_interval_undercoverage_loss,
+    _weekly_positive_rate_loss,
     _weekly_saturation_loss,
     _weekly_scale_losses,
 )
@@ -18,6 +20,64 @@ def test_weekly_scale_losses_penalize_structural_magnitude_explosion():
     assert calibrated["magnitude_ratio"].item() < 1.35
     assert exploded["magnitude_ratio"].item() > 3.0
     assert exploded["magnitude_loss"].item() > calibrated["magnitude_loss"].item() * 20.0
+
+
+def test_weekly_scale_losses_penalize_bullish_mean_and_median_bias():
+    actual_weekly = torch.tensor([-0.040, -0.030, 0.020, 0.010])
+    pred_centered = actual_weekly.clone()
+    pred_bullish = actual_weekly + 0.030
+
+    centered = _weekly_scale_losses(pred_centered, actual_weekly)
+    bullish = _weekly_scale_losses(pred_bullish, actual_weekly)
+
+    assert bullish["bias_loss"].item() > centered["bias_loss"].item() + 1.0
+
+
+def test_weekly_positive_rate_loss_penalizes_all_positive_predictions_for_mixed_actuals():
+    actual_weekly = torch.tensor([-0.030, -0.020, 0.010, 0.040])
+    pred_balanced = torch.tensor([-0.018, -0.012, 0.014, 0.020])
+    pred_all_positive = torch.tensor([0.040, 0.050, 0.060, 0.070])
+
+    balanced_loss = _weekly_positive_rate_loss(pred_balanced, actual_weekly)
+    all_positive_loss = _weekly_positive_rate_loss(pred_all_positive, actual_weekly)
+
+    assert all_positive_loss.item() > balanced_loss.item() + 0.40
+
+
+def test_weekly_interval_undercoverage_loss_prefers_wider_pi80_without_moving_q50():
+    actual_weekly = torch.tensor([-0.040, -0.020, 0.020, 0.040])
+    median = torch.tensor([-0.010, -0.010, 0.010, 0.010])
+    narrow = torch.stack(
+        [
+            median - 0.003,
+            median - 0.002,
+            median - 0.001,
+            median,
+            median + 0.001,
+            median + 0.002,
+            median + 0.003,
+        ],
+        dim=1,
+    )
+    wide = torch.stack(
+        [
+            median - 0.060,
+            median - 0.050,
+            median - 0.025,
+            median,
+            median + 0.025,
+            median + 0.050,
+            median + 0.060,
+        ],
+        dim=1,
+    )
+
+    narrow_loss = _weekly_interval_undercoverage_loss(narrow, actual_weekly, [0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98])
+    wide_loss = _weekly_interval_undercoverage_loss(wide, actual_weekly, [0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98])
+
+    assert torch.equal(narrow[:, 3], wide[:, 3])
+    assert torch.sign(narrow[:, 3]).tolist() == torch.sign(wide[:, 3]).tolist()
+    assert wide_loss.item() < narrow_loss.item()
 
 
 def test_weekly_median_cap_bounds_exploded_paths_and_keeps_gradients():

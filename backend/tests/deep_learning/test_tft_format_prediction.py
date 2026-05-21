@@ -47,3 +47,15 @@ def test_format_prediction_uses_log_return_price_conversion():
     assert np.isclose(result["weekly_price"], 100.0 * np.exp(0.05))
     assert np.isclose(result["weekly_return"], np.exp(0.05) - 1.0)
     assert result["return_basis"] == "daily_log_return_path"
+
+
+def test_format_prediction_calibrated_interval_widens_without_moving_weekly_median():
+    raw = np.tile(np.array([[-0.020, -0.010, -0.005, 0.004, 0.005, 0.010, 0.020]]), (5, 1))
+    base = format_prediction(raw, baseline_price=100.0, conformal_adjustment=0.0)
+    widened = format_prediction(raw, baseline_price=100.0, conformal_adjustment=0.030)
+
+    assert widened["weekly_log_return"] == base["weekly_log_return"]
+    assert widened["weekly_log_return_q10_calibrated"] < base["weekly_log_return_q10_calibrated"]
+    assert widened["weekly_log_return_q90_calibrated"] > base["weekly_log_return_q90_calibrated"]
+    assert widened["weekly_interval_calibrated"] is True
+    assert widened["public_quantile_crossing_rate"] == 0.0

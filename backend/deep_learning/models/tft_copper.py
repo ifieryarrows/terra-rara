@@ -135,7 +135,17 @@ def _weekly_scale_losses(
     model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
     zero_mae = actual_abs_mean
     naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
-    bias_loss = torch.abs((pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae)
+    mean_gap = (pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae
+    median_gap = (
+        (pred_weekly_median.median() - actual_weekly.median())
+        / actual_abs_median
+    )
+    bias_loss = (
+        torch.abs(mean_gap)
+        + 0.50 * torch.abs(median_gap)
+        + 0.75 * torch.relu(mean_gap)
+        + 0.50 * torch.relu(median_gap)
+    )
 
     return {
         "dispersion_loss": dispersion_loss,
@@ -145,6 +155,54 @@ def _weekly_scale_losses(
         "naive_relative_loss": naive_relative_loss,
         "bias_loss": bias_loss,
     }
+
+
+def _weekly_positive_rate_loss(
+    pred_weekly_median: torch.Tensor,
+    actual_weekly: torch.Tensor,
+    temperature: float = 0.01,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Penalize batch-level weekly sign-balance drift with a smooth sign proxy."""
+    temp = max(float(temperature), eps)
+    pred_positive_rate = torch.sigmoid(pred_weekly_median / temp).mean()
+    actual_positive_rate = (actual_weekly > 0).float().mean()
+    return torch.abs(pred_positive_rate - actual_positive_rate)
+
+
+def _weekly_interval_undercoverage_loss(
+    pred_weekly_quantiles: torch.Tensor,
+    actual_weekly: torch.Tensor,
+    quantiles: Sequence[float],
+    *,
+    target_width_ratio: float = 0.70,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Penalize weekly PI80 misses and intervals that are too narrow for actual scale."""
+    q = list(quantiles)
+    q10_idx = q.index(0.10) if 0.10 in q else 1
+    q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
+    lower = pred_weekly_quantiles[:, q10_idx]
+    upper = pred_weekly_quantiles[:, q90_idx]
+    width = torch.clamp(upper - lower, min=0.0)
+
+    actual_scale = actual_weekly.abs().mean().clamp_min(eps)
+    miss_loss = (
+        torch.relu(lower - actual_weekly)
+        + torch.relu(actual_weekly - upper)
+    ).mean() / actual_scale
+
+    actual_std = actual_weekly.std(unbiased=False).clamp_min(eps)
+    width_ratio = width.mean() / (2.56 * actual_std + eps)
+    under_width_loss = torch.relu(
+        torch.as_tensor(
+            float(target_width_ratio),
+            device=pred_weekly_quantiles.device,
+            dtype=pred_weekly_quantiles.dtype,
+        )
+        - width_ratio
+    ).pow(2)
+    return miss_loss + under_width_loss
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +317,8 @@ try:
             lambda_naive: float = 0.40,
             lambda_bias: float = 0.25,
             lambda_saturation: float = 0.25,
+            lambda_positive_rate: float = 0.20,
+            lambda_interval: float = 0.15,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
@@ -272,6 +332,8 @@ try:
             self.lambda_naive = lambda_naive
             self.lambda_bias = lambda_bias
             self.lambda_saturation = lambda_saturation
+            self.lambda_positive_rate = lambda_positive_rate
+            self.lambda_interval = lambda_interval
             self.weekly_median_cap = weekly_median_cap
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
@@ -287,6 +349,8 @@ try:
                 "naive": 0.0,
                 "bias": 0.0,
                 "saturation": 0.0,
+                "positive_rate": 0.0,
+                "interval": 0.0,
                 "directional": 0.0,
                 "total": 0.0,
             }
@@ -301,6 +365,8 @@ try:
             naive_relative_loss: torch.Tensor,
             bias_loss: torch.Tensor,
             saturation_loss: torch.Tensor,
+            positive_rate_loss: torch.Tensor,
+            interval_loss: torch.Tensor,
             directional_loss: torch.Tensor,
             total_loss: torch.Tensor,
         ) -> None:
@@ -311,6 +377,8 @@ try:
             self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
             self._component_sums["bias"] += float(bias_loss.detach().mean().cpu())
             self._component_sums["saturation"] += float(saturation_loss.detach().mean().cpu())
+            self._component_sums["positive_rate"] += float(positive_rate_loss.detach().mean().cpu())
+            self._component_sums["interval"] += float(interval_loss.detach().mean().cpu())
             self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
             self._component_sums["total"] += float(total_loss.detach().mean().cpu())
             self._component_batches += 1
@@ -327,6 +395,8 @@ try:
                     "naive_loss_mean": 0.0,
                     "bias_loss_mean": 0.0,
                     "saturation_loss_mean": 0.0,
+                    "positive_rate_loss_mean": 0.0,
+                    "interval_loss_mean": 0.0,
                     "directional_loss_mean": 0.0,
                     "total_loss_mean": 0.0,
                     "dominant_component": None,
@@ -340,6 +410,8 @@ try:
                 "naive": self._component_sums["naive"],
                 "bias": self._component_sums["bias"],
                 "saturation": self._component_sums["saturation"],
+                "positive_rate": self._component_sums["positive_rate"],
+                "interval": self._component_sums["interval"],
                 "directional": self._component_sums["directional"],
             }
             return {
@@ -351,6 +423,8 @@ try:
                 "naive_loss_mean": self._component_sums["naive"] / n_batches,
                 "bias_loss_mean": self._component_sums["bias"] / n_batches,
                 "saturation_loss_mean": self._component_sums["saturation"] / n_batches,
+                "positive_rate_loss_mean": self._component_sums["positive_rate"] / n_batches,
+                "interval_loss_mean": self._component_sums["interval"] / n_batches,
                 "directional_loss_mean": self._component_sums["directional"] / n_batches,
                 "total_loss_mean": self._component_sums["total"] / n_batches,
                 "dominant_component": max(components, key=components.get),
@@ -420,6 +494,17 @@ try:
             magnitude_loss = scale_losses["magnitude_loss"]
             naive_relative_loss = scale_losses["naive_relative_loss"]
             bias_loss = scale_losses["bias_loss"]
+            positive_rate_loss = _weekly_positive_rate_loss(
+                pred_weekly_median,
+                actual_weekly,
+                eps=eps,
+            )
+            interval_loss = _weekly_interval_undercoverage_loss(
+                pred_weekly_quantiles,
+                actual_weekly,
+                self.quantiles,
+                eps=eps,
+            )
 
             weekly_pred_direction = torch.tanh(pred_weekly_median * 10.0)
             weekly_actual_direction = torch.sign(actual_weekly)
@@ -440,6 +525,8 @@ try:
             naive_relative_loss = _to_scalar(naive_relative_loss)
             bias_loss = _to_scalar(bias_loss)
             saturation_loss = _to_scalar(saturation_loss)
+            positive_rate_loss = _to_scalar(positive_rate_loss)
+            interval_loss = _to_scalar(interval_loss)
             directional_loss = _to_scalar(directional_loss)
 
             total_loss = (
@@ -450,6 +537,8 @@ try:
                 + self.lambda_naive * _to_scalar(naive_relative_loss)
                 + self.lambda_bias * _to_scalar(bias_loss)
                 + self.lambda_saturation * _to_scalar(saturation_loss)
+                + self.lambda_positive_rate * _to_scalar(positive_rate_loss)
+                + self.lambda_interval * _to_scalar(interval_loss)
                 + self.lambda_directional * _to_scalar(directional_loss)
             )
 
@@ -461,6 +550,8 @@ try:
                 naive_relative_loss,
                 bias_loss,
                 saturation_loss,
+                positive_rate_loss,
+                interval_loss,
                 directional_loss,
                 total_loss,
             )
@@ -506,11 +597,14 @@ def create_tft_model(
             lambda_bias=cfg.weekly_loss.lambda_bias,
             lambda_directional=cfg.weekly_loss.lambda_directional,
             lambda_saturation=cfg.weekly_loss.lambda_saturation,
+            lambda_positive_rate=cfg.weekly_loss.lambda_positive_rate,
+            lambda_interval=cfg.weekly_loss.lambda_interval,
             weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
         )
         logger.info(
             "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
             "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f saturation=%.2f "
+            "positive_rate=%.2f interval=%.2f "
             "median_cap=%s "
             "monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
@@ -521,6 +615,8 @@ def create_tft_model(
             cfg.weekly_loss.lambda_bias,
             cfg.weekly_loss.lambda_directional,
             cfg.weekly_loss.lambda_saturation,
+            cfg.weekly_loss.lambda_positive_rate,
+            cfg.weekly_loss.lambda_interval,
             (
                 f"{cfg.weekly_loss.weekly_median_cap:.6f}"
                 if cfg.weekly_loss.weekly_median_cap is not None
