@@ -139,12 +139,12 @@ class WeeklyLossConfig:
     lambda_weekly_quantile: float = 0.70
     lambda_t1_quantile: float = 0.20
     lambda_dispersion: float = 0.35
-    lambda_magnitude: float = 0.55
-    lambda_naive: float = 0.40
+    lambda_magnitude: float = 0.58
+    lambda_naive: float = 0.45
     lambda_bias: float = 0.19
-    lambda_directional: float = 0.06
-    lambda_saturation: float = 0.25
-    lambda_positive_rate: float = 0.20
+    lambda_directional: float = 0.10
+    lambda_saturation: float = 0.35
+    lambda_positive_rate: float = 0.03
     lambda_interval: float = 0.15
     weekly_median_cap_abs_median_multiple: float = 2.0
     weekly_median_cap_mean_abs_multiple: float = 1.6

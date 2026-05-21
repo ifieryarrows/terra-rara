@@ -824,6 +824,63 @@ py -m pytest backend/tests -q -m "not online"
 430 passed, 9 skipped
 ```
 
+## 2026-05-21 Positive-Rate Overcorrection Fix
+
+The deterministic validation run after `lambda_positive_rate=0.20` proved that the positive-rate correction overcorrected. The model moved from always-bullish to always-bearish predictions:
+
+```text
+weekly_pred_positive_rate: 0.0000
+weekly_actual_positive_rate: 0.5741
+weekly_directional_accuracy: 0.4259
+weekly_directional_accuracy_flipped: 0.5741
+weekly_sharpe_ratio: -3.4062
+weekly_sharpe_ratio_flipped: 3.4062
+weekly_tail_capture_rate: 0.2857
+weekly_tail_capture_rate_flipped: 0.7143
+weekly_magnitude_ratio: 1.8409
+weekly_pi80_coverage: 0.3704
+weekly_median_bound_applied_rate: 0.6111
+weekly_public_quantile_crossing_rate: 0.0000
+public_quantile_crossing_rate: 0.0000
+```
+
+Diagnosis: scale explosion is no longer the first-order failure, but exact batch positive-rate matching competed with sample-level direction learning and allowed the model to collapse to the opposite global sign. The fix is not to force `weekly_pred_positive_rate` to equal the actual positive rate. The fix is to prevent all-positive or all-negative sign distributions while letting weekly sample direction drive the median.
+
+Change applied:
+
+- Replaced exact positive-rate matching with a mild anti-collapse hinge: no penalty inside `0.20 <= weekly_pred_positive_rate <= 0.85`, penalty only below `0.20` or above `0.85`.
+- Reduced `lambda_positive_rate` from `0.20` to `0.03` so sign-balance cannot dominate sample-level directional learning.
+- Strengthened weekly sample-level direction by increasing `lambda_directional` from `0.06` to `0.10` and using magnitude-weighted weekly sign error plus a small wrong-sign hinge.
+- Tightened scale/saturation pressure without weakening the q50 cap: `lambda_magnitude=0.58`, `lambda_naive=0.45`, and `lambda_saturation=0.35`.
+- Kept the bounded median cap, monotonic public quantile transform, conformal interval widening path, and strict quality gate unchanged.
+- Controlled hyperopt remains narrow; this patch does not run hyperopt.
+
+Expected next deterministic validation targets:
+
+```text
+weekly_pred_positive_rate moves from 0.0000 toward 0.40-0.75
+weekly_directional_accuracy exceeds weekly_directional_accuracy_flipped
+weekly_sharpe_ratio becomes positive
+weekly_tail_capture_rate recovers above 0.45
+weekly_magnitude_ratio moves from 1.8409 toward <= 1.35
+weekly_pi80_coverage improves from 0.3704 toward >= 0.50
+public_quantile_crossing_rate remains 0.0
+weekly_public_quantile_crossing_rate remains 0.0
+```
+
+Local validation:
+
+```text
+py -m pytest backend/tests/deep_learning/test_weekly_loss_components.py backend/tests/deep_learning/test_weekly_asro_loss.py backend/tests/deep_learning/test_weekly_metrics.py backend/tests/deep_learning/test_conformal_calibration.py backend/tests/deep_learning/test_tft_format_prediction.py backend/tests/deep_learning/test_config.py backend/tests/deep_learning/test_forecast_contract_config.py backend/tests/deep_learning/test_hyperopt.py backend/tests/deep_learning/test_trainer_optuna_overlay.py -q
+65 passed, 10 skipped
+
+py -m compileall backend/app backend/deep_learning backend/scripts scripts
+passed
+
+py -m pytest backend/tests -q -m "not online"
+450 passed, 13 skipped
+```
+
 ## 2026-05-21 Bullish Positive-Rate and PI80 Undercoverage Fix
 
 The latest deterministic weekly validation run shows that the q50 scale explosion is now largely controlled, while the remaining blockers moved to sign balance and interval coverage:

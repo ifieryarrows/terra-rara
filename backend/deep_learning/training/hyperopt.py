@@ -69,11 +69,12 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
     "lambda_dispersion": 0.35,
-    "lambda_magnitude": 0.55,
-    "lambda_naive": 0.40,
+    "lambda_magnitude": 0.58,
+    "lambda_naive": 0.45,
     "lambda_bias": 0.19,
-    "lambda_directional": 0.06,
-    "lambda_positive_rate": 0.20,
+    "lambda_directional": 0.10,
+    "lambda_saturation": 0.35,
+    "lambda_positive_rate": 0.03,
     "lambda_interval": 0.15,
     "batch_size": 32,
 }
@@ -419,9 +420,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         ),
         lambda_directional=trial.suggest_categorical(
             "lambda_directional",
-            [0.05, 0.06, 0.07],
+            [0.08, 0.10, 0.12],
         ),
-        lambda_positive_rate=0.20,
+        lambda_saturation=0.35,
+        lambda_positive_rate=0.03,
         lambda_interval=0.15,
     )
 

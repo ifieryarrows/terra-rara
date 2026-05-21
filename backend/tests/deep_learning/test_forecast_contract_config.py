@@ -12,11 +12,11 @@ def test_forecast_contract_defaults_are_weekly():
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_dispersion == 0.35
-    assert cfg.weekly_loss.lambda_magnitude == 0.55
-    assert cfg.weekly_loss.lambda_naive == 0.40
+    assert cfg.weekly_loss.lambda_magnitude == 0.58
+    assert cfg.weekly_loss.lambda_naive == 0.45
     assert cfg.weekly_loss.lambda_bias == 0.19
-    assert cfg.weekly_loss.lambda_directional == 0.06
-    assert cfg.weekly_loss.lambda_positive_rate == 0.20
+    assert cfg.weekly_loss.lambda_directional == 0.10
+    assert cfg.weekly_loss.lambda_positive_rate == 0.03
     assert cfg.weekly_loss.lambda_interval == 0.15
     assert TARGET_RETURN_TYPE == "log_return"
     assert FORECAST_CONTRACT_VERSION == "weekly_log_v1"

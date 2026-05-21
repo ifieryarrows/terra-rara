@@ -103,13 +103,14 @@ def test_positive_rate_penalty_prefers_balanced_weekly_signs_for_mixed_actuals()
     actual = torch.tensor(
         [
             [-0.006, -0.004, 0.000, 0.000, 0.000],
-            [-0.004, -0.004, 0.000, 0.000, 0.000],
             [0.005, 0.004, 0.000, 0.000, 0.000],
             [0.006, 0.006, 0.000, 0.000, 0.000],
+            [0.007, 0.006, 0.000, 0.000, 0.000],
         ]
     )
     pred_balanced = _path_from_median(actual, spread=0.002)
     pred_all_positive = _path_from_median(actual.abs() + 0.004, spread=0.002)
+    pred_all_negative = _path_from_median(-(actual.abs() + 0.004), spread=0.002)
     loss = tft_copper.WeeklyASROPFLoss(
         QUANTILES,
         lambda_weekly_quantile=0.0,
@@ -124,7 +125,9 @@ def test_positive_rate_penalty_prefers_balanced_weekly_signs_for_mixed_actuals()
         lambda_interval=0.0,
     )
 
+    assert loss.loss(pred_balanced, actual).item() == pytest.approx(0.0, abs=1e-6)
     assert loss.loss(pred_balanced, actual) < loss.loss(pred_all_positive, actual)
+    assert loss.loss(pred_balanced, actual) < loss.loss(pred_all_negative, actual)
 
 
 def test_interval_loss_prefers_wider_weekly_pi80_without_changing_q50():

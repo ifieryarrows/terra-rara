@@ -161,13 +161,27 @@ def _weekly_positive_rate_loss(
     pred_weekly_median: torch.Tensor,
     actual_weekly: torch.Tensor,
     temperature: float = 0.01,
+    lower_bound: float = 0.20,
+    upper_bound: float = 0.85,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Penalize batch-level weekly sign-balance drift with a smooth sign proxy."""
+    """Mildly penalize collapsed weekly sign distributions without exact matching."""
+    del actual_weekly
     temp = max(float(temperature), eps)
     pred_positive_rate = torch.sigmoid(pred_weekly_median / temp).mean()
-    actual_positive_rate = (actual_weekly > 0).float().mean()
-    return torch.abs(pred_positive_rate - actual_positive_rate)
+    lower = torch.as_tensor(
+        float(lower_bound),
+        device=pred_weekly_median.device,
+        dtype=pred_weekly_median.dtype,
+    )
+    upper = torch.as_tensor(
+        float(upper_bound),
+        device=pred_weekly_median.device,
+        dtype=pred_weekly_median.dtype,
+    )
+    return torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
+        pred_positive_rate - upper
+    ).pow(2)
 
 
 def _weekly_interval_undercoverage_loss(
@@ -312,12 +326,12 @@ try:
             lambda_weekly_quantile: float = 0.70,
             lambda_t1_quantile: float = 0.20,
             lambda_dispersion: float = 0.35,
-            lambda_directional: float = 0.00,
+            lambda_directional: float = 0.10,
             lambda_magnitude: float = 0.55,
             lambda_naive: float = 0.40,
             lambda_bias: float = 0.25,
-            lambda_saturation: float = 0.25,
-            lambda_positive_rate: float = 0.20,
+            lambda_saturation: float = 0.35,
+            lambda_positive_rate: float = 0.03,
             lambda_interval: float = 0.15,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,
@@ -506,12 +520,16 @@ try:
                 eps=eps,
             )
 
-            weekly_pred_direction = torch.tanh(pred_weekly_median * 10.0)
+            weekly_pred_direction = torch.tanh(pred_weekly_median * 20.0)
             weekly_actual_direction = torch.sign(actual_weekly)
-            directional_loss = F.mse_loss(
-                weekly_pred_direction,
-                weekly_actual_direction.float(),
+            directional_weight = actual_weekly.abs() / actual_weekly.abs().mean().clamp_min(eps)
+            directional_error = (weekly_pred_direction - weekly_actual_direction.float()).pow(2)
+            directional_hinge = torch.relu(
+                -weekly_pred_direction * weekly_actual_direction.float()
             )
+            directional_loss = (
+                directional_weight * directional_error
+            ).mean() + 0.25 * directional_hinge.mean()
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
                 # pytorch_forecasting metrics can return per-sample tensors;

@@ -33,15 +33,19 @@ def test_weekly_scale_losses_penalize_bullish_mean_and_median_bias():
     assert bullish["bias_loss"].item() > centered["bias_loss"].item() + 1.0
 
 
-def test_weekly_positive_rate_loss_penalizes_all_positive_predictions_for_mixed_actuals():
-    actual_weekly = torch.tensor([-0.030, -0.020, 0.010, 0.040])
-    pred_balanced = torch.tensor([-0.018, -0.012, 0.014, 0.020])
+def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
+    actual_weekly = torch.tensor([-0.030, 0.010, 0.020, 0.040])
+    pred_mid_rate = torch.tensor([-0.018, -0.012, 0.014, 0.020])
     pred_all_positive = torch.tensor([0.040, 0.050, 0.060, 0.070])
+    pred_all_negative = torch.tensor([-0.070, -0.060, -0.050, -0.040])
 
-    balanced_loss = _weekly_positive_rate_loss(pred_balanced, actual_weekly)
+    mid_loss = _weekly_positive_rate_loss(pred_mid_rate, actual_weekly)
     all_positive_loss = _weekly_positive_rate_loss(pred_all_positive, actual_weekly)
+    all_negative_loss = _weekly_positive_rate_loss(pred_all_negative, actual_weekly)
 
-    assert all_positive_loss.item() > balanced_loss.item() + 0.40
+    assert mid_loss.item() == 0.0
+    assert all_positive_loss.item() > mid_loss.item()
+    assert all_negative_loss.item() > mid_loss.item()
 
 
 def test_weekly_interval_undercoverage_loss_prefers_wider_pi80_without_moving_q50():
