@@ -63,9 +63,9 @@ KNOWN_GOOD_CONFIG = {
     "lambda_magnitude": 0.58,
     "lambda_naive": 0.45,
     "lambda_bias": 0.19,
-    "lambda_directional": 0.10,
-    "lambda_saturation": 0.35,
-    "lambda_positive_rate": 0.03,
+    "lambda_directional": 0.20,
+    "lambda_saturation": 0.50,
+    "lambda_positive_rate": 0.06,
     "lambda_interval": 0.15,
     "batch_size": 32,
 }

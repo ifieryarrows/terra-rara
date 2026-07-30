@@ -33,6 +33,17 @@ def test_weekly_scale_losses_penalize_bullish_mean_and_median_bias():
     assert bullish["bias_loss"].item() > centered["bias_loss"].item() + 1.0
 
 
+def test_weekly_scale_losses_penalize_bearish_bias_symmetrically():
+    actual_weekly = torch.tensor([-0.040, -0.030, 0.020, 0.010])
+    pred_bullish = actual_weekly + 0.030
+    pred_bearish = actual_weekly - 0.030
+
+    bullish = _weekly_scale_losses(pred_bullish, actual_weekly)
+    bearish = _weekly_scale_losses(pred_bearish, actual_weekly)
+
+    assert torch.isclose(bullish["bias_loss"], bearish["bias_loss"], rtol=1e-5, atol=1e-6)
+
+
 def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
     actual_weekly = torch.tensor([-0.030, 0.010, 0.020, 0.040])
     pred_mid_rate = torch.tensor([-0.018, -0.012, 0.014, 0.020])

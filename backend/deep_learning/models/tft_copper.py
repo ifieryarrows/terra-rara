@@ -141,10 +141,8 @@ def _weekly_scale_losses(
         / actual_abs_median
     )
     bias_loss = (
-        torch.abs(mean_gap)
-        + 0.50 * torch.abs(median_gap)
-        + 0.75 * torch.relu(mean_gap)
-        + 0.50 * torch.relu(median_gap)
+        1.50 * torch.abs(mean_gap)
+        + 1.00 * torch.abs(median_gap)
     )
 
     return {
