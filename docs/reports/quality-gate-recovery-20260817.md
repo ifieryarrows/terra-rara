@@ -66,17 +66,17 @@ The workflow uploads `/tmp/models/tft/` even when the gate fails, including `tft
 
 ## Results
 
-Run `32034661946` (commit `5409683`) completed successfully. The model used seed `42`, chronological train/validation/test splits, validation-only direction and interval calibration, and the untouched 61-row test slice.
+Run `32037012405` (final branch commit `af3e1a5`) completed successfully. The model used seed `42`, chronological train/validation/test splits, validation-only direction and interval calibration, and the untouched 61-row test slice. The earlier recovery run `32034661946` also passed; both runs are retained in GitHub Actions for auditability.
 
 | Gate metric | Baseline | Final CI | Result |
 | --- | ---: | ---: | --- |
-| Weekly directional accuracy | 0.3934 | 0.5738 | pass |
-| T+1 Sharpe | -3.8766 | 0.8730 | pass |
-| T+1 tail capture | 0.3158 | 0.5789 | pass |
-| Weekly magnitude ratio | 0.9946 | 1.0815 | pass |
+| Weekly directional accuracy | 0.3934 | 0.5574 | pass |
+| T+1 Sharpe | -3.8766 | 0.1488 | pass |
+| T+1 tail capture | 0.3158 | 0.5263 | pass |
+| Weekly magnitude ratio | 0.9946 | 0.7591 | pass |
 | Weekly tail capture | 0.4667 | 0.5333 | pass |
 | Weekly PI80 coverage | 0.7869 | 0.7869 | pass |
-| Weekly PI96 width ratio | 0.9717 | 1.0710 | pass |
+| Weekly PI96 width ratio | 0.9717 | 1.0147 | pass |
 | Public / sorted weekly crossing | 0.0000 / 0.0000 | 0.0000 / 0.0000 | pass |
 
-The validation-only weekly interval scale was `0.7662303665`, yielding validation PI80 coverage `0.7978723404`. The quality-gate CLI reported `QUALITY GATE: PASSED`; variance ratio `0.2737` remains a non-blocking warning under the existing policy. The artifact manifest therefore marks the checkpoint safe for inference and upload.
+The final validation-only weekly interval scale was `0.7363874346`, yielding validation PI80 coverage `0.7978723404`. The quality-gate CLI reported `QUALITY GATE: PASSED`; variance ratio `0.2398` remains a non-blocking warning under the existing policy. The artifact manifest therefore marks the checkpoint safe for inference and upload. Tests workflow `32036742890` also passed offline tests plus backend/frontend dependency audits.
