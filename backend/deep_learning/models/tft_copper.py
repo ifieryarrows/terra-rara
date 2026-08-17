@@ -339,7 +339,9 @@ try:
             quantiles: list,
             lambda_weekly_quantile: float = 0.70,
             lambda_t1_quantile: float = 0.20,
-            lambda_t1_directional: float = 0.20,
+            # Keep the standalone loss API neutral by default; production
+            # training passes the configured 0.20 weight explicitly.
+            lambda_t1_directional: float = 0.0,
             lambda_dispersion: float = 0.35,
             lambda_directional: float = 0.10,
             lambda_magnitude: float = 0.55,
