@@ -136,6 +136,105 @@ def apply_weekly_median_cap_np(
     return arr, diagnostics
 
 
+def apply_weekly_interval_scale_np(
+    pred: np.ndarray,
+    scale: float,
+    *,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+) -> np.ndarray:
+    """Shrink or expand all quantile spreads around the median.
+
+    The multiplier is fitted on the chronological validation split only.  A
+    value of one leaves the model output unchanged; the median path is kept
+    exactly fixed so directional and magnitude metrics are not altered.
+    """
+    arr = np.asarray(pred, dtype=np.float64)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected quantile prediction tensor [n,horizon,q], got {arr.shape}")
+    if arr.shape[-1] != len(quantiles):
+        raise ValueError(
+            f"Quantile dim mismatch: prediction has {arr.shape[-1]}, config has {len(quantiles)}"
+        )
+    multiplier = float(scale)
+    if not np.isfinite(multiplier) or multiplier <= 0.0:
+        raise ValueError(f"Interval scale must be finite and positive, got {scale!r}")
+    median_idx = len(quantiles) // 2
+    median = arr[..., median_idx : median_idx + 1]
+    return median + multiplier * (arr - median)
+
+
+def fit_weekly_interval_scale(
+    y_actual_path: np.ndarray,
+    y_pred_quantiles_path: np.ndarray,
+    *,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    horizon: int = 5,
+    weekly_median_cap: float | None = None,
+    target_coverage: float = 0.80,
+) -> dict[str, float | int | str]:
+    """Fit a validation-only scalar for weekly central-interval width.
+
+    The search is deterministic and uses no final-test labels.  It chooses
+    the candidate whose validation PI80 coverage is closest to the target;
+    this addresses over-wide quantiles while preserving the model median.
+    """
+    pred = np.asarray(y_pred_quantiles_path, dtype=np.float64)
+    actual = np.asarray(y_actual_path, dtype=np.float64)
+    if pred.ndim != 3 or pred.shape[-1] != len(quantiles):
+        raise ValueError("Expected [n,horizon,q] predictions matching quantiles")
+    if pred.shape[1] < horizon:
+        raise ValueError(f"Need at least {horizon} horizons, got {pred.shape[1]}")
+
+    n = min(len(actual), len(pred))
+    if n == 0:
+        return {
+            "fit_split": "validation",
+            "sample_count": 0,
+            "weekly_interval_scale": 1.0,
+            "validation_pi80_coverage": 0.0,
+            "target_pi80_coverage": float(target_coverage),
+        }
+
+    actual_weekly = cumulative_horizon(actual[:n], horizon=horizon)
+    # Apply the same median cap before evaluating each candidate as the
+    # promotion path applies before its monotonic quantile transform.
+    base, _ = apply_weekly_median_cap_np(
+        pred[:n],
+        weekly_median_cap=weekly_median_cap,
+        quantiles=quantiles,
+        horizon=horizon,
+    )
+    median_idx = len(quantiles) // 2
+    candidates = np.linspace(0.05, 1.0, 192, dtype=np.float64)
+    coverages: list[float] = []
+    for candidate in candidates:
+        scaled = apply_weekly_interval_scale_np(base, float(candidate), quantiles=quantiles)
+        ordered = monotonic_quantiles_np(scaled, median_idx=median_idx)
+        weekly = cumulative_quantiles(ordered, horizon=horizon)
+        q10_idx = quantiles.index(0.10)
+        q90_idx = quantiles.index(0.90)
+        coverage = prediction_interval_coverage(
+            actual_weekly,
+            weekly[:, q10_idx],
+            weekly[:, q90_idx],
+        )
+        coverages.append(float(coverage))
+
+    # Prefer the narrowest candidate on an exact tie to avoid unnecessary
+    # uncertainty inflation.  The candidate grid is fixed for reproducibility.
+    chosen_idx = min(
+        range(len(candidates)),
+        key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
+    )
+    return {
+        "fit_split": "validation",
+        "sample_count": int(n),
+        "weekly_interval_scale": float(candidates[chosen_idx]),
+        "validation_pi80_coverage": float(coverages[chosen_idx]),
+        "target_pi80_coverage": float(target_coverage),
+    }
+
+
 def _target_from_batch(batch) -> np.ndarray:
     y = batch[1] if isinstance(batch, (tuple, list)) and len(batch) > 1 else batch
     if isinstance(y, (tuple, list)):
@@ -720,6 +819,7 @@ def evaluate_quantile_predictions(
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
     weekly_median_cap: float | None = None,
+    weekly_interval_scale: float = 1.0,
 ) -> dict[str, float]:
     """
     Evaluate multi-horizon quantile predictions through the production metric path.
@@ -746,8 +846,13 @@ def evaluate_quantile_predictions(
     q98_idx = quantiles.index(0.98) if 0.98 in quantiles else len(quantiles) - 1
 
     y_actual_path = np.asarray(y_actual_path, dtype=np.float64)
-    eval_pred_np, cap_diagnostics = apply_weekly_median_cap_np(
+    scaled_pred_np = apply_weekly_interval_scale_np(
         pred_np,
+        weekly_interval_scale,
+        quantiles=quantiles,
+    )
+    eval_pred_np, cap_diagnostics = apply_weekly_median_cap_np(
+        scaled_pred_np,
         weekly_median_cap=weekly_median_cap,
         quantiles=quantiles,
         horizon=horizon,

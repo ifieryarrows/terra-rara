@@ -136,6 +136,8 @@ def _compute_test_metrics_from_quantiles(
     y_actual_path: np.ndarray,
     pred_np: np.ndarray,
     cfg: TFTASROConfig,
+    *,
+    weekly_interval_scale: float = 1.0,
 ) -> dict[str, float]:
     from deep_learning.training.metrics import evaluate_quantile_predictions
 
@@ -143,12 +145,19 @@ def _compute_test_metrics_from_quantiles(
     _validate_quantile_prediction_shape(pred_np, cfg)
 
     n_path = min(len(y_actual_path), len(pred_np))
+    evaluator_kwargs = {
+        "quantiles": cfg.model.quantiles,
+        "horizon": cfg.forecast.primary_horizon_days,
+        "weekly_median_cap": cfg.weekly_loss.weekly_median_cap,
+    }
+    # Keep the historical evaluator call shape for downstream diagnostics and
+    # tests when no validation-fitted interval adjustment is needed.
+    if float(weekly_interval_scale) != 1.0:
+        evaluator_kwargs["weekly_interval_scale"] = float(weekly_interval_scale)
     test_metrics = evaluate_quantile_predictions(
         y_actual_path[:n_path],
         pred_np[:n_path],
-        quantiles=cfg.model.quantiles,
-        horizon=cfg.forecast.primary_horizon_days,
-        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+        **evaluator_kwargs,
     )
     _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
@@ -457,8 +466,20 @@ def train_tft_model(
         "sample_count": 0,
         "direction_sign_multiplier": 1,
     }
+    interval_calibration = {
+        "fit_split": "validation",
+        "sample_count": 0,
+        "weekly_interval_scale": 1.0,
+        "validation_pi80_coverage": 0.0,
+        "target_pi80_coverage": 0.80,
+    }
+    val_actual_path = None
+    val_pred_np = None
     try:
-        from deep_learning.training.metrics import fit_direction_sign_calibration
+        from deep_learning.training.metrics import (
+            fit_direction_sign_calibration,
+            fit_weekly_interval_scale,
+        )
 
         val_actual_parts = []
         for batch in val_dl:
@@ -475,11 +496,26 @@ def train_tft_model(
                 val_pred_np,
                 horizon=cfg.forecast.primary_horizon_days,
             )
+            direction_sign_multiplier = int(
+                direction_calibration.get("direction_sign_multiplier", 1)
+            )
+            interval_calibration = fit_weekly_interval_scale(
+                val_actual_path,
+                val_pred_np * direction_sign_multiplier,
+                quantiles=tuple(cfg.model.quantiles),
+                horizon=cfg.forecast.primary_horizon_days,
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            )
     except Exception as exc:
-        logger.warning("Direction calibration unavailable; retaining raw prediction orientation: %s", exc)
+        logger.warning(
+            "Validation calibration unavailable; retaining raw intervals/orientation: %s",
+            exc,
+        )
 
     direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+    weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
     logger.info("Validation-only direction calibration: %s", direction_calibration)
+    logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
 
     # ---- 8. Evaluate on test set (Snapshot Ensemble) ----
     # Use the top-k checkpoints saved by ModelCheckpoint and take the
@@ -530,7 +566,12 @@ def train_tft_model(
             pred_np = all_pred_arrays[0]
 
         pred_np = pred_np * direction_sign_multiplier
-        test_metrics = _compute_test_metrics_from_quantiles(y_actual_path, pred_np, cfg)
+        test_metrics = _compute_test_metrics_from_quantiles(
+            y_actual_path,
+            pred_np,
+            cfg,
+            weekly_interval_scale=weekly_interval_scale,
+        )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
 
@@ -542,6 +583,7 @@ def train_tft_model(
         val_dl=val_dl,
         feature_frame=master_df,
         direction_sign_multiplier=direction_sign_multiplier,
+        weekly_interval_scale=weekly_interval_scale,
     )
 
     # ---- 8. Variable importance ----
@@ -597,6 +639,7 @@ def train_tft_model(
         "return_space": RETURN_SPACE,
         "target_scale_audit": target_scale_audit,
         "direction_calibration": direction_calibration,
+        "interval_calibration": interval_calibration,
         "experiment": {
             "seed": cfg.training.seed,
             "deterministic": True,
@@ -661,6 +704,7 @@ def _write_conformal_calibration_artifact(
     val_dl,
     feature_frame,
     direction_sign_multiplier: int = 1,
+    weekly_interval_scale: float = 1.0,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -678,6 +722,7 @@ def _write_conformal_calibration_artifact(
         )
         from deep_learning.training.metrics import (
             apply_weekly_median_cap_np,
+            apply_weekly_interval_scale_np,
             cumulative_horizon,
             cumulative_quantiles,
             monotonic_quantiles_np,
@@ -693,6 +738,11 @@ def _write_conformal_calibration_artifact(
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
+        pred_np = apply_weekly_interval_scale_np(
+            pred_np,
+            float(weekly_interval_scale),
+            quantiles=tuple(cfg.model.quantiles),
+        )
         n = min(len(y_actual_path), len(pred_np))
         if n <= 0:
             return None
@@ -781,6 +831,7 @@ def _write_conformal_calibration_artifact(
             "fit_split": "validation",
             "test_split_used_for_fit": False,
             "direction_sign_multiplier": int(direction_sign_multiplier),
+            "weekly_interval_scale": float(weekly_interval_scale),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
             "validation_pi80_width": validation_pi80_width,

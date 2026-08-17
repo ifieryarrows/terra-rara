@@ -4,11 +4,13 @@ import torch
 
 from deep_learning.training.metrics import (
     apply_weekly_median_cap_np,
+    apply_weekly_interval_scale_np,
     compute_all_metrics,
     compute_weekly_metrics,
     cumulative_horizon,
     cumulative_quantiles,
     evaluate_quantile_predictions,
+    fit_weekly_interval_scale,
     interval_score,
     monotonic_quantiles_np,
     quantile_crossing_rate,
@@ -17,6 +19,26 @@ from deep_learning.training.metrics import (
     select_prediction_horizon,
     summarize_dataloader_target_scale,
 )
+
+
+def test_validation_interval_scale_targets_central_weekly_coverage():
+    weekly_actual = np.linspace(-0.018, 0.018, 100)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((100, 5, 7), dtype=float)
+    pred[..., 0] = -0.20
+    pred[..., 1] = -0.10
+    pred[..., 2] = -0.05
+    pred[..., 4] = 0.05
+    pred[..., 5] = 0.10
+    pred[..., 6] = 0.20
+
+    calibration = fit_weekly_interval_scale(actual, pred, horizon=5)
+    scale = calibration["weekly_interval_scale"]
+    assert 0.0 < scale < 1.0
+    scaled = apply_weekly_interval_scale_np(pred, scale)
+    metrics = evaluate_quantile_predictions(actual, scaled, horizon=5)
+    assert 0.74 <= metrics["weekly_pi80_coverage"] <= 0.86
+    assert np.allclose(scaled[..., 3], pred[..., 3])
 
 
 def test_cumulative_horizon_sums_first_five_steps():
