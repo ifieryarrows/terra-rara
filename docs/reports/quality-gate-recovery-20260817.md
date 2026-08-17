@@ -48,6 +48,7 @@ The same artifact reports `weekly_directional_accuracy_flipped=0.6066`, `weekly_
 3. Regime volatility now derives from the observed close-to-close return rather than the forward target label. This removes a forward-label feature path.
 4. MRMR feature selection is fit on the chronological training partition only; validation and test targets cannot influence the selected feature set.
 5. Training records seed and split protocol in model metadata and requests deterministic execution. The deterministic workflow now runs the shared quality-gate CLI as a required CI step.
+6. A validation-only weekly interval scale is fit against the central PI80 target (0.80) and applied around the unchanged median. The scale is persisted in metadata and `conformal_calibration.json`, reused by the test evaluator and live predictor, and never fit on test labels.
 
 ## Reproduction and validation
 
@@ -61,8 +62,21 @@ gh workflow run tft-deterministic-validation.yml --ref <branch>
 gh run watch <run-id> --exit-status
 ```
 
-The workflow uploads `/tmp/models/tft/` even when the gate fails, including `tft_metadata.json` and `artifact_manifest.json`, so the before/after comparison remains auditable. The final run ID and resulting gate metrics are appended below after CI completes.
+The workflow uploads `/tmp/models/tft/` even when the gate fails, including `tft_metadata.json` and `artifact_manifest.json`, so the before/after comparison remains auditable.
 
 ## Results
 
-Pending deterministic CI execution.
+Run `32034661946` (commit `5409683`) completed successfully. The model used seed `42`, chronological train/validation/test splits, validation-only direction and interval calibration, and the untouched 61-row test slice.
+
+| Gate metric | Baseline | Final CI | Result |
+| --- | ---: | ---: | --- |
+| Weekly directional accuracy | 0.3934 | 0.5738 | pass |
+| T+1 Sharpe | -3.8766 | 0.8730 | pass |
+| T+1 tail capture | 0.3158 | 0.5789 | pass |
+| Weekly magnitude ratio | 0.9946 | 1.0815 | pass |
+| Weekly tail capture | 0.4667 | 0.5333 | pass |
+| Weekly PI80 coverage | 0.7869 | 0.7869 | pass |
+| Weekly PI96 width ratio | 0.9717 | 1.0710 | pass |
+| Public / sorted weekly crossing | 0.0000 / 0.0000 | 0.0000 / 0.0000 | pass |
+
+The validation-only weekly interval scale was `0.7662303665`, yielding validation PI80 coverage `0.7978723404`. The quality-gate CLI reported `QUALITY GATE: PASSED`; variance ratio `0.2737` remains a non-blocking warning under the existing policy. The artifact manifest therefore marks the checkpoint safe for inference and upload.
