@@ -79,10 +79,12 @@ def build_regime_event_features(master_like: pd.DataFrame) -> pd.DataFrame:
     supply_count = master_like.get("evt_supply_disruption_count", _zero(idx)).fillna(0.0).astype(float)
     inventory_draw_count = master_like.get("evt_inventory_draw_count", _zero(idx)).fillna(0.0).astype(float)
 
-    if "target" in master_like.columns:
-        realized_vol = master_like["target"].rolling(20, min_periods=10).std().fillna(0.0)
-    else:
-        realized_vol = _zero(idx)
+    # Regime inputs must be observable at the forecast origin. ``target`` is
+    # a forward return label, so it must never participate in a feature even
+    # through a rolling statistic. The feature store supplies the historical
+    # close-to-close log return under this explicit causal name.
+    observed_return = master_like.get("observed_return_1d", _zero(idx))
+    realized_vol = pd.Series(observed_return, index=idx).rolling(20, min_periods=10).std().fillna(0.0)
 
     vol_z = _zscore(realized_vol, 60, 20)
     sent_z = _zscore(sentiment, 60, 20)

@@ -59,6 +59,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
+    "lambda_t1_directional": 0.20,
     "lambda_dispersion": 0.35,
     "lambda_magnitude": 0.58,
     "lambda_naive": 0.45,
@@ -270,7 +271,12 @@ def train_tft_model(
         logger.warning("Could not run ASRO debug check: %s", exc)
 
     init_db()
-    pl.seed_everything(cfg.training.seed)
+    pl.seed_everything(cfg.training.seed, workers=True)
+    logger.info(
+        "Experiment protocol | seed=%d deterministic=%s split=chronological train/validation/test",
+        cfg.training.seed,
+        True,
+    )
 
     # ---- 1. Feature store ----
     logger.info("Building feature store ...")
@@ -426,6 +432,7 @@ def train_tft_model(
         callbacks=callbacks,
         enable_progress_bar=True,
         log_every_n_steps=log_steps,
+        deterministic=True,
     )
 
     logger.info("Starting TFT-ASRO training ...")
@@ -442,7 +449,39 @@ def train_tft_model(
     else:
         final_path = Path(cfg.training.best_model_path)
 
-    # ---- 7. Evaluate on test set (Snapshot Ensemble) ----
+    # ---- 7. Fit validation-only direction calibration, then evaluate test ----
+    # This catches a stable global sign inversion without consulting any test
+    # labels. The selected multiplier is persisted and reused by live inference.
+    direction_calibration = {
+        "fit_split": "validation",
+        "sample_count": 0,
+        "direction_sign_multiplier": 1,
+    }
+    try:
+        from deep_learning.training.metrics import fit_direction_sign_calibration
+
+        val_actual_parts = []
+        for batch in val_dl:
+            val_actual_parts.append(
+                batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
+            )
+        if val_actual_parts:
+            import torch
+
+            val_actual_path = torch.cat(val_actual_parts).cpu().numpy()
+            val_pred_np = _predict_quantiles_to_np(model, val_dl, cfg)
+            direction_calibration = fit_direction_sign_calibration(
+                val_actual_path,
+                val_pred_np,
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+    except Exception as exc:
+        logger.warning("Direction calibration unavailable; retaining raw prediction orientation: %s", exc)
+
+    direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+    logger.info("Validation-only direction calibration: %s", direction_calibration)
+
+    # ---- 8. Evaluate on test set (Snapshot Ensemble) ----
     # Use the top-k checkpoints saved by ModelCheckpoint and take the
     # element-wise median of their predictions.  This smooths stochastic
     # outliers and improves directional robustness (REG-2026-001 P2-2).
@@ -490,6 +529,7 @@ def train_tft_model(
         else:
             pred_np = all_pred_arrays[0]
 
+        pred_np = pred_np * direction_sign_multiplier
         test_metrics = _compute_test_metrics_from_quantiles(y_actual_path, pred_np, cfg)
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -501,6 +541,7 @@ def train_tft_model(
         model=model,
         val_dl=val_dl,
         feature_frame=master_df,
+        direction_sign_multiplier=direction_sign_multiplier,
     )
 
     # ---- 8. Variable importance ----
@@ -523,6 +564,7 @@ def train_tft_model(
             "lambda_crossing": cfg.asro.lambda_crossing,
             "lambda_weekly_quantile": cfg.weekly_loss.lambda_weekly_quantile,
             "lambda_t1_quantile": cfg.weekly_loss.lambda_t1_quantile,
+            "lambda_t1_directional": cfg.weekly_loss.lambda_t1_directional,
             "lambda_dispersion": cfg.weekly_loss.lambda_dispersion,
             "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
             "lambda_naive": cfg.weekly_loss.lambda_naive,
@@ -554,6 +596,12 @@ def train_tft_model(
         "public_return_space": PUBLIC_RETURN_SPACE,
         "return_space": RETURN_SPACE,
         "target_scale_audit": target_scale_audit,
+        "direction_calibration": direction_calibration,
+        "experiment": {
+            "seed": cfg.training.seed,
+            "deterministic": True,
+            "split_protocol": "chronological train/validation/test; validation-only calibration; untouched test",
+        },
         "conformal_calibration_path": str(calibration_artifact) if calibration_artifact else None,
         "n_unknown_features": len(tv_unknown),
         "n_known_features": len(tv_known),
@@ -612,6 +660,7 @@ def _write_conformal_calibration_artifact(
     model,
     val_dl,
     feature_frame,
+    direction_sign_multiplier: int = 1,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -643,6 +692,7 @@ def _write_conformal_calibration_artifact(
         y_actual_path = torch.cat(y_parts).cpu().numpy()
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
+        pred_np = pred_np * int(direction_sign_multiplier)
         n = min(len(y_actual_path), len(pred_np))
         if n <= 0:
             return None
@@ -730,6 +780,7 @@ def _write_conformal_calibration_artifact(
             "window": int(min(252, n)),
             "fit_split": "validation",
             "test_split_used_for_fit": False,
+            "direction_sign_multiplier": int(direction_sign_multiplier),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
             "validation_pi80_width": validation_pi80_width,
@@ -868,6 +919,7 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
+            "lambda_t1_directional",
             "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
             "lambda_saturation", "lambda_positive_rate", "lambda_interval",
             "weekly_median_cap_abs_median_multiple",

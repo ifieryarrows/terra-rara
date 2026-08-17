@@ -100,12 +100,13 @@ class WeeklyLossComponentLogger(pl.Callback):
 
         epoch = getattr(trainer, "current_epoch", 0)
         logger.info(
-            "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f "
+            "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f t1_dir=%.6f "
             "dispersion=%.6f magnitude=%.6f naive=%.6f directional=%.6f "
             "total=%.6f dominant=%s",
             epoch,
             stats["weekly_q_loss_mean"],
             stats["t1_q_loss_mean"],
+            stats["t1_directional_loss_mean"],
             stats["dispersion_loss_mean"],
             stats.get("magnitude_loss_mean", 0.0),
             stats.get("naive_loss_mean", 0.0),

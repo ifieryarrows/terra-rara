@@ -138,6 +138,10 @@ class ASROConfig:
 class WeeklyLossConfig:
     lambda_weekly_quantile: float = 0.70
     lambda_t1_quantile: float = 0.20
+    # The deployment gate also evaluates T+1 Sharpe and tail capture. Keep a
+    # direct, scale-aware T+1 sign term so those metrics are trained rather
+    # than inferred only from the five-day aggregate objective.
+    lambda_t1_directional: float = 0.20
     lambda_dispersion: float = 0.35
     lambda_magnitude: float = 0.58
     lambda_naive: float = 0.45

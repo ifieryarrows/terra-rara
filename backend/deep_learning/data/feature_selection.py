@@ -207,6 +207,7 @@ def select_features(
     known_features: Optional[list[str]] = None,
     forced_unknown_features: Optional[list[str]] = None,
     forbidden_features: Optional[list[str]] = None,
+    selection_df: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Run MRMR selection on unknown features while preserving known features.
@@ -216,6 +217,8 @@ def select_features(
         target_col:      Target column name.
         mrmr_top_k:      How many unknown features to keep.
         known_features:  List of time_varying_known_reals (calendar etc.) — always kept.
+        selection_df: Training-only frame used to fit MRMR. ``df`` remains the
+            full chronological frame returned to downstream split builders.
 
     Returns:
         (filtered_df, new_unknown_features, known_features)
@@ -226,6 +229,15 @@ def select_features(
         forced_unknown_features = []
     if forbidden_features is None:
         forbidden_features = []
+
+    if selection_df is None:
+        selection_df = df
+    missing_selection_cols = [col for col in df.columns if col not in selection_df.columns]
+    if missing_selection_cols:
+        raise ValueError(
+            "selection_df must contain every source column required for feature selection: "
+            f"{missing_selection_cols}"
+        )
 
     forbidden = set(forbidden_features)
     meta_cols = ["time_idx", "group_id", target_col]
@@ -250,7 +262,7 @@ def select_features(
         return df[keep_cols].copy(), selected, known_features
 
     selected_unknown = mrmr_select(
-        df,
+        selection_df,
         target_col=target_col,
         top_k=mrmr_top_k,
         exclude_cols=list(preserve_cols | forbidden),

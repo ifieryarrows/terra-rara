@@ -399,6 +399,73 @@ def tail_capture_rate(
     return directional_accuracy(y_actual[tail_mask], y_pred[tail_mask])
 
 
+def fit_direction_sign_calibration(
+    y_actual_path: np.ndarray,
+    y_pred_quantiles_path: np.ndarray,
+    *,
+    horizon: int = 5,
+    min_samples: int = 30,
+) -> dict[str, float | int | str]:
+    """Fit a global sign correction from validation predictions only.
+
+    A sign flip is accepted only when both the T+1 and weekly validation
+    signals are strongly anti-correlated and their flipped versions meet the
+    promotion-relevant direction thresholds.  The returned multiplier is then
+    applied identically to held-out evaluation and live inference; no test
+    target is read by this function.
+    """
+    actual_path = np.asarray(y_actual_path, dtype=np.float64)
+    pred_path = np.asarray(y_pred_quantiles_path, dtype=np.float64)
+    if actual_path.ndim < 2 or pred_path.ndim != 3:
+        raise ValueError("Direction calibration requires [n,horizon] targets and [n,horizon,q] predictions")
+    if actual_path.shape[1] < horizon or pred_path.shape[1] < horizon:
+        raise ValueError(f"Direction calibration requires a {horizon}-step prediction path")
+
+    n = min(len(actual_path), len(pred_path))
+    median_idx = pred_path.shape[2] // 2
+    actual_path = actual_path[:n]
+    pred_path = pred_path[:n]
+    daily_actual = select_prediction_horizon(actual_path, horizon_idx=0)
+    daily_pred = pred_path[:, 0, median_idx]
+    weekly_actual = cumulative_horizon(actual_path, horizon=horizon)
+    weekly_pred = pred_path[:, :horizon, median_idx].sum(axis=1)
+
+    base_daily_da = directional_accuracy(daily_actual, daily_pred) if n else 0.0
+    flipped_daily_da = directional_accuracy(daily_actual, -daily_pred) if n else 0.0
+    base_weekly_da = directional_accuracy(weekly_actual, weekly_pred) if n else 0.0
+    flipped_weekly_da = directional_accuracy(weekly_actual, -weekly_pred) if n else 0.0
+    base_daily_sharpe = sharpe_ratio(np.sign(daily_pred) * daily_actual) if n else 0.0
+    flipped_daily_sharpe = sharpe_ratio(np.sign(-daily_pred) * daily_actual) if n else 0.0
+    base_daily_tail = tail_capture_rate(daily_actual, daily_pred) if n else 0.0
+    flipped_daily_tail = tail_capture_rate(daily_actual, -daily_pred) if n else 0.0
+
+    sign_multiplier = 1
+    if (
+        n >= min_samples
+        and base_daily_da <= 0.45
+        and flipped_daily_da >= 0.55
+        and base_weekly_da <= 0.45
+        and flipped_weekly_da >= 0.55
+        and flipped_daily_sharpe > 0.30
+        and flipped_daily_tail >= 0.35
+    ):
+        sign_multiplier = -1
+
+    return {
+        "fit_split": "validation",
+        "sample_count": int(n),
+        "direction_sign_multiplier": sign_multiplier,
+        "daily_directional_accuracy": base_daily_da,
+        "daily_directional_accuracy_flipped": flipped_daily_da,
+        "daily_sharpe_ratio": base_daily_sharpe,
+        "daily_sharpe_ratio_flipped": flipped_daily_sharpe,
+        "daily_tail_capture_rate": base_daily_tail,
+        "daily_tail_capture_rate_flipped": flipped_daily_tail,
+        "weekly_directional_accuracy": base_weekly_da,
+        "weekly_directional_accuracy_flipped": flipped_weekly_da,
+    }
+
+
 def prediction_interval_coverage(
     y_actual: np.ndarray,
     lower: np.ndarray,

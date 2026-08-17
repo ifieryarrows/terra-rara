@@ -78,6 +78,7 @@ class TFTPredictor:
         self._pca = None
         self._hub_checked = False
         self._metadata_checked = False
+        self._direction_sign_multiplier = 1
 
     def _ensure_local_artifacts(self) -> None:
         """Download checkpoint from HF Hub if not present locally."""
@@ -175,6 +176,13 @@ class TFTPredictor:
             raise IncompatibleTFTCheckpointError(
                 "Incompatible TFT checkpoint: expected weekly_log_v1 contract. Retraining required."
             )
+        direction_calibration = metadata.get("direction_calibration") or {}
+        multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+        if multiplier not in (-1, 1):
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted direction calibration. Retraining required."
+            )
+        self._direction_sign_multiplier = multiplier
         self._metadata_checked = True
 
     @property
@@ -308,6 +316,8 @@ class TFTPredictor:
             else:
                 pred_for_format = pred_np.reshape(1, -1)
 
+            pred_for_format = pred_for_format * self._direction_sign_multiplier
+
         except IncompatibleTFTCheckpointError as exc:
             logger.warning("TFT checkpoint incompatible: %s", exc)
             return self._degraded_retrain_required(str(exc))
@@ -334,6 +344,7 @@ class TFTPredictor:
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "return_space": RETURN_SPACE,
+            "direction_sign_multiplier": self._direction_sign_multiplier,
         }
 
         # Surface freshness + instrument identity so the UI can label the
