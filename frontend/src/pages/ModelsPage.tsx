@@ -50,13 +50,16 @@ export const ModelsPage = () => {
   }
 
   const m = data.metrics ?? {};
-  const da = m.directional_accuracy;
+  const weeklyDa = m.weekly_directional_accuracy;
+  const weeklySampleCount = m.weekly_sample_count;
+  const weeklyDaThreshold = weeklySampleCount != null && weeklySampleCount < 80 ? 0.51 : 0.53;
   const sharpe = m.sharpe_ratio;
   const vr = m.variance_ratio;
   const mae = m.mae;
   const rmse = m.rmse;
   const sortino = m.sortino_ratio;
   const tail = m.tail_capture_rate;
+  const tailCaptureThreshold = 0.35;
 
   const gate = data.quality_gate;
 
@@ -116,10 +119,10 @@ export const ModelsPage = () => {
         <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Core Metrics</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Metric
-            label="Directional Accuracy"
-            value={fmtPct(da)}
-            tone={da != null ? (da >= 0.52 ? 'good' : 'bad') : 'neutral'}
-            hint="Share of correct direction calls"
+            label="Weekly Directional Accuracy"
+            value={fmtPct(weeklyDa)}
+            tone={weeklyDa != null ? (weeklyDa >= weeklyDaThreshold ? 'good' : 'bad') : 'neutral'}
+            hint={`Weekly sign accuracy · gate ≥ ${(weeklyDaThreshold * 100).toFixed(0)}%`}
           />
           <Metric
             label="Sharpe Ratio"
@@ -138,9 +141,14 @@ export const ModelsPage = () => {
             tone={vr != null ? (vr >= 0.5 && vr <= 1.5 ? 'good' : 'bad') : 'neutral'}
             hint="pred σ / actual σ (target ≈ 1.0)"
           />
-          <Metric label="MAE" value={fmtNum(mae)} />
-          <Metric label="RMSE" value={fmtNum(rmse)} />
-          <Metric label="Tail Capture" value={fmtPct(tail)} hint="Extreme-move coverage" />
+          <Metric label="MAE" value={fmtNum(mae)} hint="Mean absolute error · lower is better" />
+          <Metric label="RMSE" value={fmtNum(rmse)} hint="Penalizes larger errors · lower is better" />
+          <Metric
+            label="Tail Capture"
+            value={fmtPct(tail)}
+            tone={tail != null ? (tail >= tailCaptureThreshold ? 'good' : 'bad') : 'neutral'}
+            hint={`Correct direction on extreme moves · gate ≥ ${(tailCaptureThreshold * 100).toFixed(0)}%`}
+          />
           <Metric
             label="Pred σ / Actual σ"
             value={`${fmtNum(m.pred_std, 4)} / ${fmtNum(m.actual_std, 4)}`}

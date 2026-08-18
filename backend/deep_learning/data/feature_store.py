@@ -427,6 +427,12 @@ def build_tft_dataframe(
     target_model = target_1d.copy()
     target_model.name = cfg.forecast.model_daily_target_col
 
+    # Unlike ``target_model``, this is known at the row's forecast origin:
+    # close[t] / close[t-1].  It is used only to construct causal regime
+    # features and is intentionally not exposed as a TFT feature itself.
+    observed_return_1d = log_close.diff().fillna(0.0)
+    observed_return_1d.name = "observed_return_1d"
+
     realized_vol_20d = target_1d.rolling(20, min_periods=10).std()
     realized_vol_20d.name = "realized_vol_20d"
 
@@ -456,6 +462,7 @@ def build_tft_dataframe(
             lme_features,
             futures_features,
             target_model.to_frame(),
+            observed_return_1d.to_frame(),
         ],
         axis=1,
     ).reindex(target_index).fillna(0.0)
@@ -539,8 +546,17 @@ def build_tft_dataframe(
     )
 
     # ---- 7. MRMR feature selection (reduce dimensionality) ----
+    # Fit the selector on the chronological training partition only.  Using
+    # validation or test targets here would leak their label relationships into
+    # the feature set before the held-out evaluation begins.
     if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > cfg.feature_store.mrmr_top_k:
         from deep_learning.data.feature_selection import select_features
+
+        test_size = int(len(master) * cfg.training.test_ratio)
+        val_size = int(len(master) * cfg.training.val_ratio)
+        train_size = len(master) - val_size - test_size
+        if train_size <= 0:
+            raise ValueError("Feature selection requires a non-empty chronological training partition")
 
         master, time_varying_unknown, time_varying_known = select_features(
             master,
@@ -549,6 +565,7 @@ def build_tft_dataframe(
             known_features=time_varying_known,
             forced_unknown_features=forced_unknown,
             forbidden_features=list(non_feature_cols),
+            selection_df=master.iloc[:train_size],
         )
 
     from deep_learning.data.validation import validate_weekly_target_contract

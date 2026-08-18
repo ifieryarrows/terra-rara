@@ -26,6 +26,28 @@ def test_correct_weekly_direction_has_lower_loss_than_anti_direction():
     assert loss.loss(pred_good, actual) < loss.loss(pred_bad, actual)
 
 
+def test_t1_directional_loss_prefers_same_sign_first_step():
+    actual = torch.tensor([[0.010, 0.0, 0.0, 0.0, 0.0], [-0.010, 0.0, 0.0, 0.0, 0.0]])
+    pred_good = _path_from_median(actual)
+    pred_bad = _path_from_median(-actual)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=1.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
+    )
+
+    assert loss.loss(pred_good, actual) < loss.loss(pred_bad, actual)
+
+
 def test_dispersion_loss_prefers_matching_weekly_median_scale():
     actual = torch.tensor(
         [
@@ -186,6 +208,7 @@ def test_weekly_loss_tracks_component_means():
     assert means["n_batches"] == 1
     assert means["weekly_q_loss_mean"] >= 0.0
     assert means["t1_q_loss_mean"] >= 0.0
+    assert means["t1_directional_loss_mean"] >= 0.0
     assert means["dispersion_loss_mean"] >= 0.0
     assert means["magnitude_loss_mean"] >= 0.0
     assert means["naive_loss_mean"] >= 0.0
@@ -198,6 +221,7 @@ def test_weekly_loss_tracks_component_means():
     assert means["dominant_component"] in {
         "weekly_q",
         "t1_q",
+        "t1_directional",
         "dispersion",
         "magnitude",
         "naive",

@@ -1,0 +1,35 @@
+import numpy as np
+
+from deep_learning.training.metrics import fit_direction_sign_calibration
+
+
+def _quantile_path(median_path: np.ndarray) -> np.ndarray:
+    offsets = np.array([-0.012, -0.008, -0.004, 0.0, 0.004, 0.008, 0.012])
+    return median_path[..., None] + offsets
+
+
+def test_validation_only_direction_calibration_flips_stable_inverse_signal():
+    signs = np.array([1.0, -1.0] * 20)
+    magnitudes = np.linspace(0.016, 0.032, len(signs))
+    actual = np.repeat((signs * magnitudes)[:, None], 5, axis=1)
+    pred = _quantile_path(-actual)
+
+    calibration = fit_direction_sign_calibration(actual, pred)
+
+    assert calibration["fit_split"] == "validation"
+    assert calibration["direction_sign_multiplier"] == -1
+    assert calibration["daily_directional_accuracy"] == 0.0
+    assert calibration["daily_directional_accuracy_flipped"] == 1.0
+    assert calibration["weekly_directional_accuracy"] == 0.0
+    assert calibration["weekly_directional_accuracy_flipped"] == 1.0
+
+
+def test_direction_calibration_keeps_aligned_signal_unchanged():
+    signs = np.array([1.0, -1.0] * 20)
+    magnitudes = np.linspace(0.016, 0.032, len(signs))
+    actual = np.repeat((signs * magnitudes)[:, None], 5, axis=1)
+    pred = _quantile_path(actual)
+
+    calibration = fit_direction_sign_calibration(actual, pred)
+
+    assert calibration["direction_sign_multiplier"] == 1

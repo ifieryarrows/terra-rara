@@ -41,6 +41,10 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           TOKENIZERS_PARALLELISM: "false"
 
+      - name: Quality gate — deterministic validation
+        working-directory: backend
+        run: python scripts/tft_quality_gate.py
+
       - name: Upload validation artifacts
         if: always()
         uses: actions/upload-artifact@v4

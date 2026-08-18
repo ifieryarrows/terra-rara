@@ -96,3 +96,25 @@ def test_select_features_forces_sentiment_regime_and_preserves_forbidden(sample_
     assert "target_1d_log_return" in filtered.columns
     assert "target_1d_log_return" not in unknown
     assert "material_move_5d" not in unknown
+
+
+def test_select_features_fits_mrmr_on_explicit_training_frame(monkeypatch, sample_df):
+    observed = {}
+
+    def fake_mrmr(frame, **_kwargs):
+        observed["index"] = frame.index.tolist()
+        return ["signal_1"]
+
+    monkeypatch.setattr("deep_learning.data.feature_selection.mrmr_select", fake_mrmr)
+    training_only = sample_df.iloc[:80].copy()
+
+    filtered, unknown, _ = select_features(
+        sample_df,
+        target_col="target",
+        mrmr_top_k=1,
+        selection_df=training_only,
+    )
+
+    assert observed["index"] == training_only.index.tolist()
+    assert unknown == ["signal_1"]
+    assert len(filtered) == len(sample_df)

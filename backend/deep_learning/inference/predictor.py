@@ -78,6 +78,8 @@ class TFTPredictor:
         self._pca = None
         self._hub_checked = False
         self._metadata_checked = False
+        self._direction_sign_multiplier = 1
+        self._weekly_interval_scale = 1.0
 
     def _ensure_local_artifacts(self) -> None:
         """Download checkpoint from HF Hub if not present locally."""
@@ -175,6 +177,20 @@ class TFTPredictor:
             raise IncompatibleTFTCheckpointError(
                 "Incompatible TFT checkpoint: expected weekly_log_v1 contract. Retraining required."
             )
+        direction_calibration = metadata.get("direction_calibration") or {}
+        multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+        if multiplier not in (-1, 1):
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted direction calibration. Retraining required."
+            )
+        self._direction_sign_multiplier = multiplier
+        interval_calibration = metadata.get("interval_calibration") or {}
+        interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
+        if not np.isfinite(interval_scale) or interval_scale <= 0.0:
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted weekly interval scale. Retraining required."
+            )
+        self._weekly_interval_scale = interval_scale
         self._metadata_checked = True
 
     @property
@@ -308,6 +324,14 @@ class TFTPredictor:
             else:
                 pred_for_format = pred_np.reshape(1, -1)
 
+            pred_for_format = pred_for_format * self._direction_sign_multiplier
+            if self._weekly_interval_scale != 1.0:
+                median_idx = len(self.cfg.model.quantiles) // 2
+                median = pred_for_format[..., median_idx : median_idx + 1]
+                pred_for_format = median + self._weekly_interval_scale * (
+                    pred_for_format - median
+                )
+
         except IncompatibleTFTCheckpointError as exc:
             logger.warning("TFT checkpoint incompatible: %s", exc)
             return self._degraded_retrain_required(str(exc))
@@ -334,6 +358,8 @@ class TFTPredictor:
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "return_space": RETURN_SPACE,
+            "direction_sign_multiplier": self._direction_sign_multiplier,
+            "weekly_interval_scale": self._weekly_interval_scale,
         }
 
         # Surface freshness + instrument identity so the UI can label the

@@ -182,6 +182,22 @@ def _weekly_positive_rate_loss(
     ).pow(2)
 
 
+def _directional_sign_loss(
+    prediction: torch.Tensor,
+    actual: torch.Tensor,
+    *,
+    tanh_scale: float,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Magnitude-aware sign loss for a single forecast horizon."""
+    soft_prediction_sign = torch.tanh(prediction * float(tanh_scale))
+    actual_sign = torch.sign(actual).float()
+    weights = actual.abs() / actual.abs().mean().clamp_min(eps)
+    squared_error = (soft_prediction_sign - actual_sign).pow(2)
+    wrong_sign_hinge = torch.relu(-soft_prediction_sign * actual_sign)
+    return (weights * squared_error).mean() + 0.25 * wrong_sign_hinge.mean()
+
+
 def _weekly_interval_undercoverage_loss(
     pred_weekly_quantiles: torch.Tensor,
     actual_weekly: torch.Tensor,
@@ -323,6 +339,9 @@ try:
             quantiles: list,
             lambda_weekly_quantile: float = 0.70,
             lambda_t1_quantile: float = 0.20,
+            # Keep the standalone loss API neutral by default; production
+            # training passes the configured 0.20 weight explicitly.
+            lambda_t1_directional: float = 0.0,
             lambda_dispersion: float = 0.35,
             lambda_directional: float = 0.10,
             lambda_magnitude: float = 0.55,
@@ -338,6 +357,7 @@ try:
             super().__init__(quantiles=quantiles)
             self.lambda_weekly_quantile = lambda_weekly_quantile
             self.lambda_t1_quantile = lambda_t1_quantile
+            self.lambda_t1_directional = lambda_t1_directional
             self.lambda_dispersion = lambda_dispersion
             self.lambda_directional = lambda_directional
             self.lambda_magnitude = lambda_magnitude
@@ -356,6 +376,7 @@ try:
             self._component_sums = {
                 "weekly_q": 0.0,
                 "t1_q": 0.0,
+                "t1_directional": 0.0,
                 "dispersion": 0.0,
                 "magnitude": 0.0,
                 "naive": 0.0,
@@ -372,6 +393,7 @@ try:
             self,
             weekly_q_loss: torch.Tensor,
             t1_q_loss: torch.Tensor,
+            t1_directional_loss: torch.Tensor,
             dispersion_loss: torch.Tensor,
             magnitude_loss: torch.Tensor,
             naive_relative_loss: torch.Tensor,
@@ -384,6 +406,7 @@ try:
         ) -> None:
             self._component_sums["weekly_q"] += float(weekly_q_loss.detach().mean().cpu())
             self._component_sums["t1_q"] += float(t1_q_loss.detach().mean().cpu())
+            self._component_sums["t1_directional"] += float(t1_directional_loss.detach().mean().cpu())
             self._component_sums["dispersion"] += float(dispersion_loss.detach().mean().cpu())
             self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
             self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
@@ -402,6 +425,7 @@ try:
                     "n_batches": 0,
                     "weekly_q_loss_mean": 0.0,
                     "t1_q_loss_mean": 0.0,
+                    "t1_directional_loss_mean": 0.0,
                     "dispersion_loss_mean": 0.0,
                     "magnitude_loss_mean": 0.0,
                     "naive_loss_mean": 0.0,
@@ -417,6 +441,7 @@ try:
             components = {
                 "weekly_q": self._component_sums["weekly_q"],
                 "t1_q": self._component_sums["t1_q"],
+                "t1_directional": self._component_sums["t1_directional"],
                 "dispersion": self._component_sums["dispersion"],
                 "magnitude": self._component_sums["magnitude"],
                 "naive": self._component_sums["naive"],
@@ -430,6 +455,7 @@ try:
                 "n_batches": n_batches,
                 "weekly_q_loss_mean": self._component_sums["weekly_q"] / n_batches,
                 "t1_q_loss_mean": self._component_sums["t1_q"] / n_batches,
+                "t1_directional_loss_mean": self._component_sums["t1_directional"] / n_batches,
                 "dispersion_loss_mean": self._component_sums["dispersion"] / n_batches,
                 "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
                 "naive_loss_mean": self._component_sums["naive"] / n_batches,
@@ -498,6 +524,12 @@ try:
 
             weekly_q_loss = self._pinball(pred_weekly_quantiles, actual_weekly)
             t1_q_loss = super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1])
+            t1_directional_loss = _directional_sign_loss(
+                median_path[:, 0],
+                y_actual[:, 0],
+                tanh_scale=100.0,
+                eps=self.sharpe_eps,
+            )
 
             pred_weekly_median = median_path.sum(dim=1)
             eps = self.sharpe_eps
@@ -518,16 +550,12 @@ try:
                 eps=eps,
             )
 
-            weekly_pred_direction = torch.tanh(pred_weekly_median * 20.0)
-            weekly_actual_direction = torch.sign(actual_weekly)
-            directional_weight = actual_weekly.abs() / actual_weekly.abs().mean().clamp_min(eps)
-            directional_error = (weekly_pred_direction - weekly_actual_direction.float()).pow(2)
-            directional_hinge = torch.relu(
-                -weekly_pred_direction * weekly_actual_direction.float()
+            directional_loss = _directional_sign_loss(
+                pred_weekly_median,
+                actual_weekly,
+                tanh_scale=20.0,
+                eps=eps,
             )
-            directional_loss = (
-                directional_weight * directional_error
-            ).mean() + 0.25 * directional_hinge.mean()
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
                 # pytorch_forecasting metrics can return per-sample tensors;
@@ -537,6 +565,7 @@ try:
 
             weekly_q_loss = _to_scalar(weekly_q_loss)
             t1_q_loss = _to_scalar(t1_q_loss)
+            t1_directional_loss = _to_scalar(t1_directional_loss)
             magnitude_loss = _to_scalar(magnitude_loss)
             naive_relative_loss = _to_scalar(naive_relative_loss)
             bias_loss = _to_scalar(bias_loss)
@@ -548,6 +577,7 @@ try:
             total_loss = (
                 self.lambda_weekly_quantile * _to_scalar(weekly_q_loss)
                 + self.lambda_t1_quantile * _to_scalar(t1_q_loss)
+                + self.lambda_t1_directional * _to_scalar(t1_directional_loss)
                 + self.lambda_dispersion * _to_scalar(dispersion_loss)
                 + self.lambda_magnitude * _to_scalar(magnitude_loss)
                 + self.lambda_naive * _to_scalar(naive_relative_loss)
@@ -561,6 +591,7 @@ try:
             self._record_components(
                 weekly_q_loss,
                 t1_q_loss,
+                t1_directional_loss,
                 dispersion_loss,
                 magnitude_loss,
                 naive_relative_loss,
@@ -607,6 +638,7 @@ def create_tft_model(
             quantiles=quantiles,
             lambda_weekly_quantile=cfg.weekly_loss.lambda_weekly_quantile,
             lambda_t1_quantile=cfg.weekly_loss.lambda_t1_quantile,
+            lambda_t1_directional=cfg.weekly_loss.lambda_t1_directional,
             lambda_dispersion=cfg.weekly_loss.lambda_dispersion,
             lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
             lambda_naive=cfg.weekly_loss.lambda_naive,
@@ -618,13 +650,14 @@ def create_tft_model(
             weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
+            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f t1_dir=%.2f dispersion=%.2f "
             "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f saturation=%.2f "
             "positive_rate=%.2f interval=%.2f "
             "median_cap=%s "
             "monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
+            cfg.weekly_loss.lambda_t1_directional,
             cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
