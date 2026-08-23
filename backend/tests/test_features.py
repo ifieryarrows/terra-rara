@@ -14,6 +14,7 @@ from app.features import (
     compute_rsi,
     compute_volatility,
     generate_symbol_features,
+    describe_feature,
 )
 
 
@@ -147,6 +148,24 @@ class TestGenerateSymbolFeatures:
         # Check a middle value (not first few which may be NaN)
         idx = 10
         assert abs(lag1.iloc[idx] - ret1.iloc[idx - 1]) < 0.0001
+
+
+class TestFeatureDescriptions:
+    def test_sanitized_symbols_use_canonical_user_facing_labels(self):
+        dxy = describe_feature("DX_Y_NYB_price_sma_ratio")
+        copper = describe_feature("HG_F_SMA_5")
+
+        assert dxy["label"] == "US Dollar Index · Price vs. 20-day average"
+        assert dxy["category"] == "Trend"
+        assert copper["label"] == "Copper Futures · 5-day moving average"
+        assert copper["category"] == "Trend"
+
+    def test_long_labels_are_not_truncated(self):
+        described = describe_feature("COPX_EMA_20")
+
+        assert "Global Copper Miners ETF" in described["label"]
+        assert "weighted moving average" in described["label"]
+        assert "…" not in described["label"]
 
 
 class TestTargetCreation:

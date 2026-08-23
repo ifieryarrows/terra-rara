@@ -439,6 +439,19 @@ _SYMBOL_LABEL_MAP: dict[str, str] = {
 }
 
 
+def _symbol_prefix_aliases() -> list[tuple[str, str]]:
+    """Return raw and sanitized feature prefixes mapped to raw symbols."""
+    import re
+
+    aliases: list[tuple[str, str]] = []
+    for symbol in _SYMBOL_LABEL_MAP:
+        aliases.append((symbol, symbol))
+        sanitized = re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_")
+        if sanitized != symbol:
+            aliases.append((sanitized, symbol))
+    return aliases
+
+
 def _humanize_symbol(sym: str) -> str:
     """Convert ticker to a user-facing label."""
     if not sym:
@@ -450,22 +463,22 @@ def _humanize_symbol(sym: str) -> str:
 
 
 _INDICATOR_LABEL_MAP: dict[str, str] = {
-    "ret1":            "1-day return",
-    "ret2":            "2-day return",
-    "ret5":            "5-day return",
-    "ret10":           "10-day return",
-    "RSI_14":          "14-day RSI (momentum)",
+    "ret1":            "1-day price change",
+    "ret2":            "2-day price change",
+    "ret5":            "5-day price change",
+    "ret10":           "10-day price change",
+    "RSI_14":          "14-day price momentum",
     "SMA_5":           "5-day moving average",
     "SMA_10":          "10-day moving average",
     "SMA_20":          "20-day moving average",
-    "EMA_5":           "5-day exponential MA",
-    "EMA_10":          "10-day exponential MA",
-    "EMA_20":          "20-day exponential MA",
-    "vol_5":           "5-day volatility",
-    "vol_10":          "10-day volatility",
-    "vol_20":          "20-day volatility",
-    "price_sma_ratio": "Price vs. 20-day MA",
-    "target":          "Model target (next-day return)",
+    "EMA_5":           "5-day weighted moving average",
+    "EMA_10":          "10-day weighted moving average",
+    "EMA_20":          "20-day weighted moving average",
+    "vol_5":           "5-day price volatility",
+    "vol_10":          "10-day price volatility",
+    "vol_20":          "20-day price volatility",
+    "price_sma_ratio": "Price vs. 20-day average",
+    "target":          "Model target (next-day change)",
 }
 
 
@@ -507,13 +520,17 @@ def describe_feature(feature: str) -> dict[str, str]:
         return {"label": "—", "description": "", "category": "Other"}
 
     # Pattern: <SYMBOL>_<token> where token can itself contain underscores.
-    # We try the longest matching symbol prefix.
+    # We try the longest matching raw or sanitized symbol prefix. Training
+    # features use safe names such as HG_F and DX_Y_NYB, while the label map
+    # uses the canonical market symbols HG=F and DX-Y.NYB.
+    import re
+
     symbol = ""
     token = feature
-    for known in sorted(_SYMBOL_LABEL_MAP.keys(), key=len, reverse=True):
-        prefix = f"{known}_"
+    for prefix, canonical in sorted(_symbol_prefix_aliases(), key=lambda item: len(item[0]), reverse=True):
+        prefix = f"{prefix}_"
         if feature.startswith(prefix):
-            symbol = known
+            symbol = canonical
             token = feature[len(prefix) :]
             break
 
@@ -521,7 +538,6 @@ def describe_feature(feature: str) -> dict[str, str]:
         # Fallback heuristic: features are often serialized as
         # "<TICKER>_<INDICATOR...>". If the prefix looks like a ticker we
         # treat it as the subject even when it's not in _SYMBOL_LABEL_MAP yet.
-        import re
         if "_" in feature:
             maybe_sym, rest = feature.split("_", 1)
             if re.fullmatch(r"[A-Z0-9^=.\-]{1,20}", maybe_sym or ""):
@@ -549,7 +565,6 @@ def describe_feature(feature: str) -> dict[str, str]:
 
     # Time horizon extraction (e.g. RSI_14, vol_10)
     time_horizon = ""
-    import re
     m = re.search(r"_(\d+)$", token)
     if m:
         time_horizon = f"{m.group(1)}d"
@@ -561,10 +576,6 @@ def describe_feature(feature: str) -> dict[str, str]:
     else:
         label = indicator_label[:1].upper() + indicator_label[1:]
         description = label
-
-    # Keep label concise
-    if len(label) > 48:
-        label = label[:45] + "…"
 
     return {
         "label": label,

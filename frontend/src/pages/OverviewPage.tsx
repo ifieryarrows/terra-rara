@@ -19,7 +19,7 @@ import {
 } from '../api';
 import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
-  AnalysisReport, HistoryResponse,
+  AnalysisReport, HistoryResponse, Influencer,
   CommentaryResponse, TFTAnalysisResponse
 } from '../types';
 import { useSentimentSummary } from '../hooks/useQueries';
@@ -49,6 +49,28 @@ const MapSkeleton = () => (
     </div>
   </div>
 );
+
+const driverCategoryTone: Record<string, string> = {
+  Momentum:   'bg-copper-500/15 text-copper-300',
+  Trend:      'bg-blue-500/15 text-blue-300',
+  Volatility: 'bg-amber-500/15 text-amber-300',
+  Sentiment:  'bg-violet-500/15 text-violet-300',
+  Macro:      'bg-emerald-500/15 text-emerald-300',
+  Sector:     'bg-rose-500/15 text-rose-300',
+  Embedding:  'bg-slate-500/15 text-slate-300',
+  Other:      'bg-white/5 text-gray-400',
+};
+
+const driverCategoryLabel: Record<string, string> = {
+  Momentum: 'Momentum signal',
+  Trend: 'Trend signal',
+  Volatility: 'Price volatility',
+  Sentiment: 'News sentiment',
+  Macro: 'Macro market',
+  Sector: 'Related market',
+  Embedding: 'News pattern',
+  Other: 'Other factor',
+};
 
 // --- Components ---
 
@@ -670,34 +692,21 @@ export const OverviewPage = () => {
           <GlassCard title="Market Drivers" icon={BarChart3} colSpan={4}>
             <div className="space-y-4">
               {analysis?.top_influencers?.length ? (
-                analysis.top_influencers.slice(0, 5).map((inf: any, i: number) => {
+                analysis.top_influencers.slice(0, 5).map((inf: Influencer, i: number) => {
                   const maxImp = analysis.top_influencers[0]?.importance || 1;
                   const label = inf.label || inf.description || inf.feature;
-                  const categoryTone: Record<string, string> = {
-                    Momentum:   'bg-copper-500/15 text-copper-300',
-                    Trend:      'bg-blue-500/15 text-blue-300',
-                    Volatility: 'bg-amber-500/15 text-amber-300',
-                    Sentiment:  'bg-violet-500/15 text-violet-300',
-                    Macro:      'bg-emerald-500/15 text-emerald-300',
-                    Sector:     'bg-rose-500/15 text-rose-300',
-                    Embedding:  'bg-slate-500/15 text-slate-300',
-                    Other:      'bg-white/5 text-gray-400',
-                  };
                   return (
                     <div key={inf.feature} className="group" title={inf.feature}>
-                      <div className="flex justify-between items-start mb-1 gap-2">
+                      <div className="flex justify-between items-start mb-1 gap-3">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
                           {inf.category && (
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${categoryTone[inf.category] || categoryTone.Other} font-medium uppercase tracking-wider shrink-0`}>
-                              {inf.category}
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
+                              {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
                             </span>
                           )}
-                          <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors whitespace-normal break-words leading-snug">
+                          <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
                             {label}
                           </span>
-                          {inf.time_horizon && (
-                            <span className="text-[9px] font-mono text-gray-500 shrink-0">{inf.time_horizon}</span>
-                          )}
                         </div>
                         <span className="text-xs font-mono text-gray-500 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
                       </div>
