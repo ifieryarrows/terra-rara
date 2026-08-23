@@ -717,10 +717,13 @@ export const OverviewPage = () => {
           {/* Model Health Card */}
           <GlassCard title="Model Reliability" icon={Crosshair} colSpan={4}>
             {tftMetrics ? (() => {
-              const da = (tftMetrics.directional_accuracy ?? 0) * 100;
+              const weeklyDa = tftMetrics.weekly_directional_accuracy;
+              const weeklySampleCount = tftMetrics.weekly_sample_count;
+              const weeklyDaThreshold = weeklySampleCount != null && weeklySampleCount < 80 ? 51 : 53;
+              const da = (weeklyDa ?? 0) * 100;
               const sharpe = tftMetrics.sharpe_ratio ?? 0;
 
-              const daGood = da >= 52;
+              const daGood = weeklyDa != null && da >= weeklyDaThreshold;
               const sharpeGood = sharpe >= 0;
 
               const overallGood = (daGood ? 1 : 0) + (sharpeGood ? 1 : 0);
@@ -740,13 +743,21 @@ export const OverviewPage = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         {daGood ? <CheckCircle2 size={13} className="text-emerald-400" /> : <AlertTriangle size={13} className="text-rose-400" />}
-                        <span className="text-xs text-gray-400">Direction Accuracy</span>
+                        <span className="text-xs text-gray-400">Weekly Direction Accuracy</span>
                       </div>
-                      <span className={clsx("text-xs font-mono font-medium", daGood ? "text-emerald-400" : "text-rose-400")}>{da.toFixed(1)}%</span>
+                      <span className={clsx("text-xs font-mono font-medium", daGood ? "text-emerald-400" : "text-rose-400")}>
+                        {weeklyDa != null ? `${da.toFixed(1)}%` : '--'}
+                      </span>
                     </div>
                     <ProgressBar value={da} max={100} color={daGood ? "bg-emerald-500" : "bg-rose-500"} />
                     <p className="text-[10px] text-gray-600">
-                      {da >= 55 ? "Strong directional signal" : da >= 50 ? "Beats coin flip" : "Below random — still learning"}
+                      {weeklyDa == null
+                        ? "Weekly metric unavailable"
+                        : da >= 55
+                        ? "Strong weekly directional signal"
+                        : da >= 50
+                        ? "Beats coin flip on a weekly horizon"
+                        : "Below random — still learning"}
                     </p>
                   </div>
 

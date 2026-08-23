@@ -156,6 +156,8 @@ export interface TFTModelMetadata {
     mae?: number;
     rmse?: number;
     directional_accuracy?: number;
+    weekly_directional_accuracy?: number;
+    weekly_sample_count?: number;
     sharpe_ratio?: number;
     sortino_ratio?: number;
     variance_ratio?: number;
