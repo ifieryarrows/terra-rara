@@ -669,48 +669,56 @@ export const OverviewPage = () => {
               `label`, `description`, `category`, `time_horizon`. */}
           <GlassCard title="Market Drivers" icon={BarChart3} colSpan={4}>
             <div className="space-y-4">
-              {analysis?.top_influencers.slice(0, 5).map((inf: any, i: number) => {
-                const maxImp = analysis.top_influencers[0]?.importance || 1;
-                const label = inf.label || inf.description || inf.feature;
-                const categoryTone: Record<string, string> = {
-                  Momentum:   'bg-copper-500/15 text-copper-300',
-                  Trend:      'bg-blue-500/15 text-blue-300',
-                  Volatility: 'bg-amber-500/15 text-amber-300',
-                  Sentiment:  'bg-violet-500/15 text-violet-300',
-                  Macro:      'bg-emerald-500/15 text-emerald-300',
-                  Sector:     'bg-rose-500/15 text-rose-300',
-                  Embedding:  'bg-slate-500/15 text-slate-300',
-                  Other:      'bg-white/5 text-gray-400',
-                };
-                return (
-                  <div key={inf.feature} className="group" title={inf.feature}>
-                    <div className="flex justify-between items-start mb-1 gap-2">
-                      <div className="flex items-start gap-2 min-w-0 flex-1">
-                        {inf.category && (
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${categoryTone[inf.category] || categoryTone.Other} font-medium uppercase tracking-wider shrink-0`}>
-                            {inf.category}
+              {analysis?.top_influencers?.length ? (
+                analysis.top_influencers.slice(0, 5).map((inf: any, i: number) => {
+                  const maxImp = analysis.top_influencers[0]?.importance || 1;
+                  const label = inf.label || inf.description || inf.feature;
+                  const categoryTone: Record<string, string> = {
+                    Momentum:   'bg-copper-500/15 text-copper-300',
+                    Trend:      'bg-blue-500/15 text-blue-300',
+                    Volatility: 'bg-amber-500/15 text-amber-300',
+                    Sentiment:  'bg-violet-500/15 text-violet-300',
+                    Macro:      'bg-emerald-500/15 text-emerald-300',
+                    Sector:     'bg-rose-500/15 text-rose-300',
+                    Embedding:  'bg-slate-500/15 text-slate-300',
+                    Other:      'bg-white/5 text-gray-400',
+                  };
+                  return (
+                    <div key={inf.feature} className="group" title={inf.feature}>
+                      <div className="flex justify-between items-start mb-1 gap-2">
+                        <div className="flex items-start gap-2 min-w-0 flex-1">
+                          {inf.category && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${categoryTone[inf.category] || categoryTone.Other} font-medium uppercase tracking-wider shrink-0`}>
+                              {inf.category}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors whitespace-normal break-words leading-snug">
+                            {label}
                           </span>
-                        )}
-                        <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors whitespace-normal break-words leading-snug">
-                          {label}
-                        </span>
-                        {inf.time_horizon && (
-                          <span className="text-[9px] font-mono text-gray-500 shrink-0">{inf.time_horizon}</span>
-                        )}
+                          {inf.time_horizon && (
+                            <span className="text-[9px] font-mono text-gray-500 shrink-0">{inf.time_horizon}</span>
+                          )}
+                        </div>
+                        <span className="text-xs font-mono text-gray-500 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
                       </div>
-                      <span className="text-xs font-mono text-gray-500 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
+                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(inf.importance / maxImp) * 100}%` }}
+                          transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                      <motion.div
-                        className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(inf.importance / maxImp) * 100}%` }}
-                        transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
+                  <BarChart3 size={24} className="text-gray-700" />
+                  <p className="text-xs text-gray-500">Market drivers are unavailable</p>
+                  <p className="text-[10px] text-gray-700">They will appear after the next model refresh.</p>
+                </div>
+              )}
             </div>
           </GlassCard>
 

@@ -8,6 +8,7 @@ Endpoints:
 """
 
 import logging
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -123,6 +124,43 @@ app.add_middleware(
 # API Endpoints
 # =============================================================================
 
+def _load_cached_xgb_importance(session, symbol: str) -> list[dict]:
+    """Load feature importance without running inference.
+
+    The analysis endpoint is snapshot-only, but a snapshot can predate the
+    feature-importance metadata or contain an empty list after a failed model
+    metadata write. Prefer the DB copy and fall back to the model artifact
+    written by the worker so the UI can still render the drivers.
+    """
+    from app.models import ModelMetadata
+
+    try:
+        metadata = (
+            session.query(ModelMetadata)
+            .filter(ModelMetadata.symbol == symbol)
+            .first()
+        )
+        if metadata and metadata.importance_json:
+            importance = json.loads(metadata.importance_json)
+            if isinstance(importance, list) and importance:
+                return importance[:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance from DB: %s", exc)
+
+    try:
+        model_dir = Path(get_settings().model_dir)
+        importance_path = model_dir / (
+            f"xgb_{symbol.replace('=', '_')}_latest.importance.json"
+        )
+        if importance_path.exists():
+            importance = json.loads(importance_path.read_text(encoding="utf-8"))
+            if isinstance(importance, list) and importance:
+                return importance[:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance artifact: %s", exc)
+
+    return []
+
 @app.get(
     "/api/analysis",
     response_model=AnalysisReport,
@@ -217,6 +255,10 @@ async def get_analysis(
             }
         if "top_influencers" not in report:
             report["top_influencers"] = []
+        if not report["top_influencers"]:
+            recovered_importance = _load_cached_xgb_importance(session, symbol)
+            if recovered_importance:
+                report["top_influencers"] = recovered_importance
 
         # Re-label cached influencers so snapshots written before the
         # describe_feature() rollout also render human-readable names in the

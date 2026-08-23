@@ -476,17 +476,11 @@ async def _execute_pipeline_stages_v2(
     if train_model:
         logger.info(f"[run_id={run_id}] Stage 4: Model training")
         try:
-            from app.ai_engine import train_xgboost_model, save_model_metadata_to_db
+            from app.ai_engine import train_xgboost_model
             
             train_result = train_xgboost_model(session)
-            save_model_metadata_to_db(
-                session,
-                symbol="HG=F",
-                importance=train_result.get("importance", []),
-                features=train_result.get("features", []),
-                metrics=train_result.get("metrics", {}),
-            )
-            session.commit()
+            if not train_result:
+                raise RuntimeError("XGBoost training returned no result")
             
             result["model_trained"] = True
             result["model_metrics"] = train_result.get("metrics", {})

@@ -118,6 +118,45 @@ class TestAnalysisSchema:
             assert report.sentiment_label == label
 
 
+class TestMarketDriverRecovery:
+    """Tests for recovering feature importance for the Market Drivers card."""
+
+    def test_cached_importance_prefers_database_metadata(self):
+        from app.main import _load_cached_xgb_importance
+
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            importance_json='[{"feature": "HG=F_EMA_10", "importance": 1.0}]'
+        )
+
+        recovered = _load_cached_xgb_importance(session, "HG=F")
+
+        assert recovered == [{"feature": "HG=F_EMA_10", "importance": 1.0}]
+
+    def test_cached_importance_falls_back_to_model_artifact(self, tmp_path, monkeypatch):
+        from app import main
+
+        importance_path = tmp_path / "xgb_HG_F_latest.importance.json"
+        importance_path.write_text(
+            '[{"feature": "HG=F_RSI_14", "importance": 0.75}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            main,
+            "get_settings",
+            lambda: SimpleNamespace(model_dir=str(tmp_path)),
+        )
+
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            importance_json="[]"
+        )
+
+        recovered = main._load_cached_xgb_importance(session, "HG=F")
+
+        assert recovered == [{"feature": "HG=F_RSI_14", "importance": 0.75}]
+
+
 class TestHistorySchema:
     """Tests for history response schema."""
     
