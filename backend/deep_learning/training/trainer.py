@@ -568,6 +568,24 @@ def train_tft_model(
     else:
         final_path = Path(cfg.training.best_model_path)
 
+    # Calibration, gate evaluation, and live inference must all use the same
+    # promoted checkpoint.  ``trainer.fit`` leaves ``model`` at the last
+    # training state, while production loads ``best_tft_asro.ckpt``; using the
+    # former for validation calibration would make the persisted correction
+    # depend on a checkpoint that is never deployed.
+    evaluation_model = model
+    if best_path:
+        try:
+            from deep_learning.models.tft_copper import load_tft_model
+
+            evaluation_model = load_tft_model(str(best_path))
+            logger.info("Using promoted best checkpoint for calibration and gate evaluation: %s", best_path)
+        except Exception as exc:
+            logger.warning(
+                "Could not reload best checkpoint for evaluation; using in-memory model: %s",
+                exc,
+            )
+
     # ---- 7. Fit validation-only direction calibration, then evaluate test ----
     # This catches a stable global sign inversion without consulting any test
     # labels. The selected multiplier is persisted and reused by live inference.
@@ -602,7 +620,7 @@ def train_tft_model(
             import torch
 
             val_actual_path = torch.cat(val_actual_parts).cpu().numpy()
-            val_pred_np = _predict_quantiles_to_np(model, val_dl, cfg)
+            val_pred_np = _predict_quantiles_to_np(evaluation_model, val_dl, cfg)
             direction_calibration = fit_direction_sign_calibration(
                 val_actual_path,
                 val_pred_np,
@@ -688,14 +706,13 @@ def train_tft_model(
     logger.info("Validation-only direction calibration: %s", direction_calibration)
     logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
 
-    # ---- 8. Evaluate on test set (Snapshot Ensemble) ----
-    # Use the top-k checkpoints saved by ModelCheckpoint and take the
-    # element-wise median of their predictions.  This smooths stochastic
-    # outliers and improves directional robustness (REG-2026-001 P2-2).
+    # ---- 8. Evaluate on the promoted best checkpoint ----
+    # Keep gate evaluation identical to the checkpoint loaded by production.
+    # A top-k snapshot ensemble would evaluate a different artifact than the
+    # one copied to best_tft_asro.ckpt and calibrated above.
     test_metrics = {}
     if test_dl is not None:
         import torch
-        from deep_learning.models.tft_copper import load_tft_model
         from deep_learning.training.metrics import apply_weekly_sign_threshold_np
 
         # Collect actual values (same regardless of which model predicts)
@@ -705,37 +722,9 @@ def train_tft_model(
                 batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
             )
         y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
-        # Gather top-k checkpoint paths
-        best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
-        ckpt_paths = sorted(best_k.keys(), key=lambda p: best_k[p]) if best_k else []
-
-        # Always include the just-trained model as a baseline
-        all_pred_arrays = []
-
-        # Predictions from the best model (already in memory)
-        all_pred_arrays.append(_predict_quantiles_to_np(model, test_dl, cfg))
-
-        # Load additional checkpoints for ensemble
-        for cp in ckpt_paths:
-            if str(cp) == str(best_path):
-                continue  # already have this one
-            try:
-                ckpt_model = load_tft_model(str(cp))
-                all_pred_arrays.append(_predict_quantiles_to_np(ckpt_model, test_dl, cfg))
-                del ckpt_model
-            except Exception as exc:
-                logger.warning("Skipping incompatible ensemble checkpoint %s: %s", cp, exc)
-
-        ensemble_size = len(all_pred_arrays)
-        logger.info(
-            "Snapshot Ensemble: %d model(s) for test evaluation", ensemble_size,
-        )
-
-        # Element-wise median across all models
-        if ensemble_size >= 2:
-            pred_np = np.median(np.stack(all_pred_arrays, axis=0), axis=0)
-        else:
-            pred_np = all_pred_arrays[0]
+        pred_np = _predict_quantiles_to_np(evaluation_model, test_dl, cfg)
+        ensemble_size = 1
+        logger.info("Promoted checkpoint evaluation: 1 model")
 
         pred_np = pred_np * direction_sign_multiplier
         pred_np = apply_weekly_sign_threshold_np(
@@ -778,7 +767,7 @@ def train_tft_model(
 
     calibration_artifact = _write_conformal_calibration_artifact(
         cfg=cfg,
-        model=model,
+        model=evaluation_model,
         val_dl=val_dl,
         feature_frame=master_df,
         direction_sign_multiplier=direction_sign_multiplier,
@@ -790,7 +779,7 @@ def train_tft_model(
     )
 
     # ---- 8. Variable importance ----
-    var_importance = get_variable_importance(model, val_dataloader=val_dl)
+    var_importance = get_variable_importance(evaluation_model, val_dataloader=val_dl)
 
     # ---- 9. Persist metadata ----
     result = {
