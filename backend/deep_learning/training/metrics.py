@@ -509,14 +509,15 @@ def fit_direction_sign_calibration(
     horizon: int = 5,
     min_samples: int = 30,
 ) -> dict[str, float | int | str | bool]:
-    """Fit a global sign correction from validation predictions only.
+    """Fit validation-only T+1 and weekly sign corrections.
 
-    A sign flip is accepted only when both the T+1 and weekly validation
-    signals are strongly anti-correlated and their flipped versions meet the
-    promotion-relevant direction thresholds.  When a validation forecast is
+    A global sign flip is accepted only when both the T+1 and weekly validation
+    signals are strongly anti-correlated.  If only T+1 is anti-correlated, a
+    separate first-day sign correction is accepted when its validation DA,
+    Sharpe, and tail capture are strong.  When a validation forecast is
     structurally sign-collapsed, a small additive weekly threshold is selected
     from a fixed validation quantile grid only if it improves validation DA
-    while keeping the predicted sign rate balanced.  Both adjustments are
+    while keeping the predicted sign rate balanced.  All corrections are
     applied identically to held-out evaluation and live inference; no test
     target is read by this function.
     """
@@ -557,7 +558,20 @@ def fit_direction_sign_calibration(
     ):
         sign_multiplier = -1
 
-    oriented_weekly_pred = weekly_pred * sign_multiplier
+    daily_sign_multiplier = 1
+    if (
+        n >= min_samples
+        and base_daily_da <= 0.45
+        and flipped_daily_da >= 0.55
+        and flipped_daily_sharpe > 0.30
+        and flipped_daily_tail >= 0.35
+    ):
+        daily_sign_multiplier = -1
+
+    oriented_pred_path = pred_path * sign_multiplier
+    if daily_sign_multiplier == -1:
+        oriented_pred_path[:, 0, :] *= -1.0
+    oriented_weekly_pred = oriented_pred_path[:, :horizon, median_idx].sum(axis=1)
     oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
     weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
     weekly_sign_threshold = 0.0
@@ -612,8 +626,13 @@ def fit_direction_sign_calibration(
         "fit_split": "validation",
         "sample_count": int(n),
         "direction_sign_multiplier": sign_multiplier,
+        "daily_sign_multiplier": daily_sign_multiplier,
         "daily_directional_accuracy": base_daily_da,
         "daily_directional_accuracy_flipped": flipped_daily_da,
+        "daily_calibrated_directional_accuracy": (
+            directional_accuracy(daily_actual, daily_pred * daily_sign_multiplier)
+            if n else 0.0
+        ),
         "daily_sharpe_ratio": base_daily_sharpe,
         "daily_sharpe_ratio_flipped": flipped_daily_sharpe,
         "daily_tail_capture_rate": base_daily_tail,
@@ -651,6 +670,21 @@ def apply_weekly_sign_threshold_np(
     if abs(float(threshold)) <= 1e-12:
         return arr
     arr[:, :horizon, :] -= float(threshold) / float(horizon)
+    return arr
+
+
+def apply_daily_sign_correction_np(
+    pred: np.ndarray,
+    multiplier: int,
+) -> np.ndarray:
+    """Apply a validation-fitted T+1 sign multiplier to the first path step."""
+    arr = np.asarray(pred, dtype=np.float64).copy()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [n,horizon,q] predictions, got {arr.shape}")
+    if int(multiplier) not in (-1, 1):
+        raise ValueError(f"Daily sign multiplier must be -1 or 1, got {multiplier!r}")
+    if int(multiplier) == -1 and arr.shape[0] > 0:
+        arr[:, 0, :] *= -1.0
     return arr
 
 

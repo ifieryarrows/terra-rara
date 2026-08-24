@@ -79,6 +79,7 @@ class TFTPredictor:
         self._hub_checked = False
         self._metadata_checked = False
         self._direction_sign_multiplier = 1
+        self._daily_sign_multiplier = 1
         self._weekly_sign_threshold = 0.0
         self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
@@ -186,6 +187,12 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted direction calibration. Retraining required."
             )
         self._direction_sign_multiplier = multiplier
+        daily_multiplier = int(direction_calibration.get("daily_sign_multiplier", 1))
+        if daily_multiplier not in (-1, 1):
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted daily sign multiplier. Retraining required."
+            )
+        self._daily_sign_multiplier = daily_multiplier
         weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
         if not np.isfinite(weekly_sign_threshold) or abs(weekly_sign_threshold) > 0.25:
             raise IncompatibleTFTCheckpointError(
@@ -343,6 +350,9 @@ class TFTPredictor:
                 pred_for_format = pred_np.reshape(1, -1)
 
             pred_for_format = pred_for_format * self._direction_sign_multiplier
+            if self._daily_sign_multiplier == -1:
+                pred_for_format = pred_for_format.copy()
+                pred_for_format[0, :] *= -1.0
             if abs(self._weekly_sign_threshold) > 1e-12:
                 from deep_learning.training.metrics import apply_weekly_sign_correction_np
 
@@ -408,6 +418,7 @@ class TFTPredictor:
             "target_return_type": TARGET_RETURN_TYPE,
             "return_space": RETURN_SPACE,
             "direction_sign_multiplier": self._direction_sign_multiplier,
+            "daily_sign_multiplier": self._daily_sign_multiplier,
             "weekly_sign_threshold": self._weekly_sign_threshold,
             "weekly_direction_model_enabled": bool(self._weekly_direction_model),
             "weekly_interval_scale": self._weekly_interval_scale,

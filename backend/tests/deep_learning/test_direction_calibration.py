@@ -1,6 +1,7 @@
 import numpy as np
 
 from deep_learning.training.metrics import (
+    apply_daily_sign_correction_np,
     apply_weekly_sign_correction_np,
     apply_weekly_sign_threshold_np,
     fit_direction_sign_calibration,
@@ -66,3 +67,11 @@ def test_weekly_sign_correction_preserves_t1_scale_and_quantile_order():
     assert np.allclose(corrected[0, -1, 4], -0.088)
     assert np.allclose(corrected[1], pred[1])
     assert np.isclose(np.abs(corrected[0, :, 3].sum()), np.abs(pred[0, :, 3].sum()))
+
+
+def test_daily_sign_correction_only_changes_first_prediction_step():
+    pred = np.ones((2, 5, 7), dtype=float)
+    corrected = apply_daily_sign_correction_np(pred, -1)
+
+    assert np.allclose(corrected[:, 0], -1.0)
+    assert np.allclose(corrected[:, 1:], 1.0)
