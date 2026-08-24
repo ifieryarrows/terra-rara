@@ -350,9 +350,15 @@ class TFTPredictor:
                 pred_for_format = pred_np.reshape(1, -1)
 
             pred_for_format = pred_for_format * self._direction_sign_multiplier
-            if self._daily_sign_multiplier == -1:
-                pred_for_format = pred_for_format.copy()
-                pred_for_format[0, :] *= -1.0
+            if self._daily_sign_multiplier != 1:
+                from deep_learning.training.metrics import apply_daily_sign_correction_np
+
+                # Keep live inference identical to the validation/test contract:
+                # correcting T+1 must preserve the weekly cumulative median.
+                pred_for_format = apply_daily_sign_correction_np(
+                    pred_for_format[None, ...],
+                    self._daily_sign_multiplier,
+                )[0]
             if abs(self._weekly_sign_threshold) > 1e-12:
                 from deep_learning.training.metrics import apply_weekly_sign_correction_np
 
