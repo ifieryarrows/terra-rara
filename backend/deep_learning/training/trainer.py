@@ -16,8 +16,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
 import logging
+import os
+import platform
+import sys
 import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -25,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 from deep_learning.contract import (
@@ -45,6 +51,49 @@ warnings.filterwarnings(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _build_data_snapshot_metadata(master_df: pd.DataFrame) -> dict:
+    """Describe the exact feature frame used for a train/test split."""
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in master_df.columns).encode())
+    digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
+    digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
+    return {
+        "sha256": digest.hexdigest(),
+        "rows": int(len(master_df)),
+        "columns": int(master_df.shape[1]),
+        "first_index": str(master_df.index.min()) if len(master_df) else None,
+        "last_index": str(master_df.index.max()) if len(master_df) else None,
+        "tft_data_as_of": os.environ.get("TFT_DATA_AS_OF") or None,
+    }
+
+
+def _runtime_environment_metadata() -> dict:
+    """Capture versions that can materially change a TFT run."""
+    package_names = (
+        "torch",
+        "lightning",
+        "pytorch-forecasting",
+        "optuna",
+        "optuna-integration",
+        "numpy",
+        "pandas",
+        "scikit-learn",
+    )
+    packages = {}
+    for package_name in package_names:
+        try:
+            packages[package_name] = importlib.metadata.version(package_name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[package_name] = None
+    return {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "github_sha": os.environ.get("GITHUB_SHA") or None,
+        "runner_image": os.environ.get("ImageOS") or os.environ.get("RUNNER_OS") or None,
+        "packages": packages,
+    }
 
 KNOWN_GOOD_CONFIG = {
     "max_encoder_length": 50,
@@ -638,6 +687,8 @@ def train_tft_model(
         "public_return_space": PUBLIC_RETURN_SPACE,
         "return_space": RETURN_SPACE,
         "target_scale_audit": target_scale_audit,
+        "data_snapshot": _build_data_snapshot_metadata(master_df),
+        "runtime_environment": _runtime_environment_metadata(),
         "direction_calibration": direction_calibration,
         "interval_calibration": interval_calibration,
         "experiment": {

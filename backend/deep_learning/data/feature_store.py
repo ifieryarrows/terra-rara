@@ -14,6 +14,7 @@ TFT data categories:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -23,6 +24,24 @@ import pandas as pd
 from deep_learning.config import TFTASROConfig, get_tft_config
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_data_end_date() -> datetime:
+    """Resolve the feature-store cutoff, allowing reproducible replay runs."""
+    raw_value = os.environ.get("TFT_DATA_AS_OF", "").strip()
+    if not raw_value:
+        return datetime.now(timezone.utc)
+
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            "TFT_DATA_AS_OF must be an ISO-8601 timestamp, for example "
+            "2026-08-23T23:59:59Z"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -315,8 +334,9 @@ def build_tft_dataframe(
         cfg = get_tft_config()
 
     target_symbol = cfg.feature_store.target_symbol
-    end_date = datetime.now(timezone.utc)
+    end_date = _resolve_data_end_date()
     start_date = end_date - timedelta(days=cfg.training.lookback_days)
+    logger.info("Feature store cutoff: %s", end_date.isoformat())
 
     # ---- 1. Price & technical indicators ----
     # Use screener-validated symbols from active.json
@@ -398,14 +418,23 @@ def build_tft_dataframe(
     from deep_learning.data.lme_warehouse import fetch_lme_data, compute_lme_features, compute_proxy_lme_features
     from deep_learning.data.futures_curve import build_futures_features_from_yfinance
 
-    lme_raw = fetch_lme_data(cfg.lme)
+    lme_raw = fetch_lme_data(
+        cfg.lme,
+        start_date=start_date.date().isoformat(),
+        end_date=end_date.date().isoformat(),
+    )
     if not lme_raw.empty:
         lme_features = compute_lme_features(lme_raw, windows=cfg.lme.stock_change_windows)
         lme_features = lme_features.reindex(target_index).ffill(limit=cfg.lme.max_ffill_days)
     else:
         lme_features = compute_proxy_lme_features(price_df)
 
-    futures_features = build_futures_features_from_yfinance(session, target_symbol, cfg.training.lookback_days)
+    futures_features = build_futures_features_from_yfinance(
+        session,
+        target_symbol,
+        cfg.training.lookback_days,
+        end_date=end_date,
+    )
     if not futures_features.empty:
         futures_features = futures_features.reindex(target_index).ffill(limit=3)
     else:

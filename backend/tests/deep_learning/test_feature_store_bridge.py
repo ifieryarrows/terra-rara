@@ -103,7 +103,7 @@ def _patch_feature_store_sources(monkeypatch, price_df: pd.DataFrame) -> None:
     )
     monkeypatch.setattr(
         "deep_learning.data.lme_warehouse.fetch_lme_data",
-        lambda _cfg: pd.DataFrame(),
+        lambda _cfg, **_kwargs: pd.DataFrame(),
     )
     monkeypatch.setattr(
         "deep_learning.data.lme_warehouse.compute_proxy_lme_features",
@@ -149,3 +149,25 @@ def test_build_tft_dataframe_keeps_latest_bar_for_inference(monkeypatch):
     assert master.loc[dates[-1], "target"] == 0.0
     assert master.loc[dates[-1], "target_5d_log_return"] == 0.0
     assert master["target"].isna().sum() == 0
+
+
+def test_build_tft_dataframe_honors_replay_cutoff(monkeypatch):
+    dates = pd.date_range("2026-04-20", periods=10, freq="B")
+    price_df = pd.DataFrame(
+        {"close": [6.00, 6.05, 6.10, 6.02, 6.01, 6.08, 6.11, 6.09, 6.15, 6.20]},
+        index=dates,
+    )
+    _patch_feature_store_sources(monkeypatch, price_df)
+    captured = {}
+    original_builder = feature_store._build_price_features
+
+    def capture_end_date(session, symbol, start_date, end_date):
+        captured["end_date"] = end_date
+        return original_builder(session, symbol, start_date, end_date)
+
+    monkeypatch.setattr(feature_store, "_build_price_features", capture_end_date)
+    monkeypatch.setenv("TFT_DATA_AS_OF", "2026-04-29T12:34:56Z")
+
+    build_tft_dataframe(object(), _minimal_tft_cfg())
+
+    assert captured["end_date"].isoformat() == "2026-04-29T12:34:56+00:00"

@@ -4,12 +4,14 @@ import inspect
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 
 import deep_learning.training.hyperopt as hyperopt_module
 from deep_learning.training.hyperopt import (
     KNOWN_GOOD_TRIAL_PARAMS,
     MIN_COMPLETED_TRIALS,
     _build_result_payload,
+    _data_snapshot_id,
     _enqueue_known_good_trial,
     _finite_completed_trial_count,
     _fold_scale_diagnostic,
@@ -17,6 +19,16 @@ from deep_learning.training.hyperopt import (
     create_trial_config,
 )
 from deep_learning.config import get_tft_config
+
+
+def test_data_snapshot_id_is_stable_and_changes_with_frame_content():
+    frame = pd.DataFrame({"target": [0.1, -0.2]})
+    same_frame = frame.copy()
+    changed_frame = frame.copy()
+    changed_frame.loc[1, "target"] = -0.3
+
+    assert _data_snapshot_id(frame) == _data_snapshot_id(same_frame)
+    assert _data_snapshot_id(frame) != _data_snapshot_id(changed_frame)
 
 
 def _trial(number: int, state: str, value=None, params=None, user_attrs=None):

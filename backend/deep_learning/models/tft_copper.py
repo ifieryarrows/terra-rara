@@ -161,25 +161,44 @@ def _weekly_positive_rate_loss(
     temperature: float = 0.01,
     lower_bound: float = 0.20,
     upper_bound: float = 0.75,
+    tolerance: float = 0.20,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Mildly penalize collapsed weekly sign distributions without exact matching."""
-    del actual_weekly
+    """Keep predicted weekly signs aligned with the observed batch signs.
+
+    The detached sign targets provide a strong gradient against all-positive
+    collapse. The additional bounds are a tolerant band around the observed
+    rate rather than an exact-match objective, so the term remains robust to
+    small batch-composition noise.
+    """
     temp = max(float(temperature), eps)
-    pred_positive_rate = torch.sigmoid(pred_weekly_median / temp).mean()
-    lower = torch.as_tensor(
-        float(lower_bound),
+    pred_positive_probability = torch.sigmoid(pred_weekly_median / temp)
+    pred_positive_rate = pred_positive_probability.mean()
+    actual_positive_rate = (actual_weekly.detach() > 0).to(
+        device=pred_weekly_median.device,
+        dtype=pred_weekly_median.dtype,
+    ).mean()
+    actual_sign = (actual_weekly.detach() > 0).to(
         device=pred_weekly_median.device,
         dtype=pred_weekly_median.dtype,
     )
-    upper = torch.as_tensor(
-        float(upper_bound),
-        device=pred_weekly_median.device,
-        dtype=pred_weekly_median.dtype,
+    sign_loss = F.binary_cross_entropy(pred_positive_probability, actual_sign)
+    band = max(float(tolerance), eps)
+    lower = torch.clamp(
+        actual_positive_rate - band,
+        min=float(lower_bound),
+        max=float(upper_bound),
     )
-    return torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
+    upper = torch.clamp(
+        actual_positive_rate + band,
+        min=float(lower_bound),
+        max=float(upper_bound),
+    )
+    upper = torch.maximum(upper, lower)
+    rate_band_loss = torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
         pred_positive_rate - upper
     ).pow(2)
+    return sign_loss + rate_band_loss
 
 
 def _directional_sign_loss(

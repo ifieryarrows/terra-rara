@@ -28,10 +28,20 @@ on:
                 required: false
                 default: "30"
                 type: string
+            data_as_of:
+                description: "Optional UTC ISO-8601 feature-store cutoff for replayable validation"
+                required: false
+                default: ""
+                type: string
 
 env:
     PYTHONPATH: backend
     MODEL_DIR: /tmp/models
+    PYTHONHASHSEED: "42"
+    CUBLAS_WORKSPACE_CONFIG: ":4096:8"
+    OMP_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+    TFT_DATA_AS_OF: ${{ github.event.inputs.data_as_of || '' }}
 
 jobs:
     # ─────────────────────────────────────────────────────────────────────────
@@ -50,17 +60,21 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v5
               with:
-                  python-version: "3.11"
+                  python-version: "3.11.15"
                   cache: "pip"
 
             - name: Install dependencies
               working-directory: backend
               run: |
                   python -m pip install --upgrade pip
-                  pip install -r requirements.txt
+                  pip install -r requirements.txt -c constraints-tft.txt
 
             - name: Create model directory
               run: mkdir -p /tmp/models/tft/checkpoints
+
+            - name: Record hyperopt environment
+              working-directory: backend
+              run: python -m pip freeze | sort > /tmp/models/tft/hyperopt_environment.txt
 
             - name: Backfill FinBERT embeddings
               working-directory: backend
@@ -86,7 +100,9 @@ jobs:
                   # trainer.py reads optuna_results.json from tft/ root via
                   # _apply_optuna_results(). The train job restores it there.
                   name: optuna-results-${{ github.run_id }}
-                  path: /tmp/models/tft/optuna_results.json
+                  path: |
+                      /tmp/models/tft/optuna_results.json
+                      /tmp/models/tft/hyperopt_environment.txt
                   retention-days: 7
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -111,17 +127,21 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v5
               with:
-                  python-version: "3.11"
+                  python-version: "3.11.15"
                   cache: "pip"
 
             - name: Install dependencies
               working-directory: backend
               run: |
                   python -m pip install --upgrade pip
-                  pip install -r requirements.txt
+                  pip install -r requirements.txt -c constraints-tft.txt
 
             - name: Create model directory
               run: mkdir -p /tmp/models/tft/checkpoints
+
+            - name: Record training environment
+              working-directory: backend
+              run: python -m pip freeze | sort > /tmp/models/tft/environment.txt
 
             - name: Download Optuna results artifact
               # Only attempt download when hyperopt actually ran and succeeded.

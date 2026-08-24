@@ -241,13 +241,13 @@ def _resolve_num_workers(configured: int) -> int:
     the script to be inside an ``if __name__ == '__main__'`` guard, which is
     not the case in training scripts. Force 0 to avoid deadlocks.
 
-    On Linux/macOS (GitHub Actions, HF Spaces), use the configured value;
-    default to 2 when the config still carries the old 0.
+    On Linux/macOS (GitHub Actions, HF Spaces), honor the configured value as
+    well. In particular, configured ``0`` is intentional for strict
+    reproducibility and must not silently become multiprocessing.
     """
     if os.name == "nt":
         return 0
-    # On POSIX: honour config; upgrade 0 → 2 as a sensible floor
-    return max(configured, 2)
+    return max(int(configured), 0)
 
 
 def create_dataloaders(

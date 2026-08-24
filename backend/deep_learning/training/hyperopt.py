@@ -11,15 +11,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
+import os
 import sys
 import warnings
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 warnings.filterwarnings(
     "ignore",
@@ -79,6 +83,15 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_interval": 0.15,
     "batch_size": 32,
 }
+
+
+def _data_snapshot_id(master_df: pd.DataFrame) -> str:
+    """Return a stable identifier for the exact frame used by hyperopt."""
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in master_df.columns).encode())
+    digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
+    digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
+    return digest.hexdigest()
 
 
 def _trial_state_counts(study) -> dict[str, int]:
@@ -539,6 +552,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_scale_diagnostics: list[dict] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
+        # Keep each trial/fold independent of RNG state left by a previous
+        # fold or a pruned trial. This makes the controlled search reproducible
+        # even when the pruning path changes.
+        pl.seed_everything(
+            int(base_cfg.training.seed + trial.number * 1000 + fold_idx),
+            workers=True,
+        )
         # ---- setup ----
         try:
             fold_train_dl, fold_val_dl, _ = create_dataloaders(
@@ -619,6 +639,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             enable_model_summary=False,
             logger=False,
             log_every_n_steps=log_steps,
+            deterministic=True,
         )
 
         # ---- train ----
@@ -1108,17 +1129,30 @@ def run_hyperopt(
         base_cfg = get_tft_config()
 
     init_db()
-    pl.seed_everything(base_cfg.training.seed)
+    pl.seed_everything(base_cfg.training.seed, workers=True)
 
     logger.info("Building feature store for hyperopt ...")
     with SessionLocal() as session:
         master_data = build_tft_dataframe(session, base_cfg)
 
+    snapshot_id = _data_snapshot_id(master_data[0])
+    run_suffix = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime(
+        "%Y%m%d%H%M%S"
+    )
+    effective_study_name = f"{study_name}_{snapshot_id[:12]}_{run_suffix}"
+    logger.info(
+        "Optuna reproducibility contract | snapshot=%s study=%s seed=%d",
+        snapshot_id,
+        effective_study_name,
+        base_cfg.training.seed,
+    )
+
     study = optuna.create_study(
-        study_name=study_name,
+        study_name=effective_study_name,
         direction="minimize",
         storage=storage,
-        load_if_exists=True,
+        load_if_exists=False,
+        sampler=optuna.samplers.TPESampler(seed=base_cfg.training.seed),
         pruner=optuna.pruners.MedianPruner(
             n_startup_trials=max(5, n_trials // 3),
             n_warmup_steps=1,
@@ -1136,6 +1170,8 @@ def run_hyperopt(
     results_path = Path(base_cfg.training.best_model_path).parent / "optuna_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
     result = _build_result_payload(study)
+    result["study_name"] = effective_study_name
+    result["data_snapshot_id"] = snapshot_id
     results_path.write_text(json.dumps(result, indent=2, allow_nan=False))
     logger.info(
         "Optuna structural invalidity report: %s",
