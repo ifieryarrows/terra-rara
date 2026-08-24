@@ -582,6 +582,7 @@ def train_tft_model(
         )
 
     direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+    weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
     weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
     logger.info("Validation-only direction calibration: %s", direction_calibration)
     logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
@@ -594,6 +595,7 @@ def train_tft_model(
     if test_dl is not None:
         import torch
         from deep_learning.models.tft_copper import load_tft_model
+        from deep_learning.training.metrics import apply_weekly_sign_threshold_np
 
         # Collect actual values (same regardless of which model predicts)
         y_actual_parts = []
@@ -635,6 +637,11 @@ def train_tft_model(
             pred_np = all_pred_arrays[0]
 
         pred_np = pred_np * direction_sign_multiplier
+        pred_np = apply_weekly_sign_threshold_np(
+            pred_np,
+            weekly_sign_threshold,
+            horizon=cfg.forecast.primary_horizon_days,
+        )
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
@@ -652,6 +659,7 @@ def train_tft_model(
         val_dl=val_dl,
         feature_frame=master_df,
         direction_sign_multiplier=direction_sign_multiplier,
+        weekly_sign_threshold=weekly_sign_threshold,
         weekly_interval_scale=weekly_interval_scale,
     )
 
@@ -775,6 +783,7 @@ def _write_conformal_calibration_artifact(
     val_dl,
     feature_frame,
     direction_sign_multiplier: int = 1,
+    weekly_sign_threshold: float = 0.0,
     weekly_interval_scale: float = 1.0,
 ) -> Optional[Path]:
     """
@@ -792,6 +801,7 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
+            apply_weekly_sign_threshold_np,
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
             cumulative_horizon,
@@ -809,6 +819,11 @@ def _write_conformal_calibration_artifact(
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
+        pred_np = apply_weekly_sign_threshold_np(
+            pred_np,
+            float(weekly_sign_threshold),
+            horizon=cfg.forecast.primary_horizon_days,
+        )
         pred_np = apply_weekly_interval_scale_np(
             pred_np,
             float(weekly_interval_scale),
@@ -902,6 +917,7 @@ def _write_conformal_calibration_artifact(
             "fit_split": "validation",
             "test_split_used_for_fit": False,
             "direction_sign_multiplier": int(direction_sign_multiplier),
+            "weekly_sign_threshold": float(weekly_sign_threshold),
             "weekly_interval_scale": float(weekly_interval_scale),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,

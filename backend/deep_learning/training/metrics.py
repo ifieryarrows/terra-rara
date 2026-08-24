@@ -508,12 +508,15 @@ def fit_direction_sign_calibration(
     *,
     horizon: int = 5,
     min_samples: int = 30,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | bool]:
     """Fit a global sign correction from validation predictions only.
 
     A sign flip is accepted only when both the T+1 and weekly validation
     signals are strongly anti-correlated and their flipped versions meet the
-    promotion-relevant direction thresholds.  The returned multiplier is then
+    promotion-relevant direction thresholds.  When a validation forecast is
+    structurally sign-collapsed, a small additive weekly threshold is selected
+    from a fixed validation quantile grid only if it improves validation DA
+    while keeping the predicted sign rate balanced.  Both adjustments are
     applied identically to held-out evaluation and live inference; no test
     target is read by this function.
     """
@@ -554,6 +557,57 @@ def fit_direction_sign_calibration(
     ):
         sign_multiplier = -1
 
+    oriented_weekly_pred = weekly_pred * sign_multiplier
+    oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
+    weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
+    weekly_sign_threshold = 0.0
+    weekly_sign_threshold_validation_da = oriented_weekly_da
+    weekly_sign_threshold_validation_pred_positive_rate = weekly_pred_positive_rate
+
+    # A constant positive forecast can look good when the validation window is
+    # majority-positive.  Fit a bounded threshold only for that structural
+    # failure mode.  The quantile grid is deliberately coarse to avoid fitting
+    # an arbitrary threshold to a small validation window.
+    if (
+        n >= min_samples
+        and (weekly_pred_positive_rate > 0.90 or weekly_pred_positive_rate < 0.10)
+    ):
+        candidate_thresholds = np.unique(
+            np.concatenate(
+                [
+                    np.array([0.0], dtype=np.float64),
+                    np.quantile(oriented_weekly_pred, np.linspace(0.15, 0.85, 8)),
+                ]
+            )
+        )
+        best: tuple[float, float, float, float] | None = None
+        for threshold in candidate_thresholds:
+            adjusted = oriented_weekly_pred - float(threshold)
+            predicted_rate = float(np.mean(adjusted > 0.0))
+            if not 0.25 <= predicted_rate <= 0.75:
+                continue
+            candidate_da = directional_accuracy(weekly_actual, adjusted)
+            candidate_key = (
+                candidate_da,
+                -abs(float(threshold)),
+                predicted_rate,
+                float(threshold),
+            )
+            if best is None or candidate_key > best:
+                best = candidate_key
+
+        if best is not None:
+            candidate_da, _, candidate_rate, best_threshold = best
+            # Require a real validation improvement and retain a meaningful
+            # minimum directional signal; otherwise leave the raw forecast
+            # unchanged and let the structural gate reject it.
+            if candidate_da >= 0.51 and candidate_da >= oriented_weekly_da + 0.01:
+                weekly_sign_threshold = float(best_threshold)
+                weekly_sign_threshold_validation_da = float(candidate_da)
+                weekly_sign_threshold_validation_pred_positive_rate = float(candidate_rate)
+
+    weekly_sign_threshold = float(weekly_sign_threshold)
+
     return {
         "fit_split": "validation",
         "sample_count": int(n),
@@ -566,7 +620,38 @@ def fit_direction_sign_calibration(
         "daily_tail_capture_rate_flipped": flipped_daily_tail,
         "weekly_directional_accuracy": base_weekly_da,
         "weekly_directional_accuracy_flipped": flipped_weekly_da,
+        "weekly_sign_threshold": weekly_sign_threshold,
+        "weekly_sign_threshold_applied": bool(abs(weekly_sign_threshold) > 1e-12),
+        "weekly_sign_threshold_validation_da": weekly_sign_threshold_validation_da,
+        "weekly_sign_threshold_validation_pred_positive_rate": (
+            weekly_sign_threshold_validation_pred_positive_rate
+        ),
     }
+
+
+def apply_weekly_sign_threshold_np(
+    pred: np.ndarray,
+    threshold: float,
+    *,
+    horizon: int = 5,
+) -> np.ndarray:
+    """Apply a validation-fitted weekly location threshold to all quantiles.
+
+    The same location shift is applied to every quantile, preserving interval
+    widths and quantile ordering.  Dividing by the forecast horizon makes the
+    cumulative weekly median shift by exactly ``threshold``.
+    """
+    arr = np.asarray(pred, dtype=np.float64).copy()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [n,horizon,q] predictions, got {arr.shape}")
+    if not np.isfinite(float(threshold)):
+        raise ValueError("Weekly sign threshold must be finite")
+    if horizon <= 0 or arr.shape[1] < horizon:
+        raise ValueError(f"Need at least {horizon} prediction steps, got {arr.shape[1]}")
+    if abs(float(threshold)) <= 1e-12:
+        return arr
+    arr[:, :horizon, :] -= float(threshold) / float(horizon)
+    return arr
 
 
 def prediction_interval_coverage(

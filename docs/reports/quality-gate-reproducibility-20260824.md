@@ -123,6 +123,12 @@ not a post-hoc metric adjustment or a test-set calibration.
   early-stopping callbacks, and the weekly path monitors that complete
   validation objective. Non-ASRO training retains the framework `val_loss`
   monitor.
+- Validation direction calibration now has a bounded weekly threshold fallback
+  for structural sign collapse. It searches a fixed validation-only quantile
+  grid, requires a balanced predicted sign rate and at least a 0.01 validation
+  DA improvement, persists the selected threshold, and applies the same shift
+  in inference. A collapsed forecast with no validation signal remains
+  unchanged and is rejected by the gate.
 
 The deterministic validation workflow requires `data_as_of`; the scheduled
 training workflow may still use the latest available cutoff when no replay

@@ -79,6 +79,7 @@ class TFTPredictor:
         self._hub_checked = False
         self._metadata_checked = False
         self._direction_sign_multiplier = 1
+        self._weekly_sign_threshold = 0.0
         self._weekly_interval_scale = 1.0
 
     def _ensure_local_artifacts(self) -> None:
@@ -184,6 +185,12 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted direction calibration. Retraining required."
             )
         self._direction_sign_multiplier = multiplier
+        weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
+        if not np.isfinite(weekly_sign_threshold) or abs(weekly_sign_threshold) > 0.25:
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted weekly sign threshold. Retraining required."
+            )
+        self._weekly_sign_threshold = weekly_sign_threshold
         interval_calibration = metadata.get("interval_calibration") or {}
         interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
         if not np.isfinite(interval_scale) or interval_scale <= 0.0:
@@ -325,6 +332,11 @@ class TFTPredictor:
                 pred_for_format = pred_np.reshape(1, -1)
 
             pred_for_format = pred_for_format * self._direction_sign_multiplier
+            if abs(self._weekly_sign_threshold) > 1e-12:
+                pred_for_format = pred_for_format - (
+                    self._weekly_sign_threshold
+                    / float(self.cfg.forecast.primary_horizon_days)
+                )
             if self._weekly_interval_scale != 1.0:
                 median_idx = len(self.cfg.model.quantiles) // 2
                 median = pred_for_format[..., median_idx : median_idx + 1]
@@ -359,6 +371,7 @@ class TFTPredictor:
             "target_return_type": TARGET_RETURN_TYPE,
             "return_space": RETURN_SPACE,
             "direction_sign_multiplier": self._direction_sign_multiplier,
+            "weekly_sign_threshold": self._weekly_sign_threshold,
             "weekly_interval_scale": self._weekly_interval_scale,
         }
 

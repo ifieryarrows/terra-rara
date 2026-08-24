@@ -1,6 +1,9 @@
 import numpy as np
 
-from deep_learning.training.metrics import fit_direction_sign_calibration
+from deep_learning.training.metrics import (
+    apply_weekly_sign_threshold_np,
+    fit_direction_sign_calibration,
+)
 
 
 def _quantile_path(median_path: np.ndarray) -> np.ndarray:
@@ -33,3 +36,13 @@ def test_direction_calibration_keeps_aligned_signal_unchanged():
     calibration = fit_direction_sign_calibration(actual, pred)
 
     assert calibration["direction_sign_multiplier"] == 1
+
+
+def test_weekly_sign_threshold_shifts_cumulative_median_only():
+    pred = np.zeros((2, 5, 7), dtype=float)
+    pred[..., 3] = 0.02
+    shifted = apply_weekly_sign_threshold_np(pred, 0.05, horizon=5)
+
+    assert np.allclose(shifted[:, :, 3], 0.01)
+    assert np.allclose(shifted[:, :, 0], -0.01)
+    assert np.allclose(shifted[:, :, 6], -0.01)
