@@ -108,7 +108,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
-    "lambda_t1_directional": 0.20,
+    "lambda_t1_directional": 0.75,
     "lambda_dispersion": 0.20,
     "lambda_magnitude": 0.58,
     "lambda_naive": 0.45,
@@ -125,6 +125,7 @@ CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
     "lambda_naive",
     "lambda_bias",
     "lambda_directional",
+    "lambda_t1_directional",
     "lambda_positive_rate",
 )
 
@@ -1178,6 +1179,8 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_dispersion"] = min(max(float(params["lambda_dispersion"]), 0.10), 0.25)
         if "lambda_positive_rate" in params:
             params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.10), 0.75)
+        if "lambda_t1_directional" in params:
+            params["lambda_t1_directional"] = min(max(float(params["lambda_t1_directional"]), 0.20), 0.75)
         if "lambda_magnitude" in params:
             params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
         if "lambda_naive" in params:

@@ -72,7 +72,7 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
-    "lambda_t1_directional": 0.20,
+    "lambda_t1_directional": 0.75,
     "lambda_dispersion": 0.20,
     "lambda_magnitude": 0.58,
     "lambda_naive": 0.45,
@@ -419,7 +419,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     weekly_loss_cfg = WeeklyLossConfig(
         lambda_weekly_quantile=0.70,
         lambda_t1_quantile=0.20,
-        lambda_t1_directional=0.20,
+        lambda_t1_directional=trial.suggest_categorical(
+            "lambda_t1_directional",
+            [0.20, 0.50, 0.75],
+        ),
         lambda_dispersion=0.20,
         lambda_magnitude=trial.suggest_categorical(
             "lambda_magnitude",
