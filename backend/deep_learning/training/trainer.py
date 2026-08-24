@@ -605,6 +605,7 @@ def train_tft_model(
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
+            apply_weekly_sign_correction_np,
             cumulative_horizon,
             directional_accuracy,
             fit_direction_sign_calibration,
@@ -630,6 +631,11 @@ def train_tft_model(
                 direction_calibration.get("direction_sign_multiplier", 1)
             )
             oriented_val_pred_np = val_pred_np * direction_sign_multiplier
+            oriented_val_pred_np = apply_weekly_sign_correction_np(
+                oriented_val_pred_np,
+                float(direction_calibration.get("weekly_sign_threshold", 0.0)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
             if weekly_direction_model.get("coef"):
                 from deep_learning.training.direction_model import (
                     apply_weekly_direction_model,
@@ -713,7 +719,7 @@ def train_tft_model(
     test_metrics = {}
     if test_dl is not None:
         import torch
-        from deep_learning.training.metrics import apply_weekly_sign_threshold_np
+        from deep_learning.training.metrics import apply_weekly_sign_correction_np
 
         # Collect actual values (same regardless of which model predicts)
         y_actual_parts = []
@@ -727,7 +733,7 @@ def train_tft_model(
         logger.info("Promoted checkpoint evaluation: 1 model")
 
         pred_np = pred_np * direction_sign_multiplier
-        pred_np = apply_weekly_sign_threshold_np(
+        pred_np = apply_weekly_sign_correction_np(
             pred_np,
             weekly_sign_threshold,
             horizon=cfg.forecast.primary_horizon_days,
@@ -920,7 +926,7 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
-            apply_weekly_sign_threshold_np,
+            apply_weekly_sign_correction_np,
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
             cumulative_horizon,
@@ -938,7 +944,7 @@ def _write_conformal_calibration_artifact(
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
-        pred_np = apply_weekly_sign_threshold_np(
+        pred_np = apply_weekly_sign_correction_np(
             pred_np,
             float(weekly_sign_threshold),
             horizon=cfg.forecast.primary_horizon_days,

@@ -654,6 +654,40 @@ def apply_weekly_sign_threshold_np(
     return arr
 
 
+def apply_weekly_sign_correction_np(
+    pred: np.ndarray,
+    threshold: float,
+    *,
+    horizon: int = 5,
+) -> np.ndarray:
+    """Apply a validation-fitted weekly sign decision without changing scale.
+
+    The threshold is evaluated on the cumulative weekly median.  When the
+    threshold changes that sign, reverse and negate the complete quantile path
+    for that sample.  This preserves the path's absolute magnitude, interval
+    width, and quantile ordering while applying the same validation-only sign
+    decision to held-out evaluation and live inference.
+    """
+    arr = np.asarray(pred, dtype=np.float64).copy()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [n,horizon,q] predictions, got {arr.shape}")
+    if not np.isfinite(float(threshold)):
+        raise ValueError("Weekly sign threshold must be finite")
+    if horizon <= 0 or arr.shape[1] < horizon:
+        raise ValueError(f"Need at least {horizon} prediction steps, got {arr.shape[1]}")
+    if abs(float(threshold)) <= 1e-12 or arr.shape[0] == 0:
+        return arr
+
+    median_idx = arr.shape[2] // 2
+    weekly_pred = arr[:, :horizon, median_idx].sum(axis=1)
+    raw_sign = weekly_pred > 0.0
+    adjusted_sign = (weekly_pred - float(threshold)) > 0.0
+    flip = raw_sign != adjusted_sign
+    if np.any(flip):
+        arr[flip, :horizon, :] = -arr[flip, :horizon, ::-1]
+    return arr
+
+
 def prediction_interval_coverage(
     y_actual: np.ndarray,
     lower: np.ndarray,

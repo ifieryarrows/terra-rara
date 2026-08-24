@@ -1,6 +1,7 @@
 import numpy as np
 
 from deep_learning.training.metrics import (
+    apply_weekly_sign_correction_np,
     apply_weekly_sign_threshold_np,
     fit_direction_sign_calibration,
 )
@@ -46,3 +47,21 @@ def test_weekly_sign_threshold_shifts_cumulative_median_only():
     assert np.allclose(shifted[:, :, 3], 0.01)
     assert np.allclose(shifted[:, :, 0], -0.01)
     assert np.allclose(shifted[:, :, 6], -0.01)
+
+
+def test_weekly_sign_correction_preserves_magnitude_and_reverses_quantiles():
+    pred = np.zeros((2, 5, 7), dtype=float)
+    pred[0, :, 3] = 0.01
+    pred[0, :, 2] = 0.008
+    pred[0, :, 4] = 0.012
+    pred[1, :, 3] = -0.01
+    pred[1, :, 2] = -0.012
+    pred[1, :, 4] = -0.008
+
+    corrected = apply_weekly_sign_correction_np(pred, 0.08, horizon=5)
+
+    assert np.allclose(corrected[0, :, 3], -0.01)
+    assert np.allclose(corrected[0, :, 2], -0.012)
+    assert np.allclose(corrected[0, :, 4], -0.008)
+    assert np.allclose(corrected[1], pred[1])
+    assert np.allclose(np.abs(corrected[0]).sum(), np.abs(pred[0]).sum())

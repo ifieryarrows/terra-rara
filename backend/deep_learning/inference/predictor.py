@@ -344,10 +344,13 @@ class TFTPredictor:
 
             pred_for_format = pred_for_format * self._direction_sign_multiplier
             if abs(self._weekly_sign_threshold) > 1e-12:
-                pred_for_format = pred_for_format - (
-                    self._weekly_sign_threshold
-                    / float(self.cfg.forecast.primary_horizon_days)
-                )
+                from deep_learning.training.metrics import apply_weekly_sign_correction_np
+
+                pred_for_format = apply_weekly_sign_correction_np(
+                    pred_for_format[None, ...],
+                    self._weekly_sign_threshold,
+                    horizon=self.cfg.forecast.primary_horizon_days,
+                )[0]
             if self._weekly_direction_model:
                 from deep_learning.training.direction_model import (
                     apply_weekly_direction_model,
