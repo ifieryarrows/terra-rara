@@ -79,7 +79,7 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_bias": 0.19,
     "lambda_directional": 0.25,
     "lambda_saturation": 0.35,
-    "lambda_positive_rate": 0.15,
+    "lambda_positive_rate": 0.75,
     "lambda_interval": 0.15,
     "batch_size": 32,
 }
@@ -438,7 +438,10 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
             [0.15, 0.20, 0.25],
         ),
         lambda_saturation=0.35,
-        lambda_positive_rate=0.15,
+        lambda_positive_rate=trial.suggest_categorical(
+            "lambda_positive_rate",
+            [0.15, 0.35, 0.50, 0.75],
+        ),
         lambda_interval=0.15,
     )
 

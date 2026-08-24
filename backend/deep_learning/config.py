@@ -155,10 +155,11 @@ class WeeklyLossConfig:
     # Reduced from 0.50 to 0.35: saturation was adding weight that competed
     # with directional learning without directly addressing any gate metric.
     lambda_saturation: float = 0.35
-    # Increased from 0.06 to 0.15: the model collapsed to 97%+ positive
-    # predictions while actual positive rate is ~55%, causing magnitude
-    # ratio explosion.  Stronger positive-rate control prevents this bias.
-    lambda_positive_rate: float = 0.15
+    # Increased from 0.15 to 0.75 after the deterministic validation run still
+    # produced a 95%+ positive weekly forecast.  The component is a detached
+    # training-only sign/rate loss; increasing its weight addresses the
+    # collapse without changing any evaluation or promotion threshold.
+    lambda_positive_rate: float = 0.75
     lambda_interval: float = 0.15
     weekly_median_cap_abs_median_multiple: float = 2.0
     weekly_median_cap_mean_abs_multiple: float = 1.6

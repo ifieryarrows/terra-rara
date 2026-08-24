@@ -377,7 +377,7 @@ try:
             lambda_naive: float = 0.45,
             lambda_bias: float = 0.19,
             lambda_saturation: float = 0.35,
-            lambda_positive_rate: float = 0.15,
+            lambda_positive_rate: float = 0.75,
             lambda_interval: float = 0.15,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,
