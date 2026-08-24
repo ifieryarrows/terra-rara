@@ -197,6 +197,72 @@ def _predict_quantiles_to_np(mdl, dataloader, cfg: TFTASROConfig) -> np.ndarray:
     return pred_np
 
 
+def _validation_checkpoint_score(metrics: dict[str, float]) -> float:
+    """Score a checkpoint only against validation gate-consumer metrics."""
+    weekly_da = float(metrics.get("weekly_directional_accuracy", 0.0))
+    weekly_mr = max(float(metrics.get("weekly_magnitude_ratio", 0.0)), 1e-8)
+    weekly_pi80 = float(metrics.get("weekly_pi80_coverage", 0.0))
+    weekly_tail = float(metrics.get("weekly_tail_capture_rate", 0.0))
+    pred_rate = float(metrics.get("weekly_pred_positive_rate", 0.5))
+    actual_rate = float(metrics.get("weekly_actual_positive_rate", 0.5))
+    return float(
+        abs(np.log(weekly_mr))
+        + 3.0 * abs(weekly_pi80 - 0.80)
+        + 2.0 * abs(pred_rate - actual_rate)
+        + 3.0 * max(0.0, 0.51 - weekly_da)
+        + 2.0 * max(0.0, 0.45 - weekly_tail)
+    )
+
+
+def _select_validation_checkpoint(
+    *,
+    candidate_paths: list[str],
+    val_dl,
+    y_actual_path: np.ndarray,
+    cfg: TFTASROConfig,
+) -> str:
+    """Promote the top validation checkpoint by the gate's validation consumers.
+
+    ModelCheckpoint still limits the candidate set to the best training
+    checkpoints. This second, validation-only pass prevents a low loss value
+    from promoting a sign-collapsed or badly scaled weekly forecast.
+    """
+    from deep_learning.models.tft_copper import load_tft_model
+    from deep_learning.training.metrics import evaluate_quantile_predictions
+
+    best_path = candidate_paths[0]
+    best_score = float("inf")
+    for path in dict.fromkeys(candidate_paths):
+        try:
+            candidate_model = load_tft_model(path)
+            candidate_pred = _predict_quantiles_to_np(candidate_model, val_dl, cfg)
+            candidate_metrics = evaluate_quantile_predictions(
+                y_actual_path,
+                candidate_pred,
+                quantiles=cfg.model.quantiles,
+                horizon=cfg.forecast.primary_horizon_days,
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            )
+            score = _validation_checkpoint_score(candidate_metrics)
+            logger.info(
+                "Validation checkpoint candidate: %s score=%.6f WeeklyDA=%.4f "
+                "WeeklyMR=%.4f WeeklyPI80=%.4f WeeklyPredPositive=%.4f",
+                path,
+                score,
+                candidate_metrics.get("weekly_directional_accuracy", 0.0),
+                candidate_metrics.get("weekly_magnitude_ratio", 0.0),
+                candidate_metrics.get("weekly_pi80_coverage", 0.0),
+                candidate_metrics.get("weekly_pred_positive_rate", 0.5),
+            )
+            if score < best_score:
+                best_score = score
+                best_path = path
+        except Exception as exc:
+            logger.warning("Validation checkpoint candidate skipped (%s): %s", path, exc)
+    logger.info("Validation checkpoint selected: %s score=%.6f", best_path, best_score)
+    return best_path
+
+
 def _require_promotable_metrics(metrics: dict) -> None:
     missing = [
         key for key in REQUIRED_PROMOTABLE_METRICS
@@ -525,13 +591,13 @@ def train_tft_model(
     # the complete validation objective plus a validation-only sign-collapse
     # guard before checkpoint selection and early stopping run.
     monitor_metric = (
-        "val_weekly_gate_loss"
+        "val_weekly_loss"
         if use_asro and cfg.forecast.primary_horizon_days == 5
         else "val_loss"
     )
     checkpoint_filename = (
-        "tft-asro-{epoch:02d}-{val_weekly_gate_loss:.4f}"
-        if monitor_metric == "val_weekly_gate_loss"
+        "tft-asro-{epoch:02d}-{val_weekly_loss:.4f}"
+        if monitor_metric == "val_weekly_loss"
         else "tft-asro-{epoch:02d}-{val_loss:.4f}"
     )
 
@@ -586,6 +652,33 @@ def train_tft_model(
 
     # ---- 6. Best checkpoint ----
     best_path = trainer.checkpoint_callback.best_model_path
+    if (
+        best_path
+        and use_asro
+        and cfg.forecast.primary_horizon_days == 5
+    ):
+        try:
+            import torch
+
+            validation_actual_parts = []
+            for batch in val_dl:
+                validation_actual_parts.append(
+                    batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
+                )
+            validation_actual_path = torch.cat(validation_actual_parts).cpu().numpy()
+            candidate_paths = list(trainer.checkpoint_callback.best_k_models)
+            candidate_paths.append(best_path)
+            best_path = _select_validation_checkpoint(
+                candidate_paths=candidate_paths,
+                val_dl=val_dl,
+                y_actual_path=validation_actual_path,
+                cfg=cfg,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Validation checkpoint selection unavailable; retaining monitored best: %s",
+                exc,
+            )
     if best_path:
         final_path = Path(cfg.training.best_model_path)
         final_path.parent.mkdir(parents=True, exist_ok=True)
