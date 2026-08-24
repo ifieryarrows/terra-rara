@@ -663,10 +663,11 @@ def apply_weekly_sign_correction_np(
     """Apply a validation-fitted weekly sign decision without changing scale.
 
     The threshold is evaluated on the cumulative weekly median.  When the
-    threshold changes that sign, reverse and negate the complete quantile path
-    for that sample.  This preserves the path's absolute magnitude, interval
-    width, and quantile ordering while applying the same validation-only sign
-    decision to held-out evaluation and live inference.
+    threshold changes that sign, shift only the final forecast day so the
+    cumulative weekly median changes to the opposite sign with the same
+    absolute magnitude.  This preserves T+1, the weekly absolute magnitude,
+    interval widths, and quantile ordering while applying the same
+    validation-only sign decision to held-out evaluation and live inference.
     """
     arr = np.asarray(pred, dtype=np.float64).copy()
     if arr.ndim != 3:
@@ -684,7 +685,9 @@ def apply_weekly_sign_correction_np(
     adjusted_sign = (weekly_pred - float(threshold)) > 0.0
     flip = raw_sign != adjusted_sign
     if np.any(flip):
-        arr[flip, :horizon, :] = -arr[flip, :horizon, ::-1]
+        desired_weekly = np.where(flip, -np.abs(weekly_pred), weekly_pred)
+        delta = desired_weekly - weekly_pred
+        arr[flip, horizon - 1, :] += delta[flip, None]
     return arr
 
 

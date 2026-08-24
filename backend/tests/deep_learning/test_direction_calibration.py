@@ -49,7 +49,7 @@ def test_weekly_sign_threshold_shifts_cumulative_median_only():
     assert np.allclose(shifted[:, :, 6], -0.01)
 
 
-def test_weekly_sign_correction_preserves_magnitude_and_reverses_quantiles():
+def test_weekly_sign_correction_preserves_t1_scale_and_quantile_order():
     pred = np.zeros((2, 5, 7), dtype=float)
     pred[0, :, 3] = 0.01
     pred[0, :, 2] = 0.008
@@ -60,8 +60,9 @@ def test_weekly_sign_correction_preserves_magnitude_and_reverses_quantiles():
 
     corrected = apply_weekly_sign_correction_np(pred, 0.08, horizon=5)
 
-    assert np.allclose(corrected[0, :, 3], -0.01)
-    assert np.allclose(corrected[0, :, 2], -0.012)
-    assert np.allclose(corrected[0, :, 4], -0.008)
+    assert np.allclose(corrected[0, :4], pred[0, :4])
+    assert np.allclose(corrected[0, -1, 3], -0.09)
+    assert np.allclose(corrected[0, -1, 2], -0.092)
+    assert np.allclose(corrected[0, -1, 4], -0.088)
     assert np.allclose(corrected[1], pred[1])
-    assert np.allclose(np.abs(corrected[0]).sum(), np.abs(pred[0]).sum())
+    assert np.isclose(np.abs(corrected[0, :, 3].sum()), np.abs(pred[0, :, 3].sum()))
