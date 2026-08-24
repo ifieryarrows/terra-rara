@@ -569,8 +569,10 @@ def fit_direction_sign_calibration(
         daily_sign_multiplier = -1
 
     oriented_pred_path = pred_path * sign_multiplier
-    if daily_sign_multiplier == -1:
-        oriented_pred_path[:, 0, :] *= -1.0
+    oriented_pred_path = apply_daily_sign_correction_np(
+        oriented_pred_path,
+        daily_sign_multiplier,
+    )
     oriented_weekly_pred = oriented_pred_path[:, :horizon, median_idx].sum(axis=1)
     oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
     weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
@@ -677,14 +679,21 @@ def apply_daily_sign_correction_np(
     pred: np.ndarray,
     multiplier: int,
 ) -> np.ndarray:
-    """Apply a validation-fitted T+1 sign multiplier to the first path step."""
+    """Flip T+1 while preserving each sample's cumulative weekly median."""
     arr = np.asarray(pred, dtype=np.float64).copy()
     if arr.ndim != 3:
         raise ValueError(f"Expected [n,horizon,q] predictions, got {arr.shape}")
     if int(multiplier) not in (-1, 1):
         raise ValueError(f"Daily sign multiplier must be -1 or 1, got {multiplier!r}")
     if int(multiplier) == -1 and arr.shape[0] > 0:
-        arr[:, 0, :] *= -1.0
+        horizon = arr.shape[1]
+        median_idx = arr.shape[2] // 2
+        weekly_before = arr[:, :, median_idx].sum(axis=1)
+        arr[:, 0, :] = -arr[:, 0, ::-1]
+        weekly_after_first_day_flip = arr[:, :, median_idx].sum(axis=1)
+        arr[:, horizon - 1, :] += (
+            weekly_before - weekly_after_first_day_flip
+        ).reshape(-1, 1)
     return arr
 
 

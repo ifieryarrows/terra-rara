@@ -74,4 +74,6 @@ def test_daily_sign_correction_only_changes_first_prediction_step():
     corrected = apply_daily_sign_correction_np(pred, -1)
 
     assert np.allclose(corrected[:, 0], -1.0)
-    assert np.allclose(corrected[:, 1:], 1.0)
+    assert np.allclose(corrected[:, 1:4], 1.0)
+    assert np.allclose(corrected[:, 4], 3.0)
+    assert np.allclose(corrected[:, :, 3].sum(axis=1), pred[:, :, 3].sum(axis=1))
