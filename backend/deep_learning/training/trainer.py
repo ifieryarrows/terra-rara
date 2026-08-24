@@ -351,6 +351,46 @@ def train_tft_model(
     )
     train_dl, val_dl, test_dl = create_dataloaders(training_ds, validation_ds, test_ds, cfg)
 
+    n_rows = len(master_df)
+    test_size = int(n_rows * cfg.training.test_ratio)
+    val_size = int(n_rows * cfg.training.val_ratio)
+    train_size = n_rows - val_size - test_size
+    train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
+    val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
+    max_time_idx = int(master_df["time_idx"].iloc[-1])
+    weekly_direction_model: dict = {
+        "version": 1,
+        "enabled": False,
+        "reason": "weekly_direction_model_not_used",
+        "fit_split": "train",
+        "horizon": int(cfg.forecast.primary_horizon_days),
+    }
+    if use_asro and cfg.forecast.primary_horizon_days == 5:
+        try:
+            from deep_learning.training.direction_model import fit_weekly_direction_model
+
+            weekly_direction_model = fit_weekly_direction_model(
+                master_df,
+                list(tv_unknown),
+                train_cutoff=train_cutoff,
+                horizon=cfg.forecast.primary_horizon_days,
+                max_encoder_length=cfg.model.max_encoder_length,
+                target_col=cfg.forecast.primary_target_col,
+            )
+            logger.info(
+                "Weekly direction model fitted on train origins=%s; awaiting validation selection",
+                weekly_direction_model.get("train_origin_count", 0),
+            )
+        except Exception as exc:
+            weekly_direction_model = {
+                "version": 1,
+                "enabled": False,
+                "reason": f"fit_failed:{type(exc).__name__}",
+                "fit_split": "train",
+                "horizon": int(cfg.forecast.primary_horizon_days),
+            }
+            logger.warning("Weekly direction model unavailable: %s", exc)
+
     train_scale_audit = summarize_dataloader_target_scale(
         train_dl,
         horizon=cfg.forecast.primary_horizon_days,
@@ -546,6 +586,8 @@ def train_tft_model(
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
+            cumulative_horizon,
+            directional_accuracy,
             fit_direction_sign_calibration,
             fit_weekly_interval_scale,
         )
@@ -568,9 +610,67 @@ def train_tft_model(
             direction_sign_multiplier = int(
                 direction_calibration.get("direction_sign_multiplier", 1)
             )
+            oriented_val_pred_np = val_pred_np * direction_sign_multiplier
+            if weekly_direction_model.get("coef"):
+                from deep_learning.training.direction_model import (
+                    apply_weekly_direction_model,
+                    predict_weekly_direction,
+                )
+
+                val_direction_probability = predict_weekly_direction(
+                    weekly_direction_model,
+                    master_df,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                )
+                if len(val_direction_probability) == len(oriented_val_pred_np):
+                    candidate_val_pred_np = apply_weekly_direction_model(
+                        oriented_val_pred_np,
+                        val_direction_probability,
+                        threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    actual_weekly = cumulative_horizon(
+                        val_actual_path,
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    base_weekly_da = directional_accuracy(
+                        actual_weekly,
+                        cumulative_horizon(
+                            oriented_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
+                            horizon=cfg.forecast.primary_horizon_days,
+                        ),
+                    )
+                    candidate_weekly_da = directional_accuracy(
+                        actual_weekly,
+                        cumulative_horizon(
+                            candidate_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
+                            horizon=cfg.forecast.primary_horizon_days,
+                        ),
+                    )
+                    candidate_rate = float(np.mean(val_direction_probability >= 0.50))
+                    if (
+                        candidate_weekly_da >= 0.51
+                        and candidate_weekly_da >= base_weekly_da + 0.01
+                        and 0.25 <= candidate_rate <= 0.75
+                    ):
+                        weekly_direction_model["enabled"] = True
+                        weekly_direction_model["reason"] = "validation_improved"
+                        weekly_direction_model["validation_sample_count"] = int(len(actual_weekly))
+                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
+                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
+                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
+                        oriented_val_pred_np = candidate_val_pred_np
+                    else:
+                        weekly_direction_model["reason"] = "validation_selection_rejected"
+                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
+                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
+                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
+                else:
+                    weekly_direction_model["reason"] = "validation_origin_count_mismatch"
             interval_calibration = fit_weekly_interval_scale(
                 val_actual_path,
-                val_pred_np * direction_sign_multiplier,
+                oriented_val_pred_np,
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
                 weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
@@ -642,6 +742,28 @@ def train_tft_model(
             weekly_sign_threshold,
             horizon=cfg.forecast.primary_horizon_days,
         )
+        if weekly_direction_model.get("enabled"):
+            from deep_learning.training.direction_model import (
+                apply_weekly_direction_model,
+                predict_weekly_direction,
+            )
+
+            test_direction_probability = predict_weekly_direction(
+                weekly_direction_model,
+                master_df,
+                start_exclusive=val_cutoff - 1,
+                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+            )
+            if len(test_direction_probability) != len(pred_np):
+                raise RuntimeError(
+                    "Weekly direction model origin count does not match the untouched test window"
+                )
+            pred_np = apply_weekly_direction_model(
+                pred_np,
+                test_direction_probability,
+                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
@@ -660,6 +782,9 @@ def train_tft_model(
         feature_frame=master_df,
         direction_sign_multiplier=direction_sign_multiplier,
         weekly_sign_threshold=weekly_sign_threshold,
+        weekly_direction_model=weekly_direction_model,
+        validation_start_time=train_cutoff,
+        validation_end_time=val_cutoff - cfg.forecast.primary_horizon_days,
         weekly_interval_scale=weekly_interval_scale,
     )
 
@@ -718,6 +843,7 @@ def train_tft_model(
         "data_snapshot": _build_data_snapshot_metadata(master_df),
         "runtime_environment": _runtime_environment_metadata(),
         "direction_calibration": direction_calibration,
+        "weekly_direction_model": weekly_direction_model,
         "interval_calibration": interval_calibration,
         "experiment": {
             "seed": cfg.training.seed,
@@ -784,6 +910,9 @@ def _write_conformal_calibration_artifact(
     feature_frame,
     direction_sign_multiplier: int = 1,
     weekly_sign_threshold: float = 0.0,
+    weekly_direction_model: Optional[dict] = None,
+    validation_start_time: Optional[int] = None,
+    validation_end_time: Optional[int] = None,
     weekly_interval_scale: float = 1.0,
 ) -> Optional[Path]:
     """
@@ -824,6 +953,30 @@ def _write_conformal_calibration_artifact(
             float(weekly_sign_threshold),
             horizon=cfg.forecast.primary_horizon_days,
         )
+        if weekly_direction_model and weekly_direction_model.get("enabled"):
+            from deep_learning.training.direction_model import (
+                apply_weekly_direction_model,
+                predict_weekly_direction,
+            )
+
+            if validation_start_time is None or validation_end_time is None:
+                raise ValueError("Validation time bounds are required for weekly direction calibration")
+            validation_probability = predict_weekly_direction(
+                weekly_direction_model,
+                feature_frame,
+                start_exclusive=validation_start_time,
+                end_inclusive=validation_end_time,
+            )
+            if len(validation_probability) != len(pred_np):
+                raise ValueError(
+                    "Weekly direction model origin count does not match validation predictions"
+                )
+            pred_np = apply_weekly_direction_model(
+                pred_np,
+                validation_probability,
+                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
         pred_np = apply_weekly_interval_scale_np(
             pred_np,
             float(weekly_interval_scale),

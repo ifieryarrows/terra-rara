@@ -129,6 +129,12 @@ not a post-hoc metric adjustment or a test-set calibration.
   DA improvement, persists the selected threshold, and applies the same shift
   in inference. A collapsed forecast with no validation signal remains
   unchanged and is rejected by the gate.
+- A separate regularized logistic weekly-direction model is fit only on
+  chronological training origins. It may flip each TFT weekly median path only
+  when untouched validation improves by at least 0.01 DA and the resulting
+  validation sign rate is in `[0.25, 0.75]`; otherwise it remains disabled.
+  Its coefficients and selection evidence are persisted in metadata for the
+  same live-inference behavior.
 
 The deterministic validation workflow requires `data_as_of`; the scheduled
 training workflow may still use the latest available cutoff when no replay

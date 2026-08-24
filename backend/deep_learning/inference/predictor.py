@@ -80,6 +80,7 @@ class TFTPredictor:
         self._metadata_checked = False
         self._direction_sign_multiplier = 1
         self._weekly_sign_threshold = 0.0
+        self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
 
     def _ensure_local_artifacts(self) -> None:
@@ -191,6 +192,16 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted weekly sign threshold. Retraining required."
             )
         self._weekly_sign_threshold = weekly_sign_threshold
+        weekly_direction_model = metadata.get("weekly_direction_model") or {}
+        if weekly_direction_model.get("enabled"):
+            required_fields = {"feature_names", "mean", "scale", "coef", "intercept"}
+            if not required_fields.issubset(weekly_direction_model):
+                raise IncompatibleTFTCheckpointError(
+                    "Incompatible TFT checkpoint: incomplete weekly direction model. Retraining required."
+                )
+            self._weekly_direction_model = weekly_direction_model
+        else:
+            self._weekly_direction_model = {}
         interval_calibration = metadata.get("interval_calibration") or {}
         interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
         if not np.isfinite(interval_scale) or interval_scale <= 0.0:
@@ -337,6 +348,29 @@ class TFTPredictor:
                     self._weekly_sign_threshold
                     / float(self.cfg.forecast.primary_horizon_days)
                 )
+            if self._weekly_direction_model:
+                from deep_learning.training.direction_model import (
+                    apply_weekly_direction_model,
+                    predict_weekly_direction,
+                )
+
+                latest_time_idx = int(master_df["time_idx"].iloc[-1])
+                direction_probability = predict_weekly_direction(
+                    self._weekly_direction_model,
+                    master_df,
+                    start_exclusive=latest_time_idx - 1,
+                    end_inclusive=latest_time_idx,
+                )
+                if len(direction_probability) != 1:
+                    raise IncompatibleTFTCheckpointError(
+                        "Weekly direction model could not score the latest forecast origin. Retraining required."
+                    )
+                pred_for_format = apply_weekly_direction_model(
+                    pred_for_format[None, ...],
+                    direction_probability,
+                    threshold=float(self._weekly_direction_model.get("decision_threshold", 0.50)),
+                    horizon=self.cfg.forecast.primary_horizon_days,
+                )[0]
             if self._weekly_interval_scale != 1.0:
                 median_idx = len(self.cfg.model.quantiles) // 2
                 median = pred_for_format[..., median_idx : median_idx + 1]
@@ -372,6 +406,7 @@ class TFTPredictor:
             "return_space": RETURN_SPACE,
             "direction_sign_multiplier": self._direction_sign_multiplier,
             "weekly_sign_threshold": self._weekly_sign_threshold,
+            "weekly_direction_model_enabled": bool(self._weekly_direction_model),
             "weekly_interval_scale": self._weekly_interval_scale,
         }
 
