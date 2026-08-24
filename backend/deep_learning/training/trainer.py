@@ -451,9 +451,28 @@ def train_tft_model(
     ckpt_dir = Path(cfg.training.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+    # For the weekly ASRO path, the framework's ``val_loss`` is the base
+    # quantile metric and omits the direction, scale, dispersion and interval
+    # terms used by the production contract.  WeeklyLossComponentLogger logs
+    # the complete validation objective first, so checkpoint selection and
+    # early stopping optimize the same weekly objective that training uses.
+    monitor_metric = (
+        "val_weekly_loss"
+        if use_asro and cfg.forecast.primary_horizon_days == 5
+        else "val_loss"
+    )
+    checkpoint_filename = (
+        "tft-asro-{epoch:02d}-{val_weekly_loss:.4f}"
+        if monitor_metric == "val_weekly_loss"
+        else "tft-asro-{epoch:02d}-{val_loss:.4f}"
+    )
+
     callbacks = [
+        # Must run before EarlyStopping/ModelCheckpoint so the monitored
+        # validation metric is present in callback_metrics for this epoch.
+        WeeklyLossComponentLogger(),
         EarlyStopping(
-            monitor="val_loss",
+            monitor=monitor_metric,
             patience=cfg.training.early_stopping_patience,
             mode="min",
             verbose=True,
@@ -461,13 +480,12 @@ def train_tft_model(
         LearningRateMonitor(logging_interval="epoch"),
         ModelCheckpoint(
             dirpath=str(ckpt_dir),
-            filename="tft-asro-{epoch:02d}-{val_loss:.4f}",
-            monitor="val_loss",
+            filename=checkpoint_filename,
+            monitor=monitor_metric,
             mode="min",
             save_top_k=3,
             save_last=True,
         ),
-        WeeklyLossComponentLogger(),
     ]
 
     if use_asro and cfg.forecast.primary_horizon_days != 5:

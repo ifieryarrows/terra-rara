@@ -5,12 +5,13 @@ Scope: `9360011dde1177e1118ddfe6b8de4abfe94d8cf0` and the working-tree changes i
 
 ## Outcome
 
-The failure chain was traced to three independent sources: an unbounded rolling
-data cutoff, a weekly positive-rate loss that ignored its actual target, and
-reproducibility gaps in worker allocation, Optuna sampling, and dependency
-resolution. The working tree now contains fixes for each source without
-changing quality-gate thresholds, using test labels for calibration, or
-weakening leakage controls.
+The failure chain was traced to four independent sources: an unbounded rolling
+data cutoff, a weekly positive-rate loss that ignored its actual target,
+reproducibility gaps in worker allocation/Optuna/dependency resolution, and
+checkpoint selection that monitored the base daily quantile loss instead of
+the full weekly objective. The working tree now contains fixes for each source
+without changing quality-gate thresholds, using test labels for calibration,
+or weakening leakage controls.
 
 The initial reproducibility patch had not yet been executed by a new GitHub
 training run when this report was first written. The first patched run is
@@ -31,6 +32,9 @@ new staged implementation-plan file was present.
 | [32136653304](https://github.com/ifieryarrows/terra-rara/actions/runs/32136653304) | Aug 18 / `67f03f7` | Pass | Weekly DA 0.5738, MR 1.0815, PI80 0.7869, Sharpe 0.8730 |
 | [32670262933](https://github.com/ifieryarrows/terra-rara/actions/runs/32670262933) | Aug 23 / `bdd5b9f` | Fail | MR 1.6317 and PI80 0.5161 failed the unchanged gate |
 | [32759937911](https://github.com/ifieryarrows/terra-rara/actions/runs/32759937911) | Aug 24 / `9360011` | Fail | MR 1.8192, PI80 0.7097, and Sharpe -0.9852 failed the unchanged gate |
+| [32772290679](https://github.com/ifieryarrows/terra-rara/actions/runs/32772290679) | Aug 24 / `53aa104` | Pre-guard pass | Fixed cutoff/pinned environment; WeeklyMR 1.1887 and PI80 0.8065, but predicted-positive rate 1.0000 |
+| [32773991603](https://github.com/ifieryarrows/terra-rara/actions/runs/32773991603) | Aug 24 / `c340238` | Infra fail | Training stopped before model creation because Supabase DNS resolution failed; artifact creation also timed out |
+| [32774675627](https://github.com/ifieryarrows/terra-rara/actions/runs/32774675627) | Aug 24 / `c340238` | Expected gate fail | Training completed; new sign guard rejected predicted-positive rate 1.0000, with MR 1.5786, PI80 0.6129, Sharpe -1.1616 |
 
 Aug 17 and Aug 18 used the same seed, old weekly loss configuration, and
 reported 439 training samples / 61 weekly test samples, yet their test metrics
@@ -54,6 +58,12 @@ were not a like-for-like OOS comparison.
 4. The training workflows resolved broad `>=` requirements and moved from
    CPython 3.11.15 on Aug 18 to 3.11.16 later, with additional ML-adjacent
    package patch drift.
+5. `ModelCheckpoint` and `EarlyStopping` monitored framework `val_loss`, while
+   `WeeklyASROPFLoss` recorded a larger weekly objective containing direction,
+   scale, dispersion, saturation, and interval terms. The selected checkpoints
+   could therefore minimize daily quantile error while retaining a degenerate
+   weekly sign forecast. The Aug 24 logs show `val_loss=0.011` while the
+   corresponding weekly component totals remained directionally poor.
 
 The first patched remote run, [32772290679](https://github.com/ifieryarrows/terra-rara/actions/runs/32772290679),
 used the fixed cutoff and pinned environment and passed the pre-existing gate:
@@ -63,6 +73,13 @@ crossings 0. However, it still produced a 1.0000 weekly positive rate against
 that weekly MAE versus the zero baseline was 1.3115. This is not accepted as
 the requested OOS solution: it exposed a degenerate majority forecast that the
 old gate did not reject.
+
+The historical Aug 18 artifact [32136653304](https://github.com/ifieryarrows/terra-rara/actions/runs/32136653304)
+confirms that this was not a hidden directional improvement: its weekly
+predicted-positive rate was also 1.0000, while its 0.5738 test positive rate
+made majority accuracy, magnitude, interval coverage, and Sharpe pass by
+chance. The new structural gate guard correctly classifies that behavior as
+unsafe.
 
 ## Controlled loss experiment
 
@@ -102,6 +119,10 @@ not a post-hoc metric adjustment or a test-set calibration.
 - Weekly training logs now include bias, saturation, positive-rate, and
   interval component means so the next run can verify which loss terms are
   actually dominating instead of inferring it from final metrics.
+- Weekly ASRO validation now publishes `val_weekly_loss` before checkpoint and
+  early-stopping callbacks, and the weekly path monitors that complete
+  validation objective. Non-ASRO training retains the framework `val_loss`
+  monitor.
 
 The deterministic validation workflow requires `data_as_of`; the scheduled
 training workflow may still use the latest available cutoff when no replay

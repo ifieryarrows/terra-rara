@@ -98,6 +98,22 @@ class WeeklyLossComponentLogger(pl.Callback):
         if not stats.get("n_batches"):
             return
 
+        # ``val_loss`` is the framework's quantile metric in the current
+        # PyTorch Forecasting stack.  It does not include the weekly ASRO
+        # components recorded above, so monitoring it can select a checkpoint
+        # that is well calibrated per day but directionally collapsed over
+        # five days.  Publish the complete validation objective before the
+        # later EarlyStopping/ModelCheckpoint callbacks run.
+        pl_module.log(
+            "val_weekly_loss",
+            float(stats["total_loss_mean"]),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+
         epoch = getattr(trainer, "current_epoch", 0)
         logger.info(
             "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f t1_dir=%.6f "
