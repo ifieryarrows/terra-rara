@@ -108,7 +108,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 0.70,
     "lambda_t1_quantile": 0.20,
-    "lambda_t1_directional": 0.75,
+    "lambda_t1_directional": 0.20,
     "lambda_dispersion": 0.20,
     "lambda_magnitude": 0.58,
     "lambda_naive": 0.45,
@@ -125,7 +125,6 @@ CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
     "lambda_naive",
     "lambda_bias",
     "lambda_directional",
-    "lambda_t1_directional",
     "lambda_positive_rate",
 )
 
@@ -606,7 +605,6 @@ def train_tft_model(
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
-            apply_daily_sign_correction_np,
             apply_weekly_sign_correction_np,
             cumulative_horizon,
             directional_accuracy,
@@ -632,14 +630,8 @@ def train_tft_model(
             direction_sign_multiplier = int(
                 direction_calibration.get("direction_sign_multiplier", 1)
             )
-            daily_sign_multiplier = int(
-                direction_calibration.get("daily_sign_multiplier", 1)
-            )
+            daily_sign_multiplier = 1
             oriented_val_pred_np = val_pred_np * direction_sign_multiplier
-            oriented_val_pred_np = apply_daily_sign_correction_np(
-                oriented_val_pred_np,
-                daily_sign_multiplier,
-            )
             oriented_val_pred_np = apply_weekly_sign_correction_np(
                 oriented_val_pred_np,
                 float(direction_calibration.get("weekly_sign_threshold", 0.0)),
@@ -716,7 +708,9 @@ def train_tft_model(
         )
 
     direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
-    daily_sign_multiplier = int(direction_calibration.get("daily_sign_multiplier", 1))
+    # T+1-only validation flips are intentionally not promoted after the fixed
+    # OOS replay showed that they can reverse the held-out direction.
+    daily_sign_multiplier = 1
     weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
     weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
     logger.info("Validation-only direction calibration: %s", direction_calibration)
@@ -730,7 +724,6 @@ def train_tft_model(
     if test_dl is not None:
         import torch
         from deep_learning.training.metrics import (
-            apply_daily_sign_correction_np,
             apply_weekly_sign_correction_np,
         )
 
@@ -746,7 +739,6 @@ def train_tft_model(
         logger.info("Promoted checkpoint evaluation: 1 model")
 
         pred_np = pred_np * direction_sign_multiplier
-        pred_np = apply_daily_sign_correction_np(pred_np, daily_sign_multiplier)
         pred_np = apply_weekly_sign_correction_np(
             pred_np,
             weekly_sign_threshold,
@@ -942,7 +934,6 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
-            apply_daily_sign_correction_np,
             apply_weekly_sign_correction_np,
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
@@ -961,7 +952,6 @@ def _write_conformal_calibration_artifact(
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
-        pred_np = apply_daily_sign_correction_np(pred_np, daily_sign_multiplier)
         pred_np = apply_weekly_sign_correction_np(
             pred_np,
             float(weekly_sign_threshold),
@@ -1179,8 +1169,6 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["lambda_dispersion"] = min(max(float(params["lambda_dispersion"]), 0.10), 0.25)
         if "lambda_positive_rate" in params:
             params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.10), 0.75)
-        if "lambda_t1_directional" in params:
-            params["lambda_t1_directional"] = min(max(float(params["lambda_t1_directional"]), 0.20), 0.75)
         if "lambda_magnitude" in params:
             params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
         if "lambda_naive" in params:
@@ -1229,7 +1217,6 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_t1_directional",
             "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
             "lambda_saturation", "lambda_positive_rate", "lambda_interval",
             "weekly_median_cap_abs_median_multiple",

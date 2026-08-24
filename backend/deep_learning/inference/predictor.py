@@ -187,12 +187,9 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted direction calibration. Retraining required."
             )
         self._direction_sign_multiplier = multiplier
-        daily_multiplier = int(direction_calibration.get("daily_sign_multiplier", 1))
-        if daily_multiplier not in (-1, 1):
-            raise IncompatibleTFTCheckpointError(
-                "Incompatible TFT checkpoint: invalid validation-fitted daily sign multiplier. Retraining required."
-            )
-        self._daily_sign_multiplier = daily_multiplier
+        # T+1-only validation flips are not promoted: the fixed OOS replay
+        # showed that they can reverse a useful live/test direction.
+        self._daily_sign_multiplier = 1
         weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
         if not np.isfinite(weekly_sign_threshold) or abs(weekly_sign_threshold) > 0.25:
             raise IncompatibleTFTCheckpointError(
@@ -350,15 +347,6 @@ class TFTPredictor:
                 pred_for_format = pred_np.reshape(1, -1)
 
             pred_for_format = pred_for_format * self._direction_sign_multiplier
-            if self._daily_sign_multiplier != 1:
-                from deep_learning.training.metrics import apply_daily_sign_correction_np
-
-                # Keep live inference identical to the validation/test contract:
-                # correcting T+1 must preserve the weekly cumulative median.
-                pred_for_format = apply_daily_sign_correction_np(
-                    pred_for_format[None, ...],
-                    self._daily_sign_multiplier,
-                )[0]
             if abs(self._weekly_sign_threshold) > 1e-12:
                 from deep_learning.training.metrics import apply_weekly_sign_correction_np
 

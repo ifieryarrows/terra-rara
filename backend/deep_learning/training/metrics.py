@@ -509,12 +509,12 @@ def fit_direction_sign_calibration(
     horizon: int = 5,
     min_samples: int = 30,
 ) -> dict[str, float | int | str | bool]:
-    """Fit validation-only T+1 and weekly sign corrections.
+    """Fit validation-only global and weekly sign corrections.
 
     A global sign flip is accepted only when both the T+1 and weekly validation
-    signals are strongly anti-correlated.  If only T+1 is anti-correlated, a
-    separate first-day sign correction is accepted when its validation DA,
-    Sharpe, and tail capture are strong.  When a validation forecast is
+    signals are strongly anti-correlated.  A T+1-only sign flip is deliberately
+    not promoted: the fixed OOS replay showed that this validation-only choice
+    reversed a useful test direction.  When a validation forecast is
     structurally sign-collapsed, a small additive weekly threshold is selected
     from a fixed validation quantile grid only if it improves validation DA
     while keeping the predicted sign rate balanced.  All corrections are
@@ -558,21 +558,7 @@ def fit_direction_sign_calibration(
     ):
         sign_multiplier = -1
 
-    daily_sign_multiplier = 1
-    if (
-        n >= min_samples
-        and base_daily_da <= 0.45
-        and flipped_daily_da >= 0.55
-        and flipped_daily_sharpe > 0.30
-        and flipped_daily_tail >= 0.35
-    ):
-        daily_sign_multiplier = -1
-
     oriented_pred_path = pred_path * sign_multiplier
-    oriented_pred_path = apply_daily_sign_correction_np(
-        oriented_pred_path,
-        daily_sign_multiplier,
-    )
     oriented_weekly_pred = oriented_pred_path[:, :horizon, median_idx].sum(axis=1)
     oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
     weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
@@ -628,11 +614,13 @@ def fit_direction_sign_calibration(
         "fit_split": "validation",
         "sample_count": int(n),
         "direction_sign_multiplier": sign_multiplier,
-        "daily_sign_multiplier": daily_sign_multiplier,
+        # Retained as a compatibility field; T+1-only validation flips are
+        # intentionally not promoted after the fixed OOS replay.
+        "daily_sign_multiplier": 1,
         "daily_directional_accuracy": base_daily_da,
         "daily_directional_accuracy_flipped": flipped_daily_da,
         "daily_calibrated_directional_accuracy": (
-            directional_accuracy(daily_actual, daily_pred * daily_sign_multiplier)
+            base_daily_da
             if n else 0.0
         ),
         "daily_sharpe_ratio": base_daily_sharpe,

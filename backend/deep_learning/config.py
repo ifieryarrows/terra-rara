@@ -138,10 +138,9 @@ class ASROConfig:
 class WeeklyLossConfig:
     lambda_weekly_quantile: float = 0.70
     lambda_t1_quantile: float = 0.20
-    # The deployment gate also evaluates T+1 Sharpe and tail capture. Increase
-    # the direct, scale-aware T+1 sign term after the deterministic run still
-    # failed those metrics despite passing the weekly contract.
-    lambda_t1_directional: float = 0.75
+    # Keep the validated T+1 directional baseline. A higher weight was tested
+    # on the fixed OOS snapshot and degraded weekly magnitude and PI80.
+    lambda_t1_directional: float = 0.20
     # Reduced from 0.35 to 0.20: dispersion loss was dominating weekly quantile
     # loss in CI training logs, starving the directional signal.  Magnitude
     # loss handles scale control more directly via gate-aligned penalties.

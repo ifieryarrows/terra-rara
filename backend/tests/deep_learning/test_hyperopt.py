@@ -404,7 +404,7 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_dispersion == 0.20
-    assert cfg.weekly_loss.lambda_t1_directional in {0.20, 0.50, 0.75}
+    assert cfg.weekly_loss.lambda_t1_directional == 0.20
     assert cfg.weekly_loss.weekly_median_cap is None
     assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
@@ -419,7 +419,6 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
         "lambda_naive": [0.35, 0.40, 0.45],
         "lambda_bias": [0.14, 0.17, 0.19],
         "lambda_directional": [0.15, 0.20, 0.25],
-        "lambda_t1_directional": [0.20, 0.50, 0.75],
         "lambda_positive_rate": [0.15, 0.35, 0.50, 0.75],
     }
     assert "lambda_interval" not in trial.categorical_choices

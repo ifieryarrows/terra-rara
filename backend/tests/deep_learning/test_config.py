@@ -58,7 +58,7 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.weekly_loss.lambda_magnitude == 0.58
     assert updated.weekly_loss.lambda_naive == 0.45
     assert updated.weekly_loss.lambda_bias == 0.19
-    assert updated.weekly_loss.lambda_t1_directional == 0.75
+    assert updated.weekly_loss.lambda_t1_directional == 0.20
     assert updated.weekly_loss.lambda_directional == 0.25
     assert updated.weekly_loss.lambda_saturation == 0.35
     assert updated.weekly_loss.lambda_positive_rate == 0.75
@@ -74,7 +74,7 @@ def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     assert cfg.weekly_loss.lambda_magnitude == 0.58
     assert cfg.weekly_loss.lambda_naive == 0.45
     assert cfg.weekly_loss.lambda_bias == 0.19
-    assert cfg.weekly_loss.lambda_t1_directional == 0.75
+    assert cfg.weekly_loss.lambda_t1_directional == 0.20
     assert cfg.weekly_loss.lambda_directional == 0.25
     assert cfg.weekly_loss.lambda_saturation == 0.35
     assert cfg.weekly_loss.lambda_positive_rate == 0.75

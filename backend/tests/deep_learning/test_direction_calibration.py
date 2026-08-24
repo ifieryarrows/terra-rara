@@ -23,6 +23,7 @@ def test_validation_only_direction_calibration_flips_stable_inverse_signal():
 
     assert calibration["fit_split"] == "validation"
     assert calibration["direction_sign_multiplier"] == -1
+    assert calibration["daily_sign_multiplier"] == 1
     assert calibration["daily_directional_accuracy"] == 0.0
     assert calibration["daily_directional_accuracy_flipped"] == 1.0
     assert calibration["weekly_directional_accuracy"] == 0.0

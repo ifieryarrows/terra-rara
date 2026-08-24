@@ -95,7 +95,7 @@ def test_apply_optuna_results_uses_controlled_baseline_with_weekly_search_params
     assert resolved.weekly_loss.lambda_magnitude == 0.50
     assert resolved.weekly_loss.lambda_naive == 0.35
     assert resolved.weekly_loss.lambda_bias == 0.14
-    assert resolved.weekly_loss.lambda_t1_directional == 0.75
+    assert resolved.weekly_loss.lambda_t1_directional == 0.20
     assert resolved.weekly_loss.lambda_directional == 0.15
     assert resolved.weekly_loss.lambda_dispersion == 0.20
     assert resolved.weekly_loss.lambda_saturation == 0.35
