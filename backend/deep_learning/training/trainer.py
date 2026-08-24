@@ -521,17 +521,17 @@ def train_tft_model(
 
     # For the weekly ASRO path, the framework's ``val_loss`` is the base
     # quantile metric and omits the direction, scale, dispersion and interval
-    # terms used by the production contract.  WeeklyLossComponentLogger logs
-    # the complete validation objective first, so checkpoint selection and
-    # early stopping optimize the same weekly objective that training uses.
+    # terms used by the production contract. WeeklyLossComponentLogger logs
+    # the complete validation objective plus a validation-only sign-collapse
+    # guard before checkpoint selection and early stopping run.
     monitor_metric = (
-        "val_weekly_loss"
+        "val_weekly_gate_loss"
         if use_asro and cfg.forecast.primary_horizon_days == 5
         else "val_loss"
     )
     checkpoint_filename = (
-        "tft-asro-{epoch:02d}-{val_weekly_loss:.4f}"
-        if monitor_metric == "val_weekly_loss"
+        "tft-asro-{epoch:02d}-{val_weekly_gate_loss:.4f}"
+        if monitor_metric == "val_weekly_gate_loss"
         else "tft-asro-{epoch:02d}-{val_loss:.4f}"
     )
 

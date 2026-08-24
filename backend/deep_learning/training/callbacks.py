@@ -102,11 +102,22 @@ class WeeklyLossComponentLogger(pl.Callback):
         # PyTorch Forecasting stack.  It does not include the weekly ASRO
         # components recorded above, so monitoring it can select a checkpoint
         # that is well calibrated per day but directionally collapsed over
-        # five days.  Publish the complete validation objective before the
-        # later EarlyStopping/ModelCheckpoint callbacks run.
+        # five days.  Publish both the complete validation objective and a
+        # gate-oriented selection metric before the later callbacks run. The
+        # extra positive-rate term is validation-only and targets the existing
+        # sign-collapse guard without changing any gate threshold.
         pl_module.log(
             "val_weekly_loss",
             float(stats["total_loss_mean"]),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+        pl_module.log(
+            "val_weekly_gate_loss",
+            float(stats["total_loss_mean"] + stats["positive_rate_loss_mean"]),
             on_step=False,
             on_epoch=True,
             prog_bar=False,
