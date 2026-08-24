@@ -54,14 +54,14 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.asro.lambda_madl == 0.40
     assert updated.weekly_loss.lambda_weekly_quantile == 0.70
     assert updated.weekly_loss.lambda_t1_quantile == 0.20
-    assert updated.weekly_loss.lambda_dispersion == 0.35
+    assert updated.weekly_loss.lambda_dispersion == 0.20
     assert updated.weekly_loss.lambda_magnitude == 0.58
     assert updated.weekly_loss.lambda_naive == 0.45
     assert updated.weekly_loss.lambda_bias == 0.19
     assert updated.weekly_loss.lambda_t1_directional == 0.20
-    assert updated.weekly_loss.lambda_directional == 0.20
-    assert updated.weekly_loss.lambda_saturation == 0.50
-    assert updated.weekly_loss.lambda_positive_rate == 0.06
+    assert updated.weekly_loss.lambda_directional == 0.25
+    assert updated.weekly_loss.lambda_saturation == 0.35
+    assert updated.weekly_loss.lambda_positive_rate == 0.15
     assert updated.weekly_loss.lambda_interval == 0.15
     assert updated.training.batch_size == 32
 
@@ -70,14 +70,14 @@ def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     cfg = get_tft_config()
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
-    assert cfg.weekly_loss.lambda_dispersion == 0.35
+    assert cfg.weekly_loss.lambda_dispersion == 0.20
     assert cfg.weekly_loss.lambda_magnitude == 0.58
     assert cfg.weekly_loss.lambda_naive == 0.45
     assert cfg.weekly_loss.lambda_bias == 0.19
     assert cfg.weekly_loss.lambda_t1_directional == 0.20
-    assert cfg.weekly_loss.lambda_directional == 0.20
-    assert cfg.weekly_loss.lambda_saturation == 0.50
-    assert cfg.weekly_loss.lambda_positive_rate == 0.06
+    assert cfg.weekly_loss.lambda_directional == 0.25
+    assert cfg.weekly_loss.lambda_saturation == 0.35
+    assert cfg.weekly_loss.lambda_positive_rate == 0.15
     assert cfg.weekly_loss.lambda_interval == 0.15
     assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6

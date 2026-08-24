@@ -303,6 +303,7 @@ def test_startup_protection_requires_min_finite_completed_trials():
     protected_trial = SimpleNamespace(study=protected_study)
 
     assert _finite_completed_trial_count(protected_study) == 1
+
     assert _is_startup_protected(protected_trial)
 
     enough_completed = _study(
@@ -335,12 +336,12 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.70
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.35
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.20
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.58
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.45
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.19
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.10
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.03
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.25
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.15
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_interval"] == 0.15
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -390,13 +391,13 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
 
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
-    assert cfg.weekly_loss.lambda_dispersion == 0.35
+    assert cfg.weekly_loss.lambda_dispersion == 0.20
     assert cfg.weekly_loss.weekly_median_cap is None
     assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
     assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
     assert cfg.weekly_loss.lambda_saturation == 0.35
-    assert cfg.weekly_loss.lambda_positive_rate == 0.03
+    assert cfg.weekly_loss.lambda_positive_rate == 0.15
     assert cfg.weekly_loss.lambda_interval == 0.15
 
     assert trial.float_ranges == {}
@@ -404,7 +405,7 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
         "lambda_magnitude": [0.50, 0.55, 0.58],
         "lambda_naive": [0.35, 0.40, 0.45],
         "lambda_bias": [0.14, 0.17, 0.19],
-        "lambda_directional": [0.08, 0.10, 0.12],
+        "lambda_directional": [0.15, 0.20, 0.25],
     }
     assert "lambda_positive_rate" not in trial.categorical_choices
     assert "lambda_interval" not in trial.categorical_choices

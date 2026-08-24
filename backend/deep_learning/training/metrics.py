@@ -205,7 +205,11 @@ def fit_weekly_interval_scale(
         horizon=horizon,
     )
     median_idx = len(quantiles) // 2
-    candidates = np.linspace(0.05, 1.0, 192, dtype=np.float64)
+    # Allow widening (scale > 1.0) when validation coverage is below target,
+    # not just shrinking when coverage is above target.  The upper bound of
+    # 2.5 is capped to avoid overshooting the PI80 width-ratio gate (≤ 2.0
+    # when coverage > 0.86).
+    candidates = np.linspace(0.05, 2.5, 256, dtype=np.float64)
     coverages: list[float] = []
     for candidate in candidates:
         scaled = apply_weekly_interval_scale_np(base, float(candidate), quantiles=quantiles)

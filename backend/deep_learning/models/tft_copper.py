@@ -119,8 +119,8 @@ def _weekly_scale_losses(
         structural_explosion = torch.relu(ratio - 3.0)
         return (
             torch.abs(torch.log(ratio))
-            + 2.0 * quality_band_excess.pow(2)
-            + 2.0 * quality_band_deficit.pow(2)
+            + 4.0 * quality_band_excess.pow(2)
+            + 4.0 * quality_band_deficit.pow(2)
             + 4.0 * structural_explosion.pow(2)
         )
 
@@ -160,7 +160,7 @@ def _weekly_positive_rate_loss(
     actual_weekly: torch.Tensor,
     temperature: float = 0.01,
     lower_bound: float = 0.20,
-    upper_bound: float = 0.85,
+    upper_bound: float = 0.75,
     eps: float = 1e-8,
 ) -> torch.Tensor:
     """Mildly penalize collapsed weekly sign distributions without exact matching."""
@@ -342,13 +342,13 @@ try:
             # Keep the standalone loss API neutral by default; production
             # training passes the configured 0.20 weight explicitly.
             lambda_t1_directional: float = 0.0,
-            lambda_dispersion: float = 0.35,
-            lambda_directional: float = 0.10,
-            lambda_magnitude: float = 0.55,
-            lambda_naive: float = 0.40,
-            lambda_bias: float = 0.25,
+            lambda_dispersion: float = 0.20,
+            lambda_directional: float = 0.25,
+            lambda_magnitude: float = 0.58,
+            lambda_naive: float = 0.45,
+            lambda_bias: float = 0.19,
             lambda_saturation: float = 0.35,
-            lambda_positive_rate: float = 0.03,
+            lambda_positive_rate: float = 0.15,
             lambda_interval: float = 0.15,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,

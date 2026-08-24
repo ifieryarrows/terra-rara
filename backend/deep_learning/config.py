@@ -142,13 +142,23 @@ class WeeklyLossConfig:
     # direct, scale-aware T+1 sign term so those metrics are trained rather
     # than inferred only from the five-day aggregate objective.
     lambda_t1_directional: float = 0.20
-    lambda_dispersion: float = 0.35
+    # Reduced from 0.35 to 0.20: dispersion loss was dominating weekly quantile
+    # loss in CI training logs, starving the directional signal.  Magnitude
+    # loss handles scale control more directly via gate-aligned penalties.
+    lambda_dispersion: float = 0.20
     lambda_magnitude: float = 0.58
     lambda_naive: float = 0.45
     lambda_bias: float = 0.19
-    lambda_directional: float = 0.20
-    lambda_saturation: float = 0.50
-    lambda_positive_rate: float = 0.06
+    # Increased from 0.20 to 0.25: CI callback logged "directional loss is
+    # below 5% of total loss" across nearly every epoch.
+    lambda_directional: float = 0.25
+    # Reduced from 0.50 to 0.35: saturation was adding weight that competed
+    # with directional learning without directly addressing any gate metric.
+    lambda_saturation: float = 0.35
+    # Increased from 0.06 to 0.15: the model collapsed to 97%+ positive
+    # predictions while actual positive rate is ~55%, causing magnitude
+    # ratio explosion.  Stronger positive-rate control prevents this bias.
+    lambda_positive_rate: float = 0.15
     lambda_interval: float = 0.15
     weekly_median_cap_abs_median_multiple: float = 2.0
     weekly_median_cap_mean_abs_multiple: float = 1.6
