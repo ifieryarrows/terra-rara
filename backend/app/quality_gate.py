@@ -36,6 +36,8 @@ def evaluate_quality_gate(
     weekly_sorted_quantile_crossing_rate: Optional[float] = None,
     weekly_median_sort_gap_max: Optional[float] = None,
     weekly_sample_count: Optional[int] = None,
+    weekly_pred_positive_rate: Optional[float] = None,
+    weekly_actual_positive_rate: Optional[float] = None,
 ) -> Tuple[bool, List[str]]:
     """
     Evaluate TFT-ASRO metrics against deployment thresholds.
@@ -66,6 +68,27 @@ def evaluate_quality_gate(
         reasons.append("Missing weekly_tail_capture_rate")
     elif weekly_tail_capture_rate < 0.45:
         reasons.append(f"WeeklyTailCapture={weekly_tail_capture_rate:.4f} < 0.45")
+
+    # The hyperopt objective already rejects majority-sign collapse. Apply the
+    # same structural guard at promotion time so a forecast that merely
+    # matches the test-window majority cannot pass on DA and magnitude alone.
+    if weekly_pred_positive_rate is None:
+        reasons.append("Missing weekly_pred_positive_rate")
+    if weekly_actual_positive_rate is None:
+        reasons.append("Missing weekly_actual_positive_rate")
+    if weekly_pred_positive_rate is not None and weekly_actual_positive_rate is not None:
+        positive_collapse = (
+            weekly_pred_positive_rate > 0.90 and weekly_actual_positive_rate < 0.75
+        )
+        negative_collapse = (
+            weekly_pred_positive_rate < 0.10 and weekly_actual_positive_rate > 0.25
+        )
+        if positive_collapse or negative_collapse:
+            reasons.append(
+                "WeeklySignCollapse="
+                f"pred_positive_rate={weekly_pred_positive_rate:.4f}, "
+                f"actual_positive_rate={weekly_actual_positive_rate:.4f}"
+            )
 
     if weekly_pi80_coverage is None:
         reasons.append("Missing weekly_pi80_coverage")

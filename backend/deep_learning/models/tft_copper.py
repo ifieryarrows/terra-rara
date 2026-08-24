@@ -182,7 +182,17 @@ def _weekly_positive_rate_loss(
         device=pred_weekly_median.device,
         dtype=pred_weekly_median.dtype,
     )
-    sign_loss = F.binary_cross_entropy(pred_positive_probability, actual_sign)
+    positive_fraction = actual_positive_rate.clamp(min=eps, max=1.0 - eps)
+    class_weights = torch.where(
+        actual_sign > 0.5,
+        0.5 / positive_fraction,
+        0.5 / (1.0 - positive_fraction),
+    )
+    sign_loss = F.binary_cross_entropy(
+        pred_positive_probability,
+        actual_sign,
+        weight=class_weights,
+    )
     band = max(float(tolerance), eps)
     lower = torch.clamp(
         actual_positive_rate - band,

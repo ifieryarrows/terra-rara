@@ -12,9 +12,10 @@ resolution. The working tree now contains fixes for each source without
 changing quality-gate thresholds, using test labels for calibration, or
 weakening leakage controls.
 
-The modified code has not yet been executed by a new GitHub training run, so a
-new remote quality-gate pass and an out-of-sample improvement are not claimed
-by this report.
+The initial reproducibility patch had not yet been executed by a new GitHub
+training run when this report was first written. The first patched run is
+recorded below; its pre-existing gate pass is explicitly not treated as an OOS
+solution because its sign distribution remained degenerate.
 
 At inspection time, `HEAD` was `9360011` on `main`, there were no staged
 files, and the only pre-existing unrelated working-tree item was the
@@ -54,6 +55,15 @@ were not a like-for-like OOS comparison.
    CPython 3.11.15 on Aug 18 to 3.11.16 later, with additional ML-adjacent
    package patch drift.
 
+The first patched remote run, [32772290679](https://github.com/ifieryarrows/terra-rara/actions/runs/32772290679),
+used the fixed cutoff and pinned environment and passed the pre-existing gate:
+WeeklyMR 1.1887, PI80 0.8065, PI96 width ratio 1.3100, Sharpe 0.5973, and
+crossings 0. However, it still produced a 1.0000 weekly positive rate against
+0.5484 actual, sign correlation 0.0681, variance ratio 0.2790, and a warning
+that weekly MAE versus the zero baseline was 1.3115. This is not accepted as
+the requested OOS solution: it exposed a degenerate majority forecast that the
+old gate did not reject.
+
 ## Controlled loss experiment
 
 Using a 62-sample synthetic batch with 34 positive and 28 negative weekly
@@ -70,6 +80,13 @@ not a post-hoc metric adjustment or a test-set calibration.
   BCE term plus a tolerant ±0.20 rate band, bounded by the existing safety
   limits. It remains a training loss and does not read validation or test
   labels.
+- The BCE term now uses inverse class-frequency weights from the training
+  batch, preventing an imbalanced historical sign regime from making the
+  majority forecast a local optimum.
+- The final gate now applies the same sign-collapse guard already used by
+  hyperopt (`predicted positive rate > 0.90` while actual is `< 0.75`, with a
+  symmetric negative guard) and requires both positive-rate metrics in the
+  promotable artifact.
 - POSIX data loaders now honor `num_workers=0`; hyperopt seeds Python/worker
   state, uses a seed-specific `TPESampler`, seeds each trial/fold, and enables
   Lightning deterministic mode.

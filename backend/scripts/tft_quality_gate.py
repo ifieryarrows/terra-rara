@@ -54,6 +54,8 @@ def main() -> int:
     weekly_gap = metrics.get("weekly_median_sort_gap_max")
     weekly_samples = metrics.get("weekly_sample_count")
     weekly_mae_vs_naive_zero = metrics.get("weekly_mae_vs_naive_zero")
+    weekly_pred_positive_rate = metrics.get("weekly_pred_positive_rate")
+    weekly_actual_positive_rate = metrics.get("weekly_actual_positive_rate")
 
     print(
         "Quality gate metrics: "
@@ -67,6 +69,8 @@ def main() -> int:
         f"WeeklyTail={weekly_tail} WeeklyPI80={weekly_pi80} "
         f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
         f"WeeklyQCross={weekly_qcross} WeeklySortedQCross={weekly_sorted_qcross} "
+        f"WeeklyPredPositive={weekly_pred_positive_rate} "
+        f"WeeklyActualPositive={weekly_actual_positive_rate} "
         f"WeeklyN={weekly_samples}"
     )
 
@@ -92,6 +96,8 @@ def main() -> int:
         weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
         weekly_median_sort_gap_max=weekly_gap,
         weekly_sample_count=weekly_samples,
+        weekly_pred_positive_rate=weekly_pred_positive_rate,
+        weekly_actual_positive_rate=weekly_actual_positive_rate,
     )
     warnings = evaluate_quality_gate_warnings(
         vr=vr,

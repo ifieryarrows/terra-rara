@@ -140,6 +140,8 @@ REQUIRED_PROMOTABLE_METRICS = (
     "weekly_sample_count",
     "weekly_quantile_crossing_rate",
     "weekly_sorted_quantile_crossing_rate",
+    "weekly_pred_positive_rate",
+    "weekly_actual_positive_rate",
     "quantile_crossing_rate",
     "sorted_quantile_crossing_rate",
 )

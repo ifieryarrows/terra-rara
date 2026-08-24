@@ -43,6 +43,8 @@ def _valid_metadata() -> dict:
             "weekly_sorted_quantile_crossing_rate": 0.0,
             "weekly_median_sort_gap_max": 0.0,
             "weekly_sample_count": 120,
+            "weekly_pred_positive_rate": 0.55,
+            "weekly_actual_positive_rate": 0.55,
             "mae_vs_naive_zero": 0.9,
             "weekly_mae_vs_naive_zero": 0.9,
         },

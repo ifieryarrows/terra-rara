@@ -30,6 +30,8 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
             "weekly_sorted_quantile_crossing_rate": 0.0,
             "weekly_median_sort_gap_max": 0.0,
             "weekly_sample_count": 120,
+            "weekly_pred_positive_rate": 0.55,
+            "weekly_actual_positive_rate": 0.55,
         }
     }
     metadata_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")

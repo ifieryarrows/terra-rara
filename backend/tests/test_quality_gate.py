@@ -17,6 +17,8 @@ GOOD_WEEKLY = {
     "weekly_sorted_quantile_crossing_rate": 0.0,
     "weekly_median_sort_gap_max": 0.0,
     "weekly_sample_count": 120,
+    "weekly_pred_positive_rate": 0.55,
+    "weekly_actual_positive_rate": 0.55,
 }
 GOOD_QUANTILE = {
     "quantile_crossing_rate": 0.0,
@@ -106,6 +108,23 @@ def test_quality_gate_rejects_weekly_pi96_width_explosion():
 
     assert passed is False
     assert "WeeklyPI96WidthRatio=10.6438 > 3.0" in reasons
+
+
+def test_quality_gate_rejects_weekly_majority_sign_collapse():
+    passed, reasons = evaluate_quality_gate(
+        da=0.55,
+        sharpe=0.5,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{
+            **GOOD_WEEKLY,
+            "weekly_pred_positive_rate": 1.0,
+            "weekly_actual_positive_rate": 0.5484,
+        },
+    )
+
+    assert passed is False
+    assert any("WeeklySignCollapse=" in reason for reason in reasons)
 
 
 def test_quality_gate_asserts_weekly_public_crossing_above_bug_threshold():

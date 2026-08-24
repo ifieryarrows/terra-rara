@@ -103,6 +103,8 @@ def build_artifact_health(local_dir: str | Path) -> dict:
                 ),
                 weekly_median_sort_gap_max=metrics.get("weekly_median_sort_gap_max"),
                 weekly_sample_count=metrics.get("weekly_sample_count"),
+                weekly_pred_positive_rate=metrics.get("weekly_pred_positive_rate"),
+                weekly_actual_positive_rate=metrics.get("weekly_actual_positive_rate"),
             )
             if not quality_gate_passed:
                 gate_error = "; ".join(reasons)
