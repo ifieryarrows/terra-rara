@@ -95,6 +95,31 @@ def _runtime_environment_metadata() -> dict:
         "packages": packages,
     }
 
+
+def _configure_tft_reproducibility() -> None:
+    """Make CPU training use one deterministic execution stream.
+
+    Lightning's ``deterministic=True`` covers algorithm selection, but it does
+    not force the CPU thread pools to a single reduction order. The fixed
+    snapshot replay showed that the same seed could otherwise select different
+    validation checkpoints on the hosted runner.
+    """
+    import torch
+
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # The process may already have initialized the inter-op pool; the
+        # single intra-op stream above still removes the material variation.
+        pass
+    torch.use_deterministic_algorithms(True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        torch.backends.cuda.matmul.allow_tf32 = False
+
 KNOWN_GOOD_CONFIG = {
     "max_encoder_length": 50,
     "hidden_size": 48,
@@ -307,6 +332,8 @@ def train_tft_model(
         logger.info("Using deterministic weekly validation config: %s", DETERMINISTIC_WEEKLY_CONFIG)
     else:
         cfg = _apply_optuna_results(cfg)
+
+    _configure_tft_reproducibility()
 
     # ---- 0b. ASRO loss sanity check (runs before any training) ----
     try:
