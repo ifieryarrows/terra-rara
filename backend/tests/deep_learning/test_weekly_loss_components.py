@@ -45,6 +45,16 @@ def test_weekly_scale_losses_penalize_bearish_bias_symmetrically():
     assert torch.isclose(bullish["bias_loss"], bearish["bias_loss"], rtol=1e-5, atol=1e-6)
 
 
+def test_weekly_dispersion_loss_is_bounded_for_collapsed_batches():
+    actual_weekly = torch.tensor([-0.040, -0.010, 0.015, 0.035])
+    collapsed = torch.zeros_like(actual_weekly)
+
+    dispersion = _weekly_scale_losses(collapsed, actual_weekly)["dispersion_loss"]
+
+    assert torch.isfinite(dispersion)
+    assert dispersion.item() <= 1.5
+
+
 def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
     actual_weekly = torch.tensor([-0.030, -0.010, 0.020, 0.040])
     pred_mid_rate = torch.tensor([-0.018, -0.012, 0.014, 0.020])

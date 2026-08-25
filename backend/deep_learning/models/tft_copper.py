@@ -144,7 +144,21 @@ def _weekly_scale_losses(
 
     pred_std = pred_weekly_median.std(unbiased=False) + eps
     actual_std = actual_weekly.std(unbiased=False) + eps
-    dispersion_loss = torch.abs(torch.log(pred_std / actual_std))
+    # A batch can temporarily collapse to almost one weekly value.  The raw
+    # log-ratio then reaches ~15 and its 1/pred_std derivative overwhelms the
+    # rest of the objective, making cross-run CPU round-off choose a different
+    # basin.  Keep the dispersion signal in a broad, pre-specified [0.25, 4]
+    # ratio band and use a smooth-L1 penalty; this still discourages material
+    # under/over-dispersion without allowing one pathological batch to steer
+    # the whole epoch.
+    dispersion_log_error = torch.log(
+        (pred_std / actual_std).clamp(min=0.25, max=4.0)
+    )
+    dispersion_loss = F.smooth_l1_loss(
+        dispersion_log_error,
+        torch.zeros_like(dispersion_log_error),
+        beta=0.5,
+    )
 
     model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
     zero_mae = actual_abs_mean
