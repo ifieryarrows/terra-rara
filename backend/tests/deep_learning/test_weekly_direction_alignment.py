@@ -19,6 +19,11 @@ def test_weekly_directional_loss_prefers_same_sign_prediction():
         lambda_dispersion=0.0,
         lambda_magnitude=0.0,
         lambda_naive=0.0,
+        lambda_t1_directional=0.0,
+        lambda_bias=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
         lambda_directional=1.0,
     )
 
