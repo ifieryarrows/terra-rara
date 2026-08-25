@@ -174,12 +174,12 @@ def fit_weekly_interval_scale(
 ) -> dict[str, float | int | str]:
     """Fit a validation-only scalar for weekly central-interval width.
 
-    The search is deterministic and uses no final-test labels.  It first
-    matches nominal validation coverage, then chooses the narrowest candidate
-    when the empirical coverage grid is symmetric around the target.  The
-    proper interval score is retained as a deterministic tertiary tie-breaker.
-    This avoids selecting an unnecessarily wide interval because of floating
-    point noise in two equally distant empirical coverage values.
+    The search is deterministic and uses no final-test labels.  It minimizes
+    the proper validation interval score among candidates that remain within
+    one empirical observation of nominal coverage.  The finite-sample floor
+    avoids selecting an unnecessarily wide interval when the validation
+    coverage grid cannot represent the target exactly, while retaining a
+    pre-specified coverage safeguard.
     """
     pred = np.asarray(y_pred_quantiles_path, dtype=np.float64)
     actual = np.asarray(y_actual_path, dtype=np.float64)
@@ -251,24 +251,15 @@ def fit_weekly_interval_scale(
         idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
     ]
     if eligible:
-        distances = [
-            abs(coverages[idx] - float(target_coverage)) for idx in eligible
-        ]
-        min_distance = min(distances)
-        # Treat mathematically symmetric empirical points as a real tie.  The
-        # previous exact-float comparison could choose the wider side merely
-        # because 0.80 - 0.789473... and 0.810526... - 0.80 rounded by a few
-        # ulps differently.
-        distance_ties = [
-            idx
-            for idx in eligible
-            if abs(abs(coverages[idx] - float(target_coverage)) - min_distance) <= 1e-12
-        ]
         chosen_idx = min(
-            distance_ties,
-            key=lambda idx: (candidates[idx], interval_scores[idx]),
+            eligible,
+            key=lambda idx: (
+                interval_scores[idx],
+                abs(coverages[idx] - float(target_coverage)),
+                candidates[idx],
+            ),
         )
-        selection_method = "validation_target_narrowest_with_one_observation_floor"
+        selection_method = "validation_interval_score_with_one_observation_floor"
     else:
         # Defensive fallback for pathological inputs; preserve the original
         # target-closest behavior rather than silently widening the interval.
