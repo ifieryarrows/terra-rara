@@ -406,7 +406,7 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_dispersion == 0.20
     assert cfg.weekly_loss.lambda_t1_directional == 0.20
     assert cfg.weekly_loss.weekly_median_cap is None
-    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
+    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 1.25
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
     assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
     assert cfg.weekly_loss.lambda_saturation == 0.35

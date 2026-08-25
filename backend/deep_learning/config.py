@@ -160,7 +160,11 @@ class WeeklyLossConfig:
     # collapse without changing any evaluation or promotion threshold.
     lambda_positive_rate: float = 0.75
     lambda_interval: float = 0.15
-    weekly_median_cap_abs_median_multiple: float = 2.0
+    # Keep the structural median cap close to the train-window weekly scale.
+    # The previous 2.0x setting allowed a fixed OOS replay to saturate at a
+    # cap more than twice its held-out median move; 1.25x remains derived
+    # solely from training targets while preventing that high-amplitude mode.
+    weekly_median_cap_abs_median_multiple: float = 1.25
     weekly_median_cap_mean_abs_multiple: float = 1.6
     weekly_median_cap_std_multiple: float = 1.2
     weekly_median_cap: Optional[float] = None
