@@ -196,15 +196,11 @@ def fit_weekly_interval_scale(
         }
 
     actual_weekly = cumulative_horizon(actual[:n], horizon=horizon)
-    # Apply the same median cap before evaluating each candidate as the
-    # promotion path applies before its monotonic quantile transform.
-    base, _ = apply_weekly_median_cap_np(
-        pred[:n],
-        weekly_median_cap=weekly_median_cap,
-        quantiles=quantiles,
-        horizon=horizon,
-    )
     median_idx = len(quantiles) // 2
+    # Mirror the production order exactly: interval scaling is applied to the
+    # raw quantiles first, then the training-derived median cap, then the
+    # monotonic transform. Fitting in a different order can select a scale
+    # that does not reproduce the interval path used by the quality gate.
     # Allow widening (scale > 1.0) when validation coverage is below target,
     # not just shrinking when coverage is above target.  The upper bound of
     # 2.5 is capped to avoid overshooting the PI80 width-ratio gate (≤ 2.0
@@ -212,8 +208,16 @@ def fit_weekly_interval_scale(
     candidates = np.linspace(0.05, 2.5, 256, dtype=np.float64)
     coverages: list[float] = []
     for candidate in candidates:
-        scaled = apply_weekly_interval_scale_np(base, float(candidate), quantiles=quantiles)
-        ordered = monotonic_quantiles_np(scaled, median_idx=median_idx)
+        scaled = apply_weekly_interval_scale_np(
+            pred[:n], float(candidate), quantiles=quantiles
+        )
+        bounded, _ = apply_weekly_median_cap_np(
+            scaled,
+            weekly_median_cap=weekly_median_cap,
+            quantiles=quantiles,
+            horizon=horizon,
+        )
+        ordered = monotonic_quantiles_np(bounded, median_idx=median_idx)
         weekly = cumulative_quantiles(ordered, horizon=horizon)
         q10_idx = quantiles.index(0.10)
         q90_idx = quantiles.index(0.90)

@@ -41,6 +41,37 @@ def test_validation_interval_scale_targets_central_weekly_coverage():
     assert np.allclose(scaled[..., 3], pred[..., 3])
 
 
+def test_validation_interval_scale_matches_production_order_with_median_cap():
+    weekly_actual = np.linspace(-0.040, 0.040, 100)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((100, 5, 7), dtype=float)
+    pred[..., 0] = -0.20
+    pred[..., 1] = -0.10
+    pred[..., 2] = -0.05
+    pred[..., 4] = 0.05
+    pred[..., 5] = 0.10
+    pred[..., 6] = 0.20
+    pred[..., 3] = np.sign(weekly_actual)[:, None] * 0.20
+
+    calibration = fit_weekly_interval_scale(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=0.08,
+    )
+    metrics = evaluate_quantile_predictions(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=0.08,
+        weekly_interval_scale=calibration["weekly_interval_scale"],
+    )
+
+    assert metrics["weekly_pi80_coverage"] == pytest.approx(
+        calibration["validation_pi80_coverage"]
+    )
+
+
 def test_cumulative_horizon_sums_first_five_steps():
     y = np.array([[0.01, 0.02, -0.01, 0.00, 0.03, 0.99]])
     assert np.isclose(cumulative_horizon(y, horizon=5)[0], 0.05)
