@@ -723,13 +723,24 @@ def train_tft_model(
                         weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
                 else:
                     weekly_direction_model["reason"] = "validation_origin_count_mismatch"
+            # The held-out test block immediately follows validation. Fit the
+            # uncertainty scale on a recent validation tail so calibration
+            # reflects the adjacent regime while remaining strictly
+            # validation-only. Direction calibration above intentionally keeps
+            # the full validation block because sign stability benefits from
+            # the larger sample.
+            interval_calibration_window = min(
+                len(val_actual_path),
+                max(32, len(val_actual_path) // 2),
+            )
             interval_calibration = fit_weekly_interval_scale(
-                val_actual_path,
-                oriented_val_pred_np,
+                val_actual_path[-interval_calibration_window:],
+                oriented_val_pred_np[-interval_calibration_window:],
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
                 weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
             )
+            interval_calibration["calibration_window"] = int(interval_calibration_window)
     except Exception as exc:
         logger.warning(
             "Validation calibration unavailable; retaining raw intervals/orientation: %s",
