@@ -1,7 +1,7 @@
 # TFT-ASRO Quality-Gate Reproducibility and OOS Recovery
 
 Date: 2026-08-25  
-Scope: `codex/tft-quality-gate-recovery-20260824`, current head `493e176`
+Scope: `codex/tft-quality-gate-recovery-20260824`, current head `fb6b96f`
 
 ## Current outcome
 
@@ -28,7 +28,7 @@ pending when this report was written.
 | [32857587031](https://github.com/ifieryarrows/terra-rara/actions/runs/32857587031) | `462a348`, same snapshot, isolated artifact | Fail / deterministic replay | Exact match to `32855673086`: same promoted checkpoint `epoch=29`, same gate metrics |
 | [32858780393](https://github.com/ifieryarrows/terra-rara/actions/runs/32858780393) | `d449b03`, seeded shuffle restored | Fail | WeeklyDA `0.5645`, MR `1.2858`, Tail `0.5625`, PI80 `0.8871`; only PI80 failed |
 | [32860786879](https://github.com/ifieryarrows/terra-rara/actions/runs/32860786879) | `34da1df`, symmetric interval-width loss | Fail | Same directional/magnitude metrics; PI96 width improved `1.1166 → 1.0148`, but PI80 remained `0.8871` |
-| [32861632419](https://github.com/ifieryarrows/terra-rara/actions/runs/32861632419) | `1977afa`, current snapshot, 30-trial normal workflow | Pending | Hyperopt workflow was still in setup when this report was generated |
+| [32862903964](https://github.com/ifieryarrows/terra-rara/actions/runs/32862903964) | `fb6b96f`, current snapshot, 30-trial normal workflow | Pending | Replay-aware workflow skipped live embedding backfill and entered Optuna; the earlier `32861632419` attempt was cancelled while backfill remained active |
 
 The historical baseline remains relevant: [32037012405](https://github.com/ifieryarrows/terra-rara/actions/runs/32037012405)
 passed on Aug 17, while [32670262933](https://github.com/ifieryarrows/terra-rara/actions/runs/32670262933)
@@ -68,6 +68,8 @@ accepted as a robust OOS result.
   under-width pressure to symmetric deviation from the train-objective target.
 - `493e176` validates an expected frame SHA before persisting a live-built
   snapshot.
+- `fb6b96f` skips the live FinBERT backfill when a supplied immutable snapshot
+  is being replayed, preventing an unnecessary DB mutation/blocking step.
 
 The quality gate contract in `backend/app/quality_gate.py` is unchanged. The
 weekly DA, magnitude, tail, PI80/PI96, crossing, and daily risk checks remain
@@ -77,8 +79,7 @@ mandatory; the existing sign-collapse guard remains active.
 
 Local verification completed before the pending normal workflow:
 
-- Full backend suite after snapshot/replay changes: `471 passed, 14 skipped,
-  8 warnings`.
+- Full backend suite on the final code: `471 passed, 14 skipped, 8 warnings`.
 - Focused interval/model tests: `27 passed, 11 skipped`.
 - Feature-store replay tests: `10 passed`.
 - Compileall and workflow YAML parsing passed; `git diff --check` passed.
