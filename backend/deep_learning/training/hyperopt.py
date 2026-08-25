@@ -130,6 +130,69 @@ def _finite_completed_trial_count(study) -> int:
     )
 
 
+def _select_preflight_safe_trial(study, fold_diagnostics: list[dict]):
+    """Select the lowest-objective trial that passes validation preflight.
+
+    The objective is continuous and can rank a directionally collapsed trial
+    above a usable one. Selecting that trial and rejecting it only later in
+    ``trainer.py`` wastes the search and silently falls back to a different
+    configuration. This validation-only constraint does not change the
+    deployment gate or use OOS labels.
+    """
+    diagnostics_by_trial = {
+        int(d["trial"]): d
+        for d in fold_diagnostics
+        if d.get("state") == "COMPLETE" and d.get("trial") is not None
+    }
+    finite_trials = [
+        trial
+        for trial in getattr(study, "trials", [])
+        if getattr(trial.state, "name", None) == "COMPLETE"
+        and trial.value is not None
+        and np.isfinite(float(trial.value))
+    ]
+    candidates = []
+    for trial in finite_trials:
+        preflight = best_trial_preflight_check(
+            diagnostics_by_trial.get(int(trial.number), {})
+        )
+        candidates.append(
+            {
+                "trial": int(trial.number),
+                "value": float(trial.value),
+                "preflight_passed": bool(preflight["preflight_passed"]),
+                "passed": int(preflight["passed"]),
+                "total": int(preflight["total"]),
+            }
+        )
+
+    eligible = [
+        trial
+        for trial, candidate in zip(finite_trials, candidates)
+        if candidate["preflight_passed"]
+    ]
+    if eligible:
+        selected = min(eligible, key=lambda trial: float(trial.value))
+        mode = "lowest_objective_preflight_pass"
+    elif finite_trials:
+        selected = min(finite_trials, key=lambda trial: float(trial.value))
+        mode = "lowest_objective_no_preflight_pass"
+    else:
+        selected = None
+        mode = "no_finite_completed_trials"
+
+    return selected, {
+        "mode": mode,
+        "selected_trial": None if selected is None else int(selected.number),
+        "preflight_eligible_trials": [
+            candidate["trial"]
+            for candidate in candidates
+            if candidate["preflight_passed"]
+        ],
+        "candidates": candidates,
+    }
+
+
 def _weekly_pinball_loss(
     actual_path: np.ndarray,
     pred_path: np.ndarray,
@@ -318,9 +381,9 @@ def _build_fold_scale_diagnostics(study) -> list[dict]:
 def _build_result_payload(study) -> dict:
     """Build the persisted hyperopt artifact without assuming a best trial exists."""
     trial_state_counts = _trial_state_counts(study)
-    best = _best_finite_completed_trial(study)
     prune_reasons, fold_diagnostics = _build_prune_diagnostics(study)
     fold_scale_diagnostics = _build_fold_scale_diagnostics(study)
+    best, selection = _select_preflight_safe_trial(study, fold_diagnostics)
     structural_report = compute_structural_invalidity_report(fold_diagnostics)
     distribution_summary = compute_trial_distribution_summary(fold_diagnostics)
 
@@ -337,6 +400,7 @@ def _build_result_payload(study) -> dict:
             "fold_scale_diagnostics": fold_scale_diagnostics,
             "structural_invalidity_report": structural_report,
             "trial_distribution_summary": distribution_summary,
+            "best_trial_selection": selection,
             "best_trial_preflight": None,
             "message": (
                 "No Optuna trials completed with a finite objective value; "
@@ -367,6 +431,7 @@ def _build_result_payload(study) -> dict:
         "fold_scale_diagnostics": fold_scale_diagnostics,
         "structural_invalidity_report": structural_report,
         "trial_distribution_summary": distribution_summary,
+        "best_trial_selection": selection,
         "best_trial_preflight": preflight,
     }
 

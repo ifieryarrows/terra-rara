@@ -37,6 +37,32 @@ def test_structural_invalidity_report_blocks_when_no_completed_trial_passes():
     assert "Fix quantile head architecture" in report["next_action"]
 
 
+def test_structural_invalidity_report_counts_trial_level_intersection():
+    base = {
+        "state": "COMPLETE",
+        "avg_quantile_crossing_rate": 0.0,
+        "avg_weekly_magnitude_ratio": 1.0,
+        "avg_weekly_pred_positive_rate": 0.55,
+        "avg_weekly_actual_positive_rate": 0.57,
+        "avg_weekly_pi80_coverage": 0.80,
+        "avg_weekly_pi80_width_ratio": 1.0,
+        "avg_weekly_mae_vs_naive_zero": 1.0,
+        "avg_variance_ratio": 1.0,
+    }
+    report = compute_structural_invalidity_report(
+        [
+            {**base, "avg_directional_accuracy": 0.52},
+            {**base, "avg_directional_accuracy": 0.49},
+            {**base, "avg_directional_accuracy": 0.48},
+            {**base, "avg_directional_accuracy": 0.47},
+        ]
+    )
+
+    assert report["structural_check_results"]["directional_accuracy_ge_0_50"] == 1
+    assert report["trials_passing_all_checks"] == 1
+    assert report["verdict"] == "PARTIAL_STRUCTURAL_FAILURE"
+
+
 def test_trial_distribution_summary_reports_percentiles():
     summary = compute_trial_distribution_summary(
         [

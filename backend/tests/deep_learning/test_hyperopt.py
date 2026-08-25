@@ -116,6 +116,43 @@ def test_build_result_payload_selects_best_finite_completed_trial():
     assert result["trial_state_counts"] == {"complete": 3}
 
 
+def test_build_result_payload_prefers_preflight_safe_trial_over_lower_objective():
+    healthy = {
+        "avg_quantile_crossing_rate": 0.0,
+        "avg_weekly_magnitude_ratio": 1.0,
+        "avg_weekly_pred_positive_rate": 0.55,
+        "avg_weekly_actual_positive_rate": 0.57,
+        "avg_weekly_pi80_coverage": 0.80,
+        "avg_weekly_pi80_width_ratio": 1.0,
+        "avg_weekly_mae_vs_naive_zero": 1.0,
+        "avg_variance_ratio": 1.0,
+    }
+    result = _build_result_payload(
+        _study(
+            _trial(
+                0,
+                "COMPLETE",
+                0.10,
+                {"lambda_positive_rate": 0.50},
+                {**healthy, "avg_directional_accuracy": 0.49},
+            ),
+            _trial(
+                1,
+                "COMPLETE",
+                0.50,
+                {"lambda_positive_rate": 0.75},
+                {**healthy, "avg_directional_accuracy": 0.52},
+            ),
+        )
+    )
+
+    assert result["best_trial"] == 1
+    assert result["best_params"] == {"lambda_positive_rate": 0.75}
+    assert result["best_trial_preflight"]["preflight_passed"] is True
+    assert result["best_trial_selection"]["mode"] == "lowest_objective_preflight_pass"
+    assert result["best_trial_selection"]["preflight_eligible_trials"] == [1]
+
+
 def test_build_result_payload_marks_structural_failure_as_artifact_status():
     result = _build_result_payload(
         _study(
