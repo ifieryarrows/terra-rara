@@ -59,14 +59,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: tft-deterministic-validation-${{ github.event.inputs.feature_snapshot_run_id }}
-          path: /tmp/models/tft/
+          path: /tmp/tft-feature-snapshot/
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           run-id: ${{ github.event.inputs.feature_snapshot_run_id }}
 
       - name: Verify immutable feature snapshot
         if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
-        run: test -f /tmp/models/tft/feature_snapshot.pkl && test -f /tmp/models/tft/feature_snapshot.pkl.json
+        run: |
+          test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl
+          test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl.json
+          cp /tmp/tft-feature-snapshot/feature_snapshot.pkl /tmp/models/tft/feature_snapshot.pkl
+          cp /tmp/tft-feature-snapshot/feature_snapshot.pkl.json /tmp/models/tft/feature_snapshot.pkl.json
 
       - name: Record validation environment
         working-directory: backend
