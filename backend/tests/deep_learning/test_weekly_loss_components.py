@@ -55,6 +55,18 @@ def test_weekly_dispersion_loss_is_bounded_for_collapsed_batches():
     assert dispersion.item() <= 1.5
 
 
+def test_weekly_scale_optimization_keeps_median_ratio_as_diagnostic_only():
+    actual_weekly = torch.tensor([-0.040, -0.010, 0.015, 0.035])
+    pred_weekly = torch.tensor([-0.080, -0.020, 0.030, 0.070], requires_grad=True)
+
+    losses = _weekly_scale_losses(pred_weekly, actual_weekly)
+    losses["magnitude_loss"].backward()
+
+    assert losses["magnitude_ratio"].item() == pytest.approx(2.0)
+    assert losses["mean_magnitude_ratio"].item() == pytest.approx(2.0)
+    assert torch.isfinite(pred_weekly.grad).all()
+
+
 def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
     actual_weekly = torch.tensor([-0.030, -0.010, 0.020, 0.040])
     pred_mid_rate = torch.tensor([-0.018, -0.012, 0.014, 0.020])

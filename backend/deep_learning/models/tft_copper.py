@@ -138,9 +138,13 @@ def _weekly_scale_losses(
             + 4.0 * structural_explosion.pow(2)
         )
 
-    magnitude_loss = _bounded_scale_loss(magnitude_ratio) + 0.5 * _bounded_scale_loss(
-        mean_magnitude_ratio
-    )
+    # The median ratio remains available as the production diagnostic, but a
+    # batch median is an order statistic: its active element can change after
+    # an otherwise negligible floating-point perturbation.  Feeding that
+    # gradient into the optimizer made otherwise identical CPU runs follow
+    # different paths.  Use the smooth mean ratio for optimization while
+    # preserving the median ratio used by hyperopt and the quality gate.
+    magnitude_loss = _bounded_scale_loss(mean_magnitude_ratio)
 
     pred_std = pred_weekly_median.std(unbiased=False) + eps
     actual_std = actual_weekly.std(unbiased=False) + eps
@@ -168,10 +172,9 @@ def _weekly_scale_losses(
         (pred_weekly_median.median() - actual_weekly.median())
         / actual_abs_median
     )
-    bias_loss = (
-        1.50 * torch.abs(mean_gap)
-        + 1.00 * torch.abs(median_gap)
-    )
+    # As above, keep the median gap as a diagnostic but avoid its
+    # order-statistic gradient in the train objective.
+    bias_loss = 1.50 * torch.abs(mean_gap)
 
     return {
         "dispersion_loss": dispersion_loss,
