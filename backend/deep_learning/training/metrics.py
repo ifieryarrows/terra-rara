@@ -174,9 +174,12 @@ def fit_weekly_interval_scale(
 ) -> dict[str, float | int | str]:
     """Fit a validation-only scalar for weekly central-interval width.
 
-    The search is deterministic and uses no final-test labels.  It chooses
-    the candidate whose validation PI80 coverage is closest to the target;
-    this addresses over-wide quantiles while preserving the model median.
+    The search is deterministic and uses no final-test labels.  It minimizes
+    the proper validation interval score among candidates that remain within
+    one empirical observation of nominal coverage.  The finite-sample floor
+    avoids selecting an unnecessarily wide interval when the validation
+    coverage grid cannot represent the target exactly, while retaining a
+    pre-specified coverage safeguard.
     """
     pred = np.asarray(y_pred_quantiles_path, dtype=np.float64)
     actual = np.asarray(y_actual_path, dtype=np.float64)
@@ -207,6 +210,7 @@ def fit_weekly_interval_scale(
     # when coverage > 0.86).
     candidates = np.linspace(0.05, 2.5, 256, dtype=np.float64)
     coverages: list[float] = []
+    interval_scores: list[float] = []
     for candidate in candidates:
         scaled = apply_weekly_interval_scale_np(
             pred[:n], float(candidate), quantiles=quantiles
@@ -227,19 +231,52 @@ def fit_weekly_interval_scale(
             weekly[:, q90_idx],
         )
         coverages.append(float(coverage))
+        interval_scores.append(
+            float(
+                interval_score(
+                    actual_weekly,
+                    weekly[:, q10_idx],
+                    weekly[:, q90_idx],
+                    alpha=0.20,
+                )
+            )
+        )
 
-    # Prefer the narrowest candidate on an exact tie to avoid unnecessary
-    # uncertainty inflation.  The candidate grid is fixed for reproducibility.
-    chosen_idx = min(
-        range(len(candidates)),
-        key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
-    )
+    # Coverage is quantized in steps of 1/n.  Permit the lower adjacent
+    # empirical point, but never a larger departure from nominal coverage;
+    # within that pre-specified set, the proper interval score selects the
+    # narrowest useful interval without consulting the held-out test split.
+    coverage_floor = max(0.0, float(target_coverage) - (1.0 / float(n)))
+    eligible = [
+        idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
+    ]
+    if eligible:
+        chosen_idx = min(
+            eligible,
+            key=lambda idx: (
+                interval_scores[idx],
+                abs(coverages[idx] - float(target_coverage)),
+                candidates[idx],
+            ),
+        )
+        selection_method = "validation_interval_score_with_one_observation_floor"
+    else:
+        # Defensive fallback for pathological inputs; preserve the original
+        # target-closest behavior rather than silently widening the interval.
+        chosen_idx = min(
+            range(len(candidates)),
+            key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
+        )
+        selection_method = "coverage_target_fallback"
     return {
         "fit_split": "validation",
         "sample_count": int(n),
         "weekly_interval_scale": float(candidates[chosen_idx]),
         "validation_pi80_coverage": float(coverages[chosen_idx]),
         "target_pi80_coverage": float(target_coverage),
+        "validation_pi80_coverage_floor": float(coverage_floor),
+        "validation_pi80_interval_score": float(interval_scores[chosen_idx]),
+        "interval_selection_method": selection_method,
     }
 
 

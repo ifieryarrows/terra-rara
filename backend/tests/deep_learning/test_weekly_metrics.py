@@ -72,6 +72,26 @@ def test_validation_interval_scale_matches_production_order_with_median_cap():
     )
 
 
+def test_validation_interval_scale_uses_finite_sample_floor_and_proper_score():
+    weekly_actual = np.linspace(-0.018, 0.018, 95)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((95, 5, 7), dtype=float)
+    pred[..., 0] = -0.20
+    pred[..., 1] = -0.10
+    pred[..., 2] = -0.05
+    pred[..., 4] = 0.05
+    pred[..., 5] = 0.10
+    pred[..., 6] = 0.20
+
+    calibration = fit_weekly_interval_scale(actual, pred, horizon=5)
+
+    assert calibration["interval_selection_method"] == (
+        "validation_interval_score_with_one_observation_floor"
+    )
+    assert calibration["validation_pi80_coverage"] >= 0.80 - 1.0 / 95 - 1e-12
+    assert calibration["validation_pi80_interval_score"] > 0.0
+
+
 def test_cumulative_horizon_sums_first_five_steps():
     y = np.array([[0.01, 0.02, -0.01, 0.00, 0.03, 0.99]])
     assert np.isclose(cumulative_horizon(y, horizon=5)[0], 0.05)
