@@ -296,6 +296,13 @@ def train_tft_model(
     Returns:
         Dict with metrics, checkpoint path, and feature importance.
     """
+    # Configure torch before importing Lightning.  Importing Lightning may
+    # initialize torch's inter-op pool, after which set_num_interop_threads()
+    # can no longer make the process single-threaded.  The hosted-runner
+    # replay showed that leaving that pool at its default produced different
+    # validation trajectories for the same seed and data snapshot.
+    _configure_tft_reproducibility()
+
     # pytorch_forecasting >=1.0 uses the unified `lightning` package.
     # Importing from `pytorch_lightning` gives a different LightningModule
     # base class, causing "model must be a LightningModule" at trainer.fit().
@@ -332,8 +339,6 @@ def train_tft_model(
         logger.info("Using deterministic weekly validation config: %s", DETERMINISTIC_WEEKLY_CONFIG)
     else:
         cfg = _apply_optuna_results(cfg)
-
-    _configure_tft_reproducibility()
 
     # ---- 0b. ASRO loss sanity check (runs before any training) ----
     try:
