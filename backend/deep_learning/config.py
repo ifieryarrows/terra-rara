@@ -164,7 +164,7 @@ class WeeklyLossConfig:
     # small fraction of the loss. Increase its optimization weight so the
     # quantile head learns narrower, regime-sensitive spreads; gate thresholds
     # and validation-only calibration remain unchanged.
-    lambda_interval: float = 0.45
+    lambda_interval: float = 0.40
     # Keep the structural median cap close to the train-window weekly scale.
     # The previous 2.0x setting allowed a fixed OOS replay to saturate at a
     # cap more than twice its held-out median move; 1.25x remains derived
