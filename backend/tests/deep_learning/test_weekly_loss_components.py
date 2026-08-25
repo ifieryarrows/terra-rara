@@ -138,3 +138,17 @@ def test_weekly_saturation_loss_penalizes_raw_paths_near_and_above_cap():
     assert _weekly_saturation_loss(above_cap, weekly_median_cap=0.05).item() > (
         _weekly_saturation_loss(near_cap, weekly_median_cap=0.05).item() * 10.0
     )
+
+
+def test_weekly_saturation_loss_has_a_sublinear_far_violation_tail():
+    """A single absurd raw forecast must not dominate the first epoch."""
+    cap = 0.05
+    moderate = _weekly_saturation_loss(
+        torch.tensor([cap * 20.0]), weekly_median_cap=cap
+    )
+    extreme = _weekly_saturation_loss(
+        torch.tensor([cap * 100.0]), weekly_median_cap=cap
+    )
+
+    assert extreme.item() > moderate.item()
+    assert extreme.item() < 4.0 * moderate.item()

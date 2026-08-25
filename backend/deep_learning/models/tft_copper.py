@@ -91,18 +91,15 @@ def _weekly_saturation_loss(
     near_cap_excess = torch.relu(raw_abs - near_threshold) / near_band
     above_cap_excess = torch.relu(raw_abs - cap) / cap.clamp_min(eps)
 
-    # The raw model can start far outside the train-derived cap.  A pure
-    # squared barrier then produces a huge gradient (the fixed replay reached
-    # saturation losses above 8,000), making the first shuffled epoch
-    # numerically sensitive and sending otherwise identical runs to different
-    # checkpoints.  Preserve the quadratic penalty for normal near-cap
-    # violations, but use a Huber-style linear tail for large violations.
+    # The raw model can start far outside the train-derived cap.  A quadratic
+    # barrier (and even a Huber tail) lets a single early batch dominate the
+    # objective: the fixed replay reached saturation losses above 170, after
+    # which tiny CPU floating-point differences selected different training
+    # trajectories.  Keep a strong penalty near the cap, but use a smooth
+    # logarithmic tail so the penalty stays informative without growing
+    # linearly with an implausibly large raw forecast.
     def _robust_squared(excess: torch.Tensor) -> torch.Tensor:
-        return torch.where(
-            excess <= 1.0,
-            excess.pow(2),
-            2.0 * excess - 1.0,
-        )
+        return torch.log1p(excess).pow(2)
 
     return (
         0.10 * _robust_squared(near_cap_excess).mean()
