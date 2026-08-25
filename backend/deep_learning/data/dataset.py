@@ -283,6 +283,7 @@ def create_dataloaders(
         train=True,
         batch_size=cfg.training.batch_size,
         num_workers=nw,
+        shuffle=False,
         generator=train_generator,
     )
     val_dl = validation_dataset.to_dataloader(
