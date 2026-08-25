@@ -7,6 +7,16 @@ on:
         description: "UTC ISO-8601 feature-store cutoff for replayable validation"
         required: true
         type: string
+      feature_snapshot_run_id:
+        description: "Optional prior validation run whose immutable feature snapshot should be replayed"
+        required: false
+        default: ""
+        type: string
+      expected_data_snapshot_sha:
+        description: "Optional SHA-256 of the immutable TFT feature snapshot"
+        required: false
+        default: ""
+        type: string
 
 env:
   PYTHONPATH: backend
@@ -16,6 +26,8 @@ env:
   OMP_NUM_THREADS: "1"
   MKL_NUM_THREADS: "1"
   TFT_DATA_AS_OF: ${{ github.event.inputs.data_as_of || '' }}
+  TFT_FEATURE_SNAPSHOT_PATH: /tmp/models/tft/feature_snapshot.pkl
+  TFT_EXPECTED_DATA_SNAPSHOT_SHA: ${{ github.event.inputs.expected_data_snapshot_sha || '' }}
 
 jobs:
   deterministic-weekly-validation:
@@ -41,6 +53,20 @@ jobs:
       - name: Create model directory
         run: |
           mkdir -p /tmp/models/tft/checkpoints
+
+      - name: Download immutable feature snapshot
+        if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: tft-deterministic-validation-${{ github.event.inputs.feature_snapshot_run_id }}
+          path: /tmp/models/tft/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.feature_snapshot_run_id }}
+
+      - name: Verify immutable feature snapshot
+        if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+        run: test -f /tmp/models/tft/feature_snapshot.pkl && test -f /tmp/models/tft/feature_snapshot.pkl.json
 
       - name: Record validation environment
         working-directory: backend

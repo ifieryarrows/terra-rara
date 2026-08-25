@@ -171,3 +171,28 @@ def test_build_tft_dataframe_honors_replay_cutoff(monkeypatch):
     build_tft_dataframe(object(), _minimal_tft_cfg())
 
     assert captured["end_date"].isoformat() == "2026-04-29T12:34:56+00:00"
+
+
+def test_build_tft_dataframe_replays_immutable_feature_snapshot(monkeypatch, tmp_path):
+    dates = pd.date_range("2026-04-20", periods=10, freq="B")
+    price_df = pd.DataFrame(
+        {"close": [6.00, 6.05, 6.10, 6.02, 6.01, 6.08, 6.11, 6.09, 6.15, 6.20]},
+        index=dates,
+    )
+    _patch_feature_store_sources(monkeypatch, price_df)
+    snapshot_path = tmp_path / "feature_snapshot.pkl"
+    monkeypatch.setenv("TFT_FEATURE_SNAPSHOT_PATH", str(snapshot_path))
+    monkeypatch.setenv("TFT_DATA_AS_OF", "2026-04-29T12:34:56Z")
+
+    first = build_tft_dataframe(object(), _minimal_tft_cfg())
+    assert snapshot_path.exists()
+    assert snapshot_path.with_suffix(".pkl.json").exists()
+
+    def fail_if_live_data_is_loaded(*_args, **_kwargs):
+        raise AssertionError("replay unexpectedly rebuilt the live feature store")
+
+    monkeypatch.setattr(feature_store, "_build_price_features", fail_if_live_data_is_loaded)
+    second = build_tft_dataframe(object(), _minimal_tft_cfg())
+
+    pd.testing.assert_frame_equal(first[0], second[0])
+    assert first[1:] == second[1:]

@@ -16,7 +16,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import logging
@@ -55,12 +54,10 @@ logger = logging.getLogger(__name__)
 
 def _build_data_snapshot_metadata(master_df: pd.DataFrame) -> dict:
     """Describe the exact feature frame used for a train/test split."""
-    digest = hashlib.sha256()
-    digest.update("\x1f".join(str(column) for column in master_df.columns).encode())
-    digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
-    digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
+    from deep_learning.data.feature_store import data_snapshot_sha256
+
     return {
-        "sha256": digest.hexdigest(),
+        "sha256": data_snapshot_sha256(master_df),
         "rows": int(len(master_df)),
         "columns": int(master_df.shape[1]),
         "first_index": str(master_df.index.min()) if len(master_df) else None,
