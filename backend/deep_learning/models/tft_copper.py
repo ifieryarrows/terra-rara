@@ -252,7 +252,7 @@ def _weekly_interval_undercoverage_loss(
     target_width_ratio: float = 0.70,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Penalize weekly PI80 misses and intervals that are too narrow for actual scale."""
+    """Penalize weekly PI80 misses and deviation from the target interval scale."""
     q = list(quantiles)
     q10_idx = q.index(0.10) if 0.10 in q else 1
     q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
@@ -268,15 +268,13 @@ def _weekly_interval_undercoverage_loss(
 
     actual_std = actual_weekly.std(unbiased=False).clamp_min(eps)
     width_ratio = width.mean() / (2.56 * actual_std + eps)
-    under_width_loss = torch.relu(
-        torch.as_tensor(
-            float(target_width_ratio),
-            device=pred_weekly_quantiles.device,
-            dtype=pred_weekly_quantiles.dtype,
-        )
-        - width_ratio
-    ).pow(2)
-    return miss_loss + under_width_loss
+    target_width = torch.as_tensor(
+        float(target_width_ratio),
+        device=pred_weekly_quantiles.device,
+        dtype=pred_weekly_quantiles.dtype,
+    )
+    width_scale_loss = (width_ratio - target_width).pow(2)
+    return miss_loss + width_scale_loss
 
 
 # ---------------------------------------------------------------------------
