@@ -86,7 +86,7 @@ def test_validation_interval_scale_uses_finite_sample_floor_and_proper_score():
     calibration = fit_weekly_interval_scale(actual, pred, horizon=5)
 
     assert calibration["interval_selection_method"] == (
-        "validation_interval_score_with_one_observation_floor"
+        "validation_target_narrowest_with_one_observation_floor"
     )
     assert calibration["validation_pi80_coverage"] >= 0.80 - 1.0 / 95 - 1e-12
     assert calibration["validation_pi80_interval_score"] > 0.0
