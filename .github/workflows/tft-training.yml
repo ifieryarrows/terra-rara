@@ -43,6 +43,11 @@ on:
                 required: false
                 default: ""
                 type: string
+            optuna_results_run_id:
+                description: "Optional prior TFT run whose validation-selected Optuna artifact should be replayed when hyperopt is skipped"
+                required: false
+                default: ""
+                type: string
 
 env:
     PYTHONPATH: backend
@@ -205,6 +210,19 @@ jobs:
                   # Restores optuna_results.json to tft/ root so that
                   # _apply_optuna_results() in trainer.py picks it up.
                   path: /tmp/models/tft/
+
+            - name: Download replayed Optuna results artifact
+              # A normal train replay may reuse a validation-selected artifact
+              # without rerunning the expensive search. This remains opt-in
+              # and auditable through the explicit source run id.
+              if: ${{ needs.hyperopt.result == 'skipped' && github.event.inputs.run_hyperopt == 'false' && github.event.inputs.optuna_results_run_id != '' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: optuna-results-${{ github.event.inputs.optuna_results_run_id }}
+                  path: /tmp/models/tft/
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  run-id: ${{ github.event.inputs.optuna_results_run_id }}
 
             - name: Train TFT-ASRO model
               working-directory: backend
