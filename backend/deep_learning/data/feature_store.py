@@ -748,6 +748,15 @@ def build_tft_dataframe(
     valid_close = close.dropna()
     last_close = float(valid_close.iloc[-1]) if len(valid_close) > 0 else float('nan')
 
+    configured_sha = os.environ.get("TFT_EXPECTED_DATA_SNAPSHOT_SHA", "").strip().lower()
+    if configured_sha:
+        actual_sha = data_snapshot_sha256(master)
+        if actual_sha != configured_sha:
+            raise RuntimeError(
+                "Built TFT feature frame does not match TFT_EXPECTED_DATA_SNAPSHOT_SHA: "
+                f"expected={configured_sha} actual={actual_sha}"
+            )
+
     if snapshot_path is not None:
         _write_feature_snapshot(
             snapshot_path,
@@ -758,14 +767,5 @@ def build_tft_dataframe(
             last_close=last_close,
             drop_missing_target=drop_missing_target,
         )
-
-    configured_sha = os.environ.get("TFT_EXPECTED_DATA_SNAPSHOT_SHA", "").strip().lower()
-    if configured_sha:
-        actual_sha = data_snapshot_sha256(master)
-        if actual_sha != configured_sha:
-            raise RuntimeError(
-                "Built TFT feature frame does not match TFT_EXPECTED_DATA_SNAPSHOT_SHA: "
-                f"expected={configured_sha} actual={actual_sha}"
-            )
 
     return master, time_varying_unknown, time_varying_known, target_cols, last_close
