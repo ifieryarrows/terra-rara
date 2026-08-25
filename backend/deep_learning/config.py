@@ -159,7 +159,12 @@ class WeeklyLossConfig:
     # training-only sign/rate loss; increasing its weight addresses the
     # collapse without changing any evaluation or promotion threshold.
     lambda_positive_rate: float = 0.75
-    lambda_interval: float = 0.15
+    # The fixed OOS replay still produced a validation PI80 width ratio above
+    # the train-objective target despite the interval component being only a
+    # small fraction of the loss. Increase its optimization weight so the
+    # quantile head learns narrower, regime-sensitive spreads; gate thresholds
+    # and validation-only calibration remain unchanged.
+    lambda_interval: float = 0.45
     # Keep the structural median cap close to the train-window weekly scale.
     # The previous 2.0x setting allowed a fixed OOS replay to saturate at a
     # cap more than twice its held-out median move; 1.25x remains derived
