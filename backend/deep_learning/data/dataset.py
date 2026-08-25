@@ -268,12 +268,11 @@ def create_dataloaders(
         nw, os.name, cfg.training.num_workers,
     )
 
-    # Do not let the training sampler derive its seed from the process-global
-    # torch RNG.  Model construction and Lightning callbacks consume that RNG
-    # before the first epoch, so two otherwise identical hosted runs could
-    # start with different shuffled windows.  An explicit generator makes the
-    # chronological training protocol reproducible without affecting the
-    # untouched validation/test loaders.
+    # Keep the training windows shuffled, as required by the stochastic
+    # optimizer, but do not let the sampler derive its seed from the
+    # process-global torch RNG. Model construction and Lightning callbacks
+    # consume that RNG before the first epoch, so an explicit generator is
+    # required for replayable runs. Validation/test loaders remain ordered.
     import torch
 
     train_generator = torch.Generator(device="cpu")
@@ -283,7 +282,7 @@ def create_dataloaders(
         train=True,
         batch_size=cfg.training.batch_size,
         num_workers=nw,
-        shuffle=False,
+        shuffle=True,
         generator=train_generator,
     )
     val_dl = validation_dataset.to_dataloader(
