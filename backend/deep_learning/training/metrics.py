@@ -21,6 +21,10 @@ from deep_learning.models.monotonic_quantiles import (
 )
 
 
+DEFAULT_WEEKLY_INTERVAL_CONDITIONING_POWER = 0.35
+WEEKLY_INTERVAL_CONDITIONING_POWER_CANDIDATES = (0.25, 0.35, 0.50, 0.75, 1.00)
+
+
 def select_prediction_horizon(values: np.ndarray, horizon_idx: int = 0) -> np.ndarray:
     """
     Select one forecast horizon from a target/prediction matrix.
@@ -141,12 +145,23 @@ def apply_weekly_interval_scale_np(
     scale: float,
     *,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    conditioning_values: np.ndarray | None = None,
+    conditioning_reference: float | None = None,
+    conditioning_power: float = DEFAULT_WEEKLY_INTERVAL_CONDITIONING_POWER,
+    conditioning_min_factor: float = 0.5,
+    conditioning_max_factor: float = 2.0,
+    conditioning_min_scale: float = 0.20,
+    conditioning_max_scale: float = 2.50,
 ) -> np.ndarray:
-    """Shrink or expand all quantile spreads around the median.
+    """Shrink or expand quantile spreads around the median.
 
     The multiplier is fitted on the chronological validation split only.  A
     value of one leaves the model output unchanged; the median path is kept
-    exactly fixed so directional and magnitude metrics are not altered.
+    exactly fixed so directional and magnitude metrics are not altered.  When
+    ``conditioning_values`` are supplied, each forecast receives a bounded
+    multiplier proportional to its forecast-origin condition relative to the
+    validation-derived reference.  This changes interval width only; it never
+    changes the forecast median.
     """
     arr = np.asarray(pred, dtype=np.float64)
     if arr.ndim != 3:
@@ -155,9 +170,60 @@ def apply_weekly_interval_scale_np(
         raise ValueError(
             f"Quantile dim mismatch: prediction has {arr.shape[-1]}, config has {len(quantiles)}"
         )
-    multiplier = float(scale)
-    if not np.isfinite(multiplier) or multiplier <= 0.0:
+    base_multiplier = float(scale)
+    if not np.isfinite(base_multiplier) or base_multiplier <= 0.0:
         raise ValueError(f"Interval scale must be finite and positive, got {scale!r}")
+
+    multiplier: float | np.ndarray = base_multiplier
+    if conditioning_values is not None:
+        values = np.asarray(conditioning_values, dtype=np.float64).reshape(-1)
+        if len(values) != arr.shape[0]:
+            raise ValueError(
+                "Interval conditioning values must match prediction samples: "
+                f"{len(values)} != {arr.shape[0]}"
+            )
+        if conditioning_reference is None:
+            valid = values[np.isfinite(values) & (values > 1e-12)]
+            if valid.size == 0:
+                raise ValueError("Interval conditioning requires a positive finite reference")
+            reference = float(np.median(valid))
+        else:
+            reference = float(conditioning_reference)
+        if not np.isfinite(reference) or reference <= 1e-12:
+            raise ValueError(
+                "Interval conditioning reference must be finite and positive, "
+                f"got {conditioning_reference!r}"
+            )
+        power = float(conditioning_power)
+        min_factor = float(conditioning_min_factor)
+        max_factor = float(conditioning_max_factor)
+        min_scale = float(conditioning_min_scale)
+        max_scale = float(conditioning_max_scale)
+        if not np.isfinite(power):
+            raise ValueError(f"Interval conditioning power must be finite, got {power!r}")
+        if (
+            not np.isfinite(min_factor)
+            or not np.isfinite(max_factor)
+            or min_factor <= 0.0
+            or max_factor < min_factor
+        ):
+            raise ValueError("Interval conditioning factor bounds are invalid")
+        if (
+            not np.isfinite(min_scale)
+            or not np.isfinite(max_scale)
+            or min_scale <= 0.0
+            or max_scale < min_scale
+        ):
+            raise ValueError("Interval conditioning scale bounds are invalid")
+        valid = np.isfinite(values) & (values > 1e-12)
+        ratio = np.ones_like(values, dtype=np.float64)
+        ratio[valid] = values[valid] / reference
+        factors = np.clip(ratio, min_factor, max_factor) ** power
+        multiplier = np.clip(
+            base_multiplier * factors,
+            min_scale,
+            max_scale,
+        ).reshape(-1, 1, 1)
     median_idx = len(quantiles) // 2
     median = arr[..., median_idx : median_idx + 1]
     return median + multiplier * (arr - median)
@@ -171,8 +237,15 @@ def fit_weekly_interval_scale(
     horizon: int = 5,
     weekly_median_cap: float | None = None,
     target_coverage: float = 0.80,
-) -> dict[str, float | int | str]:
-    """Fit a validation-only scalar for weekly central-interval width.
+    conditioning_values: np.ndarray | None = None,
+    conditioning_feature: str | None = None,
+    conditioning_power: float | None = None,
+    conditioning_min_factor: float = 0.5,
+    conditioning_max_factor: float = 2.0,
+    conditioning_min_scale: float = 0.20,
+    conditioning_max_scale: float = 2.50,
+) -> dict[str, float | int | str | bool | None]:
+    """Fit validation-only weekly interval width calibration.
 
     The search is deterministic and uses no final-test labels.  It minimizes
     the proper validation interval score among candidates that remain within
@@ -200,6 +273,41 @@ def fit_weekly_interval_scale(
 
     actual_weekly = cumulative_horizon(actual[:n], horizon=horizon)
     median_idx = len(quantiles) // 2
+    condition_values = None
+    condition_reference = None
+    conditioning_enabled = bool(conditioning_feature and conditioning_values is not None)
+    conditioning_reason = "disabled"
+    if conditioning_enabled:
+        condition_values = np.asarray(conditioning_values, dtype=np.float64).reshape(-1)
+        if len(condition_values) < n:
+            raise ValueError(
+                "Interval conditioning values are shorter than validation predictions: "
+                f"{len(condition_values)} < {n}"
+            )
+        condition_values = condition_values[:n]
+        valid = condition_values[np.isfinite(condition_values) & (condition_values > 1e-12)]
+        if valid.size == 0:
+            conditioning_enabled = False
+            conditioning_reason = "invalid_reference"
+            condition_values = None
+        else:
+            condition_reference = float(np.median(valid))
+            conditioning_reason = "enabled"
+
+    if conditioning_power is None:
+        power_candidates = (
+            WEEKLY_INTERVAL_CONDITIONING_POWER_CANDIDATES
+            if conditioning_enabled
+            else (DEFAULT_WEEKLY_INTERVAL_CONDITIONING_POWER,)
+        )
+    else:
+        selected_power = float(conditioning_power)
+        if not np.isfinite(selected_power):
+            raise ValueError(
+                f"Interval conditioning power must be finite, got {conditioning_power!r}"
+            )
+        power_candidates = (selected_power,)
+
     # Mirror the production order exactly: interval scaling is applied to the
     # raw quantiles first, then the training-derived median cap, then the
     # monotonic transform. Fitting in a different order can select a scale
@@ -208,76 +316,133 @@ def fit_weekly_interval_scale(
     # not just shrinking when coverage is above target.  The upper bound of
     # 2.5 is capped to avoid overshooting the PI80 width-ratio gate (≤ 2.0
     # when coverage > 0.86).
-    candidates = np.linspace(0.05, 2.5, 256, dtype=np.float64)
-    coverages: list[float] = []
-    interval_scores: list[float] = []
-    for candidate in candidates:
-        scaled = apply_weekly_interval_scale_np(
-            pred[:n], float(candidate), quantiles=quantiles
-        )
-        bounded, _ = apply_weekly_median_cap_np(
-            scaled,
-            weekly_median_cap=weekly_median_cap,
-            quantiles=quantiles,
-            horizon=horizon,
-        )
-        ordered = monotonic_quantiles_np(bounded, median_idx=median_idx)
-        weekly = cumulative_quantiles(ordered, horizon=horizon)
-        q10_idx = quantiles.index(0.10)
-        q90_idx = quantiles.index(0.90)
-        coverage = prediction_interval_coverage(
-            actual_weekly,
-            weekly[:, q10_idx],
-            weekly[:, q90_idx],
-        )
-        coverages.append(float(coverage))
-        interval_scores.append(
-            float(
-                interval_score(
-                    actual_weekly,
-                    weekly[:, q10_idx],
-                    weekly[:, q90_idx],
-                    alpha=0.20,
-                )
-            )
-        )
-
     # Coverage is quantized in steps of 1/n.  Permit the lower adjacent
     # empirical point, but never a larger departure from nominal coverage;
     # within that pre-specified set, the proper interval score selects the
     # narrowest useful interval without consulting the held-out test split.
     coverage_floor = max(0.0, float(target_coverage) - (1.0 / float(n)))
-    eligible = [
-        idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
+    candidate_results: list[dict[str, float | str]] = []
+    candidates = (
+        np.linspace(0.20, 2.5, 231, dtype=np.float64)
+        if conditioning_enabled
+        else np.linspace(0.05, 2.5, 256, dtype=np.float64)
+    )
+    q10_idx = quantiles.index(0.10)
+    q90_idx = quantiles.index(0.90)
+    for power in power_candidates:
+        coverages: list[float] = []
+        interval_scores: list[float] = []
+        for candidate in candidates:
+            scaled = apply_weekly_interval_scale_np(
+                pred[:n],
+                float(candidate),
+                quantiles=quantiles,
+                conditioning_values=condition_values,
+                conditioning_reference=condition_reference,
+                conditioning_power=float(power),
+                conditioning_min_factor=conditioning_min_factor,
+                conditioning_max_factor=conditioning_max_factor,
+                conditioning_min_scale=conditioning_min_scale,
+                conditioning_max_scale=conditioning_max_scale,
+            )
+            bounded, _ = apply_weekly_median_cap_np(
+                scaled,
+                weekly_median_cap=weekly_median_cap,
+                quantiles=quantiles,
+                horizon=horizon,
+            )
+            ordered = monotonic_quantiles_np(bounded, median_idx=median_idx)
+            weekly = cumulative_quantiles(ordered, horizon=horizon)
+            coverage = prediction_interval_coverage(
+                actual_weekly,
+                weekly[:, q10_idx],
+                weekly[:, q90_idx],
+            )
+            coverages.append(float(coverage))
+            interval_scores.append(
+                float(
+                    interval_score(
+                        actual_weekly,
+                        weekly[:, q10_idx],
+                        weekly[:, q90_idx],
+                        alpha=0.20,
+                    )
+                )
+            )
+
+        eligible = [
+            idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
+        ]
+        if eligible:
+            chosen_idx = min(
+                eligible,
+                key=lambda idx: (
+                    interval_scores[idx],
+                    abs(coverages[idx] - float(target_coverage)),
+                    candidates[idx],
+                ),
+            )
+            selection_method = "validation_interval_score_with_one_observation_floor"
+        else:
+            # Defensive fallback for pathological inputs; preserve the original
+            # target-closest behavior rather than silently widening the interval.
+            chosen_idx = min(
+                range(len(candidates)),
+                key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
+            )
+            selection_method = "coverage_target_fallback"
+        candidate_results.append(
+            {
+                "power": float(power),
+                "scale": float(candidates[chosen_idx]),
+                "coverage": float(coverages[chosen_idx]),
+                "interval_score": float(interval_scores[chosen_idx]),
+                "selection_method": selection_method,
+            }
+        )
+
+    eligible_results = [
+        row for row in candidate_results if row["coverage"] >= coverage_floor
     ]
-    if eligible:
-        chosen_idx = min(
-            eligible,
-            key=lambda idx: (
-                interval_scores[idx],
-                abs(coverages[idx] - float(target_coverage)),
-                candidates[idx],
-            ),
-        )
-        selection_method = "validation_interval_score_with_one_observation_floor"
-    else:
-        # Defensive fallback for pathological inputs; preserve the original
-        # target-closest behavior rather than silently widening the interval.
-        chosen_idx = min(
-            range(len(candidates)),
-            key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
-        )
-        selection_method = "coverage_target_fallback"
-    return {
+    selected_result = min(
+        eligible_results or candidate_results,
+        key=lambda row: (
+            row["interval_score"],
+            abs(row["coverage"] - float(target_coverage)),
+            row["power"],
+        ),
+    )
+    selected_power = float(selected_result["power"])
+    calibration_metadata = {
+        "weekly_interval_conditioning_enabled": conditioning_enabled,
+        "weekly_interval_conditioning_feature": (
+            str(conditioning_feature) if conditioning_enabled else None
+        ),
+        "weekly_interval_conditioning_reference": (
+            condition_reference if conditioning_enabled else None
+        ),
+        "weekly_interval_conditioning_power": selected_power,
+        "weekly_interval_conditioning_power_selection": (
+            "validation_interval_score_grid" if len(power_candidates) > 1 else "fixed"
+        ),
+        "weekly_interval_conditioning_min_factor": float(conditioning_min_factor),
+        "weekly_interval_conditioning_max_factor": float(conditioning_max_factor),
+        "weekly_interval_conditioning_min_scale": float(conditioning_min_scale),
+        "weekly_interval_conditioning_max_scale": float(conditioning_max_scale),
+        "weekly_interval_conditioning_reason": conditioning_reason,
+    }
+    result = {
         "fit_split": "validation",
         "sample_count": int(n),
-        "weekly_interval_scale": float(candidates[chosen_idx]),
-        "validation_pi80_coverage": float(coverages[chosen_idx]),
+        "weekly_interval_scale": float(selected_result["scale"]),
+        "validation_pi80_coverage": float(selected_result["coverage"]),
         "target_pi80_coverage": float(target_coverage),
         "validation_pi80_coverage_floor": float(coverage_floor),
-        "validation_pi80_interval_score": float(interval_scores[chosen_idx]),
-        "interval_selection_method": selection_method,
+        "validation_pi80_interval_score": float(selected_result["interval_score"]),
+        "interval_selection_method": str(selected_result["selection_method"]),
     }
+    result.update(calibration_metadata)
+    return result
 
 
 def _target_from_batch(batch) -> np.ndarray:
@@ -1020,6 +1185,13 @@ def evaluate_quantile_predictions(
     horizon: int = 5,
     weekly_median_cap: float | None = None,
     weekly_interval_scale: float = 1.0,
+    weekly_interval_conditioning_values: np.ndarray | None = None,
+    weekly_interval_conditioning_reference: float | None = None,
+    weekly_interval_conditioning_power: float = 0.35,
+    weekly_interval_conditioning_min_factor: float = 0.5,
+    weekly_interval_conditioning_max_factor: float = 2.0,
+    weekly_interval_conditioning_min_scale: float = 0.20,
+    weekly_interval_conditioning_max_scale: float = 2.50,
 ) -> dict[str, float]:
     """
     Evaluate multi-horizon quantile predictions through the production metric path.
@@ -1050,6 +1222,13 @@ def evaluate_quantile_predictions(
         pred_np,
         weekly_interval_scale,
         quantiles=quantiles,
+        conditioning_values=weekly_interval_conditioning_values,
+        conditioning_reference=weekly_interval_conditioning_reference,
+        conditioning_power=weekly_interval_conditioning_power,
+        conditioning_min_factor=weekly_interval_conditioning_min_factor,
+        conditioning_max_factor=weekly_interval_conditioning_max_factor,
+        conditioning_min_scale=weekly_interval_conditioning_min_scale,
+        conditioning_max_scale=weekly_interval_conditioning_max_scale,
     )
     eval_pred_np, cap_diagnostics = apply_weekly_median_cap_np(
         scaled_pred_np,

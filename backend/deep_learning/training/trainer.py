@@ -84,38 +84,43 @@ def _runtime_environment_metadata() -> dict:
             packages[package_name] = importlib.metadata.version(package_name)
         except importlib.metadata.PackageNotFoundError:
             packages[package_name] = None
+    try:
+        import torch
+
+        torch_runtime = {
+            "num_threads": int(torch.get_num_threads()),
+            "num_interop_threads": int(torch.get_num_interop_threads()),
+            "deterministic_algorithms": bool(
+                torch.are_deterministic_algorithms_enabled()
+            ),
+        }
+    except Exception:
+        torch_runtime = None
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "github_sha": os.environ.get("GITHUB_SHA") or None,
         "runner_image": os.environ.get("ImageOS") or os.environ.get("RUNNER_OS") or None,
         "packages": packages,
+        "process_controls": {
+            key: os.environ.get(key)
+            for key in (
+                "PYTHONHASHSEED",
+                "CUBLAS_WORKSPACE_CONFIG",
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "TOKENIZERS_PARALLELISM",
+            )
+        },
+        "torch_runtime": torch_runtime,
     }
 
 
 def _configure_tft_reproducibility() -> None:
-    """Make CPU training use one deterministic execution stream.
+    """Keep the historical private entry point for callers and tests."""
+    from deep_learning.training.reproducibility import configure_tft_reproducibility
 
-    Lightning's ``deterministic=True`` covers algorithm selection, but it does
-    not force the CPU thread pools to a single reduction order. The fixed
-    snapshot replay showed that the same seed could otherwise select different
-    validation checkpoints on the hosted runner.
-    """
-    import torch
-
-    torch.set_num_threads(1)
-    try:
-        torch.set_num_interop_threads(1)
-    except RuntimeError:
-        # The process may already have initialized the inter-op pool; the
-        # single intra-op stream above still removes the material variation.
-        pass
-    torch.use_deterministic_algorithms(True)
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-        torch.backends.cuda.matmul.allow_tf32 = False
+    configure_tft_reproducibility()
 
 KNOWN_GOOD_CONFIG = {
     "max_encoder_length": 50,
@@ -169,6 +174,8 @@ REQUIRED_PROMOTABLE_METRICS = (
     "sorted_quantile_crossing_rate",
 )
 
+WEEKLY_INTERVAL_CONDITIONING_FEATURE = "realized_vol_20d"
+
 
 def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig) -> None:
     if pred_np.ndim != 3:
@@ -212,6 +219,8 @@ def _compute_test_metrics_from_quantiles(
     cfg: TFTASROConfig,
     *,
     weekly_interval_scale: float = 1.0,
+    weekly_interval_calibration: Optional[dict] = None,
+    weekly_interval_conditioning_values: Optional[np.ndarray] = None,
 ) -> dict[str, float]:
     from deep_learning.training.metrics import evaluate_quantile_predictions
 
@@ -226,8 +235,38 @@ def _compute_test_metrics_from_quantiles(
     }
     # Keep the historical evaluator call shape for downstream diagnostics and
     # tests when no validation-fitted interval adjustment is needed.
-    if float(weekly_interval_scale) != 1.0:
-        evaluator_kwargs["weekly_interval_scale"] = float(weekly_interval_scale)
+    calibration = weekly_interval_calibration or {}
+    effective_scale = float(calibration.get("weekly_interval_scale", weekly_interval_scale))
+    if effective_scale != 1.0:
+        evaluator_kwargs["weekly_interval_scale"] = effective_scale
+    if calibration.get("weekly_interval_conditioning_enabled"):
+        if weekly_interval_conditioning_values is None:
+            raise RuntimeError(
+                "Weekly interval calibration requires forecast-origin conditioning values"
+            )
+        evaluator_kwargs.update(
+            {
+                "weekly_interval_conditioning_values": weekly_interval_conditioning_values,
+                "weekly_interval_conditioning_reference": calibration.get(
+                    "weekly_interval_conditioning_reference"
+                ),
+                "weekly_interval_conditioning_power": calibration.get(
+                    "weekly_interval_conditioning_power", 0.35
+                ),
+                "weekly_interval_conditioning_min_factor": calibration.get(
+                    "weekly_interval_conditioning_min_factor", 0.5
+                ),
+                "weekly_interval_conditioning_max_factor": calibration.get(
+                    "weekly_interval_conditioning_max_factor", 2.0
+                ),
+                "weekly_interval_conditioning_min_scale": calibration.get(
+                    "weekly_interval_conditioning_min_scale", 0.20
+                ),
+                "weekly_interval_conditioning_max_scale": calibration.get(
+                    "weekly_interval_conditioning_max_scale", 2.50
+                ),
+            }
+        )
     test_metrics = evaluate_quantile_predictions(
         y_actual_path[:n_path],
         pred_np[:n_path],
@@ -236,6 +275,33 @@ def _compute_test_metrics_from_quantiles(
     _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
     return test_metrics
+
+
+def _weekly_interval_conditioning_values(
+    feature_frame: Optional[pd.DataFrame],
+    *,
+    feature_name: str,
+    start_exclusive: int,
+    end_inclusive: int,
+    expected_count: int,
+) -> np.ndarray:
+    """Return condition values for the exact forecast origins being scored."""
+    if feature_frame is None or feature_name not in feature_frame.columns:
+        raise RuntimeError(
+            f"Weekly interval conditioning feature is missing: {feature_name}"
+        )
+    if "time_idx" not in feature_frame.columns:
+        raise RuntimeError("Weekly interval conditioning requires a time_idx column")
+    times = pd.to_numeric(feature_frame["time_idx"], errors="coerce")
+    selected = feature_frame.loc[
+        (times > int(start_exclusive)) & (times <= int(end_inclusive))
+    ].sort_values("time_idx")
+    if len(selected) != int(expected_count):
+        raise RuntimeError(
+            "Weekly interval conditioning origin count does not match predictions: "
+            f"{len(selected)} != {expected_count}"
+        )
+    return pd.to_numeric(selected[feature_name], errors="coerce").to_numpy(dtype=np.float64)
 
 
 def _log_weekly_alignment_sample(
@@ -630,6 +696,7 @@ def train_tft_model(
         "validation_pi80_coverage": 0.0,
         "target_pi80_coverage": 0.80,
     }
+    validation_interval_conditioning_values = None
     val_actual_path = None
     val_pred_np = None
     try:
@@ -723,12 +790,26 @@ def train_tft_model(
                         weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
                 else:
                     weekly_direction_model["reason"] = "validation_origin_count_mismatch"
+            if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
+                validation_interval_conditioning_values = _weekly_interval_conditioning_values(
+                    master_df,
+                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                    expected_count=len(oriented_val_pred_np),
+                )
             interval_calibration = fit_weekly_interval_scale(
                 val_actual_path,
                 oriented_val_pred_np,
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
                 weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                conditioning_values=validation_interval_conditioning_values,
+                conditioning_feature=(
+                    WEEKLY_INTERVAL_CONDITIONING_FEATURE
+                    if validation_interval_conditioning_values is not None
+                    else None
+                ),
             )
     except Exception as exc:
         logger.warning(
@@ -795,11 +876,24 @@ def train_tft_model(
                 threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
                 horizon=cfg.forecast.primary_horizon_days,
             )
+        test_interval_conditioning_values = None
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            test_interval_conditioning_values = _weekly_interval_conditioning_values(
+                master_df,
+                feature_name=str(
+                    interval_calibration["weekly_interval_conditioning_feature"]
+                ),
+                start_exclusive=val_cutoff - 1,
+                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                expected_count=len(pred_np),
+            )
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
             cfg,
             weekly_interval_scale=weekly_interval_scale,
+            weekly_interval_calibration=interval_calibration,
+            weekly_interval_conditioning_values=test_interval_conditioning_values,
         )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -815,9 +909,10 @@ def train_tft_model(
         daily_sign_multiplier=daily_sign_multiplier,
         weekly_sign_threshold=weekly_sign_threshold,
         weekly_direction_model=weekly_direction_model,
-        validation_start_time=train_cutoff,
+        validation_start_time=train_cutoff - 1,
         validation_end_time=val_cutoff - cfg.forecast.primary_horizon_days,
         weekly_interval_scale=weekly_interval_scale,
+        weekly_interval_calibration=interval_calibration,
     )
 
     # ---- 8. Variable importance ----
@@ -947,6 +1042,7 @@ def _write_conformal_calibration_artifact(
     validation_start_time: Optional[int] = None,
     validation_end_time: Optional[int] = None,
     weekly_interval_scale: float = 1.0,
+    weekly_interval_calibration: Optional[dict] = None,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -1010,10 +1106,55 @@ def _write_conformal_calibration_artifact(
                 threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
                 horizon=cfg.forecast.primary_horizon_days,
             )
+        interval_calibration = weekly_interval_calibration or {}
+        effective_interval_scale = float(
+            interval_calibration.get("weekly_interval_scale", weekly_interval_scale)
+        )
+        interval_kwargs = {
+            "quantiles": tuple(cfg.model.quantiles),
+        }
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            if validation_start_time is None or validation_end_time is None:
+                raise ValueError(
+                    "Validation time bounds are required for weekly interval conditioning"
+                )
+            conditioning_feature = str(
+                interval_calibration["weekly_interval_conditioning_feature"]
+            )
+            validation_conditioning_values = _weekly_interval_conditioning_values(
+                feature_frame,
+                feature_name=conditioning_feature,
+                start_exclusive=validation_start_time,
+                end_inclusive=validation_end_time,
+                expected_count=len(pred_np),
+            )
+            interval_kwargs.update(
+                {
+                    "conditioning_values": validation_conditioning_values,
+                    "conditioning_reference": interval_calibration.get(
+                        "weekly_interval_conditioning_reference"
+                    ),
+                    "conditioning_power": interval_calibration.get(
+                        "weekly_interval_conditioning_power", 0.35
+                    ),
+                    "conditioning_min_factor": interval_calibration.get(
+                        "weekly_interval_conditioning_min_factor", 0.5
+                    ),
+                    "conditioning_max_factor": interval_calibration.get(
+                        "weekly_interval_conditioning_max_factor", 2.0
+                    ),
+                    "conditioning_min_scale": interval_calibration.get(
+                        "weekly_interval_conditioning_min_scale", 0.20
+                    ),
+                    "conditioning_max_scale": interval_calibration.get(
+                        "weekly_interval_conditioning_max_scale", 2.50
+                    ),
+                }
+            )
         pred_np = apply_weekly_interval_scale_np(
             pred_np,
-            float(weekly_interval_scale),
-            quantiles=tuple(cfg.model.quantiles),
+            effective_interval_scale,
+            **interval_kwargs,
         )
         n = min(len(y_actual_path), len(pred_np))
         if n <= 0:
@@ -1105,7 +1246,31 @@ def _write_conformal_calibration_artifact(
             "direction_sign_multiplier": int(direction_sign_multiplier),
             "daily_sign_multiplier": int(daily_sign_multiplier),
             "weekly_sign_threshold": float(weekly_sign_threshold),
-            "weekly_interval_scale": float(weekly_interval_scale),
+            "weekly_interval_scale": float(effective_interval_scale),
+            "weekly_interval_conditioning_enabled": bool(
+                interval_calibration.get("weekly_interval_conditioning_enabled", False)
+            ),
+            "weekly_interval_conditioning_feature": interval_calibration.get(
+                "weekly_interval_conditioning_feature"
+            ),
+            "weekly_interval_conditioning_reference": interval_calibration.get(
+                "weekly_interval_conditioning_reference"
+            ),
+            "weekly_interval_conditioning_power": interval_calibration.get(
+                "weekly_interval_conditioning_power", 0.35
+            ),
+            "weekly_interval_conditioning_min_factor": interval_calibration.get(
+                "weekly_interval_conditioning_min_factor", 0.5
+            ),
+            "weekly_interval_conditioning_max_factor": interval_calibration.get(
+                "weekly_interval_conditioning_max_factor", 2.0
+            ),
+            "weekly_interval_conditioning_min_scale": interval_calibration.get(
+                "weekly_interval_conditioning_min_scale", 0.20
+            ),
+            "weekly_interval_conditioning_max_scale": interval_calibration.get(
+                "weekly_interval_conditioning_max_scale", 2.50
+            ),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
             "validation_pi80_width": validation_pi80_width,

@@ -83,6 +83,7 @@ class TFTPredictor:
         self._weekly_sign_threshold = 0.0
         self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
+        self._weekly_interval_conditioning: dict = {}
 
     def _ensure_local_artifacts(self) -> None:
         """Download checkpoint from HF Hub if not present locally."""
@@ -213,6 +214,52 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted weekly interval scale. Retraining required."
             )
         self._weekly_interval_scale = interval_scale
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            conditioning_feature = str(
+                interval_calibration.get("weekly_interval_conditioning_feature", "")
+            ).strip()
+            conditioning_reference = float(
+                interval_calibration.get("weekly_interval_conditioning_reference", 0.0)
+            )
+            conditioning_power = float(
+                interval_calibration.get("weekly_interval_conditioning_power", 0.35)
+            )
+            min_factor = float(
+                interval_calibration.get("weekly_interval_conditioning_min_factor", 0.5)
+            )
+            max_factor = float(
+                interval_calibration.get("weekly_interval_conditioning_max_factor", 2.0)
+            )
+            min_scale = float(
+                interval_calibration.get("weekly_interval_conditioning_min_scale", 0.20)
+            )
+            max_scale = float(
+                interval_calibration.get("weekly_interval_conditioning_max_scale", 2.50)
+            )
+            if (
+                not conditioning_feature
+                or not np.isfinite(conditioning_reference)
+                or conditioning_reference <= 1e-12
+                or not np.isfinite(conditioning_power)
+                or min_factor <= 0.0
+                or max_factor < min_factor
+                or min_scale <= 0.0
+                or max_scale < min_scale
+            ):
+                raise IncompatibleTFTCheckpointError(
+                    "Incompatible TFT checkpoint: invalid validation-fitted weekly interval conditioning. Retraining required."
+                )
+            self._weekly_interval_conditioning = {
+                "feature": conditioning_feature,
+                "reference": conditioning_reference,
+                "power": conditioning_power,
+                "min_factor": min_factor,
+                "max_factor": max_factor,
+                "min_scale": min_scale,
+                "max_scale": max_scale,
+            }
+        else:
+            self._weekly_interval_conditioning = {}
         self._metadata_checked = True
 
     @property
@@ -378,12 +425,38 @@ class TFTPredictor:
                     threshold=float(self._weekly_direction_model.get("decision_threshold", 0.50)),
                     horizon=self.cfg.forecast.primary_horizon_days,
                 )[0]
-            if self._weekly_interval_scale != 1.0:
-                median_idx = len(self.cfg.model.quantiles) // 2
-                median = pred_for_format[..., median_idx : median_idx + 1]
-                pred_for_format = median + self._weekly_interval_scale * (
-                    pred_for_format - median
-                )
+            if self._weekly_interval_conditioning:
+                from deep_learning.training.metrics import apply_weekly_interval_scale_np
+
+                conditioning_feature = self._weekly_interval_conditioning["feature"]
+                if conditioning_feature not in master_df.columns:
+                    raise IncompatibleTFTCheckpointError(
+                        "Weekly interval conditioning feature is missing from live features. Retraining required."
+                    )
+                conditioning_value = pd.to_numeric(
+                    pd.Series([master_df.iloc[-1][conditioning_feature]]),
+                    errors="coerce",
+                ).to_numpy(dtype=np.float64)
+                pred_for_format = apply_weekly_interval_scale_np(
+                    pred_for_format[None, ...],
+                    self._weekly_interval_scale,
+                    quantiles=tuple(self.cfg.model.quantiles),
+                    conditioning_values=conditioning_value,
+                    conditioning_reference=self._weekly_interval_conditioning["reference"],
+                    conditioning_power=self._weekly_interval_conditioning["power"],
+                    conditioning_min_factor=self._weekly_interval_conditioning["min_factor"],
+                    conditioning_max_factor=self._weekly_interval_conditioning["max_factor"],
+                    conditioning_min_scale=self._weekly_interval_conditioning["min_scale"],
+                    conditioning_max_scale=self._weekly_interval_conditioning["max_scale"],
+                )[0]
+            elif self._weekly_interval_scale != 1.0:
+                from deep_learning.training.metrics import apply_weekly_interval_scale_np
+
+                pred_for_format = apply_weekly_interval_scale_np(
+                    pred_for_format[None, ...],
+                    self._weekly_interval_scale,
+                    quantiles=tuple(self.cfg.model.quantiles),
+                )[0]
 
         except IncompatibleTFTCheckpointError as exc:
             logger.warning("TFT checkpoint incompatible: %s", exc)
@@ -416,6 +489,10 @@ class TFTPredictor:
             "weekly_sign_threshold": self._weekly_sign_threshold,
             "weekly_direction_model_enabled": bool(self._weekly_direction_model),
             "weekly_interval_scale": self._weekly_interval_scale,
+            "weekly_interval_conditioning_enabled": bool(self._weekly_interval_conditioning),
+            "weekly_interval_conditioning_feature": self._weekly_interval_conditioning.get(
+                "feature"
+            ),
         }
 
         # Surface freshness + instrument identity so the UI can label the

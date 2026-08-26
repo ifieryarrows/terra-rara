@@ -40,6 +40,29 @@ def test_weekly_direction_model_fits_train_origins_and_scores_later_origins():
     assert probabilities[0] != probabilities[1]
 
 
+def test_weekly_direction_model_prefers_fixed_causal_feature_family():
+    time_idx = np.arange(220)
+    signal = np.where(time_idx % 2 == 0, 1.0, -1.0)
+    frame = pd.DataFrame(
+        {
+            "time_idx": time_idx,
+            "news_count": signal,
+            "noise": np.sin(time_idx / 7.0),
+            "target_5d_log_return": signal * 0.01,
+        }
+    )
+
+    calibrator = fit_weekly_direction_model(
+        frame,
+        ["noise", "news_count"],
+        train_cutoff=150,
+        horizon=5,
+        max_encoder_length=20,
+    )
+
+    assert calibrator["feature_names"] == ["news_count"]
+
+
 def test_weekly_direction_model_preserves_quantile_ordering():
     pred = np.zeros((2, 5, 7), dtype=float)
     pred[..., 3] = 0.02

@@ -14,6 +14,39 @@ import numpy as np
 import pandas as pd
 
 
+# Keep the auxiliary direction model deliberately small and causal.  The TFT
+# remains responsible for magnitude and interval shape; this model only
+# resolves a stable weekly sign mismatch from regime/news context.  Selecting
+# this fixed family avoids fitting a high-dimensional classifier to a short
+# validation window.
+WEEKLY_DIRECTION_FEATURE_NAMES = (
+    "after_close_news_count",
+    "days_since_last_material_news",
+    "event_shock_score",
+    "futures_curve_slope",
+    "futures_spread_long",
+    "material_news_count",
+    "news_count",
+    "proxy_vol_price_interaction",
+    "proxy_vol_spike",
+    "proxy_vol_zscore",
+    "regime_high_vol_chop",
+    "regime_inventory_tightness",
+    "regime_risk_off_macro",
+    "regime_risk_on_demand",
+    "regime_supply_shock",
+    "regime_usd_pressure",
+    "sentiment_index",
+    "stale_sentiment_flag",
+)
+
+
+def _select_direction_features(feature_names: list[str]) -> list[str]:
+    """Use the fixed causal family when available; keep custom test inputs usable."""
+    selected = [name for name in WEEKLY_DIRECTION_FEATURE_NAMES if name in feature_names]
+    return selected or list(feature_names)
+
+
 def _finite_feature_frame(frame: pd.DataFrame, feature_names: list[str]) -> np.ndarray:
     missing = [name for name in feature_names if name not in frame.columns]
     if missing:
@@ -32,7 +65,7 @@ def fit_weekly_direction_model(
     max_encoder_length: int = 50,
     target_col: str = "target_5d_log_return",
 ) -> dict[str, Any]:
-    """Fit a balanced logistic direction model on training origins only."""
+    """Fit a small balanced logistic direction model on training origins only."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
 
@@ -53,6 +86,7 @@ def fit_weekly_direction_model(
             "horizon": int(horizon),
         }
 
+    feature_names = _select_direction_features(feature_names)
     x = _finite_feature_frame(frame.loc[origin_mask], feature_names)
     y = (target[origin_mask] > 0.0).astype(np.int64)
     if np.unique(y).size < 2:
@@ -68,7 +102,7 @@ def fit_weekly_direction_model(
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(x)
     model = LogisticRegression(
-        C=0.10,
+        C=0.03,
         class_weight="balanced",
         max_iter=1000,
         random_state=42,

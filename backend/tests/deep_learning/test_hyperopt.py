@@ -364,6 +364,17 @@ def test_startup_protection_requires_min_finite_completed_trials():
     assert not _is_startup_protected(unprotected_trial)
 
 
+def test_shared_reproducibility_contract_sets_deterministic_cpu():
+    import torch
+
+    from deep_learning.training.reproducibility import configure_tft_reproducibility
+
+    configure_tft_reproducibility()
+
+    assert torch.get_num_threads() == 1
+    assert torch.are_deterministic_algorithms_enabled()
+
+
 def test_enqueue_known_good_trial_only_for_empty_study():
     class FakeStudy:
         def __init__(self, trials=None):

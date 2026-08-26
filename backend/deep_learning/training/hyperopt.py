@@ -41,6 +41,7 @@ from deep_learning.config import (
     get_tft_config,
 )
 from deep_learning.logging_utils import configure_cli_logging, suppress_lightning_noise
+from deep_learning.training.reproducibility import configure_tft_reproducibility
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
@@ -1183,6 +1184,10 @@ def run_hyperopt(
     Returns:
         Dict with best params, best value, and study summary.
     """
+    # Hyperopt runs in a separate job/process from final training.  Apply the
+    # same CPU/thread and algorithm contract before importing Lightning so
+    # validation trajectories and the selected artifact are replayable.
+    configure_tft_reproducibility()
     import optuna
     suppress_lightning_noise()
     try:
