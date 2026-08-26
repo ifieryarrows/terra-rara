@@ -38,6 +38,8 @@ def evaluate_quality_gate(
     weekly_sample_count: Optional[int] = None,
     weekly_pred_positive_rate: Optional[float] = None,
     weekly_actual_positive_rate: Optional[float] = None,
+    weekly_raw_magnitude_ratio: Optional[float] = None,
+    weekly_median_bound_applied_rate: Optional[float] = None,
 ) -> Tuple[bool, List[str]]:
     """
     Evaluate TFT-ASRO metrics against deployment thresholds.
@@ -63,6 +65,9 @@ def evaluate_quality_gate(
         reasons.append(f"WeeklyMagnitudeRatio={weekly_magnitude_ratio:.4f} outside [0.65, 1.35]")
         if weekly_magnitude_ratio > 3.0:
             reasons.append(f"WeeklyMagnitudeExplosion={weekly_magnitude_ratio:.4f} > 3.0")
+
+    if weekly_raw_magnitude_ratio is not None and weekly_raw_magnitude_ratio > 3.0:
+        reasons.append(f"WeeklyRawMagnitudeExplosion={weekly_raw_magnitude_ratio:.4f} > 3.0")
 
     if weekly_tail_capture_rate is None:
         reasons.append("Missing weekly_tail_capture_rate")
@@ -155,6 +160,8 @@ def evaluate_quality_gate_warnings(
     vr: float,
     mae_vs_naive_zero: Optional[float] = None,
     weekly_mae_vs_naive_zero: Optional[float] = None,
+    weekly_median_bound_applied_rate: Optional[float] = None,
+    weekly_raw_magnitude_ratio: Optional[float] = None,
 ) -> List[str]:
     """Return stabilization warnings that do not fail promotion yet."""
     warnings: list[str] = []
@@ -169,5 +176,13 @@ def evaluate_quality_gate_warnings(
     if weekly_mae_vs_naive_zero is not None and weekly_mae_vs_naive_zero > 1.25:
         warnings.append(
             f"WeeklyMAEvsNaiveZero={weekly_mae_vs_naive_zero:.4f} > 1.25 - worse than warning baseline"
+        )
+    if weekly_median_bound_applied_rate is not None and weekly_median_bound_applied_rate > 0.30:
+        warnings.append(
+            f"WeeklyMedianBoundRate={weekly_median_bound_applied_rate:.2%} > 30% - significant prediction capping"
+        )
+    if weekly_raw_magnitude_ratio is not None and weekly_raw_magnitude_ratio > 1.8:
+        warnings.append(
+            f"WeeklyRawMagnitudeRatio={weekly_raw_magnitude_ratio:.2f} > 1.8 - raw model over-predicting scale"
         )
     return warnings

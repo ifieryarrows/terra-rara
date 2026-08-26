@@ -156,6 +156,59 @@ export const ModelsPage = () => {
         </div>
       </section>
 
+      {/* Scale & Magnitude Diagnostics */}
+      <section>
+        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          Scale & Magnitude Diagnostics
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Metric
+            label="Weekly Magnitude Ratio"
+            value={fmtNum(m.weekly_magnitude_ratio, 2)}
+            tone={
+              m.weekly_magnitude_ratio != null
+                ? m.weekly_magnitude_ratio >= 0.65 && m.weekly_magnitude_ratio <= 1.35
+                  ? 'good'
+                  : 'bad'
+                : 'neutral'
+            }
+            hint="Bounded pred |abs| / actual |abs| · gate [0.65, 1.35]"
+          />
+          <Metric
+            label="Raw Magnitude Ratio"
+            value={fmtNum(m.weekly_raw_magnitude_ratio, 2)}
+            tone={
+              m.weekly_raw_magnitude_ratio != null
+                ? m.weekly_raw_magnitude_ratio <= 2.0
+                  ? 'good'
+                  : 'bad'
+                : 'neutral'
+            }
+            hint="Pre-cap neural network scale · warns if > 1.8"
+          />
+          <Metric
+            label="Cap Clipping Rate"
+            value={fmtPct(m.weekly_median_bound_applied_rate)}
+            tone={
+              m.weekly_median_bound_applied_rate != null
+                ? m.weekly_median_bound_applied_rate <= 0.3
+                  ? 'good'
+                  : m.weekly_median_bound_applied_rate <= 0.5
+                  ? 'neutral'
+                  : 'bad'
+                : 'neutral'
+            }
+            hint="Predictions clipped by median safety ceiling"
+          />
+          <Metric
+            label="Weekly Sharpe Ratio"
+            value={fmtNum(m.weekly_sharpe_ratio, 2)}
+            tone={m.weekly_sharpe_ratio != null ? (m.weekly_sharpe_ratio >= 0 ? 'good' : 'bad') : 'neutral'}
+            hint="52-week annualized weekly strategy return"
+          />
+        </div>
+      </section>
+
       {/* Variable importance */}
       {data.variable_importance && data.variable_importance.length > 0 && (
         <section>

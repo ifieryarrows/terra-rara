@@ -607,3 +607,21 @@ def test_weekly_metrics_preserve_raw_crossing_and_promote_sorted_quantiles():
     assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
     assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_pi80_width"] >= 0.0
+
+def test_weekly_annualisation_factor_uses_52():
+    import numpy as np
+    from deep_learning.training.metrics import compute_weekly_metrics, sharpe_ratio
+
+    rng = np.random.default_rng(42)
+    actual = rng.normal(0.005, 0.02, size=(30, 5))
+    pred = np.zeros((30, 5, 7))
+    # Consistent positive predictions
+    pred[..., 3] = 0.01
+
+    weekly_metrics = compute_weekly_metrics(actual, pred, horizon=5)
+    weekly_actual = actual.sum(axis=1)
+    strategy_returns = np.sign(pred[:, :5, 3].sum(axis=1)) * weekly_actual
+
+    expected_sharpe_52 = sharpe_ratio(strategy_returns, annualisation=52.0)
+    assert np.isclose(weekly_metrics["weekly_sharpe_ratio"], expected_sharpe_52, rtol=1e-5)
+

@@ -1504,6 +1504,9 @@ async def get_tft_summary(
         weekly_samples = metrics.get("weekly_sample_count")
         weekly_pred_pos = metrics.get("weekly_pred_positive_rate")
         weekly_actual_pos = metrics.get("weekly_actual_positive_rate")
+        weekly_raw_mr = metrics.get("weekly_raw_magnitude_ratio")
+        weekly_bound_rate = metrics.get("weekly_median_bound_applied_rate")
+        weekly_cap = metrics.get("weekly_median_cap")
         
         passed, reasons = evaluate_quality_gate(
             da,
@@ -1525,6 +1528,8 @@ async def get_tft_summary(
             weekly_sample_count=weekly_samples,
             weekly_pred_positive_rate=weekly_pred_pos,
             weekly_actual_positive_rate=weekly_actual_pos,
+            weekly_raw_magnitude_ratio=weekly_raw_mr,
+            weekly_median_bound_applied_rate=weekly_bound_rate,
         )
         
         gate_metrics = {
@@ -1550,6 +1555,9 @@ async def get_tft_summary(
             "weekly_sorted_quantile_crossing_rate": weekly_sorted_qcross,
             "weekly_median_sort_gap_max": weekly_gap,
             "weekly_sample_count": weekly_samples,
+            "weekly_raw_magnitude_ratio": weekly_raw_mr,
+            "weekly_median_bound_applied_rate": weekly_bound_rate,
+            "weekly_median_cap": weekly_cap,
         }.items():
             if value is not None:
                 gate_metrics[name] = float(value)

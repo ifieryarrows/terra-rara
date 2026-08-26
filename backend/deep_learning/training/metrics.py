@@ -981,6 +981,7 @@ def compute_all_metrics(
     y_pred_q98: np.ndarray | None = None,
     y_pred_quantiles: np.ndarray | None = None,
     tail_threshold: float = 0.015,
+    annualisation: float = 252.0,
 ) -> dict[str, float]:
     """
     Compute the full financial metric suite.
@@ -1005,8 +1006,8 @@ def compute_all_metrics(
         "directional_accuracy_ci_high": da_ci_high,
         "directional_accuracy_n": float(direction_n),
         "tail_capture_rate": tail_capture_rate(y_actual, y_pred_median, tail_threshold),
-        "sharpe_ratio": sharpe_ratio(strategy_returns),
-        "sortino_ratio": sortino_ratio(strategy_returns),
+        "sharpe_ratio": sharpe_ratio(strategy_returns, annualisation=annualisation),
+        "sortino_ratio": sortino_ratio(strategy_returns, annualisation=annualisation),
         "naive_zero_mae": zero_mae,
         "naive_zero_rmse": zero_rmse,
         "mae_vs_naive_zero": float(np.abs(y_actual - y_pred_median).mean() / (zero_mae + 1e-12)),
@@ -1064,6 +1065,7 @@ def compute_weekly_metrics(
     y_pred_quantiles_path: np.ndarray,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
+    annualisation: float | None = None,
 ) -> dict[str, float]:
     """
     Compute weekly-first metrics from a daily log-return path.
@@ -1090,6 +1092,11 @@ def compute_weekly_metrics(
         else 0.0
     )
 
+    effective_annualisation = (
+        float(annualisation)
+        if annualisation is not None
+        else (52.0 if horizon == 5 else 252.0 / max(float(horizon), 1.0))
+    )
     metrics = compute_all_metrics(
         weekly_actual,
         weekly_pred,
@@ -1099,6 +1106,7 @@ def compute_weekly_metrics(
         y_pred_q98=weekly_quantiles[:, q98_idx],
         y_pred_quantiles=weekly_quantiles,
         tail_threshold=tail_threshold,
+        annualisation=effective_annualisation,
     )
 
     weekly_metrics = {f"weekly_{k}": v for k, v in metrics.items()}

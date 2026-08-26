@@ -152,3 +152,36 @@ def test_quality_gate_rejects_negative_public_widths():
     assert passed is False
     assert "PI80Width=-0.0010 < 0.0" in reasons
     assert "WeeklyPI96Width=-0.0010 < 0.0" in reasons
+
+def test_quality_gate_rejects_weekly_raw_magnitude_explosion():
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=1.0,
+        weekly_raw_magnitude_ratio=3.5,
+        **GOOD_QUANTILE,
+        **GOOD_WEEKLY,
+    )
+    assert passed is False
+    assert any("WeeklyRawMagnitudeExplosion=" in r for r in reasons)
+
+
+def test_quality_gate_warns_on_excessive_cap_clipping():
+    warnings = evaluate_quality_gate_warnings(
+        vr=1.0,
+        weekly_median_bound_applied_rate=0.75,
+        weekly_raw_magnitude_ratio=2.4,
+    )
+    assert any("WeeklyMedianBoundRate=" in w for w in warnings)
+    assert any("WeeklyRawMagnitudeRatio=" in w for w in warnings)
+
+
+def test_quality_gate_warns_on_moderate_cap_clipping():
+    warnings = evaluate_quality_gate_warnings(
+        vr=1.0,
+        weekly_median_bound_applied_rate=0.45,
+        weekly_raw_magnitude_ratio=1.9,
+    )
+    assert any("WeeklyMedianBoundRate=" in w for w in warnings)
+    assert any("WeeklyRawMagnitudeRatio=" in w for w in warnings)
+

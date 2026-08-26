@@ -56,6 +56,8 @@ def main() -> int:
     weekly_mae_vs_naive_zero = metrics.get("weekly_mae_vs_naive_zero")
     weekly_pred_positive_rate = metrics.get("weekly_pred_positive_rate")
     weekly_actual_positive_rate = metrics.get("weekly_actual_positive_rate")
+    weekly_raw_magnitude_ratio = metrics.get("weekly_raw_magnitude_ratio")
+    weekly_median_bound_applied_rate = metrics.get("weekly_median_bound_applied_rate")
 
     print(
         "Quality gate metrics: "
@@ -98,11 +100,15 @@ def main() -> int:
         weekly_sample_count=weekly_samples,
         weekly_pred_positive_rate=weekly_pred_positive_rate,
         weekly_actual_positive_rate=weekly_actual_positive_rate,
+        weekly_raw_magnitude_ratio=weekly_raw_magnitude_ratio,
+        weekly_median_bound_applied_rate=weekly_median_bound_applied_rate,
     )
     warnings = evaluate_quality_gate_warnings(
         vr=vr,
         mae_vs_naive_zero=mae_vs_naive_zero,
         weekly_mae_vs_naive_zero=weekly_mae_vs_naive_zero,
+        weekly_median_bound_applied_rate=weekly_median_bound_applied_rate,
+        weekly_raw_magnitude_ratio=weekly_raw_magnitude_ratio,
     )
     for warning in warnings:
         print(f"QUALITY GATE WARNING: {warning}")
