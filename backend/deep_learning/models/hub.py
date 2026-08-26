@@ -107,6 +107,7 @@ def build_artifact_health(local_dir: str | Path) -> dict:
                 weekly_actual_positive_rate=metrics.get("weekly_actual_positive_rate"),
                 weekly_raw_magnitude_ratio=metrics.get("weekly_raw_magnitude_ratio"),
                 weekly_median_bound_applied_rate=metrics.get("weekly_median_bound_applied_rate"),
+                weekly_sharpe_ratio=metrics.get("weekly_sharpe_ratio"),
             )
             if not quality_gate_passed:
                 gate_error = "; ".join(reasons)

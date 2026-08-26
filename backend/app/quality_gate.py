@@ -40,6 +40,7 @@ def evaluate_quality_gate(
     weekly_actual_positive_rate: Optional[float] = None,
     weekly_raw_magnitude_ratio: Optional[float] = None,
     weekly_median_bound_applied_rate: Optional[float] = None,
+    weekly_sharpe_ratio: Optional[float] = None,
 ) -> Tuple[bool, List[str]]:
     """
     Evaluate TFT-ASRO metrics against deployment thresholds.
@@ -138,6 +139,9 @@ def evaluate_quality_gate(
             f"WeeklyOrderedMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.001"
         )
 
+    if weekly_sharpe_ratio is not None and weekly_sharpe_ratio < -0.20:
+        reasons.append(f"WeeklySharpe={weekly_sharpe_ratio:.4f} < -0.20")
+
     if sharpe < -0.30:
         reasons.append(f"Sharpe={sharpe:.4f} < -0.30")
     if tail_capture is not None and tail_capture < 0.35:
@@ -162,6 +166,7 @@ def evaluate_quality_gate_warnings(
     weekly_mae_vs_naive_zero: Optional[float] = None,
     weekly_median_bound_applied_rate: Optional[float] = None,
     weekly_raw_magnitude_ratio: Optional[float] = None,
+    weekly_sharpe_ratio: Optional[float] = None,
 ) -> List[str]:
     """Return stabilization warnings that do not fail promotion yet."""
     warnings: list[str] = []
@@ -184,5 +189,9 @@ def evaluate_quality_gate_warnings(
     if weekly_raw_magnitude_ratio is not None and weekly_raw_magnitude_ratio > 1.8:
         warnings.append(
             f"WeeklyRawMagnitudeRatio={weekly_raw_magnitude_ratio:.2f} > 1.8 - raw model over-predicting scale"
+        )
+    if weekly_sharpe_ratio is not None and weekly_sharpe_ratio < 0.20:
+        warnings.append(
+            f"WeeklySharpe={weekly_sharpe_ratio:.4f} < 0.20 - low weekly risk-adjusted return"
         )
     return warnings

@@ -114,54 +114,35 @@ export const ModelsPage = () => {
         </div>
       )}
 
-      {/* Core metrics */}
+      {/* Primary Horizon: Weekly Forecast (5D) */}
       <section>
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Core Metrics</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
+            Primary Horizon: Weekly Strategy (5-Day Cumulative)
+          </h3>
+          <span className="text-[11px] text-slate-400 font-mono">
+            Target Horizon: 5 Trading Days · Annualized factor: √52
+          </span>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Metric
             label="Weekly Directional Accuracy"
             value={fmtPct(weeklyDa)}
             tone={weeklyDa != null ? (weeklyDa >= weeklyDaThreshold ? 'good' : 'bad') : 'neutral'}
-            hint={`Weekly sign accuracy · gate ≥ ${(weeklyDaThreshold * 100).toFixed(0)}%`}
+            hint="Weekly sign accuracy · gate ≥ 51%"
           />
           <Metric
-            label="Sharpe Ratio"
-            value={fmtNum(sharpe, 3)}
-            tone={sharpe != null ? (sharpe >= 0 ? 'good' : 'bad') : 'neutral'}
-            hint="Risk-adjusted strategy return"
+            label="Weekly Sharpe Ratio"
+            value={fmtNum(m.weekly_sharpe_ratio, 2)}
+            tone={m.weekly_sharpe_ratio != null ? (m.weekly_sharpe_ratio >= 0 ? 'good' : 'bad') : 'neutral'}
+            hint="52-week annualized risk-adjusted return (√52 factor)"
           />
           <Metric
-            label="Sortino Ratio"
-            value={fmtNum(sortino, 3)}
-            tone={sortino != null ? (sortino >= 0 ? 'good' : 'bad') : 'neutral'}
+            label="Weekly Sortino Ratio"
+            value={fmtNum(m.weekly_sortino_ratio, 2)}
+            tone={m.weekly_sortino_ratio != null ? (m.weekly_sortino_ratio >= 0 ? 'good' : 'bad') : 'neutral'}
+            hint="Penalizes downside volatility only (√52 factor)"
           />
-          <Metric
-            label="Variance Ratio"
-            value={fmtNum(vr, 3)}
-            tone={vr != null ? (vr >= 0.5 && vr <= 1.5 ? 'good' : 'bad') : 'neutral'}
-            hint="pred σ / actual σ (target ≈ 1.0)"
-          />
-          <Metric label="MAE" value={fmtNum(mae)} hint="Mean absolute error · lower is better" />
-          <Metric label="RMSE" value={fmtNum(rmse)} hint="Penalizes larger errors · lower is better" />
-          <Metric
-            label="Tail Capture"
-            value={fmtPct(tail)}
-            tone={tail != null ? (tail >= tailCaptureThreshold ? 'good' : 'bad') : 'neutral'}
-            hint={`Correct direction on extreme moves · gate ≥ ${(tailCaptureThreshold * 100).toFixed(0)}%`}
-          />
-          <Metric
-            label="Pred σ / Actual σ"
-            value={`${fmtNum(m.pred_std, 4)} / ${fmtNum(m.actual_std, 4)}`}
-          />
-        </div>
-      </section>
-
-      {/* Scale & Magnitude Diagnostics */}
-      <section>
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
-          Scale & Magnitude Diagnostics
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Metric
             label="Weekly Magnitude Ratio"
             value={fmtNum(m.weekly_magnitude_ratio, 2)}
@@ -175,12 +156,26 @@ export const ModelsPage = () => {
             hint="Bounded pred |abs| / actual |abs| · gate [0.65, 1.35]"
           />
           <Metric
+            label="Weekly Tail Capture"
+            value={fmtPct(m.weekly_tail_capture_rate)}
+            tone={
+              m.weekly_tail_capture_rate != null
+                ? m.weekly_tail_capture_rate >= 0.45
+                  ? 'good'
+                  : 'bad'
+                : 'neutral'
+            }
+            hint="Correct direction on extreme weekly moves · gate ≥ 45%"
+          />
+          <Metric
             label="Raw Magnitude Ratio"
             value={fmtNum(m.weekly_raw_magnitude_ratio, 2)}
             tone={
               m.weekly_raw_magnitude_ratio != null
-                ? m.weekly_raw_magnitude_ratio <= 2.0
+                ? m.weekly_raw_magnitude_ratio <= 1.8
                   ? 'good'
+                  : m.weekly_raw_magnitude_ratio <= 3.0
+                  ? 'neutral'
                   : 'bad'
                 : 'neutral'
             }
@@ -198,13 +193,70 @@ export const ModelsPage = () => {
                   : 'bad'
                 : 'neutral'
             }
-            hint="Predictions clipped by median safety ceiling"
+            hint="Fraction of predictions capped by weekly median ceiling"
           />
           <Metric
-            label="Weekly Sharpe Ratio"
-            value={fmtNum(m.weekly_sharpe_ratio, 2)}
-            tone={m.weekly_sharpe_ratio != null ? (m.weekly_sharpe_ratio >= 0 ? 'good' : 'bad') : 'neutral'}
-            hint="52-week annualized weekly strategy return"
+            label="Weekly PI80 Coverage"
+            value={fmtPct(m.weekly_pi80_coverage)}
+            tone={
+              m.weekly_pi80_coverage != null
+                ? m.weekly_pi80_coverage >= 0.74 && m.weekly_pi80_coverage <= 0.86
+                  ? 'good'
+                  : 'bad'
+                : 'neutral'
+            }
+            hint="80% prediction interval empirical coverage (target ≈ 80%)"
+          />
+        </div>
+      </section>
+
+      {/* Single-Step Diagnostics: Daily Path (T+1) */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
+            Diagnostic Path: Daily Step (T+1)
+          </h3>
+          <span className="text-[11px] text-slate-500 font-mono">
+            Single-step path diagnostics · Annualized factor: √252
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Metric
+            label="Daily Directional Accuracy"
+            value={fmtPct(m.directional_accuracy)}
+            tone={m.directional_accuracy != null ? (m.directional_accuracy >= 0.50 ? 'good' : 'neutral') : 'neutral'}
+            hint="Single-day (T+1) direction accuracy"
+          />
+          <Metric
+            label="Daily Sharpe Ratio"
+            value={fmtNum(sharpe, 3)}
+            tone={sharpe != null ? (sharpe >= 0 ? 'good' : 'bad') : 'neutral'}
+            hint="252-day annualized single-day strategy return"
+          />
+          <Metric
+            label="Daily Sortino Ratio"
+            value={fmtNum(sortino, 3)}
+            tone={sortino != null ? (sortino >= 0 ? 'good' : 'bad') : 'neutral'}
+            hint="Single-day downside risk-adjusted return"
+          />
+          <Metric
+            label="Variance Ratio"
+            value={fmtNum(vr, 3)}
+            tone={vr != null ? (vr >= 0.5 && vr <= 1.5 ? 'good' : 'bad') : 'neutral'}
+            hint="pred σ / actual σ (target ≈ 1.0)"
+          />
+          <Metric label="MAE" value={fmtNum(mae)} hint="Daily mean absolute error" />
+          <Metric label="RMSE" value={fmtNum(rmse)} hint="Daily root mean squared error" />
+          <Metric
+            label="Daily Tail Capture"
+            value={fmtPct(tail)}
+            tone={tail != null ? (tail >= tailCaptureThreshold ? 'good' : 'bad') : 'neutral'}
+            hint="Correct direction on extreme daily moves · ≥ 35%"
+          />
+          <Metric
+            label="Pred σ / Actual σ"
+            value={`${fmtNum(m.pred_std, 4)} / ${fmtNum(m.actual_std, 4)}`}
+            hint="Daily standard deviation ratio"
           />
         </div>
       </section>

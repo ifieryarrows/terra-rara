@@ -185,3 +185,23 @@ def test_quality_gate_warns_on_moderate_cap_clipping():
     assert any("WeeklyMedianBoundRate=" in w for w in warnings)
     assert any("WeeklyRawMagnitudeRatio=" in w for w in warnings)
 
+def test_quality_gate_rejects_negative_weekly_sharpe():
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=1.0,
+        weekly_sharpe_ratio=-0.45,
+        **GOOD_QUANTILE,
+        **GOOD_WEEKLY,
+    )
+    assert passed is False
+    assert any("WeeklySharpe=" in r for r in reasons)
+
+
+def test_quality_gate_warns_on_low_weekly_sharpe():
+    warnings = evaluate_quality_gate_warnings(
+        vr=1.0,
+        weekly_sharpe_ratio=0.12,
+    )
+    assert any("WeeklySharpe=0.1200 < 0.20" in w for w in warnings)
+
