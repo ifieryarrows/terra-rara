@@ -1077,9 +1077,15 @@ async def get_tft_analysis(
                     payload = dict(latest.payload_json)
                     gen_at = latest.generated_at
                     gen_at = _as_utc(gen_at)
+                    # Only a quality-gate-passed model should invalidate the
+                    # snapshot. A failed model being newer must NOT force live
+                    # inference, since that would serve a rejected checkpoint.
                     model_meta = (
                         session.query(TFTModelMetadata)
-                        .filter(TFTModelMetadata.symbol == symbol)
+                        .filter(
+                            TFTModelMetadata.symbol == symbol,
+                            TFTModelMetadata.quality_gate_passed.is_(True),
+                        )
                         .order_by(TFTModelMetadata.trained_at.desc())
                         .first()
                     )
@@ -1427,10 +1433,25 @@ async def get_tft_summary(
         return out
 
     with SessionLocal() as session:
-        meta = session.query(TFTModelMetadata).filter(
-            TFTModelMetadata.symbol == symbol
-        ).order_by(TFTModelMetadata.trained_at.desc()).first()
-        
+        # Prefer the most-recently-trained model that passed the quality gate.
+        # Fall back to the latest model regardless (so the page still shows
+        # metrics and reasons even when no promoted checkpoint exists yet).
+        meta = (
+            session.query(TFTModelMetadata)
+            .filter(
+                TFTModelMetadata.symbol == symbol,
+                TFTModelMetadata.quality_gate_passed.is_(True),
+            )
+            .order_by(TFTModelMetadata.trained_at.desc())
+            .first()
+        )
+        if meta is None:
+            meta = (
+                session.query(TFTModelMetadata)
+                .filter(TFTModelMetadata.symbol == symbol)
+                .order_by(TFTModelMetadata.trained_at.desc())
+                .first()
+            )
         if not meta:
             raise HTTPException(status_code=404, detail=f"No TFT model metadata found for {symbol}")
 

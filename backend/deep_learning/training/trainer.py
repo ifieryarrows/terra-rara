@@ -1430,10 +1430,45 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
 
 
 def _persist_tft_metadata(symbol: str, result: dict) -> None:
-    """Save TFT model metadata to DB."""
+    """Save TFT model metadata to DB, including the quality gate result."""
     try:
         from app.db import SessionLocal
         from app.models import TFTModelMetadata
+        from app.quality_gate import evaluate_quality_gate
+
+        # Evaluate quality gate so the result is persisted alongside the metrics.
+        metrics = result.get("test_metrics") or {}
+        try:
+            gate_passed, _reasons = evaluate_quality_gate(
+                da=float(metrics.get("directional_accuracy", 0.5)),
+                sharpe=float(metrics.get("sharpe_ratio", 0.0)),
+                vr=float(metrics.get("variance_ratio", 1.0)),
+                tail_capture=metrics.get("tail_capture_rate"),
+                quantile_crossing_rate=metrics.get("quantile_crossing_rate"),
+                median_sort_gap_max=metrics.get("median_sort_gap_max"),
+                pi80_width=metrics.get("pi80_width"),
+                pi96_width=metrics.get("pi96_width"),
+                weekly_directional_accuracy=metrics.get("weekly_directional_accuracy"),
+                weekly_magnitude_ratio=metrics.get("weekly_magnitude_ratio"),
+                weekly_tail_capture_rate=metrics.get("weekly_tail_capture_rate"),
+                weekly_pi80_coverage=metrics.get("weekly_pi80_coverage"),
+                weekly_pi80_width=metrics.get("weekly_pi80_width"),
+                weekly_pi80_width_ratio=metrics.get("weekly_pi80_width_ratio"),
+                weekly_pi96_coverage=metrics.get("weekly_pi96_coverage"),
+                weekly_pi96_width=metrics.get("weekly_pi96_width"),
+                weekly_pi96_width_ratio=metrics.get("weekly_pi96_width_ratio"),
+                weekly_quantile_crossing_rate=metrics.get("weekly_quantile_crossing_rate"),
+                weekly_sorted_quantile_crossing_rate=metrics.get(
+                    "weekly_sorted_quantile_crossing_rate"
+                ),
+                weekly_median_sort_gap_max=metrics.get("weekly_median_sort_gap_max"),
+                weekly_sample_count=metrics.get("weekly_sample_count"),
+                weekly_pred_positive_rate=metrics.get("weekly_pred_positive_rate"),
+                weekly_actual_positive_rate=metrics.get("weekly_actual_positive_rate"),
+            )
+        except Exception as gate_exc:
+            logger.warning("Quality gate evaluation failed during persist: %s", gate_exc)
+            gate_passed = False
 
         with SessionLocal() as session:
             existing = session.query(TFTModelMetadata).filter(
@@ -1445,16 +1480,20 @@ def _persist_tft_metadata(symbol: str, result: dict) -> None:
                 existing.metrics_json = json.dumps(result.get("test_metrics", {}))
                 existing.checkpoint_path = result.get("checkpoint_path", "")
                 existing.trained_at = datetime.now(timezone.utc)
+                existing.quality_gate_passed = gate_passed
             else:
                 session.add(TFTModelMetadata(
                     symbol=symbol,
                     config_json=json.dumps(result.get("config", {})),
                     metrics_json=json.dumps(result.get("test_metrics", {})),
                     checkpoint_path=result.get("checkpoint_path", ""),
+                    quality_gate_passed=gate_passed,
                 ))
 
             session.commit()
-            logger.info("TFT metadata persisted for %s", symbol)
+            logger.info(
+                "TFT metadata persisted for %s (quality_gate_passed=%s)", symbol, gate_passed
+            )
     except Exception as exc:
         logger.warning("Could not persist TFT metadata: %s", exc)
 
