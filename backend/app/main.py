@@ -1502,6 +1502,8 @@ async def get_tft_summary(
         weekly_sorted_qcross = metrics.get("weekly_sorted_quantile_crossing_rate")
         weekly_gap = metrics.get("weekly_median_sort_gap_max")
         weekly_samples = metrics.get("weekly_sample_count")
+        weekly_pred_pos = metrics.get("weekly_pred_positive_rate")
+        weekly_actual_pos = metrics.get("weekly_actual_positive_rate")
         
         passed, reasons = evaluate_quality_gate(
             da,
@@ -1521,6 +1523,8 @@ async def get_tft_summary(
             weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
             weekly_median_sort_gap_max=weekly_gap,
             weekly_sample_count=weekly_samples,
+            weekly_pred_positive_rate=weekly_pred_pos,
+            weekly_actual_positive_rate=weekly_actual_pos,
         )
         
         gate_metrics = {
