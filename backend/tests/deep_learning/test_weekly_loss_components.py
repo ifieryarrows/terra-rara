@@ -3,7 +3,6 @@ import torch
 
 from deep_learning.models.tft_copper import (
     _bound_weekly_median_path,
-    _smooth_bound_weekly_median,
     _weekly_interval_undercoverage_loss,
     _weekly_positive_rate_loss,
     _weekly_saturation_loss,
@@ -175,20 +174,3 @@ def test_weekly_saturation_loss_has_a_sublinear_far_violation_tail():
 
     assert extreme.item() > moderate.item()
     assert extreme.item() < 4.0 * moderate.item()
-
-
-def test_smooth_weekly_sign_bound_keeps_corrective_gradient_above_cap():
-    raw_weekly = torch.tensor([0.10, -0.10], requires_grad=True)
-    actual_weekly = torch.tensor([-0.03, 0.03])
-
-    bounded = _smooth_bound_weekly_median(
-        raw_weekly,
-        weekly_median_cap=0.03,
-    )
-    loss = _weekly_positive_rate_loss(bounded, actual_weekly)
-    loss.backward()
-
-    assert torch.max(torch.abs(bounded)).item() <= 0.03
-    assert raw_weekly.grad is not None
-    assert raw_weekly.grad[0].item() > 0.0
-    assert raw_weekly.grad[1].item() < 0.0

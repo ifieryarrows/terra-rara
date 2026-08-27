@@ -47,9 +47,16 @@ magnitude still passed at `1.3367`, only `0.0133` below its upper gate. Loss
 logs and an autograd replay identified a structural gradient break: after the
 hard weekly median cap, the summed q50 is exactly `+/-cap`, so weekly direction
 and positive-rate objectives have zero raw-q50 gradient on clipped samples.
-The follow-up keeps the exact public cap but feeds those two training-only sign
-objectives through a smooth `cap * tanh(raw / cap)` surrogate. No threshold,
-loss weight, public prediction, or interval calibration was changed.
+Run
+[33120071397](https://github.com/ifieryarrows/terra-rara/actions/runs/33120071397)
+tested a training-only smooth `cap * tanh(raw / cap)` sign surrogate on the
+same `200ce6d4…` snapshot. Raw magnitude improved from `2.9573` to `2.1567`,
+weekly Sharpe remained `2.4120`, WeeklyDA remained strong at `0.6613`, and tail
+capture stayed `0.6875`. The hypothesis was nevertheless rejected: daily
+Sharpe fell to `-1.0652`, variance ratio rose to `2.8432`, and PI80 overcovered
+at `0.9032`. The gate correctly rejected the candidate before Hub/DB promotion,
+so the smooth sign-surrogate implementation was removed while retaining its
+diagnostic evidence. No threshold was changed.
 
 ## Earlier diagnosis
 
@@ -80,6 +87,7 @@ the later successful remote run is recorded above.
 | [32999841194](https://github.com/ifieryarrows/terra-rara/actions/runs/32999841194) | `1f2a9df`, snapshot `2c2bfb15…` | Fail | Same inputs/runtime family; WeeklyDA `0.6452`, PI80 `0.9516`; only PI80 failed |
 | [33020232075](https://github.com/ifieryarrows/terra-rara/actions/runs/33020232075) | `20d144c`, snapshot `4e2e5cae…` | Pass | WeeklyDA `0.6452`, MR `1.3252`, tail `0.6250`, PI80 `0.8387`, weekly Sharpe `1.9603`; cap-rate warning `0.6290` |
 | [33117940637](https://github.com/ifieryarrows/terra-rara/actions/runs/33117940637) | `c93fc45`, snapshot `200ce6d4…` | Pass | Promotion order proven; WeeklyDA `0.6774`, MR `1.3367`, tail `0.6875`, PI80 `0.8387`, weekly Sharpe `2.3982`; raw MR `2.9573`, cap rate `0.7097` |
+| [33120071397](https://github.com/ifieryarrows/terra-rara/actions/runs/33120071397) | `9e4006f`, snapshot `200ce6d4…` | Fail | Smooth sign surrogate lowered raw MR to `2.1567`, but PI80 rose to `0.9032` and daily Sharpe fell to `-1.0652`; Hub/DB promotion blocked |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -138,7 +146,7 @@ sign-collapse guard is not triggered.
 
 ## Verification
 
-- Backend suite after the smooth sign-gradient follow-up: **516 passed, 8 warnings**.
+- Backend suite after rejecting the smooth sign-gradient experiment: **515 passed, 8 warnings**.
 - Focused TFT calibration, hyperopt, direction, conformal, trainer, and
   predictor suite: **63 passed, 2 warnings**.
 - Python compileall and `git diff --check` passed.
@@ -147,10 +155,9 @@ sign-collapse guard is not triggered.
 
 ## Remaining acceptance step
 
-Run `33117940637` closes the promotion-order acceptance on `c93fc45`; a passing
-candidate uploaded to Hub before the DB promotion step completed. The remaining
-model acceptance is a controlled run of the differentiable sign-surrogate
-change. It must retain WeeklyDA, PI80, tail capture, and weekly Sharpe while
-moving raw magnitude materially below `2.9573` and cap application below
-`0.7097`. When that long pipeline is started, monitoring will stop immediately
-after dispatch and the user will be asked to report when it finishes.
+Run `33117940637` closes the promotion-order acceptance on `c93fc45`; run
+`33120071397` additionally proves that a rejected candidate leaves Hub and DB
+untouched. The active model therefore remains the passing `c93fc45` artifact.
+The next raw-scale experiment must be selected on validation evidence without
+altering the already-working bounded direction and interval path. No new long
+pipeline has been started.
