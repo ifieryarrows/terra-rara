@@ -319,7 +319,10 @@ jobs:
     # ─────────────────────────────────────────────────────────────────────────
     backtest:
         needs: [train]
-        if: ${{ needs.train.result == 'success' }}
+        # train itself depends on an optionally skipped hyperopt job. Include
+        # always() so that transitive skip propagation cannot suppress this
+        # successful-training follow-up.
+        if: ${{ always() && needs.train.result == 'success' }}
         uses: ./.github/workflows/backtest.yml
         secrets: inherit
         with:

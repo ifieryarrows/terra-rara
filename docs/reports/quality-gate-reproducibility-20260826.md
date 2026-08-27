@@ -1,8 +1,8 @@
 # TFT-ASRO Quality-Gate Reproducibility and OOS Recovery
 
 Date: 2026-08-26
-Scope: `codex/tft-quality-gate-recovery-20260824`, through `fa3e7c4`, plus the
-promotion-isolation review performed on 2026-08-27
+Scope: `codex/tft-quality-gate-recovery-20260824`, through `c93fc45`, plus the
+post-acceptance raw-scale review performed on 2026-08-28
 
 ## Current outcome
 
@@ -32,6 +32,25 @@ the active DB row only after both the shared gate and Hub upload succeed,
 strictly serves passed metadata, and applies the promotion-column migration
 idempotently at application startup and CI promotion time.
 
+Remote run
+[33117940637](https://github.com/ifieryarrows/terra-rara/actions/runs/33117940637)
+then completed successfully on the final promotion-isolation commit `c93fc45`.
+The shared gate passed before Hub upload, the Hub/DB promotion step succeeded,
+and the manifest reports both `safe_to_upload_to_hub=true` and
+`safe_for_inference=true`. WeeklyDA improved to `0.6774`, weekly Sharpe to
+`2.3982`, tail capture to `0.6875`, and PI80 remained `0.8387`.
+
+The same run exposed the remaining reproducibility margin: raw weekly magnitude
+rose from `1.8433` to `2.9573` while train/validation target scale changed by
+only roughly 2-3%. Cap application rose from `0.6290` to `0.7097`; bounded
+magnitude still passed at `1.3367`, only `0.0133` below its upper gate. Loss
+logs and an autograd replay identified a structural gradient break: after the
+hard weekly median cap, the summed q50 is exactly `+/-cap`, so weekly direction
+and positive-rate objectives have zero raw-q50 gradient on clipped samples.
+The follow-up keeps the exact public cap but feeds those two training-only sign
+objectives through a smooth `cap * tanh(raw / cap)` surrogate. No threshold,
+loss weight, public prediction, or interval calibration was changed.
+
 ## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
@@ -60,6 +79,7 @@ the later successful remote run is recorded above.
 | [32906424221](https://github.com/ifieryarrows/terra-rara/actions/runs/32906424221) | `1f2a9df`, snapshot `2c2bfb15…` | Fail | Current `.40` objective; WeeklyDA `0.4516`, Tail `0.4375`, PI80 `0.9516` |
 | [32999841194](https://github.com/ifieryarrows/terra-rara/actions/runs/32999841194) | `1f2a9df`, snapshot `2c2bfb15…` | Fail | Same inputs/runtime family; WeeklyDA `0.6452`, PI80 `0.9516`; only PI80 failed |
 | [33020232075](https://github.com/ifieryarrows/terra-rara/actions/runs/33020232075) | `20d144c`, snapshot `4e2e5cae…` | Pass | WeeklyDA `0.6452`, MR `1.3252`, tail `0.6250`, PI80 `0.8387`, weekly Sharpe `1.9603`; cap-rate warning `0.6290` |
+| [33117940637](https://github.com/ifieryarrows/terra-rara/actions/runs/33117940637) | `c93fc45`, snapshot `200ce6d4…` | Pass | Promotion order proven; WeeklyDA `0.6774`, MR `1.3367`, tail `0.6875`, PI80 `0.8387`, weekly Sharpe `2.3982`; raw MR `2.9573`, cap rate `0.7097` |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -118,7 +138,7 @@ sign-collapse guard is not triggered.
 
 ## Verification
 
-- Backend suite after the promotion-isolation review: **515 passed, 8 warnings**.
+- Backend suite after the smooth sign-gradient follow-up: **516 passed, 8 warnings**.
 - Focused TFT calibration, hyperopt, direction, conformal, trainer, and
   predictor suite: **63 passed, 2 warnings**.
 - Python compileall and `git diff --check` passed.
@@ -127,10 +147,10 @@ sign-collapse guard is not triggered.
 
 ## Remaining acceptance step
 
-Run `33020232075` proves the model/calibration path on `20d144c` and also passes
-the subsequently-added weekly-Sharpe rule when evaluated retrospectively. A
-fresh run from the final promotion-isolation commit is still required to prove
-the workflow ordering end to end: failed candidates must leave the active DB
-row untouched, while a passing candidate must upload to Hub before updating
-the DB. When that long pipeline is started, monitoring will stop immediately
+Run `33117940637` closes the promotion-order acceptance on `c93fc45`; a passing
+candidate uploaded to Hub before the DB promotion step completed. The remaining
+model acceptance is a controlled run of the differentiable sign-surrogate
+change. It must retain WeeklyDA, PI80, tail capture, and weekly Sharpe while
+moving raw magnitude materially below `2.9573` and cap application below
+`0.7097`. When that long pipeline is started, monitoring will stop immediately
 after dispatch and the user will be asked to report when it finishes.

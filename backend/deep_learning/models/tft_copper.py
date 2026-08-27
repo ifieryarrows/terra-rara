@@ -107,6 +107,29 @@ def _weekly_saturation_loss(
     )
 
 
+def _smooth_bound_weekly_median(
+    raw_pred_weekly_median: torch.Tensor,
+    *,
+    weekly_median_cap: Optional[float],
+) -> torch.Tensor:
+    """Bound the training sign path without zeroing gradients above the cap.
+
+    Public quantiles keep the exact hard cap.  This differentiable surrogate
+    is used only by weekly direction/sign objectives: the hard scaling makes
+    the summed weekly median exactly +/-cap and gives those objectives zero
+    gradient for every clipped sample.
+    """
+    if weekly_median_cap is None or float(weekly_median_cap) <= 0.0:
+        return raw_pred_weekly_median
+
+    cap = torch.as_tensor(
+        float(weekly_median_cap),
+        device=raw_pred_weekly_median.device,
+        dtype=raw_pred_weekly_median.dtype,
+    )
+    return cap * torch.tanh(raw_pred_weekly_median / cap)
+
+
 def _weekly_scale_losses(
     pred_weekly_median: torch.Tensor,
     actual_weekly: torch.Tensor,
@@ -590,6 +613,10 @@ try:
             )
 
             pred_weekly_median = median_path.sum(dim=1)
+            training_sign_weekly_median = _smooth_bound_weekly_median(
+                raw_pred_weekly_median,
+                weekly_median_cap=self.weekly_median_cap,
+            )
             eps = self.sharpe_eps
             scale_losses = _weekly_scale_losses(pred_weekly_median, actual_weekly, eps=eps)
             dispersion_loss = scale_losses["dispersion_loss"]
@@ -597,7 +624,7 @@ try:
             naive_relative_loss = scale_losses["naive_relative_loss"]
             bias_loss = scale_losses["bias_loss"]
             positive_rate_loss = _weekly_positive_rate_loss(
-                pred_weekly_median,
+                training_sign_weekly_median,
                 actual_weekly,
                 eps=eps,
             )
@@ -609,7 +636,7 @@ try:
             )
 
             directional_loss = _directional_sign_loss(
-                pred_weekly_median,
+                training_sign_weekly_median,
                 actual_weekly,
                 tanh_scale=20.0,
                 eps=eps,
