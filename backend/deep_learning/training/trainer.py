@@ -984,8 +984,6 @@ def train_tft_model(
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    _persist_tft_metadata(cfg.feature_store.target_symbol, result)
-
     # Write metadata JSON to disk for CI quality gate
     meta_json_path = Path(cfg.training.best_model_path).parent / "tft_metadata.json"
     try:
@@ -1009,6 +1007,7 @@ def train_tft_model(
     # the production checkpoint before the gate has evaluated test metrics.
     result["hub_uploaded"] = False
     if upload_to_hub:
+        uploaded = False
         try:
             from deep_learning.models.hub import upload_tft_artifacts
 
@@ -1023,6 +1022,9 @@ def train_tft_model(
             result["hub_uploaded"] = uploaded
         except Exception as exc:
             logger.warning("HF Hub upload skipped: %s", exc)
+        if uploaded:
+            persist_promoted_tft_metadata(cfg.feature_store.target_symbol, result)
+            result["promotion_metadata_persisted"] = True
     else:
         result["hub_upload_skipped"] = "disabled_until_quality_gate_passes"
 
@@ -1429,76 +1431,61 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     return replace(cfg, model=new_model, asro=new_asro, weekly_loss=new_weekly_loss, training=new_training)
 
 
-def _persist_tft_metadata(symbol: str, result: dict) -> None:
-    """Save TFT model metadata to DB, including the quality gate result."""
-    try:
-        from app.db import SessionLocal
-        from app.models import TFTModelMetadata
-        from app.quality_gate import evaluate_quality_gate
+def persist_promoted_tft_metadata(symbol: str, result: dict) -> None:
+    """Persist the active model only after gate and Hub promotion succeed.
 
-        # Evaluate quality gate so the result is persisted alongside the metrics.
-        metrics = result.get("test_metrics") or {}
+    Candidate training must not overwrite the single active row. The caller is
+    expected to invoke this after the artifact upload returns successfully;
+    the gate is deliberately re-evaluated here so a workflow ordering mistake
+    still fails closed.
+    """
+    from app.db import SessionLocal, ensure_tft_model_metadata_schema
+    from app.models import TFTModelMetadata
+    from app.quality_gate import evaluate_quality_gate_metrics
+
+    metrics = result.get("test_metrics") or {}
+    gate_passed, reasons = evaluate_quality_gate_metrics(metrics)
+    if not gate_passed:
+        raise ValueError(
+            "Refusing to persist rejected TFT candidate as active: "
+            + "; ".join(reasons)
+        )
+
+    ensure_tft_model_metadata_schema()
+
+    trained_at = datetime.now(timezone.utc)
+    raw_trained_at = result.get("trained_at")
+    if isinstance(raw_trained_at, str):
         try:
-            gate_passed, _reasons = evaluate_quality_gate(
-                da=float(metrics.get("directional_accuracy", 0.5)),
-                sharpe=float(metrics.get("sharpe_ratio", 0.0)),
-                vr=float(metrics.get("variance_ratio", 1.0)),
-                tail_capture=metrics.get("tail_capture_rate"),
-                quantile_crossing_rate=metrics.get("quantile_crossing_rate"),
-                median_sort_gap_max=metrics.get("median_sort_gap_max"),
-                pi80_width=metrics.get("pi80_width"),
-                pi96_width=metrics.get("pi96_width"),
-                weekly_directional_accuracy=metrics.get("weekly_directional_accuracy"),
-                weekly_magnitude_ratio=metrics.get("weekly_magnitude_ratio"),
-                weekly_tail_capture_rate=metrics.get("weekly_tail_capture_rate"),
-                weekly_pi80_coverage=metrics.get("weekly_pi80_coverage"),
-                weekly_pi80_width=metrics.get("weekly_pi80_width"),
-                weekly_pi80_width_ratio=metrics.get("weekly_pi80_width_ratio"),
-                weekly_pi96_coverage=metrics.get("weekly_pi96_coverage"),
-                weekly_pi96_width=metrics.get("weekly_pi96_width"),
-                weekly_pi96_width_ratio=metrics.get("weekly_pi96_width_ratio"),
-                weekly_quantile_crossing_rate=metrics.get("weekly_quantile_crossing_rate"),
-                weekly_sorted_quantile_crossing_rate=metrics.get(
-                    "weekly_sorted_quantile_crossing_rate"
-                ),
-                weekly_median_sort_gap_max=metrics.get("weekly_median_sort_gap_max"),
-                weekly_sample_count=metrics.get("weekly_sample_count"),
-                weekly_pred_positive_rate=metrics.get("weekly_pred_positive_rate"),
-                weekly_actual_positive_rate=metrics.get("weekly_actual_positive_rate"),
-                weekly_raw_magnitude_ratio=metrics.get("weekly_raw_magnitude_ratio"),
-                weekly_median_bound_applied_rate=metrics.get("weekly_median_bound_applied_rate"),
-                weekly_sharpe_ratio=metrics.get("weekly_sharpe_ratio"),
-            )
-        except Exception as gate_exc:
-            logger.warning("Quality gate evaluation failed during persist: %s", gate_exc)
-            gate_passed = False
+            trained_at = datetime.fromisoformat(raw_trained_at.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning("Invalid TFT trained_at timestamp during promotion: %s", raw_trained_at)
 
-        with SessionLocal() as session:
-            existing = session.query(TFTModelMetadata).filter(
-                TFTModelMetadata.symbol == symbol
-            ).first()
+    with SessionLocal() as session:
+        existing = session.query(TFTModelMetadata).filter(
+            TFTModelMetadata.symbol == symbol
+        ).first()
 
-            if existing:
-                existing.config_json = json.dumps(result.get("config", {}))
-                existing.metrics_json = json.dumps(result.get("test_metrics", {}))
-                existing.checkpoint_path = result.get("checkpoint_path", "")
-                existing.trained_at = datetime.now(timezone.utc)
-                existing.quality_gate_passed = gate_passed
-            else:
-                session.add(TFTModelMetadata(
+        if existing:
+            existing.config_json = json.dumps(result.get("config", {}))
+            existing.metrics_json = json.dumps(metrics)
+            existing.checkpoint_path = result.get("checkpoint_path", "")
+            existing.trained_at = trained_at
+            existing.quality_gate_passed = True
+        else:
+            session.add(
+                TFTModelMetadata(
                     symbol=symbol,
                     config_json=json.dumps(result.get("config", {})),
-                    metrics_json=json.dumps(result.get("test_metrics", {})),
+                    metrics_json=json.dumps(metrics),
                     checkpoint_path=result.get("checkpoint_path", ""),
-                    quality_gate_passed=gate_passed,
-                ))
-
-            session.commit()
-            logger.info(
-                "TFT metadata persisted for %s (quality_gate_passed=%s)", symbol, gate_passed
+                    trained_at=trained_at,
+                    quality_gate_passed=True,
+                )
             )
-    except Exception as exc:
-        logger.warning("Could not persist TFT metadata: %s", exc)
+
+        session.commit()
+        logger.info("Promoted TFT metadata persisted for %s", symbol)
 
 
 # ---------------------------------------------------------------------------

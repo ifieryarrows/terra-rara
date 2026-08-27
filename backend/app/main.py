@@ -513,7 +513,10 @@ async def health_check():
             # --- Latest TFT training timestamp ------------------------------
             latest_tft_model = (
                 session.query(TFTModelMetadata)
-                .filter(TFTModelMetadata.symbol == TARGET_SYMBOL)
+                .filter(
+                    TFTModelMetadata.symbol == TARGET_SYMBOL,
+                    TFTModelMetadata.quality_gate_passed.is_(True),
+                )
                 .order_by(TFTModelMetadata.trained_at.desc())
                 .first()
             )
@@ -1406,7 +1409,10 @@ async def get_tft_summary(
     symbol: str = Query(default=TARGET_SYMBOL, description="Target symbol")
 ):
     from app.models import TFTModelMetadata
-    from app.quality_gate import evaluate_quality_gate
+    from app.quality_gate import (
+        evaluate_quality_gate_metric_warnings,
+        evaluate_quality_gate_metrics,
+    )
     import json
     
     import math
@@ -1433,9 +1439,9 @@ async def get_tft_summary(
         return out
 
     with SessionLocal() as session:
-        # Prefer the most-recently-trained model that passed the quality gate.
-        # Fall back to the latest model regardless (so the page still shows
-        # metrics and reasons even when no promoted checkpoint exists yet).
+        # This endpoint describes the active/promoted model. Rejected candidate
+        # metrics remain in the GitHub run artifact and must never replace the
+        # last known-good DB row shown by the production UI.
         meta = (
             session.query(TFTModelMetadata)
             .filter(
@@ -1445,15 +1451,11 @@ async def get_tft_summary(
             .order_by(TFTModelMetadata.trained_at.desc())
             .first()
         )
-        if meta is None:
-            meta = (
-                session.query(TFTModelMetadata)
-                .filter(TFTModelMetadata.symbol == symbol)
-                .order_by(TFTModelMetadata.trained_at.desc())
-                .first()
-            )
         if not meta:
-            raise HTTPException(status_code=404, detail=f"No TFT model metadata found for {symbol}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No quality-gate-passed TFT model metadata found for {symbol}",
+            )
 
         config = _safe_json_load(meta.config_json)
         metrics_raw = _safe_json_load(meta.metrics_json)
@@ -1510,30 +1512,8 @@ async def get_tft_summary(
         weekly_sharpe = metrics.get("weekly_sharpe_ratio")
         weekly_sortino = metrics.get("weekly_sortino_ratio")
         
-        passed, reasons = evaluate_quality_gate(
-            da,
-            sharpe,
-            vr,
-            tail_capture=tail_capture,
-            quantile_crossing_rate=quantile_crossing,
-            median_sort_gap_max=median_gap_max,
-            weekly_directional_accuracy=weekly_da,
-            weekly_magnitude_ratio=weekly_mr,
-            weekly_tail_capture_rate=weekly_tail,
-            weekly_pi80_coverage=weekly_pi80,
-            weekly_pi80_width_ratio=weekly_pi80_width_ratio,
-            weekly_pi96_coverage=weekly_pi96,
-            weekly_pi96_width_ratio=weekly_pi96_width_ratio,
-            weekly_quantile_crossing_rate=weekly_qcross,
-            weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
-            weekly_median_sort_gap_max=weekly_gap,
-            weekly_sample_count=weekly_samples,
-            weekly_pred_positive_rate=weekly_pred_pos,
-            weekly_actual_positive_rate=weekly_actual_pos,
-            weekly_raw_magnitude_ratio=weekly_raw_mr,
-            weekly_median_bound_applied_rate=weekly_bound_rate,
-            weekly_sharpe_ratio=weekly_sharpe,
-        )
+        passed, reasons = evaluate_quality_gate_metrics(metrics)
+        warnings = evaluate_quality_gate_metric_warnings(metrics)
         
         gate_metrics = {
             "da": da,
@@ -1577,6 +1557,7 @@ async def get_tft_summary(
             "quality_gate": {
                 "passed": passed,
                 "reasons": reasons,
+                "warnings": warnings,
                 "metrics": gate_metrics,
             }
         }

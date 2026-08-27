@@ -265,9 +265,11 @@ jobs:
               working-directory: backend
               run: |
                   python - <<'PY'
+                  import json
                   from pathlib import Path
                   from deep_learning.config import get_tft_config
                   from deep_learning.models.hub import upload_tft_artifacts
+                  from deep_learning.training.trainer import persist_promoted_tft_metadata
 
                   cfg = get_tft_config()
                   tft_dir = Path(cfg.training.best_model_path).parent
@@ -276,10 +278,20 @@ jobs:
                       repo_id=cfg.training.hf_model_repo,
                       commit_message="TFT-ASRO checkpoint (quality gate passed)",
                   )
-                  raise SystemExit(0 if ok else 1)
+                  if not ok:
+                      raise SystemExit(1)
+
+                  metadata = json.loads(
+                      (tft_dir / "tft_metadata.json").read_text(encoding="utf-8")
+                  )
+                  persist_promoted_tft_metadata(
+                      cfg.feature_store.target_symbol,
+                      metadata,
+                  )
                   PY
               env:
                   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
             - name: Display training results
               if: ${{ always() }}

@@ -243,6 +243,10 @@ class QualityGateResponse(BaseModel):
     """Quality gate results for TFT-ASRO."""
     passed: bool = Field(..., description="Whether the model passed the quality gate")
     reasons: List[str] = Field(default_factory=list, description="Reasons for failure, if any")
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="Non-blocking model stability warnings",
+    )
     metrics: Dict[str, float] = Field(default_factory=dict, description="Key metrics evaluated (DA, Sharpe, VR)")
 
 

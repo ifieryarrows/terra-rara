@@ -32,6 +32,9 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
             "weekly_sample_count": 120,
             "weekly_pred_positive_rate": 0.55,
             "weekly_actual_positive_rate": 0.55,
+            "weekly_sharpe_ratio": 0.40,
+            "weekly_raw_magnitude_ratio": 1.0,
+            "weekly_median_bound_applied_rate": 0.10,
         }
     }
     metadata_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")

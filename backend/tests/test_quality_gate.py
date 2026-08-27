@@ -2,7 +2,11 @@
 
 import pytest
 
-from app.quality_gate import evaluate_quality_gate, evaluate_quality_gate_warnings
+from app.quality_gate import (
+    evaluate_quality_gate,
+    evaluate_quality_gate_metrics,
+    evaluate_quality_gate_warnings,
+)
 
 
 GOOD_WEEKLY = {
@@ -19,6 +23,9 @@ GOOD_WEEKLY = {
     "weekly_sample_count": 120,
     "weekly_pred_positive_rate": 0.55,
     "weekly_actual_positive_rate": 0.55,
+    "weekly_sharpe_ratio": 0.40,
+    "weekly_raw_magnitude_ratio": 1.0,
+    "weekly_median_bound_applied_rate": 0.10,
 }
 GOOD_QUANTILE = {
     "quantile_crossing_rate": 0.0,
@@ -158,9 +165,8 @@ def test_quality_gate_rejects_weekly_raw_magnitude_explosion():
         da=0.60,
         sharpe=0.1,
         vr=1.0,
-        weekly_raw_magnitude_ratio=3.5,
         **GOOD_QUANTILE,
-        **GOOD_WEEKLY,
+        **{**GOOD_WEEKLY, "weekly_raw_magnitude_ratio": 3.5},
     )
     assert passed is False
     assert any("WeeklyRawMagnitudeExplosion=" in r for r in reasons)
@@ -190,12 +196,65 @@ def test_quality_gate_rejects_negative_weekly_sharpe():
         da=0.60,
         sharpe=0.1,
         vr=1.0,
-        weekly_sharpe_ratio=-0.45,
         **GOOD_QUANTILE,
-        **GOOD_WEEKLY,
+        **{**GOOD_WEEKLY, "weekly_sharpe_ratio": -0.45},
     )
     assert passed is False
     assert any("WeeklySharpe=" in r for r in reasons)
+
+
+def test_quality_gate_rejects_missing_weekly_sharpe():
+    weekly_without_sharpe = {
+        key: value
+        for key, value in GOOD_WEEKLY.items()
+        if key != "weekly_sharpe_ratio"
+    }
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **weekly_without_sharpe,
+    )
+
+    assert passed is False
+    assert "Missing weekly_sharpe_ratio" in reasons
+
+
+def test_quality_gate_rejects_missing_raw_magnitude_audit():
+    weekly_without_raw_audit = {
+        key: value
+        for key, value in GOOD_WEEKLY.items()
+        if key not in {
+            "weekly_raw_magnitude_ratio",
+            "weekly_median_bound_applied_rate",
+        }
+    }
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **weekly_without_raw_audit,
+    )
+
+    assert passed is False
+    assert "Missing weekly_raw_magnitude_ratio" in reasons
+    assert "Missing weekly_median_bound_applied_rate" in reasons
+
+
+def test_serialized_metric_mapping_uses_full_gate_contract():
+    passed, reasons = evaluate_quality_gate_metrics(
+        {
+            "directional_accuracy": "0.60",
+            "sharpe_ratio": "0.10",
+            "variance_ratio": "1.0",
+            **GOOD_QUANTILE,
+            **GOOD_WEEKLY,
+        }
+    )
+
+    assert passed is True, reasons
 
 
 def test_quality_gate_warns_on_low_weekly_sharpe():

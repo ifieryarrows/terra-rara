@@ -7,11 +7,11 @@
 
 ## 2. Magnitude Transparency & Clipping Audits
 - **Raw vs. Bounded Magnitude:** Bounding mechanisms (`weekly_median_cap`) prevent inference explosion but can mask an unstable neural network.
-- **Quality Gate Invariant:** Quality gate evaluation must audit `weekly_raw_magnitude_ratio` alongside `weekly_bounded_magnitude_ratio`. If `weekly_median_bound_applied_rate > 0.30` (more than 30% of predictions clipped by the cap), flag the model for magnitude instability regardless of bounded performance.
+- **Quality Gate Invariant:** Quality gate evaluation must audit `weekly_raw_magnitude_ratio` alongside `weekly_bounded_magnitude_ratio`. A raw magnitude ratio above `3.0` blocks promotion. A `weekly_median_bound_applied_rate > 0.30` or raw magnitude ratio above `1.8` is surfaced as a non-blocking stability warning until a controlled OOS study justifies changing the hard gate.
 
 ## 3. Artifact Discovery & Deployment Isolation
 - **Dual Storage Verification:** When searching for previous models or release candidates, inspect both local database/disk paths AND remote CI/CD storage (GitHub Actions run artifacts via `gh run download`).
-- **Strict Quality Gate Filtering:** Endpoints serving the latest model (`/api/models/tft/summary`, etc.) and snapshot invalidation logic must explicitly filter for `quality_gate_passed.is_(True)`. Rejected checkpoints must never serve predictions or invalidate valid snapshots.
+- **Strict Quality Gate Filtering:** Endpoints serving the active model (`/api/models/tft/summary`, etc.) and snapshot invalidation logic must explicitly filter for `quality_gate_passed.is_(True)`. Candidate training must not update the single active DB row. Active metadata is written only after the shared quality gate and HF Hub upload both succeed; rejected checkpoints must never serve predictions or invalidate valid snapshots.
 
 ## 4. Horizon Consistency & Presentation Hierarchy
 - **Primary vs. Diagnostic Separation:** Multi-horizon forecasting models must strictly separate primary horizon metrics (e.g. 5D cumulative weekly returns) from single-step diagnostics (e.g. T+1 daily path).

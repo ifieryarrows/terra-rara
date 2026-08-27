@@ -707,7 +707,10 @@ class TFTPredictor:
 
         meta = (
             session.query(TFTModelMetadata)
-            .filter(TFTModelMetadata.symbol == self.cfg.feature_store.target_symbol)
+            .filter(
+                TFTModelMetadata.symbol == self.cfg.feature_store.target_symbol,
+                TFTModelMetadata.quality_gate_passed.is_(True),
+            )
             .first()
         )
         if meta is None:

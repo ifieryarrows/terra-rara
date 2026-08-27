@@ -114,9 +114,20 @@ export const ModelsPage = () => {
         </div>
       )}
 
+      {gate && gate.warnings?.length > 0 && (
+        <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
+          <p className="text-xs uppercase tracking-widest mb-2">Stability Warnings</p>
+          <ul className="list-disc list-inside space-y-1">
+            {gate.warnings.map((warning: string, i: number) => (
+              <li key={i}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Primary Horizon: Weekly Forecast (5D) */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
           <h3 className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
             Primary Horizon: Weekly Strategy (5-Day Cumulative)
           </h3>
@@ -129,13 +140,13 @@ export const ModelsPage = () => {
             label="Weekly Directional Accuracy"
             value={fmtPct(weeklyDa)}
             tone={weeklyDa != null ? (weeklyDa >= weeklyDaThreshold ? 'good' : 'bad') : 'neutral'}
-            hint="Weekly sign accuracy · gate ≥ 51%"
+            hint={`Weekly sign accuracy · gate ≥ ${(weeklyDaThreshold * 100).toFixed(0)}%`}
           />
           <Metric
             label="Weekly Sharpe Ratio"
             value={fmtNum(m.weekly_sharpe_ratio, 2)}
-            tone={m.weekly_sharpe_ratio != null ? (m.weekly_sharpe_ratio >= 0 ? 'good' : 'bad') : 'neutral'}
-            hint="52-week annualized risk-adjusted return (√52 factor)"
+            tone={m.weekly_sharpe_ratio != null ? (m.weekly_sharpe_ratio >= -0.20 ? 'good' : 'bad') : 'neutral'}
+            hint="52-week annualized return · gate ≥ -0.20"
           />
           <Metric
             label="Weekly Sortino Ratio"
@@ -212,7 +223,7 @@ export const ModelsPage = () => {
 
       {/* Single-Step Diagnostics: Daily Path (T+1) */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
           <h3 className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
             Diagnostic Path: Daily Step (T+1)
           </h3>
@@ -230,8 +241,8 @@ export const ModelsPage = () => {
           <Metric
             label="Daily Sharpe Ratio"
             value={fmtNum(sharpe, 3)}
-            tone={sharpe != null ? (sharpe >= 0 ? 'good' : 'bad') : 'neutral'}
-            hint="252-day annualized single-day strategy return"
+            tone={sharpe != null ? (sharpe >= -0.30 ? 'good' : 'bad') : 'neutral'}
+            hint="252-day annualized sanity check · gate ≥ -0.30"
           />
           <Metric
             label="Daily Sortino Ratio"

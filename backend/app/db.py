@@ -29,6 +29,10 @@ WEEKLY_DAILY_SENTIMENT_COLUMNS = (
     ("cutoff_version", "TEXT DEFAULT 'market_close_v1'", "TEXT DEFAULT 'market_close_v1'"),
 )
 
+TFT_MODEL_METADATA_COLUMNS = (
+    ("quality_gate_passed", "BOOLEAN", "BOOLEAN"),
+)
+
 # SQLAlchemy declarative base
 Base = declarative_base()
 
@@ -182,6 +186,29 @@ def _ensure_weekly_sentiment_schema(conn, is_sqlite: bool) -> None:
     )
 
 
+def _ensure_tft_model_metadata_schema(conn, is_sqlite: bool) -> None:
+    """Ensure promotion status exists on databases created before migration 004."""
+    _ensure_columns(
+        conn,
+        "tft_model_metadata",
+        TFT_MODEL_METADATA_COLUMNS,
+        is_sqlite,
+    )
+
+
+def ensure_tft_model_metadata_schema() -> None:
+    """Apply the narrow promotion migration before an external CI DB write."""
+    from app.models import TFTModelMetadata
+
+    engine = get_engine()
+    TFTModelMetadata.__table__.create(bind=engine, checkfirst=True)
+    with engine.begin() as conn:
+        _ensure_tft_model_metadata_schema(
+            conn,
+            is_sqlite=engine.dialect.name == "sqlite",
+        )
+
+
 def _run_migrations(engine):
     """
     Run necessary database migrations for schema changes.
@@ -285,6 +312,15 @@ def _run_migrations(engine):
         except Exception:
             conn.rollback()
             logger.exception("Migration failed for weekly market-date sentiment schema")
+            raise
+
+        try:
+            _ensure_tft_model_metadata_schema(conn, is_sqlite)
+            conn.commit()
+            logger.info("Migration: Ensured TFT model promotion schema exists")
+        except Exception:
+            conn.rollback()
+            logger.exception("Migration failed for TFT model promotion schema")
             raise
 
 

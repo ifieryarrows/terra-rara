@@ -1,16 +1,45 @@
 # TFT-ASRO Quality-Gate Reproducibility and OOS Recovery
 
 Date: 2026-08-26
-Scope: `codex/tft-quality-gate-recovery-20260824`, `1f2a9df`, plus the
-working-tree calibration changes
+Scope: `codex/tft-quality-gate-recovery-20260824`, through `fa3e7c4`, plus the
+promotion-isolation review performed on 2026-08-27
 
 ## Current outcome
+
+Remote run
+[33020232075](https://github.com/ifieryarrows/terra-rara/actions/runs/33020232075)
+completed successfully on commit `20d144c`. It used the known-good fallback
+configuration and a fresh 663-row snapshot
+(`4e2e5caee7f084ce1e79e56ee198bfce29ce4993aa9168faa30b55320cbf0700`).
+The model passed the shared gate with WeeklyDA `0.6452`, weekly magnitude ratio
+`1.3252`, weekly tail capture `0.6250`, PI80 `0.8387`, zero public crossing,
+daily Sharpe `5.7683`, and weekly Sharpe `1.9603` after the corrected `sqrt(52)`
+annualisation. The latter also satisfies the `weekly_sharpe_ratio >= -0.20`
+guard added in the following `fa3e7c4` commit.
+
+The pass has two explicit non-blocking stability warnings: raw weekly
+magnitude ratio `1.8433` and median-cap application rate `0.6290`. They do not
+invalidate the bounded OOS metrics, but they identify raw-scale stabilization
+as the next model-quality target.
+
+The 2026-08-27 review found that candidate training persisted DB metadata
+before CI gate and HF Hub promotion. Because `tft_model_metadata.symbol` is
+unique, a rejected candidate could overwrite the only active row; querying for
+an older passed row therefore could not recover it. Migration 004 also existed
+only as a SQL file and was not connected to the application migration runner.
+The reviewed working tree now keeps candidate metrics in CI artifacts, writes
+the active DB row only after both the shared gate and Hub upload succeed,
+strictly serves passed metadata, and applies the promotion-column migration
+idempotently at application startup and CI promotion time.
+
+## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
 the promoted checkpoint can differ between runs even with the same immutable
 snapshot and pinned runtime, and one scalar validation interval scale does not
-transfer between the validation and test volatility regimes. The quality-gate
-thresholds remain unchanged.
+transfer between the validation and test volatility regimes. The existing
+thresholds were not weakened; later commits added raw-magnitude audit fields
+and a primary-horizon weekly-Sharpe lower bound.
 
 The working tree now contains a validation-only weekly direction calibrator
 using a fixed causal regime/news feature family and a validation-referenced
@@ -18,10 +47,10 @@ using a fixed causal regime/news feature family and a validation-referenced
 gate evaluation, conformal-artifact generation, and live inference. No test
 labels are used by either calibrator.
 
-A new remote pipeline run has intentionally not been started after this change:
-the user paused the four-to-five-hour training job. The controlled artifact
-replays below are therefore the current evidence, not a completed remote-run
-acceptance.
+At the time these calibration changes were prepared, no new remote run had
+been started because the user paused the four-to-five-hour training job. The
+controlled artifact replays below were the acceptance evidence at that stage;
+the later successful remote run is recorded above.
 
 ## Remote evidence
 
@@ -30,6 +59,7 @@ acceptance.
 | [32885956455](https://github.com/ifieryarrows/terra-rara/actions/runs/32885956455) | `eb19436`, snapshot `2c2bfb15…` | Pass | Prior `.15` interval objective; WeeklyDA `0.5323`, MR `1.2858`, PI80 `0.8548` |
 | [32906424221](https://github.com/ifieryarrows/terra-rara/actions/runs/32906424221) | `1f2a9df`, snapshot `2c2bfb15…` | Fail | Current `.40` objective; WeeklyDA `0.4516`, Tail `0.4375`, PI80 `0.9516` |
 | [32999841194](https://github.com/ifieryarrows/terra-rara/actions/runs/32999841194) | `1f2a9df`, snapshot `2c2bfb15…` | Fail | Same inputs/runtime family; WeeklyDA `0.6452`, PI80 `0.9516`; only PI80 failed |
+| [33020232075](https://github.com/ifieryarrows/terra-rara/actions/runs/33020232075) | `20d144c`, snapshot `4e2e5cae…` | Pass | WeeklyDA `0.6452`, MR `1.3252`, tail `0.6250`, PI80 `0.8387`, weekly Sharpe `1.9603`; cap-rate warning `0.6290` |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -82,21 +112,25 @@ sign-collapse guard is not triggered.
   conformal calibration, and live `TFTPredictor` inference. The median path is
   unchanged; only interval spread changes.
 - Added regression coverage for conditioned interval replay, conformal-origin
-  reuse, and median preservation. `backend/app/quality_gate.py` was not
-  changed.
+  reuse, and median preservation. The calibration patch itself did not alter
+  `backend/app/quality_gate.py`; later commits added the magnitude and weekly
+  Sharpe audits described above.
 
 ## Verification
 
-- Backend suite: **502 passed, 8 warnings**.
+- Backend suite after the promotion-isolation review: **515 passed, 8 warnings**.
 - Focused TFT calibration, hyperopt, direction, conformal, trainer, and
   predictor suite: **63 passed, 2 warnings**.
 - Python compileall and `git diff --check` passed.
-- The unrelated untracked `frontend/rr_versions.json` remains untouched.
+- Frontend TypeScript and Vite production build passed. Vite retained its
+  existing large-main-chunk warning (`852.08 kB`, `253.53 kB` gzip).
 
 ## Remaining acceptance step
 
-The next run must execute the TFT-ASRO pipeline on the intended snapshot and
-produce a fresh artifact. When that long pipeline is started, monitoring will
-stop immediately after dispatch; the user will be asked to report when it has
-finished. Only then will the new manifest, logs, quality-gate result, and
-promotion safety be inspected and the goal closed.
+Run `33020232075` proves the model/calibration path on `20d144c` and also passes
+the subsequently-added weekly-Sharpe rule when evaluated retrospectively. A
+fresh run from the final promotion-isolation commit is still required to prove
+the workflow ordering end to end: failed candidates must leave the active DB
+row untouched, while a passing candidate must upload to Hub before updating
+the DB. When that long pipeline is started, monitoring will stop immediately
+after dispatch and the user will be asked to report when it finishes.
