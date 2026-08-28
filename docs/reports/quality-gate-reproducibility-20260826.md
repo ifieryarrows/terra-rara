@@ -58,6 +58,41 @@ at `0.9032`. The gate correctly rejected the candidate before Hub/DB promotion,
 so the smooth sign-surrogate implementation was removed while retaining its
 diagnostic evidence. No threshold was changed.
 
+## Validation-ranked checkpoint stabilization
+
+The failed smooth-sign run retained three validation-ranked checkpoints, which
+made it possible to test checkpoint instability without retraining. Its
+selected minimum-loss checkpoint (`epoch=19`) failed the gate, while the second
+ranked checkpoint (`epoch=13`) passed in retrospective replay. The validation
+daily Sharpe ranked those two checkpoints in the opposite order, so adding a
+new directional selection threshold would have overfit the wrong signal.
+
+The adopted rule instead reduces single-epoch dependence: the two lowest
+`val_weekly_loss` checkpoints are uniformly averaged in weight space and saved
+as one normal Lightning checkpoint. Source ranking occurs before any test
+prediction, the same averaged artifact is used for validation calibration,
+untouched-test gate evaluation, conformal metadata, Hub upload, and live
+inference, and metadata records the source checkpoint names and scores. No
+ensemble-only serving path or gate change is introduced.
+
+Pinned local replay on both downloaded `200ce6d4…` artefact sets produced the
+following diagnostic comparison. Small absolute differences from Linux CI are
+possible on Windows; the `c93fc45` single checkpoint crossed the raw-magnitude
+`3.0` boundary locally (`3.1011` versus recorded CI `2.9573`), which itself
+demonstrates why additional margin is required.
+
+| Source | Candidate | Daily Sharpe | WeeklyDA | Weekly Sharpe | Raw weekly MR | Cap rate | PI80 | Current gate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `33120071397` | selected single checkpoint | -1.0652 | 0.6613 | 2.4120 | 2.1762 | 0.7419 | 0.9032 | Fail |
+| `33120071397` | validation top-2 weight soup | 1.0242 | 0.6613 | 2.4120 | 1.3151 | 0.4839 | 0.8387 | Pass |
+| `33117940637` | selected single checkpoint | 1.5404 | 0.6935 | 2.5823 | 3.1011 | 0.7097 | 0.8387 | Fail locally on raw MR |
+| `33117940637` | validation top-2 weight soup | 2.5848 | 0.6613 | 2.4068 | 2.5388 | 0.6935 | 0.8065 | Pass |
+
+These old test windows were consulted to decide whether to adopt the fixed
+top-2 rule, so they are retrospective evidence rather than a new unbiased
+acceptance set. Final acceptance therefore requires one fresh immutable
+snapshot after this implementation is frozen.
+
 ## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
@@ -146,7 +181,8 @@ sign-collapse guard is not triggered.
 
 ## Verification
 
-- Backend suite after rejecting the smooth sign-gradient experiment: **515 passed, 8 warnings**.
+- Backend suite after adding validation-ranked top-2 checkpoint stabilization:
+  **518 passed, 7 warnings**.
 - Focused TFT calibration, hyperopt, direction, conformal, trainer, and
   predictor suite: **63 passed, 2 warnings**.
 - Python compileall and `git diff --check` passed.
@@ -158,6 +194,8 @@ sign-collapse guard is not triggered.
 Run `33117940637` closes the promotion-order acceptance on `c93fc45`; run
 `33120071397` additionally proves that a rejected candidate leaves Hub and DB
 untouched. The active model therefore remains the passing `c93fc45` artifact.
-The next raw-scale experiment must be selected on validation evidence without
-altering the already-working bounded direction and interval path. No new long
-pipeline has been started.
+The top-2 soup is now the frozen raw-scale/checkpoint-stability hypothesis: it
+changes neither the loss nor the already-working bounded direction and interval
+path. The remaining acceptance step is one fresh immutable-snapshot run. It
+must pass the unchanged gate while moving raw magnitude and cap application
+away from their boundaries; no new long pipeline has been started.

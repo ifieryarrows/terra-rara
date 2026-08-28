@@ -177,6 +177,95 @@ REQUIRED_PROMOTABLE_METRICS = (
 WEEKLY_INTERVAL_CONDITIONING_FEATURE = "realized_vol_20d"
 
 
+def _validation_ranked_checkpoint_paths(
+    checkpoint_callback,
+    *,
+    max_count: int = 2,
+) -> list[tuple[Path, float]]:
+    """Return the best saved checkpoints using validation monitor scores only."""
+    ranked: list[tuple[Path, float]] = []
+    saved_scores = getattr(checkpoint_callback, "best_k_models", {}) or {}
+    for raw_path, raw_score in saved_scores.items():
+        try:
+            score = float(raw_score.detach().cpu())
+        except AttributeError:
+            score = float(raw_score)
+        ranked.append((Path(raw_path), score))
+
+    ranked.sort(key=lambda item: (item[1], str(item[0])))
+    if not ranked:
+        best_path = str(getattr(checkpoint_callback, "best_model_path", "") or "")
+        if best_path:
+            raw_score = getattr(
+                checkpoint_callback,
+                "best_model_score",
+                float("inf"),
+            )
+            try:
+                score = float(raw_score.detach().cpu())
+            except AttributeError:
+                score = float(raw_score)
+            ranked.append((Path(best_path), score))
+    return ranked[: max(1, int(max_count))]
+
+
+def _build_uniform_checkpoint_soup(
+    source_paths: list[Path],
+    destination: Path,
+) -> None:
+    """Average compatible model weights into one deployable Lightning checkpoint.
+
+    Source checkpoints have already been ranked by the validation monitor. Test
+    predictions and labels are unavailable here by design. Non-floating state
+    (for example counters) is retained from the best-ranked checkpoint.
+    """
+    if not source_paths:
+        raise ValueError("At least one checkpoint is required for promotion")
+
+    import shutil
+    import torch
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if len(source_paths) == 1:
+        shutil.copy2(source_paths[0], destination)
+        return
+
+    def _load(path: Path) -> dict:
+        try:
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except TypeError:  # torch<2.6 compatibility
+            return torch.load(path, map_location="cpu")
+
+    payloads = [_load(path) for path in source_paths]
+    state_dicts = [payload.get("state_dict") for payload in payloads]
+    if any(not isinstance(state, dict) for state in state_dicts):
+        raise RuntimeError("Lightning checkpoint is missing a state_dict")
+
+    reference_keys = tuple(state_dicts[0])
+    for path, state in zip(source_paths[1:], state_dicts[1:]):
+        if tuple(state) != reference_keys:
+            raise RuntimeError(f"Checkpoint state keys differ: {path}")
+
+    averaged_payload = payloads[0]
+    averaged_state = averaged_payload["state_dict"]
+    for key in reference_keys:
+        tensors = [state[key] for state in state_dicts]
+        reference = tensors[0]
+        if any(tensor.shape != reference.shape for tensor in tensors[1:]):
+            raise RuntimeError(f"Checkpoint tensor shape differs for {key}")
+        if torch.is_floating_point(reference) or torch.is_complex(reference):
+            accumulator_dtype = (
+                torch.complex128 if torch.is_complex(reference) else torch.float64
+            )
+            averaged_state[key] = torch.stack(
+                [tensor.to(dtype=accumulator_dtype) for tensor in tensors]
+            ).mean(dim=0).to(dtype=reference.dtype)
+        else:
+            averaged_state[key] = reference
+
+    torch.save(averaged_payload, destination)
+
+
 def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig) -> None:
     if pred_np.ndim != 3:
         raise RuntimeError(
@@ -652,16 +741,50 @@ def train_tft_model(
     logger.info("Starting TFT-ASRO training ...")
     trainer.fit(model, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
-    # ---- 6. Best checkpoint ----
+    # ---- 6. Validation-ranked checkpoint promotion ----
+    # A single best epoch remained sensitive to small training-trajectory
+    # changes on an immutable snapshot. For weekly ASRO, average the two best
+    # validation checkpoints into one deployable checkpoint. This keeps live
+    # inference/calibration/gate evaluation aligned while reducing dependence
+    # on one noisy epoch; test labels are not available during this selection.
+    final_path = Path(cfg.training.best_model_path)
     best_path = trainer.checkpoint_callback.best_model_path
+    checkpoint_selection = {
+        "fit_split": "validation",
+        "monitor": monitor_metric,
+        "method": "best_validation_checkpoint",
+        "source_count": 0,
+        "source_checkpoints": [],
+        "source_scores": [],
+        "test_labels_used": False,
+    }
     if best_path:
-        final_path = Path(cfg.training.best_model_path)
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.copy2(best_path, final_path)
-        logger.info("Best model saved to %s (val_loss=%.6f)", final_path, trainer.checkpoint_callback.best_model_score)
-    else:
-        final_path = Path(cfg.training.best_model_path)
+        source_count = (
+            2 if use_asro and cfg.forecast.primary_horizon_days == 5 else 1
+        )
+        ranked_checkpoints = _validation_ranked_checkpoint_paths(
+            trainer.checkpoint_callback,
+            max_count=source_count,
+        )
+        source_paths = [path for path, _score in ranked_checkpoints]
+        _build_uniform_checkpoint_soup(source_paths, final_path)
+        if len(source_paths) > 1:
+            checkpoint_selection["method"] = "uniform_top2_weight_soup"
+        checkpoint_selection.update(
+            {
+                "source_count": len(source_paths),
+                "source_checkpoints": [path.name for path in source_paths],
+                "source_scores": [score for _path, score in ranked_checkpoints],
+            }
+        )
+        best_path = str(final_path)
+        logger.info(
+            "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s",
+            checkpoint_selection["method"],
+            checkpoint_selection["source_checkpoints"],
+            checkpoint_selection["source_scores"],
+            final_path,
+        )
 
     # Calibration, gate evaluation, and live inference must all use the same
     # promoted checkpoint.  ``trainer.fit`` leaves ``model`` at the last
@@ -674,10 +797,14 @@ def train_tft_model(
             from deep_learning.models.tft_copper import load_tft_model
 
             evaluation_model = load_tft_model(str(best_path))
-            logger.info("Using promoted best checkpoint for calibration and gate evaluation: %s", best_path)
+            logger.info(
+                "Using promoted checkpoint for calibration and gate evaluation: %s",
+                best_path,
+            )
         except Exception as exc:
             logger.warning(
-                "Could not reload best checkpoint for evaluation; using in-memory model: %s",
+                "Could not reload promoted checkpoint for evaluation; "
+                "using in-memory model: %s",
                 exc,
             )
 
@@ -972,6 +1099,7 @@ def train_tft_model(
         "direction_calibration": direction_calibration,
         "weekly_direction_model": weekly_direction_model,
         "interval_calibration": interval_calibration,
+        "checkpoint_selection": checkpoint_selection,
         "experiment": {
             "seed": cfg.training.seed,
             "deterministic": True,
