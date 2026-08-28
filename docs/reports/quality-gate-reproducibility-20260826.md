@@ -90,8 +90,40 @@ demonstrates why additional margin is required.
 
 These old test windows were consulted to decide whether to adopt the fixed
 top-2 rule, so they are retrospective evidence rather than a new unbiased
-acceptance set. Final acceptance therefore requires one fresh immutable
-snapshot after this implementation is frozen.
+acceptance set. This led to the fresh-snapshot run described next.
+
+## Fresh-snapshot cap-margin follow-up
+
+Run
+[33188247918](https://github.com/ifieryarrows/terra-rara/actions/runs/33188247918)
+tested the frozen top-2 rule on commit `95882a3` and a fresh 665-row snapshot
+(`3d302527…`). The intended artifact was produced from validation epochs 17 and
+18 before test evaluation. Direction and interval quality were strong:
+WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, PI80 `0.8548`, and
+daily Sharpe `2.5572`. The run missed only bounded weekly magnitude at `1.3866`
+versus the unchanged `1.35` upper bound. Hub and DB promotion were skipped, so
+the active passing `c93fc45` model remained unchanged.
+
+Replaying all three saved checkpoints plus the top-2 and top-3 soups produced
+the same bounded magnitude `1.3866`. The common value equals the cap-to-test
+median ratio: the train-only `1.25x` cap was `0.02951`, slightly too high for
+the fresh test regime regardless of checkpoint choice. The next single-variable
+change therefore reduces only the train-derived absolute-median multiplier to
+`1.20`; loss weights, checkpoint ranking, direction/interval calibration, and
+gate thresholds remain unchanged.
+
+The recorded top-2 artifacts were replayed with the cap multiplied by `0.96`
+(`1.20 / 1.25`) before changing the production default:
+
+| Source | WeeklyMR | Raw weekly MR | Cap rate | PI80 | Daily Sharpe | WeeklyDA | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `33120071397` | 1.2832 | 1.3151 | 0.5161 | 0.8387 | 1.0242 | 0.6613 | Pass |
+| `33117940637` | 1.2832 | 2.5388 | 0.6935 | 0.7903 | 2.5848 | 0.6613 | Pass |
+| `33188247918` | 1.3311 | 2.7163 | 0.7419 | 0.8548 | 2.0378 | 0.6774 | Pass |
+
+These replayed test windows now inform the cap choice and are not an unbiased
+final acceptance set. One new fresh immutable snapshot is still required after
+the `1.20` default is frozen.
 
 ## Earlier diagnosis
 
@@ -123,6 +155,7 @@ the later successful remote run is recorded above.
 | [33020232075](https://github.com/ifieryarrows/terra-rara/actions/runs/33020232075) | `20d144c`, snapshot `4e2e5cae…` | Pass | WeeklyDA `0.6452`, MR `1.3252`, tail `0.6250`, PI80 `0.8387`, weekly Sharpe `1.9603`; cap-rate warning `0.6290` |
 | [33117940637](https://github.com/ifieryarrows/terra-rara/actions/runs/33117940637) | `c93fc45`, snapshot `200ce6d4…` | Pass | Promotion order proven; WeeklyDA `0.6774`, MR `1.3367`, tail `0.6875`, PI80 `0.8387`, weekly Sharpe `2.3982`; raw MR `2.9573`, cap rate `0.7097` |
 | [33120071397](https://github.com/ifieryarrows/terra-rara/actions/runs/33120071397) | `9e4006f`, snapshot `200ce6d4…` | Fail | Smooth sign surrogate lowered raw MR to `2.1567`, but PI80 rose to `0.9032` and daily Sharpe fell to `-1.0652`; Hub/DB promotion blocked |
+| [33188247918](https://github.com/ifieryarrows/terra-rara/actions/runs/33188247918) | `95882a3`, snapshot `3d302527…` | Fail | Top-2 soup preserved WeeklyDA `0.6774`, weekly Sharpe `2.4988`, PI80 `0.8548`, and daily Sharpe `2.5572`; only bounded MR `1.3866` failed; promotion blocked |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -191,11 +224,11 @@ sign-collapse guard is not triggered.
 
 ## Remaining acceptance step
 
-Run `33117940637` closes the promotion-order acceptance on `c93fc45`; run
-`33120071397` additionally proves that a rejected candidate leaves Hub and DB
-untouched. The active model therefore remains the passing `c93fc45` artifact.
-The top-2 soup is now the frozen raw-scale/checkpoint-stability hypothesis: it
-changes neither the loss nor the already-working bounded direction and interval
-path. The remaining acceptance step is one fresh immutable-snapshot run. It
-must pass the unchanged gate while moving raw magnitude and cap application
-away from their boundaries; no new long pipeline has been started.
+Runs `33120071397` and `33188247918` prove that rejected candidates leave Hub
+and DB untouched; the active model therefore remains the passing `c93fc45`
+artifact. The top-2 soup remains fixed, and the train-derived absolute-median
+cap multiplier is reduced from `1.25` to `1.20` as the only new model variable.
+The remaining acceptance step is one fresh immutable-snapshot run after this
+default is committed. It must pass the unchanged gate while preserving
+WeeklyDA, PI80, tail capture, daily/weekly Sharpe, and raw-scale safety. No new
+long pipeline has been started.

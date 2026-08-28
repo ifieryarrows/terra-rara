@@ -183,6 +183,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifact_dir", type=Path)
     parser.add_argument("--include-soups", action="store_true")
+    parser.add_argument("--candidate", help="Evaluate only one checkpoint filename")
+    parser.add_argument(
+        "--weekly-median-cap-factor",
+        type=float,
+        default=1.0,
+        help="Diagnostic multiplier applied to the recorded weekly median cap",
+    )
     args = parser.parse_args()
 
     artifact_dir = args.artifact_dir.resolve()
@@ -196,11 +203,17 @@ def main() -> None:
 
     frame = pd.read_pickle(snapshot_path)
     cfg = get_tft_config()
+    effective_weekly_cap = (
+        float(run_meta["config"]["weekly_median_cap"])
+        * args.weekly_median_cap_factor
+    )
+    if effective_weekly_cap <= 0.0:
+        raise ValueError("The effective weekly median cap must be positive")
     cfg = replace(
         cfg,
         weekly_loss=replace(
             cfg.weekly_loss,
-            weekly_median_cap=float(run_meta["config"]["weekly_median_cap"]),
+            weekly_median_cap=effective_weekly_cap,
         ),
     )
     training_ds, validation_ds, test_ds = build_datasets(
@@ -287,6 +300,15 @@ def main() -> None:
                 )
             )
 
+    if args.candidate:
+        checkpoint_specs = [
+            spec for spec in checkpoint_specs if spec[0].name == args.candidate
+        ]
+        if not checkpoint_specs:
+            raise FileNotFoundError(
+                f"Checkpoint candidate not found: {args.candidate}"
+            )
+
     rows = []
     for checkpoint, loss in checkpoint_specs:
         model = load_tft_model(str(checkpoint))
@@ -343,6 +365,8 @@ def main() -> None:
             {
                 "checkpoint": checkpoint.name,
                 "checkpoint_loss": loss,
+                "weekly_median_cap_factor": args.weekly_median_cap_factor,
+                "effective_weekly_median_cap": effective_weekly_cap,
                 "validation_rank": rank,
                 "validation_gate_passed": validation_passed,
                 "validation_gate_reasons": validation_reasons,

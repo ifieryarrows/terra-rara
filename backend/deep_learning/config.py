@@ -166,10 +166,12 @@ class WeeklyLossConfig:
     # and validation-only calibration remain unchanged.
     lambda_interval: float = 0.40
     # Keep the structural median cap close to the train-window weekly scale.
-    # The previous 2.0x setting allowed a fixed OOS replay to saturate at a
-    # cap more than twice its held-out median move; 1.25x remains derived
-    # solely from training targets while preventing that high-amplitude mode.
-    weekly_median_cap_abs_median_multiple: float = 1.25
+    # The previous 1.25x setting left the fresh immutable-snapshot replay at
+    # WeeklyMR=1.3866 even after checkpoint averaging. A fixed 1.20x remains
+    # derived solely from training targets and replayed all three retained
+    # top-2 artifacts inside the unchanged gate without changing direction or
+    # interval calibration.
+    weekly_median_cap_abs_median_multiple: float = 1.20
     weekly_median_cap_mean_abs_multiple: float = 1.6
     weekly_median_cap_std_multiple: float = 1.2
     weekly_median_cap: Optional[float] = None
