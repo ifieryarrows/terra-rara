@@ -601,6 +601,8 @@ class TFTModelMetadata(Base):
     metrics_json = Column(Text, nullable=True)
     checkpoint_path = Column(String(500), nullable=True)
     trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    # NULL = legacy row persisted before this column was added (treat as unknown).
+    quality_gate_passed = Column(Boolean, nullable=True)
 
     def __repr__(self):
         return f"<TFTModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"

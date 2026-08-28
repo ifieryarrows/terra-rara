@@ -1,0 +1,16 @@
+# Reproducibility constraints for the TFT training and deterministic-gate
+# workflows. These versions match the last successful Aug 18 run's core ML
+# stack; the general requirements file remains intentionally broad for the
+# rest of the application.
+torch==2.13.0
+lightning==2.6.5
+pytorch-forecasting==1.8.0
+optuna==4.9.0
+optuna-integration==4.9.0
+numpy==2.4.6
+pandas==3.0.5
+scikit-learn==1.9.0
+scipy==1.17.1
+torchmetrics==1.9.0
+transformers==5.15.0
+huggingface-hub==1.28.0

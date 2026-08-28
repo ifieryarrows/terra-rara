@@ -2,7 +2,10 @@
 
 from sqlalchemy import create_engine, text
 
-from app.db import _ensure_weekly_sentiment_schema
+from app.db import (
+    _ensure_tft_model_metadata_schema,
+    _ensure_weekly_sentiment_schema,
+)
 
 
 def _sqlite_columns(conn, table_name: str) -> set[str]:
@@ -66,4 +69,29 @@ def test_weekly_sentiment_migration_adds_columns_to_old_sqlite_schema():
         )
         assert "ix_daily_sentiments_v2_market_date" in _sqlite_indexes(
             conn, "daily_sentiments_v2"
+        )
+
+
+def test_tft_promotion_migration_adds_gate_column_idempotently():
+    engine = create_engine("sqlite:///:memory:")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE tft_model_metadata (
+                    id INTEGER PRIMARY KEY,
+                    symbol VARCHAR(20) NOT NULL UNIQUE,
+                    metrics_json TEXT,
+                    trained_at TIMESTAMP NOT NULL
+                )
+                """
+            )
+        )
+
+        _ensure_tft_model_metadata_schema(conn, is_sqlite=True)
+        _ensure_tft_model_metadata_schema(conn, is_sqlite=True)
+
+        assert "quality_gate_passed" in _sqlite_columns(
+            conn, "tft_model_metadata"
         )

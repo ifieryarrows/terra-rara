@@ -11,15 +11,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
+import os
 import sys
 import warnings
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 warnings.filterwarnings(
     "ignore",
@@ -37,6 +41,7 @@ from deep_learning.config import (
     get_tft_config,
 )
 from deep_learning.logging_utils import configure_cli_logging, suppress_lightning_noise
+from deep_learning.training.reproducibility import configure_tft_reproducibility
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
@@ -75,10 +80,19 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "lambda_bias": 0.19,
     "lambda_directional": 0.25,
     "lambda_saturation": 0.35,
-    "lambda_positive_rate": 0.15,
-    "lambda_interval": 0.15,
+    "lambda_positive_rate": 0.75,
+    "lambda_interval": 0.40,
     "batch_size": 32,
 }
+
+
+def _data_snapshot_id(master_df: pd.DataFrame) -> str:
+    """Return a stable identifier for the exact frame used by hyperopt."""
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in master_df.columns).encode())
+    digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
+    digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
+    return digest.hexdigest()
 
 
 def _trial_state_counts(study) -> dict[str, int]:
@@ -115,6 +129,69 @@ def _finite_completed_trial_count(study) -> int:
         and trial.value is not None
         and np.isfinite(float(trial.value))
     )
+
+
+def _select_preflight_safe_trial(study, fold_diagnostics: list[dict]):
+    """Select the lowest-objective trial that passes validation preflight.
+
+    The objective is continuous and can rank a directionally collapsed trial
+    above a usable one. Selecting that trial and rejecting it only later in
+    ``trainer.py`` wastes the search and silently falls back to a different
+    configuration. This validation-only constraint does not change the
+    deployment gate or use OOS labels.
+    """
+    diagnostics_by_trial = {
+        int(d["trial"]): d
+        for d in fold_diagnostics
+        if d.get("state") == "COMPLETE" and d.get("trial") is not None
+    }
+    finite_trials = [
+        trial
+        for trial in getattr(study, "trials", [])
+        if getattr(trial.state, "name", None) == "COMPLETE"
+        and trial.value is not None
+        and np.isfinite(float(trial.value))
+    ]
+    candidates = []
+    for trial in finite_trials:
+        preflight = best_trial_preflight_check(
+            diagnostics_by_trial.get(int(trial.number), {})
+        )
+        candidates.append(
+            {
+                "trial": int(trial.number),
+                "value": float(trial.value),
+                "preflight_passed": bool(preflight["preflight_passed"]),
+                "passed": int(preflight["passed"]),
+                "total": int(preflight["total"]),
+            }
+        )
+
+    eligible = [
+        trial
+        for trial, candidate in zip(finite_trials, candidates)
+        if candidate["preflight_passed"]
+    ]
+    if eligible:
+        selected = min(eligible, key=lambda trial: float(trial.value))
+        mode = "lowest_objective_preflight_pass"
+    elif finite_trials:
+        selected = min(finite_trials, key=lambda trial: float(trial.value))
+        mode = "lowest_objective_no_preflight_pass"
+    else:
+        selected = None
+        mode = "no_finite_completed_trials"
+
+    return selected, {
+        "mode": mode,
+        "selected_trial": None if selected is None else int(selected.number),
+        "preflight_eligible_trials": [
+            candidate["trial"]
+            for candidate in candidates
+            if candidate["preflight_passed"]
+        ],
+        "candidates": candidates,
+    }
 
 
 def _weekly_pinball_loss(
@@ -305,9 +382,9 @@ def _build_fold_scale_diagnostics(study) -> list[dict]:
 def _build_result_payload(study) -> dict:
     """Build the persisted hyperopt artifact without assuming a best trial exists."""
     trial_state_counts = _trial_state_counts(study)
-    best = _best_finite_completed_trial(study)
     prune_reasons, fold_diagnostics = _build_prune_diagnostics(study)
     fold_scale_diagnostics = _build_fold_scale_diagnostics(study)
+    best, selection = _select_preflight_safe_trial(study, fold_diagnostics)
     structural_report = compute_structural_invalidity_report(fold_diagnostics)
     distribution_summary = compute_trial_distribution_summary(fold_diagnostics)
 
@@ -324,6 +401,7 @@ def _build_result_payload(study) -> dict:
             "fold_scale_diagnostics": fold_scale_diagnostics,
             "structural_invalidity_report": structural_report,
             "trial_distribution_summary": distribution_summary,
+            "best_trial_selection": selection,
             "best_trial_preflight": None,
             "message": (
                 "No Optuna trials completed with a finite objective value; "
@@ -354,6 +432,7 @@ def _build_result_payload(study) -> dict:
         "fold_scale_diagnostics": fold_scale_diagnostics,
         "structural_invalidity_report": structural_report,
         "trial_distribution_summary": distribution_summary,
+        "best_trial_selection": selection,
         "best_trial_preflight": preflight,
     }
 
@@ -425,8 +504,11 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
             [0.15, 0.20, 0.25],
         ),
         lambda_saturation=0.35,
-        lambda_positive_rate=0.15,
-        lambda_interval=0.15,
+        lambda_positive_rate=trial.suggest_categorical(
+            "lambda_positive_rate",
+            [0.15, 0.35, 0.50, 0.75],
+        ),
+        lambda_interval=0.40,
     )
 
     training_cfg = TrainingConfig(
@@ -539,6 +621,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_scale_diagnostics: list[dict] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
+        # Keep each trial/fold independent of RNG state left by a previous
+        # fold or a pruned trial. This makes the controlled search reproducible
+        # even when the pruning path changes.
+        pl.seed_everything(
+            int(base_cfg.training.seed + trial.number * 1000 + fold_idx),
+            workers=True,
+        )
         # ---- setup ----
         try:
             fold_train_dl, fold_val_dl, _ = create_dataloaders(
@@ -619,6 +708,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             enable_model_summary=False,
             logger=False,
             log_every_n_steps=log_steps,
+            deterministic=True,
         )
 
         # ---- train ----
@@ -1094,6 +1184,10 @@ def run_hyperopt(
     Returns:
         Dict with best params, best value, and study summary.
     """
+    # Hyperopt runs in a separate job/process from final training.  Apply the
+    # same CPU/thread and algorithm contract before importing Lightning so
+    # validation trajectories and the selected artifact are replayable.
+    configure_tft_reproducibility()
     import optuna
     suppress_lightning_noise()
     try:
@@ -1108,17 +1202,30 @@ def run_hyperopt(
         base_cfg = get_tft_config()
 
     init_db()
-    pl.seed_everything(base_cfg.training.seed)
+    pl.seed_everything(base_cfg.training.seed, workers=True)
 
     logger.info("Building feature store for hyperopt ...")
     with SessionLocal() as session:
         master_data = build_tft_dataframe(session, base_cfg)
 
+    snapshot_id = _data_snapshot_id(master_data[0])
+    run_suffix = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime(
+        "%Y%m%d%H%M%S"
+    )
+    effective_study_name = f"{study_name}_{snapshot_id[:12]}_{run_suffix}"
+    logger.info(
+        "Optuna reproducibility contract | snapshot=%s study=%s seed=%d",
+        snapshot_id,
+        effective_study_name,
+        base_cfg.training.seed,
+    )
+
     study = optuna.create_study(
-        study_name=study_name,
+        study_name=effective_study_name,
         direction="minimize",
         storage=storage,
-        load_if_exists=True,
+        load_if_exists=False,
+        sampler=optuna.samplers.TPESampler(seed=base_cfg.training.seed),
         pruner=optuna.pruners.MedianPruner(
             n_startup_trials=max(5, n_trials // 3),
             n_warmup_steps=1,
@@ -1136,6 +1243,8 @@ def run_hyperopt(
     results_path = Path(base_cfg.training.best_model_path).parent / "optuna_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
     result = _build_result_payload(study)
+    result["study_name"] = effective_study_name
+    result["data_snapshot_id"] = snapshot_id
     results_path.write_text(json.dumps(result, indent=2, allow_nan=False))
     logger.info(
         "Optuna structural invalidity report: %s",

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import torch
 from dataclasses import replace
 import json
@@ -10,6 +11,7 @@ from deep_learning.calibration.conformal import (
     select_bucket_adjustment,
 )
 from deep_learning.config import get_tft_config
+from deep_learning.training.metrics import fit_weekly_interval_scale
 from deep_learning.training.trainer import _write_conformal_calibration_artifact
 
 
@@ -132,6 +134,47 @@ def test_conformal_artifact_applies_width_floor_and_reports_calibrated_coverage(
     assert data["global_adjustment"] >= data["width_floor_adjustment"]
     assert data["calibrated_validation_pi80_coverage"] >= data["validation_pi80_coverage"]
     assert data["validation_pi80_width_ratio"] < data["target_min_pi80_width_ratio"]
+
+
+def test_conformal_artifact_reuses_validation_origin_interval_conditioning(tmp_path):
+    cfg = _cfg_for_tmp_model(tmp_path)
+    weekly_actual = torch.linspace(-0.05, 0.05, 40, dtype=torch.float32)
+    actual = weekly_actual.reshape(-1, 1).repeat(1, 5) / 5.0
+    pred = torch.zeros((40, 5, 7), dtype=torch.float32)
+    pred[..., 1] = -0.004
+    pred[..., 3] = 0.0
+    pred[..., 5] = 0.004
+    conditioning = np.linspace(0.5, 1.5, len(actual))
+    interval_calibration = fit_weekly_interval_scale(
+        actual.numpy(),
+        pred.numpy(),
+        horizon=5,
+        conditioning_values=conditioning,
+        conditioning_feature="realized_vol_20d",
+    )
+    feature_frame = pd.DataFrame(
+        {
+            "time_idx": np.arange(41),
+            "realized_vol_20d": np.concatenate(([0.5], conditioning)),
+        }
+    )
+
+    path = _write_conformal_calibration_artifact(
+        cfg=cfg,
+        model=_DummyModel(pred),
+        val_dl=[(None, (actual, None))],
+        feature_frame=feature_frame,
+        validation_start_time=0,
+        validation_end_time=40,
+        weekly_interval_calibration=interval_calibration,
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    assert data["weekly_interval_conditioning_enabled"] is True
+    assert data["weekly_interval_conditioning_feature"] == "realized_vol_20d"
+    assert data["weekly_interval_conditioning_reference"] == interval_calibration[
+        "weekly_interval_conditioning_reference"
+    ]
 
 
 def test_interval_coverage_improves_after_symmetric_widening_without_median_change():

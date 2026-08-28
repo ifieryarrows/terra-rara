@@ -147,7 +147,7 @@ def test_positive_rate_penalty_prefers_balanced_weekly_signs_for_mixed_actuals()
         lambda_interval=0.0,
     )
 
-    assert loss.loss(pred_balanced, actual).item() == pytest.approx(0.0, abs=1e-6)
+    assert loss.loss(pred_balanced, actual).item() > 0.0
     assert loss.loss(pred_balanced, actual) < loss.loss(pred_all_positive, actual)
     assert loss.loss(pred_balanced, actual) < loss.loss(pred_all_negative, actual)
 

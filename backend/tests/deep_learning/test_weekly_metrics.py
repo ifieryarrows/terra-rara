@@ -41,6 +41,146 @@ def test_validation_interval_scale_targets_central_weekly_coverage():
     assert np.allclose(scaled[..., 3], pred[..., 3])
 
 
+def test_validation_interval_scale_matches_production_order_with_median_cap():
+    weekly_actual = np.linspace(-0.040, 0.040, 100)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((100, 5, 7), dtype=float)
+    pred[..., 0] = -0.20
+    pred[..., 1] = -0.10
+    pred[..., 2] = -0.05
+    pred[..., 4] = 0.05
+    pred[..., 5] = 0.10
+    pred[..., 6] = 0.20
+    pred[..., 3] = np.sign(weekly_actual)[:, None] * 0.20
+
+    calibration = fit_weekly_interval_scale(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=0.08,
+    )
+    metrics = evaluate_quantile_predictions(
+        actual,
+        pred,
+        horizon=5,
+        weekly_median_cap=0.08,
+        weekly_interval_scale=calibration["weekly_interval_scale"],
+    )
+
+    assert metrics["weekly_pi80_coverage"] == pytest.approx(
+        calibration["validation_pi80_coverage"]
+    )
+
+
+def test_validation_interval_scale_uses_finite_sample_floor_and_proper_score():
+    weekly_actual = np.linspace(-0.018, 0.018, 95)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((95, 5, 7), dtype=float)
+    pred[..., 0] = -0.20
+    pred[..., 1] = -0.10
+    pred[..., 2] = -0.05
+    pred[..., 4] = 0.05
+    pred[..., 5] = 0.10
+    pred[..., 6] = 0.20
+
+    calibration = fit_weekly_interval_scale(actual, pred, horizon=5)
+
+    assert calibration["interval_selection_method"] == (
+        "validation_interval_score_with_one_observation_floor"
+    )
+    assert calibration["validation_pi80_coverage"] >= 0.80 - 1.0 / 95 - 1e-12
+    assert calibration["validation_pi80_interval_score"] > 0.0
+
+
+def test_conditioned_interval_scale_changes_width_without_moving_median():
+    pred = np.zeros((3, 5, 7), dtype=float)
+    pred[..., 1] = -0.01
+    pred[..., 3] = 0.02
+    pred[..., 5] = 0.03
+
+    scaled = apply_weekly_interval_scale_np(
+        pred,
+        1.0,
+        conditioning_values=np.array([0.5, 1.0, 2.0]),
+        conditioning_reference=1.0,
+        conditioning_power=1.0,
+    )
+
+    assert np.allclose(scaled[..., 3], pred[..., 3])
+    assert np.allclose(scaled[:, 0, 1], np.array([0.005, -0.01, -0.04]))
+    assert np.allclose(scaled[:, 0, 5], np.array([0.025, 0.03, 0.04]))
+
+
+def test_conditioned_interval_calibration_replays_with_validation_metadata():
+    weekly_actual = np.linspace(-0.018, 0.018, 95)
+    actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
+    pred = np.zeros((95, 5, 7), dtype=float)
+    pred[..., 1] = -0.10
+    pred[..., 3] = 0.0
+    pred[..., 5] = 0.10
+    conditioning = np.linspace(0.5, 1.5, len(actual))
+
+    calibration = fit_weekly_interval_scale(
+        actual,
+        pred,
+        horizon=5,
+        conditioning_values=conditioning,
+        conditioning_feature="realized_vol_20d",
+    )
+    scaled = apply_weekly_interval_scale_np(
+        pred,
+        calibration["weekly_interval_scale"],
+        conditioning_values=conditioning,
+        conditioning_reference=calibration["weekly_interval_conditioning_reference"],
+        conditioning_power=calibration["weekly_interval_conditioning_power"],
+        conditioning_min_factor=calibration["weekly_interval_conditioning_min_factor"],
+        conditioning_max_factor=calibration["weekly_interval_conditioning_max_factor"],
+        conditioning_min_scale=calibration["weekly_interval_conditioning_min_scale"],
+        conditioning_max_scale=calibration["weekly_interval_conditioning_max_scale"],
+    )
+    metrics = evaluate_quantile_predictions(
+        actual,
+        pred,
+        horizon=5,
+        weekly_interval_scale=calibration["weekly_interval_scale"],
+        weekly_interval_conditioning_values=conditioning,
+        weekly_interval_conditioning_reference=calibration[
+            "weekly_interval_conditioning_reference"
+        ],
+        weekly_interval_conditioning_power=calibration["weekly_interval_conditioning_power"],
+        weekly_interval_conditioning_min_factor=calibration[
+            "weekly_interval_conditioning_min_factor"
+        ],
+        weekly_interval_conditioning_max_factor=calibration[
+            "weekly_interval_conditioning_max_factor"
+        ],
+        weekly_interval_conditioning_min_scale=calibration[
+            "weekly_interval_conditioning_min_scale"
+        ],
+        weekly_interval_conditioning_max_scale=calibration[
+            "weekly_interval_conditioning_max_scale"
+        ],
+    )
+
+    assert calibration["weekly_interval_conditioning_enabled"] is True
+    assert calibration["weekly_interval_conditioning_feature"] == "realized_vol_20d"
+    assert calibration["weekly_interval_conditioning_reference"] == pytest.approx(1.0)
+    assert calibration["weekly_interval_conditioning_power_selection"] == (
+        "validation_interval_score_grid"
+    )
+    assert calibration["weekly_interval_conditioning_power"] in {
+        0.25,
+        0.35,
+        0.50,
+        0.75,
+        1.00,
+    }
+    replay_metrics = evaluate_quantile_predictions(actual, scaled, horizon=5)
+    assert metrics["weekly_pi80_coverage"] == pytest.approx(
+        replay_metrics["weekly_pi80_coverage"]
+    )
+
+
 def test_cumulative_horizon_sums_first_five_steps():
     y = np.array([[0.01, 0.02, -0.01, 0.00, 0.03, 0.99]])
     assert np.isclose(cumulative_horizon(y, horizon=5)[0], 0.05)
@@ -467,3 +607,21 @@ def test_weekly_metrics_preserve_raw_crossing_and_promote_sorted_quantiles():
     assert metrics["weekly_raw_quantile_crossing_rate"] > 0.0
     assert metrics["weekly_sorted_quantile_crossing_rate"] == 0.0
     assert metrics["weekly_pi80_width"] >= 0.0
+
+def test_weekly_annualisation_factor_uses_52():
+    import numpy as np
+    from deep_learning.training.metrics import compute_weekly_metrics, sharpe_ratio
+
+    rng = np.random.default_rng(42)
+    actual = rng.normal(0.005, 0.02, size=(30, 5))
+    pred = np.zeros((30, 5, 7))
+    # Consistent positive predictions
+    pred[..., 3] = 0.01
+
+    weekly_metrics = compute_weekly_metrics(actual, pred, horizon=5)
+    weekly_actual = actual.sum(axis=1)
+    strategy_returns = np.sign(pred[:, :5, 3].sum(axis=1)) * weekly_actual
+
+    expected_sharpe_52 = sharpe_ratio(strategy_returns, annualisation=52.0)
+    assert np.isclose(weekly_metrics["weekly_sharpe_ratio"], expected_sharpe_52, rtol=1e-5)
+

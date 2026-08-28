@@ -90,7 +90,31 @@ def _weekly_saturation_loss(
     near_band = torch.clamp(cap - near_threshold, min=eps)
     near_cap_excess = torch.relu(raw_abs - near_threshold) / near_band
     above_cap_excess = torch.relu(raw_abs - cap) / cap.clamp_min(eps)
-    return 0.10 * near_cap_excess.pow(2).mean() + 2.0 * above_cap_excess.pow(2).mean()
+
+    # The raw model can start far outside the train-derived cap.  A quadratic
+    # barrier (and even a Huber tail) lets a single early batch dominate the
+    # objective: the fixed replay reached saturation losses above 170, after
+    # which tiny CPU floating-point differences selected different training
+    # trajectories.  Keep a strong penalty near the cap, but use a smooth
+    # logarithmic tail so the penalty stays informative without growing
+    # linearly with an implausibly large raw forecast.
+    def _robust_squared(excess: torch.Tensor) -> torch.Tensor:
+        return torch.log1p(excess).pow(2)
+
+    # The logarithmic tail keeps pathological first-epoch forecasts stable, but
+    # it became too permissive once a candidate was only moderately above the
+    # cap: the fresh Linux gate finished at raw MR=3.0397 with 72.6% of weekly
+    # medians still relying on the cap.  Add a bounded barrier whose gradient is
+    # strongest for ordinary 1-3x cap violations and whose value cannot exceed
+    # one per sample.  This creates deployment margin without letting extreme
+    # initialization outliers dominate the objective again.
+    moderate_violation_barrier = torch.tanh(above_cap_excess).pow(2)
+
+    return (
+        0.10 * _robust_squared(near_cap_excess).mean()
+        + 2.0 * _robust_squared(above_cap_excess).mean()
+        + moderate_violation_barrier.mean()
+    )
 
 
 def _weekly_scale_losses(
@@ -124,13 +148,31 @@ def _weekly_scale_losses(
             + 4.0 * structural_explosion.pow(2)
         )
 
-    magnitude_loss = _bounded_scale_loss(magnitude_ratio) + 0.5 * _bounded_scale_loss(
-        mean_magnitude_ratio
-    )
+    # The median ratio remains available as the production diagnostic, but a
+    # batch median is an order statistic: its active element can change after
+    # an otherwise negligible floating-point perturbation.  Feeding that
+    # gradient into the optimizer made otherwise identical CPU runs follow
+    # different paths.  Use the smooth mean ratio for optimization while
+    # preserving the median ratio used by hyperopt and the quality gate.
+    magnitude_loss = _bounded_scale_loss(mean_magnitude_ratio)
 
     pred_std = pred_weekly_median.std(unbiased=False) + eps
     actual_std = actual_weekly.std(unbiased=False) + eps
-    dispersion_loss = torch.abs(torch.log(pred_std / actual_std))
+    # A batch can temporarily collapse to almost one weekly value.  The raw
+    # log-ratio then reaches ~15 and its 1/pred_std derivative overwhelms the
+    # rest of the objective, making cross-run CPU round-off choose a different
+    # basin.  Keep the dispersion signal in a broad, pre-specified [0.25, 4]
+    # ratio band and use a smooth-L1 penalty; this still discourages material
+    # under/over-dispersion without allowing one pathological batch to steer
+    # the whole epoch.
+    dispersion_log_error = torch.log(
+        (pred_std / actual_std).clamp(min=0.25, max=4.0)
+    )
+    dispersion_loss = F.smooth_l1_loss(
+        dispersion_log_error,
+        torch.zeros_like(dispersion_log_error),
+        beta=0.5,
+    )
 
     model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
     zero_mae = actual_abs_mean
@@ -140,10 +182,9 @@ def _weekly_scale_losses(
         (pred_weekly_median.median() - actual_weekly.median())
         / actual_abs_median
     )
-    bias_loss = (
-        1.50 * torch.abs(mean_gap)
-        + 1.00 * torch.abs(median_gap)
-    )
+    # As above, keep the median gap as a diagnostic but avoid its
+    # order-statistic gradient in the train objective.
+    bias_loss = 1.50 * torch.abs(mean_gap)
 
     return {
         "dispersion_loss": dispersion_loss,
@@ -161,25 +202,54 @@ def _weekly_positive_rate_loss(
     temperature: float = 0.01,
     lower_bound: float = 0.20,
     upper_bound: float = 0.75,
+    tolerance: float = 0.20,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Mildly penalize collapsed weekly sign distributions without exact matching."""
-    del actual_weekly
+    """Keep predicted weekly signs aligned with the observed batch signs.
+
+    The detached sign targets provide a strong gradient against all-positive
+    collapse. The additional bounds are a tolerant band around the observed
+    rate rather than an exact-match objective, so the term remains robust to
+    small batch-composition noise.
+    """
     temp = max(float(temperature), eps)
-    pred_positive_rate = torch.sigmoid(pred_weekly_median / temp).mean()
-    lower = torch.as_tensor(
-        float(lower_bound),
+    pred_positive_probability = torch.sigmoid(pred_weekly_median / temp)
+    pred_positive_rate = pred_positive_probability.mean()
+    actual_positive_rate = (actual_weekly.detach() > 0).to(
+        device=pred_weekly_median.device,
+        dtype=pred_weekly_median.dtype,
+    ).mean()
+    actual_sign = (actual_weekly.detach() > 0).to(
         device=pred_weekly_median.device,
         dtype=pred_weekly_median.dtype,
     )
-    upper = torch.as_tensor(
-        float(upper_bound),
-        device=pred_weekly_median.device,
-        dtype=pred_weekly_median.dtype,
+    positive_fraction = actual_positive_rate.clamp(min=eps, max=1.0 - eps)
+    class_weights = torch.where(
+        actual_sign > 0.5,
+        0.5 / positive_fraction,
+        0.5 / (1.0 - positive_fraction),
     )
-    return torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
+    sign_loss = F.binary_cross_entropy(
+        pred_positive_probability,
+        actual_sign,
+        weight=class_weights,
+    )
+    band = max(float(tolerance), eps)
+    lower = torch.clamp(
+        actual_positive_rate - band,
+        min=float(lower_bound),
+        max=float(upper_bound),
+    )
+    upper = torch.clamp(
+        actual_positive_rate + band,
+        min=float(lower_bound),
+        max=float(upper_bound),
+    )
+    upper = torch.maximum(upper, lower)
+    rate_band_loss = torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
         pred_positive_rate - upper
     ).pow(2)
+    return sign_loss + rate_band_loss
 
 
 def _directional_sign_loss(
@@ -206,7 +276,7 @@ def _weekly_interval_undercoverage_loss(
     target_width_ratio: float = 0.70,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Penalize weekly PI80 misses and intervals that are too narrow for actual scale."""
+    """Penalize weekly PI80 misses and deviation from the target interval scale."""
     q = list(quantiles)
     q10_idx = q.index(0.10) if 0.10 in q else 1
     q90_idx = q.index(0.90) if 0.90 in q else len(q) - 2
@@ -222,15 +292,13 @@ def _weekly_interval_undercoverage_loss(
 
     actual_std = actual_weekly.std(unbiased=False).clamp_min(eps)
     width_ratio = width.mean() / (2.56 * actual_std + eps)
-    under_width_loss = torch.relu(
-        torch.as_tensor(
-            float(target_width_ratio),
-            device=pred_weekly_quantiles.device,
-            dtype=pred_weekly_quantiles.dtype,
-        )
-        - width_ratio
-    ).pow(2)
-    return miss_loss + under_width_loss
+    target_width = torch.as_tensor(
+        float(target_width_ratio),
+        device=pred_weekly_quantiles.device,
+        dtype=pred_weekly_quantiles.dtype,
+    )
+    width_scale_loss = (width_ratio - target_width).pow(2)
+    return miss_loss + width_scale_loss
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +416,7 @@ try:
             lambda_naive: float = 0.45,
             lambda_bias: float = 0.19,
             lambda_saturation: float = 0.35,
-            lambda_positive_rate: float = 0.15,
+            lambda_positive_rate: float = 0.75,
             lambda_interval: float = 0.15,
             weekly_median_cap: Optional[float] = None,
             sharpe_eps: float = 1e-8,

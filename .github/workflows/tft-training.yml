@@ -28,10 +28,37 @@ on:
                 required: false
                 default: "30"
                 type: string
+            data_as_of:
+                description: "Optional UTC ISO-8601 feature-store cutoff for replayable validation"
+                required: false
+                default: ""
+                type: string
+            feature_snapshot_run_id:
+                description: "Optional prior validation run whose immutable feature snapshot should be replayed"
+                required: false
+                default: ""
+                type: string
+            expected_data_snapshot_sha:
+                description: "Optional SHA-256 of the immutable TFT feature snapshot"
+                required: false
+                default: ""
+                type: string
+            optuna_results_run_id:
+                description: "Optional prior TFT run whose validation-selected Optuna artifact should be replayed when hyperopt is skipped"
+                required: false
+                default: ""
+                type: string
 
 env:
     PYTHONPATH: backend
     MODEL_DIR: /tmp/models
+    PYTHONHASHSEED: "42"
+    CUBLAS_WORKSPACE_CONFIG: ":4096:8"
+    OMP_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+    TFT_DATA_AS_OF: ${{ github.event.inputs.data_as_of || '' }}
+    TFT_FEATURE_SNAPSHOT_PATH: /tmp/models/tft/feature_snapshot.pkl
+    TFT_EXPECTED_DATA_SNAPSHOT_SHA: ${{ github.event.inputs.expected_data_snapshot_sha || '' }}
 
 jobs:
     # ─────────────────────────────────────────────────────────────────────────
@@ -50,19 +77,46 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v5
               with:
-                  python-version: "3.11"
+                  python-version: "3.11.15"
                   cache: "pip"
 
             - name: Install dependencies
               working-directory: backend
               run: |
                   python -m pip install --upgrade pip
-                  pip install -r requirements.txt
+                  pip install -r requirements.txt -c constraints-tft.txt
 
             - name: Create model directory
               run: mkdir -p /tmp/models/tft/checkpoints
 
+            - name: Download immutable feature snapshot
+              if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: tft-deterministic-validation-${{ github.event.inputs.feature_snapshot_run_id }}
+                  path: /tmp/tft-feature-snapshot/
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  run-id: ${{ github.event.inputs.feature_snapshot_run_id }}
+
+            - name: Verify immutable feature snapshot
+              if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+              run: |
+                  test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl
+                  test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl.json
+                  cp /tmp/tft-feature-snapshot/feature_snapshot.pkl /tmp/models/tft/feature_snapshot.pkl
+                  cp /tmp/tft-feature-snapshot/feature_snapshot.pkl.json /tmp/models/tft/feature_snapshot.pkl.json
+
+            - name: Record hyperopt environment
+              working-directory: backend
+              run: python -m pip freeze | sort > /tmp/models/tft/hyperopt_environment.txt
+
             - name: Backfill FinBERT embeddings
+              # A supplied immutable feature snapshot already contains the
+              # exact embedding frame for replay. Backfilling the live DB in
+              # that mode is unnecessary and can mutate the source between
+              # hyperopt and training.
+              if: ${{ github.event.inputs.feature_snapshot_run_id == '' }}
               working-directory: backend
               run: |
                   python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 8
@@ -86,7 +140,9 @@ jobs:
                   # trainer.py reads optuna_results.json from tft/ root via
                   # _apply_optuna_results(). The train job restores it there.
                   name: optuna-results-${{ github.run_id }}
-                  path: /tmp/models/tft/optuna_results.json
+                  path: |
+                      /tmp/models/tft/optuna_results.json
+                      /tmp/models/tft/hyperopt_environment.txt
                   retention-days: 7
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -111,17 +167,39 @@ jobs:
             - name: Set up Python
               uses: actions/setup-python@v5
               with:
-                  python-version: "3.11"
+                  python-version: "3.11.15"
                   cache: "pip"
 
             - name: Install dependencies
               working-directory: backend
               run: |
                   python -m pip install --upgrade pip
-                  pip install -r requirements.txt
+                  pip install -r requirements.txt -c constraints-tft.txt
 
             - name: Create model directory
               run: mkdir -p /tmp/models/tft/checkpoints
+
+            - name: Download immutable feature snapshot
+              if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: tft-deterministic-validation-${{ github.event.inputs.feature_snapshot_run_id }}
+                  path: /tmp/tft-feature-snapshot/
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  run-id: ${{ github.event.inputs.feature_snapshot_run_id }}
+
+            - name: Verify immutable feature snapshot
+              if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
+              run: |
+                  test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl
+                  test -f /tmp/tft-feature-snapshot/feature_snapshot.pkl.json
+                  cp /tmp/tft-feature-snapshot/feature_snapshot.pkl /tmp/models/tft/feature_snapshot.pkl
+                  cp /tmp/tft-feature-snapshot/feature_snapshot.pkl.json /tmp/models/tft/feature_snapshot.pkl.json
+
+            - name: Record training environment
+              working-directory: backend
+              run: python -m pip freeze | sort > /tmp/models/tft/environment.txt
 
             - name: Download Optuna results artifact
               # Only attempt download when hyperopt actually ran and succeeded.
@@ -132,6 +210,19 @@ jobs:
                   # Restores optuna_results.json to tft/ root so that
                   # _apply_optuna_results() in trainer.py picks it up.
                   path: /tmp/models/tft/
+
+            - name: Download replayed Optuna results artifact
+              # A normal train replay may reuse a validation-selected artifact
+              # without rerunning the expensive search. This remains opt-in
+              # and auditable through the explicit source run id.
+              if: ${{ needs.hyperopt.result == 'skipped' && github.event.inputs.run_hyperopt == 'false' && github.event.inputs.optuna_results_run_id != '' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: optuna-results-${{ github.event.inputs.optuna_results_run_id }}
+                  path: /tmp/models/tft/
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  run-id: ${{ github.event.inputs.optuna_results_run_id }}
 
             - name: Train TFT-ASRO model
               working-directory: backend
@@ -174,9 +265,11 @@ jobs:
               working-directory: backend
               run: |
                   python - <<'PY'
+                  import json
                   from pathlib import Path
                   from deep_learning.config import get_tft_config
                   from deep_learning.models.hub import upload_tft_artifacts
+                  from deep_learning.training.trainer import persist_promoted_tft_metadata
 
                   cfg = get_tft_config()
                   tft_dir = Path(cfg.training.best_model_path).parent
@@ -185,10 +278,20 @@ jobs:
                       repo_id=cfg.training.hf_model_repo,
                       commit_message="TFT-ASRO checkpoint (quality gate passed)",
                   )
-                  raise SystemExit(0 if ok else 1)
+                  if not ok:
+                      raise SystemExit(1)
+
+                  metadata = json.loads(
+                      (tft_dir / "tft_metadata.json").read_text(encoding="utf-8")
+                  )
+                  persist_promoted_tft_metadata(
+                      cfg.feature_store.target_symbol,
+                      metadata,
+                  )
                   PY
               env:
                   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
             - name: Display training results
               if: ${{ always() }}
@@ -216,7 +319,10 @@ jobs:
     # ─────────────────────────────────────────────────────────────────────────
     backtest:
         needs: [train]
-        if: ${{ needs.train.result == 'success' }}
+        # train itself depends on an optionally skipped hyperopt job. Include
+        # always() so that transitive skip propagation cannot suppress this
+        # successful-training follow-up.
+        if: ${{ always() && needs.train.result == 'success' }}
         uses: ./.github/workflows/backtest.yml
         secrets: inherit
         with:

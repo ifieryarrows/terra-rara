@@ -4,12 +4,14 @@ import inspect
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 
 import deep_learning.training.hyperopt as hyperopt_module
 from deep_learning.training.hyperopt import (
     KNOWN_GOOD_TRIAL_PARAMS,
     MIN_COMPLETED_TRIALS,
     _build_result_payload,
+    _data_snapshot_id,
     _enqueue_known_good_trial,
     _finite_completed_trial_count,
     _fold_scale_diagnostic,
@@ -17,6 +19,16 @@ from deep_learning.training.hyperopt import (
     create_trial_config,
 )
 from deep_learning.config import get_tft_config
+
+
+def test_data_snapshot_id_is_stable_and_changes_with_frame_content():
+    frame = pd.DataFrame({"target": [0.1, -0.2]})
+    same_frame = frame.copy()
+    changed_frame = frame.copy()
+    changed_frame.loc[1, "target"] = -0.3
+
+    assert _data_snapshot_id(frame) == _data_snapshot_id(same_frame)
+    assert _data_snapshot_id(frame) != _data_snapshot_id(changed_frame)
 
 
 def _trial(number: int, state: str, value=None, params=None, user_attrs=None):
@@ -102,6 +114,43 @@ def test_build_result_payload_selects_best_finite_completed_trial():
     assert result["best_value"] == 0.75
     assert result["best_params"] == {"hidden_size": 48}
     assert result["trial_state_counts"] == {"complete": 3}
+
+
+def test_build_result_payload_prefers_preflight_safe_trial_over_lower_objective():
+    healthy = {
+        "avg_quantile_crossing_rate": 0.0,
+        "avg_weekly_magnitude_ratio": 1.0,
+        "avg_weekly_pred_positive_rate": 0.55,
+        "avg_weekly_actual_positive_rate": 0.57,
+        "avg_weekly_pi80_coverage": 0.80,
+        "avg_weekly_pi80_width_ratio": 1.0,
+        "avg_weekly_mae_vs_naive_zero": 1.0,
+        "avg_variance_ratio": 1.0,
+    }
+    result = _build_result_payload(
+        _study(
+            _trial(
+                0,
+                "COMPLETE",
+                0.10,
+                {"lambda_positive_rate": 0.50},
+                {**healthy, "avg_directional_accuracy": 0.49},
+            ),
+            _trial(
+                1,
+                "COMPLETE",
+                0.50,
+                {"lambda_positive_rate": 0.75},
+                {**healthy, "avg_directional_accuracy": 0.52},
+            ),
+        )
+    )
+
+    assert result["best_trial"] == 1
+    assert result["best_params"] == {"lambda_positive_rate": 0.75}
+    assert result["best_trial_preflight"]["preflight_passed"] is True
+    assert result["best_trial_selection"]["mode"] == "lowest_objective_preflight_pass"
+    assert result["best_trial_selection"]["preflight_eligible_trials"] == [1]
 
 
 def test_build_result_payload_marks_structural_failure_as_artifact_status():
@@ -315,6 +364,17 @@ def test_startup_protection_requires_min_finite_completed_trials():
     assert not _is_startup_protected(unprotected_trial)
 
 
+def test_shared_reproducibility_contract_sets_deterministic_cpu():
+    import torch
+
+    from deep_learning.training.reproducibility import configure_tft_reproducibility
+
+    configure_tft_reproducibility()
+
+    assert torch.get_num_threads() == 1
+    assert torch.are_deterministic_algorithms_enabled()
+
+
 def test_enqueue_known_good_trial_only_for_empty_study():
     class FakeStudy:
         def __init__(self, trials=None):
@@ -341,8 +401,8 @@ def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.45
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.19
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.25
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.15
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_interval"] == 0.15
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.75
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_interval"] == 0.40
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -392,13 +452,14 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_dispersion == 0.20
+    assert cfg.weekly_loss.lambda_t1_directional == 0.20
     assert cfg.weekly_loss.weekly_median_cap is None
-    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 2.0
+    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 1.20
     assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
     assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
     assert cfg.weekly_loss.lambda_saturation == 0.35
-    assert cfg.weekly_loss.lambda_positive_rate == 0.15
-    assert cfg.weekly_loss.lambda_interval == 0.15
+    assert cfg.weekly_loss.lambda_positive_rate in {0.15, 0.35, 0.50, 0.75}
+    assert cfg.weekly_loss.lambda_interval == 0.40
 
     assert trial.float_ranges == {}
     assert trial.categorical_choices == {
@@ -406,8 +467,8 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
         "lambda_naive": [0.35, 0.40, 0.45],
         "lambda_bias": [0.14, 0.17, 0.19],
         "lambda_directional": [0.15, 0.20, 0.25],
+        "lambda_positive_rate": [0.15, 0.35, 0.50, 0.75],
     }
-    assert "lambda_positive_rate" not in trial.categorical_choices
     assert "lambda_interval" not in trial.categorical_choices
 
 

@@ -19,7 +19,10 @@ BACKEND_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.quality_gate import evaluate_quality_gate, evaluate_quality_gate_warnings
+from app.quality_gate import (
+    evaluate_quality_gate_metric_warnings,
+    evaluate_quality_gate_metrics,
+)
 
 META_PATH = pathlib.Path(os.environ.get("TFT_METADATA_PATH", "/tmp/models/tft/tft_metadata.json"))
 
@@ -39,7 +42,6 @@ def main() -> int:
     median_gap_max = metrics.get("median_sort_gap_max")
     pi80_width = metrics.get("pi80_width")
     pi96_width = metrics.get("pi96_width")
-    mae_vs_naive_zero = metrics.get("mae_vs_naive_zero")
     weekly_da = metrics.get("weekly_directional_accuracy")
     weekly_mr = metrics.get("weekly_magnitude_ratio")
     weekly_tail = metrics.get("weekly_tail_capture_rate")
@@ -53,7 +55,10 @@ def main() -> int:
     weekly_sorted_qcross = metrics.get("weekly_sorted_quantile_crossing_rate")
     weekly_gap = metrics.get("weekly_median_sort_gap_max")
     weekly_samples = metrics.get("weekly_sample_count")
-    weekly_mae_vs_naive_zero = metrics.get("weekly_mae_vs_naive_zero")
+    weekly_pred_positive_rate = metrics.get("weekly_pred_positive_rate")
+    weekly_actual_positive_rate = metrics.get("weekly_actual_positive_rate")
+    weekly_raw_magnitude_ratio = metrics.get("weekly_raw_magnitude_ratio")
+    weekly_median_bound_applied_rate = metrics.get("weekly_median_bound_applied_rate")
 
     print(
         "Quality gate metrics: "
@@ -67,37 +72,13 @@ def main() -> int:
         f"WeeklyTail={weekly_tail} WeeklyPI80={weekly_pi80} "
         f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
         f"WeeklyQCross={weekly_qcross} WeeklySortedQCross={weekly_sorted_qcross} "
+        f"WeeklyPredPositive={weekly_pred_positive_rate} "
+        f"WeeklyActualPositive={weekly_actual_positive_rate} "
         f"WeeklyN={weekly_samples}"
     )
 
-    passed, reasons = evaluate_quality_gate(
-        da,
-        sharpe,
-        vr,
-        tail_capture=tail_capture,
-        quantile_crossing_rate=quantile_crossing,
-        median_sort_gap_max=median_gap_max,
-        pi80_width=pi80_width,
-        pi96_width=pi96_width,
-        weekly_directional_accuracy=weekly_da,
-        weekly_magnitude_ratio=weekly_mr,
-        weekly_tail_capture_rate=weekly_tail,
-        weekly_pi80_coverage=weekly_pi80,
-        weekly_pi80_width=weekly_pi80_width,
-        weekly_pi80_width_ratio=weekly_pi80_width_ratio,
-        weekly_pi96_coverage=weekly_pi96,
-        weekly_pi96_width=weekly_pi96_width,
-        weekly_pi96_width_ratio=weekly_pi96_width_ratio,
-        weekly_quantile_crossing_rate=weekly_qcross,
-        weekly_sorted_quantile_crossing_rate=weekly_sorted_qcross,
-        weekly_median_sort_gap_max=weekly_gap,
-        weekly_sample_count=weekly_samples,
-    )
-    warnings = evaluate_quality_gate_warnings(
-        vr=vr,
-        mae_vs_naive_zero=mae_vs_naive_zero,
-        weekly_mae_vs_naive_zero=weekly_mae_vs_naive_zero,
-    )
+    passed, reasons = evaluate_quality_gate_metrics(metrics)
+    warnings = evaluate_quality_gate_metric_warnings(metrics)
     for warning in warnings:
         print(f"QUALITY GATE WARNING: {warning}")
 

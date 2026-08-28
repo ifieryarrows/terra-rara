@@ -10,60 +10,54 @@ def _weekly_positive_rate_exploded(diagnostic: dict) -> bool:
     )
 
 
+def _structural_checks(diagnostics: dict) -> dict[str, bool]:
+    """Evaluate the shared trial-level structural preflight contract."""
+    return {
+        "public_crossing_le_0_001": diagnostics.get(
+            "avg_quantile_crossing_rate", 1.0
+        ) <= 0.001,
+        "weekly_magnitude_le_3_0": diagnostics.get(
+            "avg_weekly_magnitude_ratio", 999
+        ) <= 3.0,
+        "weekly_pi80_width_ratio_le_4_0": diagnostics.get(
+            "avg_weekly_pi80_width_ratio", 999
+        ) <= 4.0,
+        "weekly_positive_rate_not_exploded": not _weekly_positive_rate_exploded(
+            diagnostics
+        ),
+        "weekly_pi80_coverage_ge_0_15": diagnostics.get(
+            "avg_weekly_pi80_coverage", 0.0
+        ) >= 0.15,
+        "weekly_mae_vs_naive_zero_le_3_0": diagnostics.get(
+            "avg_weekly_mae_vs_naive_zero", 999
+        ) <= 3.0,
+        "variance_ratio_le_3_0": diagnostics.get(
+            "avg_variance_ratio", 999
+        ) <= 3.0,
+        "directional_accuracy_ge_0_50": diagnostics.get(
+            "avg_directional_accuracy", 0
+        ) >= 0.50,
+    }
+
+
 def compute_structural_invalidity_report(fold_diagnostics: list) -> dict:
     completed = [d for d in fold_diagnostics if d["state"] == "COMPLETE"]
     n = len(completed)
     if n == 0:
         return {"completed_trials": 0, "verdict": "NO_COMPLETE_TRIALS"}
 
+    trial_checks = [_structural_checks(d) for d in completed]
     checks = {
-        "public_crossing_le_0_001": sum(
-            1
-            for d in completed
-            if d.get("avg_quantile_crossing_rate", 1.0) <= 0.001
-        ),
-        "weekly_magnitude_le_3_0": sum(
-            1 for d in completed if d.get("avg_weekly_magnitude_ratio", 999) <= 3.0
-        ),
-        "weekly_pi80_width_ratio_le_4_0": sum(
-            1 for d in completed if d.get("avg_weekly_pi80_width_ratio", 999) <= 4.0
-        ),
-        "weekly_positive_rate_not_exploded": sum(
-            1 for d in completed if not _weekly_positive_rate_exploded(d)
-        ),
-        "weekly_pi80_coverage_ge_0_15": sum(
-            1 for d in completed if d.get("avg_weekly_pi80_coverage", 0.0) >= 0.15
-        ),
-        "weekly_mae_vs_naive_zero_le_3_0": sum(
-            1 for d in completed if d.get("avg_weekly_mae_vs_naive_zero", 999) <= 3.0
-        ),
-        "variance_ratio_le_3_0": sum(
-            1 for d in completed if d.get("avg_variance_ratio", 999) <= 3.0
-        ),
-        "directional_accuracy_ge_0_50": sum(
-            1 for d in completed if d.get("avg_directional_accuracy", 0) >= 0.50
-        ),
+        name: sum(1 for result in trial_checks if result[name])
+        for name in trial_checks[0]
     }
-
-    all_pass_count = sum(
-        1
-        for d in completed
-        if (
-            d.get("avg_quantile_crossing_rate", 1.0) <= 0.001
-            and d.get("avg_weekly_magnitude_ratio", 999) <= 3.0
-            and d.get("avg_weekly_pi80_width_ratio", 999) <= 4.0
-            and not _weekly_positive_rate_exploded(d)
-            and d.get("avg_weekly_pi80_coverage", 0.0) >= 0.15
-            and d.get("avg_weekly_mae_vs_naive_zero", 999) <= 3.0
-            and d.get("avg_variance_ratio", 999) <= 3.0
-        )
-    )
+    all_pass_count = sum(1 for result in trial_checks if all(result.values()))
 
     verdict = (
         "STRUCTURAL_FAILURE"
         if all_pass_count == 0
         else "PARTIAL_STRUCTURAL_FAILURE"
-        if all_pass_count < n // 2
+        if all_pass_count < n / 2
         else "ACCEPTABLE"
     )
 
@@ -126,39 +120,7 @@ def compute_trial_distribution_summary(fold_diagnostics: list) -> dict:
 
 
 def best_trial_preflight_check(best_trial_diagnostics: dict) -> dict:
-    checks = {
-        "public_crossing_le_0_001": best_trial_diagnostics.get(
-            "avg_quantile_crossing_rate", 1.0
-        )
-        <= 0.001,
-        "weekly_magnitude_le_3_0": best_trial_diagnostics.get(
-            "avg_weekly_magnitude_ratio", 999
-        )
-        <= 3.0,
-        "weekly_pi80_width_le_4_0": best_trial_diagnostics.get(
-            "avg_weekly_pi80_width_ratio", 999
-        )
-        <= 4.0,
-        "weekly_positive_rate_not_exploded": not _weekly_positive_rate_exploded(
-            best_trial_diagnostics
-        ),
-        "weekly_pi80_coverage_ge_0_15": best_trial_diagnostics.get(
-            "avg_weekly_pi80_coverage", 0.0
-        )
-        >= 0.15,
-        "weekly_mae_vs_naive_zero_le_3_0": best_trial_diagnostics.get(
-            "avg_weekly_mae_vs_naive_zero", 999
-        )
-        <= 3.0,
-        "variance_ratio_le_3_0": best_trial_diagnostics.get(
-            "avg_variance_ratio", 999
-        )
-        <= 3.0,
-        "directional_accuracy_ge_0_50": best_trial_diagnostics.get(
-            "avg_directional_accuracy", 0
-        )
-        >= 0.50,
-    }
+    checks = _structural_checks(best_trial_diagnostics)
 
     passed = sum(checks.values())
     total = len(checks)

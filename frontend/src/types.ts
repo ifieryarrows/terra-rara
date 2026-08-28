@@ -209,6 +209,7 @@ export interface ConsensusSignal {
 export interface QualityGateResponse {
   passed: boolean;
   reasons: string[];
+  warnings: string[];
   metrics: Record<string, number>;
 }
 

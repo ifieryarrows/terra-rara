@@ -98,10 +98,38 @@ class WeeklyLossComponentLogger(pl.Callback):
         if not stats.get("n_batches"):
             return
 
+        # ``val_loss`` is the framework's quantile metric in the current
+        # PyTorch Forecasting stack.  It does not include the weekly ASRO
+        # components recorded above, so monitoring it can select a checkpoint
+        # that is well calibrated per day but directionally collapsed over
+        # five days.  Publish both the complete validation objective and a
+        # gate-oriented selection metric before the later callbacks run. The
+        # extra positive-rate term is validation-only and targets the existing
+        # sign-collapse guard without changing any gate threshold.
+        pl_module.log(
+            "val_weekly_loss",
+            float(stats["total_loss_mean"]),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+        pl_module.log(
+            "val_weekly_gate_loss",
+            float(stats["total_loss_mean"] + stats["positive_rate_loss_mean"]),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+
         epoch = getattr(trainer, "current_epoch", 0)
         logger.info(
             "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f t1_dir=%.6f "
-            "dispersion=%.6f magnitude=%.6f naive=%.6f directional=%.6f "
+            "dispersion=%.6f magnitude=%.6f naive=%.6f bias=%.6f "
+            "saturation=%.6f positive_rate=%.6f interval=%.6f directional=%.6f "
             "total=%.6f dominant=%s",
             epoch,
             stats["weekly_q_loss_mean"],
@@ -110,6 +138,10 @@ class WeeklyLossComponentLogger(pl.Callback):
             stats["dispersion_loss_mean"],
             stats.get("magnitude_loss_mean", 0.0),
             stats.get("naive_loss_mean", 0.0),
+            stats.get("bias_loss_mean", 0.0),
+            stats.get("saturation_loss_mean", 0.0),
+            stats.get("positive_rate_loss_mean", 0.0),
+            stats.get("interval_loss_mean", 0.0),
             stats["directional_loss_mean"],
             stats["total_loss_mean"],
             stats["dominant_component"],

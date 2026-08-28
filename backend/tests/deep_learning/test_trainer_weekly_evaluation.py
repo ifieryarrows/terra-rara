@@ -4,11 +4,13 @@ from dataclasses import replace
 
 from deep_learning.config import get_tft_config
 from deep_learning.training import metrics as metrics_module
+from deep_learning.training.reproducibility import configure_tft_reproducibility
 from deep_learning.training.trainer import (
     _compute_test_metrics_from_quantiles,
     _log_weekly_alignment_sample,
     _predict_quantiles_to_np,
     _require_promotable_metrics,
+    _runtime_environment_metadata,
 )
 
 
@@ -137,3 +139,20 @@ def test_quantile_prediction_shape_guard_rejects_invalid_outputs(bad_prediction,
 def test_required_promotable_metrics_guard_blocks_incomplete_metadata():
     with pytest.raises(RuntimeError, match="Required TFT promotion metrics missing"):
         _require_promotable_metrics({"directional_accuracy": 0.55})
+
+
+def test_runtime_environment_metadata_records_reproducibility_state():
+    configure_tft_reproducibility()
+    metadata = _runtime_environment_metadata()
+
+    assert "packages" in metadata
+    assert set(metadata["process_controls"]) == {
+        "PYTHONHASHSEED",
+        "CUBLAS_WORKSPACE_CONFIG",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "TOKENIZERS_PARALLELISM",
+    }
+    assert metadata["torch_runtime"] is not None
+    assert metadata["torch_runtime"]["num_threads"] >= 1
+    assert metadata["torch_runtime"]["deterministic_algorithms"] is True

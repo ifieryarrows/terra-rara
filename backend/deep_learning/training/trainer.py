@@ -16,8 +16,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import logging
+import os
+import platform
+import sys
 import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -25,6 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 from deep_learning.contract import (
@@ -46,6 +51,77 @@ warnings.filterwarnings(
 
 logger = logging.getLogger(__name__)
 
+
+def _build_data_snapshot_metadata(master_df: pd.DataFrame) -> dict:
+    """Describe the exact feature frame used for a train/test split."""
+    from deep_learning.data.feature_store import data_snapshot_sha256
+
+    return {
+        "sha256": data_snapshot_sha256(master_df),
+        "rows": int(len(master_df)),
+        "columns": int(master_df.shape[1]),
+        "first_index": str(master_df.index.min()) if len(master_df) else None,
+        "last_index": str(master_df.index.max()) if len(master_df) else None,
+        "tft_data_as_of": os.environ.get("TFT_DATA_AS_OF") or None,
+    }
+
+
+def _runtime_environment_metadata() -> dict:
+    """Capture versions that can materially change a TFT run."""
+    package_names = (
+        "torch",
+        "lightning",
+        "pytorch-forecasting",
+        "optuna",
+        "optuna-integration",
+        "numpy",
+        "pandas",
+        "scikit-learn",
+    )
+    packages = {}
+    for package_name in package_names:
+        try:
+            packages[package_name] = importlib.metadata.version(package_name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[package_name] = None
+    try:
+        import torch
+
+        torch_runtime = {
+            "num_threads": int(torch.get_num_threads()),
+            "num_interop_threads": int(torch.get_num_interop_threads()),
+            "deterministic_algorithms": bool(
+                torch.are_deterministic_algorithms_enabled()
+            ),
+        }
+    except Exception:
+        torch_runtime = None
+    return {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "github_sha": os.environ.get("GITHUB_SHA") or None,
+        "runner_image": os.environ.get("ImageOS") or os.environ.get("RUNNER_OS") or None,
+        "packages": packages,
+        "process_controls": {
+            key: os.environ.get(key)
+            for key in (
+                "PYTHONHASHSEED",
+                "CUBLAS_WORKSPACE_CONFIG",
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "TOKENIZERS_PARALLELISM",
+            )
+        },
+        "torch_runtime": torch_runtime,
+    }
+
+
+def _configure_tft_reproducibility() -> None:
+    """Keep the historical private entry point for callers and tests."""
+    from deep_learning.training.reproducibility import configure_tft_reproducibility
+
+    configure_tft_reproducibility()
+
 KNOWN_GOOD_CONFIG = {
     "max_encoder_length": 50,
     "hidden_size": 48,
@@ -66,8 +142,8 @@ KNOWN_GOOD_CONFIG = {
     "lambda_bias": 0.19,
     "lambda_directional": 0.25,
     "lambda_saturation": 0.35,
-    "lambda_positive_rate": 0.15,
-    "lambda_interval": 0.15,
+    "lambda_positive_rate": 0.75,
+    "lambda_interval": 0.40,
     "batch_size": 32,
 }
 
@@ -76,6 +152,7 @@ CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
     "lambda_naive",
     "lambda_bias",
     "lambda_directional",
+    "lambda_positive_rate",
 )
 
 DETERMINISTIC_WEEKLY_CONFIG = dict(KNOWN_GOOD_CONFIG)
@@ -91,9 +168,102 @@ REQUIRED_PROMOTABLE_METRICS = (
     "weekly_sample_count",
     "weekly_quantile_crossing_rate",
     "weekly_sorted_quantile_crossing_rate",
+    "weekly_pred_positive_rate",
+    "weekly_actual_positive_rate",
     "quantile_crossing_rate",
     "sorted_quantile_crossing_rate",
 )
+
+WEEKLY_INTERVAL_CONDITIONING_FEATURE = "realized_vol_20d"
+
+
+def _validation_ranked_checkpoint_paths(
+    checkpoint_callback,
+    *,
+    max_count: int = 2,
+) -> list[tuple[Path, float]]:
+    """Return the best saved checkpoints using validation monitor scores only."""
+    ranked: list[tuple[Path, float]] = []
+    saved_scores = getattr(checkpoint_callback, "best_k_models", {}) or {}
+    for raw_path, raw_score in saved_scores.items():
+        try:
+            score = float(raw_score.detach().cpu())
+        except AttributeError:
+            score = float(raw_score)
+        ranked.append((Path(raw_path), score))
+
+    ranked.sort(key=lambda item: (item[1], str(item[0])))
+    if not ranked:
+        best_path = str(getattr(checkpoint_callback, "best_model_path", "") or "")
+        if best_path:
+            raw_score = getattr(
+                checkpoint_callback,
+                "best_model_score",
+                float("inf"),
+            )
+            try:
+                score = float(raw_score.detach().cpu())
+            except AttributeError:
+                score = float(raw_score)
+            ranked.append((Path(best_path), score))
+    return ranked[: max(1, int(max_count))]
+
+
+def _build_uniform_checkpoint_soup(
+    source_paths: list[Path],
+    destination: Path,
+) -> None:
+    """Average compatible model weights into one deployable Lightning checkpoint.
+
+    Source checkpoints have already been ranked by the validation monitor. Test
+    predictions and labels are unavailable here by design. Non-floating state
+    (for example counters) is retained from the best-ranked checkpoint.
+    """
+    if not source_paths:
+        raise ValueError("At least one checkpoint is required for promotion")
+
+    import shutil
+    import torch
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if len(source_paths) == 1:
+        shutil.copy2(source_paths[0], destination)
+        return
+
+    def _load(path: Path) -> dict:
+        try:
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except TypeError:  # torch<2.6 compatibility
+            return torch.load(path, map_location="cpu")
+
+    payloads = [_load(path) for path in source_paths]
+    state_dicts = [payload.get("state_dict") for payload in payloads]
+    if any(not isinstance(state, dict) for state in state_dicts):
+        raise RuntimeError("Lightning checkpoint is missing a state_dict")
+
+    reference_keys = tuple(state_dicts[0])
+    for path, state in zip(source_paths[1:], state_dicts[1:]):
+        if tuple(state) != reference_keys:
+            raise RuntimeError(f"Checkpoint state keys differ: {path}")
+
+    averaged_payload = payloads[0]
+    averaged_state = averaged_payload["state_dict"]
+    for key in reference_keys:
+        tensors = [state[key] for state in state_dicts]
+        reference = tensors[0]
+        if any(tensor.shape != reference.shape for tensor in tensors[1:]):
+            raise RuntimeError(f"Checkpoint tensor shape differs for {key}")
+        if torch.is_floating_point(reference) or torch.is_complex(reference):
+            accumulator_dtype = (
+                torch.complex128 if torch.is_complex(reference) else torch.float64
+            )
+            averaged_state[key] = torch.stack(
+                [tensor.to(dtype=accumulator_dtype) for tensor in tensors]
+            ).mean(dim=0).to(dtype=reference.dtype)
+        else:
+            averaged_state[key] = reference
+
+    torch.save(averaged_payload, destination)
 
 
 def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig) -> None:
@@ -138,6 +308,8 @@ def _compute_test_metrics_from_quantiles(
     cfg: TFTASROConfig,
     *,
     weekly_interval_scale: float = 1.0,
+    weekly_interval_calibration: Optional[dict] = None,
+    weekly_interval_conditioning_values: Optional[np.ndarray] = None,
 ) -> dict[str, float]:
     from deep_learning.training.metrics import evaluate_quantile_predictions
 
@@ -152,8 +324,38 @@ def _compute_test_metrics_from_quantiles(
     }
     # Keep the historical evaluator call shape for downstream diagnostics and
     # tests when no validation-fitted interval adjustment is needed.
-    if float(weekly_interval_scale) != 1.0:
-        evaluator_kwargs["weekly_interval_scale"] = float(weekly_interval_scale)
+    calibration = weekly_interval_calibration or {}
+    effective_scale = float(calibration.get("weekly_interval_scale", weekly_interval_scale))
+    if effective_scale != 1.0:
+        evaluator_kwargs["weekly_interval_scale"] = effective_scale
+    if calibration.get("weekly_interval_conditioning_enabled"):
+        if weekly_interval_conditioning_values is None:
+            raise RuntimeError(
+                "Weekly interval calibration requires forecast-origin conditioning values"
+            )
+        evaluator_kwargs.update(
+            {
+                "weekly_interval_conditioning_values": weekly_interval_conditioning_values,
+                "weekly_interval_conditioning_reference": calibration.get(
+                    "weekly_interval_conditioning_reference"
+                ),
+                "weekly_interval_conditioning_power": calibration.get(
+                    "weekly_interval_conditioning_power", 0.35
+                ),
+                "weekly_interval_conditioning_min_factor": calibration.get(
+                    "weekly_interval_conditioning_min_factor", 0.5
+                ),
+                "weekly_interval_conditioning_max_factor": calibration.get(
+                    "weekly_interval_conditioning_max_factor", 2.0
+                ),
+                "weekly_interval_conditioning_min_scale": calibration.get(
+                    "weekly_interval_conditioning_min_scale", 0.20
+                ),
+                "weekly_interval_conditioning_max_scale": calibration.get(
+                    "weekly_interval_conditioning_max_scale", 2.50
+                ),
+            }
+        )
     test_metrics = evaluate_quantile_predictions(
         y_actual_path[:n_path],
         pred_np[:n_path],
@@ -162,6 +364,33 @@ def _compute_test_metrics_from_quantiles(
     _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
     _require_promotable_metrics(test_metrics)
     return test_metrics
+
+
+def _weekly_interval_conditioning_values(
+    feature_frame: Optional[pd.DataFrame],
+    *,
+    feature_name: str,
+    start_exclusive: int,
+    end_inclusive: int,
+    expected_count: int,
+) -> np.ndarray:
+    """Return condition values for the exact forecast origins being scored."""
+    if feature_frame is None or feature_name not in feature_frame.columns:
+        raise RuntimeError(
+            f"Weekly interval conditioning feature is missing: {feature_name}"
+        )
+    if "time_idx" not in feature_frame.columns:
+        raise RuntimeError("Weekly interval conditioning requires a time_idx column")
+    times = pd.to_numeric(feature_frame["time_idx"], errors="coerce")
+    selected = feature_frame.loc[
+        (times > int(start_exclusive)) & (times <= int(end_inclusive))
+    ].sort_values("time_idx")
+    if len(selected) != int(expected_count):
+        raise RuntimeError(
+            "Weekly interval conditioning origin count does not match predictions: "
+            f"{len(selected)} != {expected_count}"
+        )
+    return pd.to_numeric(selected[feature_name], errors="coerce").to_numpy(dtype=np.float64)
 
 
 def _log_weekly_alignment_sample(
@@ -219,6 +448,13 @@ def train_tft_model(
     Returns:
         Dict with metrics, checkpoint path, and feature importance.
     """
+    # Configure torch before importing Lightning.  Importing Lightning may
+    # initialize torch's inter-op pool, after which set_num_interop_threads()
+    # can no longer make the process single-threaded.  The hosted-runner
+    # replay showed that leaving that pool at its default produced different
+    # validation trajectories for the same seed and data snapshot.
+    _configure_tft_reproducibility()
+
     # pytorch_forecasting >=1.0 uses the unified `lightning` package.
     # Importing from `pytorch_lightning` gives a different LightningModule
     # base class, causing "model must be a LightningModule" at trainer.fit().
@@ -299,6 +535,46 @@ def train_tft_model(
         master_df, tv_unknown, tv_known, target_cols, cfg,
     )
     train_dl, val_dl, test_dl = create_dataloaders(training_ds, validation_ds, test_ds, cfg)
+
+    n_rows = len(master_df)
+    test_size = int(n_rows * cfg.training.test_ratio)
+    val_size = int(n_rows * cfg.training.val_ratio)
+    train_size = n_rows - val_size - test_size
+    train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
+    val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
+    max_time_idx = int(master_df["time_idx"].iloc[-1])
+    weekly_direction_model: dict = {
+        "version": 1,
+        "enabled": False,
+        "reason": "weekly_direction_model_not_used",
+        "fit_split": "train",
+        "horizon": int(cfg.forecast.primary_horizon_days),
+    }
+    if use_asro and cfg.forecast.primary_horizon_days == 5:
+        try:
+            from deep_learning.training.direction_model import fit_weekly_direction_model
+
+            weekly_direction_model = fit_weekly_direction_model(
+                master_df,
+                list(tv_unknown),
+                train_cutoff=train_cutoff,
+                horizon=cfg.forecast.primary_horizon_days,
+                max_encoder_length=cfg.model.max_encoder_length,
+                target_col=cfg.forecast.primary_target_col,
+            )
+            logger.info(
+                "Weekly direction model fitted on train origins=%s; awaiting validation selection",
+                weekly_direction_model.get("train_origin_count", 0),
+            )
+        except Exception as exc:
+            weekly_direction_model = {
+                "version": 1,
+                "enabled": False,
+                "reason": f"fit_failed:{type(exc).__name__}",
+                "fit_split": "train",
+                "horizon": int(cfg.forecast.primary_horizon_days),
+            }
+            logger.warning("Weekly direction model unavailable: %s", exc)
 
     train_scale_audit = summarize_dataloader_target_scale(
         train_dl,
@@ -400,9 +676,28 @@ def train_tft_model(
     ckpt_dir = Path(cfg.training.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+    # For the weekly ASRO path, the framework's ``val_loss`` is the base
+    # quantile metric and omits the direction, scale, dispersion and interval
+    # terms used by the production contract. WeeklyLossComponentLogger logs
+    # the complete validation objective plus a validation-only sign-collapse
+    # guard before checkpoint selection and early stopping run.
+    monitor_metric = (
+        "val_weekly_loss"
+        if use_asro and cfg.forecast.primary_horizon_days == 5
+        else "val_loss"
+    )
+    checkpoint_filename = (
+        "tft-asro-{epoch:02d}-{val_weekly_loss:.4f}"
+        if monitor_metric == "val_weekly_loss"
+        else "tft-asro-{epoch:02d}-{val_loss:.4f}"
+    )
+
     callbacks = [
+        # Must run before EarlyStopping/ModelCheckpoint so the monitored
+        # validation metric is present in callback_metrics for this epoch.
+        WeeklyLossComponentLogger(),
         EarlyStopping(
-            monitor="val_loss",
+            monitor=monitor_metric,
             patience=cfg.training.early_stopping_patience,
             mode="min",
             verbose=True,
@@ -410,13 +705,12 @@ def train_tft_model(
         LearningRateMonitor(logging_interval="epoch"),
         ModelCheckpoint(
             dirpath=str(ckpt_dir),
-            filename="tft-asro-{epoch:02d}-{val_loss:.4f}",
-            monitor="val_loss",
+            filename=checkpoint_filename,
+            monitor=monitor_metric,
             mode="min",
             save_top_k=3,
             save_last=True,
         ),
-        WeeklyLossComponentLogger(),
     ]
 
     if use_asro and cfg.forecast.primary_horizon_days != 5:
@@ -447,16 +741,72 @@ def train_tft_model(
     logger.info("Starting TFT-ASRO training ...")
     trainer.fit(model, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
-    # ---- 6. Best checkpoint ----
+    # ---- 6. Validation-ranked checkpoint promotion ----
+    # A single best epoch remained sensitive to small training-trajectory
+    # changes on an immutable snapshot. For weekly ASRO, average the two best
+    # validation checkpoints into one deployable checkpoint. This keeps live
+    # inference/calibration/gate evaluation aligned while reducing dependence
+    # on one noisy epoch; test labels are not available during this selection.
+    final_path = Path(cfg.training.best_model_path)
     best_path = trainer.checkpoint_callback.best_model_path
+    checkpoint_selection = {
+        "fit_split": "validation",
+        "monitor": monitor_metric,
+        "method": "best_validation_checkpoint",
+        "source_count": 0,
+        "source_checkpoints": [],
+        "source_scores": [],
+        "test_labels_used": False,
+    }
     if best_path:
-        final_path = Path(cfg.training.best_model_path)
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.copy2(best_path, final_path)
-        logger.info("Best model saved to %s (val_loss=%.6f)", final_path, trainer.checkpoint_callback.best_model_score)
-    else:
-        final_path = Path(cfg.training.best_model_path)
+        source_count = (
+            2 if use_asro and cfg.forecast.primary_horizon_days == 5 else 1
+        )
+        ranked_checkpoints = _validation_ranked_checkpoint_paths(
+            trainer.checkpoint_callback,
+            max_count=source_count,
+        )
+        source_paths = [path for path, _score in ranked_checkpoints]
+        _build_uniform_checkpoint_soup(source_paths, final_path)
+        if len(source_paths) > 1:
+            checkpoint_selection["method"] = "uniform_top2_weight_soup"
+        checkpoint_selection.update(
+            {
+                "source_count": len(source_paths),
+                "source_checkpoints": [path.name for path in source_paths],
+                "source_scores": [score for _path, score in ranked_checkpoints],
+            }
+        )
+        best_path = str(final_path)
+        logger.info(
+            "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s",
+            checkpoint_selection["method"],
+            checkpoint_selection["source_checkpoints"],
+            checkpoint_selection["source_scores"],
+            final_path,
+        )
+
+    # Calibration, gate evaluation, and live inference must all use the same
+    # promoted checkpoint.  ``trainer.fit`` leaves ``model`` at the last
+    # training state, while production loads ``best_tft_asro.ckpt``; using the
+    # former for validation calibration would make the persisted correction
+    # depend on a checkpoint that is never deployed.
+    evaluation_model = model
+    if best_path:
+        try:
+            from deep_learning.models.tft_copper import load_tft_model
+
+            evaluation_model = load_tft_model(str(best_path))
+            logger.info(
+                "Using promoted checkpoint for calibration and gate evaluation: %s",
+                best_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not reload promoted checkpoint for evaluation; "
+                "using in-memory model: %s",
+                exc,
+            )
 
     # ---- 7. Fit validation-only direction calibration, then evaluate test ----
     # This catches a stable global sign inversion without consulting any test
@@ -473,10 +823,14 @@ def train_tft_model(
         "validation_pi80_coverage": 0.0,
         "target_pi80_coverage": 0.80,
     }
+    validation_interval_conditioning_values = None
     val_actual_path = None
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
+            apply_weekly_sign_correction_np,
+            cumulative_horizon,
+            directional_accuracy,
             fit_direction_sign_calibration,
             fit_weekly_interval_scale,
         )
@@ -490,7 +844,7 @@ def train_tft_model(
             import torch
 
             val_actual_path = torch.cat(val_actual_parts).cpu().numpy()
-            val_pred_np = _predict_quantiles_to_np(model, val_dl, cfg)
+            val_pred_np = _predict_quantiles_to_np(evaluation_model, val_dl, cfg)
             direction_calibration = fit_direction_sign_calibration(
                 val_actual_path,
                 val_pred_np,
@@ -499,12 +853,90 @@ def train_tft_model(
             direction_sign_multiplier = int(
                 direction_calibration.get("direction_sign_multiplier", 1)
             )
+            daily_sign_multiplier = 1
+            oriented_val_pred_np = val_pred_np * direction_sign_multiplier
+            oriented_val_pred_np = apply_weekly_sign_correction_np(
+                oriented_val_pred_np,
+                float(direction_calibration.get("weekly_sign_threshold", 0.0)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+            if weekly_direction_model.get("coef"):
+                from deep_learning.training.direction_model import (
+                    apply_weekly_direction_model,
+                    predict_weekly_direction,
+                )
+
+                val_direction_probability = predict_weekly_direction(
+                    weekly_direction_model,
+                    master_df,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                )
+                if len(val_direction_probability) == len(oriented_val_pred_np):
+                    candidate_val_pred_np = apply_weekly_direction_model(
+                        oriented_val_pred_np,
+                        val_direction_probability,
+                        threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    actual_weekly = cumulative_horizon(
+                        val_actual_path,
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    base_weekly_da = directional_accuracy(
+                        actual_weekly,
+                        cumulative_horizon(
+                            oriented_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
+                            horizon=cfg.forecast.primary_horizon_days,
+                        ),
+                    )
+                    candidate_weekly_da = directional_accuracy(
+                        actual_weekly,
+                        cumulative_horizon(
+                            candidate_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
+                            horizon=cfg.forecast.primary_horizon_days,
+                        ),
+                    )
+                    candidate_rate = float(np.mean(val_direction_probability >= 0.50))
+                    if (
+                        candidate_weekly_da >= 0.51
+                        and candidate_weekly_da >= base_weekly_da + 0.01
+                        and 0.25 <= candidate_rate <= 0.75
+                    ):
+                        weekly_direction_model["enabled"] = True
+                        weekly_direction_model["reason"] = "validation_improved"
+                        weekly_direction_model["validation_sample_count"] = int(len(actual_weekly))
+                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
+                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
+                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
+                        oriented_val_pred_np = candidate_val_pred_np
+                    else:
+                        weekly_direction_model["reason"] = "validation_selection_rejected"
+                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
+                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
+                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
+                else:
+                    weekly_direction_model["reason"] = "validation_origin_count_mismatch"
+            if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
+                validation_interval_conditioning_values = _weekly_interval_conditioning_values(
+                    master_df,
+                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                    expected_count=len(oriented_val_pred_np),
+                )
             interval_calibration = fit_weekly_interval_scale(
                 val_actual_path,
-                val_pred_np * direction_sign_multiplier,
+                oriented_val_pred_np,
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
                 weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                conditioning_values=validation_interval_conditioning_values,
+                conditioning_feature=(
+                    WEEKLY_INTERVAL_CONDITIONING_FEATURE
+                    if validation_interval_conditioning_values is not None
+                    else None
+                ),
             )
     except Exception as exc:
         logger.warning(
@@ -513,18 +945,24 @@ def train_tft_model(
         )
 
     direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
+    # T+1-only validation flips are intentionally not promoted after the fixed
+    # OOS replay showed that they can reverse the held-out direction.
+    daily_sign_multiplier = 1
+    weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
     weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
     logger.info("Validation-only direction calibration: %s", direction_calibration)
     logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
 
-    # ---- 8. Evaluate on test set (Snapshot Ensemble) ----
-    # Use the top-k checkpoints saved by ModelCheckpoint and take the
-    # element-wise median of their predictions.  This smooths stochastic
-    # outliers and improves directional robustness (REG-2026-001 P2-2).
+    # ---- 8. Evaluate on the promoted best checkpoint ----
+    # Keep gate evaluation identical to the checkpoint loaded by production.
+    # A top-k snapshot ensemble would evaluate a different artifact than the
+    # one copied to best_tft_asro.ckpt and calibrated above.
     test_metrics = {}
     if test_dl is not None:
         import torch
-        from deep_learning.models.tft_copper import load_tft_model
+        from deep_learning.training.metrics import (
+            apply_weekly_sign_correction_np,
+        )
 
         # Collect actual values (same regardless of which model predicts)
         y_actual_parts = []
@@ -533,44 +971,56 @@ def train_tft_model(
                 batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
             )
         y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
-        # Gather top-k checkpoint paths
-        best_k = getattr(trainer.checkpoint_callback, "best_k_models", {})
-        ckpt_paths = sorted(best_k.keys(), key=lambda p: best_k[p]) if best_k else []
-
-        # Always include the just-trained model as a baseline
-        all_pred_arrays = []
-
-        # Predictions from the best model (already in memory)
-        all_pred_arrays.append(_predict_quantiles_to_np(model, test_dl, cfg))
-
-        # Load additional checkpoints for ensemble
-        for cp in ckpt_paths:
-            if str(cp) == str(best_path):
-                continue  # already have this one
-            try:
-                ckpt_model = load_tft_model(str(cp))
-                all_pred_arrays.append(_predict_quantiles_to_np(ckpt_model, test_dl, cfg))
-                del ckpt_model
-            except Exception as exc:
-                logger.warning("Skipping incompatible ensemble checkpoint %s: %s", cp, exc)
-
-        ensemble_size = len(all_pred_arrays)
-        logger.info(
-            "Snapshot Ensemble: %d model(s) for test evaluation", ensemble_size,
-        )
-
-        # Element-wise median across all models
-        if ensemble_size >= 2:
-            pred_np = np.median(np.stack(all_pred_arrays, axis=0), axis=0)
-        else:
-            pred_np = all_pred_arrays[0]
+        pred_np = _predict_quantiles_to_np(evaluation_model, test_dl, cfg)
+        ensemble_size = 1
+        logger.info("Promoted checkpoint evaluation: 1 model")
 
         pred_np = pred_np * direction_sign_multiplier
+        pred_np = apply_weekly_sign_correction_np(
+            pred_np,
+            weekly_sign_threshold,
+            horizon=cfg.forecast.primary_horizon_days,
+        )
+        if weekly_direction_model.get("enabled"):
+            from deep_learning.training.direction_model import (
+                apply_weekly_direction_model,
+                predict_weekly_direction,
+            )
+
+            test_direction_probability = predict_weekly_direction(
+                weekly_direction_model,
+                master_df,
+                start_exclusive=val_cutoff - 1,
+                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+            )
+            if len(test_direction_probability) != len(pred_np):
+                raise RuntimeError(
+                    "Weekly direction model origin count does not match the untouched test window"
+                )
+            pred_np = apply_weekly_direction_model(
+                pred_np,
+                test_direction_probability,
+                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+        test_interval_conditioning_values = None
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            test_interval_conditioning_values = _weekly_interval_conditioning_values(
+                master_df,
+                feature_name=str(
+                    interval_calibration["weekly_interval_conditioning_feature"]
+                ),
+                start_exclusive=val_cutoff - 1,
+                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                expected_count=len(pred_np),
+            )
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
             cfg,
             weekly_interval_scale=weekly_interval_scale,
+            weekly_interval_calibration=interval_calibration,
+            weekly_interval_conditioning_values=test_interval_conditioning_values,
         )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -579,15 +1029,21 @@ def train_tft_model(
 
     calibration_artifact = _write_conformal_calibration_artifact(
         cfg=cfg,
-        model=model,
+        model=evaluation_model,
         val_dl=val_dl,
         feature_frame=master_df,
         direction_sign_multiplier=direction_sign_multiplier,
+        daily_sign_multiplier=daily_sign_multiplier,
+        weekly_sign_threshold=weekly_sign_threshold,
+        weekly_direction_model=weekly_direction_model,
+        validation_start_time=train_cutoff - 1,
+        validation_end_time=val_cutoff - cfg.forecast.primary_horizon_days,
         weekly_interval_scale=weekly_interval_scale,
+        weekly_interval_calibration=interval_calibration,
     )
 
     # ---- 8. Variable importance ----
-    var_importance = get_variable_importance(model, val_dataloader=val_dl)
+    var_importance = get_variable_importance(evaluation_model, val_dataloader=val_dl)
 
     # ---- 9. Persist metadata ----
     result = {
@@ -638,8 +1094,12 @@ def train_tft_model(
         "public_return_space": PUBLIC_RETURN_SPACE,
         "return_space": RETURN_SPACE,
         "target_scale_audit": target_scale_audit,
+        "data_snapshot": _build_data_snapshot_metadata(master_df),
+        "runtime_environment": _runtime_environment_metadata(),
         "direction_calibration": direction_calibration,
+        "weekly_direction_model": weekly_direction_model,
         "interval_calibration": interval_calibration,
+        "checkpoint_selection": checkpoint_selection,
         "experiment": {
             "seed": cfg.training.seed,
             "deterministic": True,
@@ -651,8 +1111,6 @@ def train_tft_model(
         "train_samples": len(training_ds),
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
-
-    _persist_tft_metadata(cfg.feature_store.target_symbol, result)
 
     # Write metadata JSON to disk for CI quality gate
     meta_json_path = Path(cfg.training.best_model_path).parent / "tft_metadata.json"
@@ -677,6 +1135,7 @@ def train_tft_model(
     # the production checkpoint before the gate has evaluated test metrics.
     result["hub_uploaded"] = False
     if upload_to_hub:
+        uploaded = False
         try:
             from deep_learning.models.hub import upload_tft_artifacts
 
@@ -691,6 +1150,9 @@ def train_tft_model(
             result["hub_uploaded"] = uploaded
         except Exception as exc:
             logger.warning("HF Hub upload skipped: %s", exc)
+        if uploaded:
+            persist_promoted_tft_metadata(cfg.feature_store.target_symbol, result)
+            result["promotion_metadata_persisted"] = True
     else:
         result["hub_upload_skipped"] = "disabled_until_quality_gate_passes"
 
@@ -704,7 +1166,13 @@ def _write_conformal_calibration_artifact(
     val_dl,
     feature_frame,
     direction_sign_multiplier: int = 1,
+    daily_sign_multiplier: int = 1,
+    weekly_sign_threshold: float = 0.0,
+    weekly_direction_model: Optional[dict] = None,
+    validation_start_time: Optional[int] = None,
+    validation_end_time: Optional[int] = None,
     weekly_interval_scale: float = 1.0,
+    weekly_interval_calibration: Optional[dict] = None,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -721,6 +1189,7 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
+            apply_weekly_sign_correction_np,
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
             cumulative_horizon,
@@ -738,10 +1207,84 @@ def _write_conformal_calibration_artifact(
         pred = model.predict(val_dl, mode="quantiles")
         pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
+        pred_np = apply_weekly_sign_correction_np(
+            pred_np,
+            float(weekly_sign_threshold),
+            horizon=cfg.forecast.primary_horizon_days,
+        )
+        if weekly_direction_model and weekly_direction_model.get("enabled"):
+            from deep_learning.training.direction_model import (
+                apply_weekly_direction_model,
+                predict_weekly_direction,
+            )
+
+            if validation_start_time is None or validation_end_time is None:
+                raise ValueError("Validation time bounds are required for weekly direction calibration")
+            validation_probability = predict_weekly_direction(
+                weekly_direction_model,
+                feature_frame,
+                start_exclusive=validation_start_time,
+                end_inclusive=validation_end_time,
+            )
+            if len(validation_probability) != len(pred_np):
+                raise ValueError(
+                    "Weekly direction model origin count does not match validation predictions"
+                )
+            pred_np = apply_weekly_direction_model(
+                pred_np,
+                validation_probability,
+                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+        interval_calibration = weekly_interval_calibration or {}
+        effective_interval_scale = float(
+            interval_calibration.get("weekly_interval_scale", weekly_interval_scale)
+        )
+        interval_kwargs = {
+            "quantiles": tuple(cfg.model.quantiles),
+        }
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            if validation_start_time is None or validation_end_time is None:
+                raise ValueError(
+                    "Validation time bounds are required for weekly interval conditioning"
+                )
+            conditioning_feature = str(
+                interval_calibration["weekly_interval_conditioning_feature"]
+            )
+            validation_conditioning_values = _weekly_interval_conditioning_values(
+                feature_frame,
+                feature_name=conditioning_feature,
+                start_exclusive=validation_start_time,
+                end_inclusive=validation_end_time,
+                expected_count=len(pred_np),
+            )
+            interval_kwargs.update(
+                {
+                    "conditioning_values": validation_conditioning_values,
+                    "conditioning_reference": interval_calibration.get(
+                        "weekly_interval_conditioning_reference"
+                    ),
+                    "conditioning_power": interval_calibration.get(
+                        "weekly_interval_conditioning_power", 0.35
+                    ),
+                    "conditioning_min_factor": interval_calibration.get(
+                        "weekly_interval_conditioning_min_factor", 0.5
+                    ),
+                    "conditioning_max_factor": interval_calibration.get(
+                        "weekly_interval_conditioning_max_factor", 2.0
+                    ),
+                    "conditioning_min_scale": interval_calibration.get(
+                        "weekly_interval_conditioning_min_scale", 0.20
+                    ),
+                    "conditioning_max_scale": interval_calibration.get(
+                        "weekly_interval_conditioning_max_scale", 2.50
+                    ),
+                }
+            )
         pred_np = apply_weekly_interval_scale_np(
             pred_np,
-            float(weekly_interval_scale),
-            quantiles=tuple(cfg.model.quantiles),
+            effective_interval_scale,
+            **interval_kwargs,
         )
         n = min(len(y_actual_path), len(pred_np))
         if n <= 0:
@@ -831,7 +1374,33 @@ def _write_conformal_calibration_artifact(
             "fit_split": "validation",
             "test_split_used_for_fit": False,
             "direction_sign_multiplier": int(direction_sign_multiplier),
-            "weekly_interval_scale": float(weekly_interval_scale),
+            "daily_sign_multiplier": int(daily_sign_multiplier),
+            "weekly_sign_threshold": float(weekly_sign_threshold),
+            "weekly_interval_scale": float(effective_interval_scale),
+            "weekly_interval_conditioning_enabled": bool(
+                interval_calibration.get("weekly_interval_conditioning_enabled", False)
+            ),
+            "weekly_interval_conditioning_feature": interval_calibration.get(
+                "weekly_interval_conditioning_feature"
+            ),
+            "weekly_interval_conditioning_reference": interval_calibration.get(
+                "weekly_interval_conditioning_reference"
+            ),
+            "weekly_interval_conditioning_power": interval_calibration.get(
+                "weekly_interval_conditioning_power", 0.35
+            ),
+            "weekly_interval_conditioning_min_factor": interval_calibration.get(
+                "weekly_interval_conditioning_min_factor", 0.5
+            ),
+            "weekly_interval_conditioning_max_factor": interval_calibration.get(
+                "weekly_interval_conditioning_max_factor", 2.0
+            ),
+            "weekly_interval_conditioning_min_scale": interval_calibration.get(
+                "weekly_interval_conditioning_min_scale", 0.20
+            ),
+            "weekly_interval_conditioning_max_scale": interval_calibration.get(
+                "weekly_interval_conditioning_max_scale", 2.50
+            ),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
             "validation_pi80_width": validation_pi80_width,
@@ -923,7 +1492,7 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "lambda_dispersion" in params:
             params["lambda_dispersion"] = min(max(float(params["lambda_dispersion"]), 0.10), 0.25)
         if "lambda_positive_rate" in params:
-            params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.10), 0.25)
+            params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.10), 0.75)
         if "lambda_magnitude" in params:
             params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
         if "lambda_naive" in params:
@@ -972,7 +1541,6 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     weekly_loss_overrides = {
         k: params[k] for k in (
             "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_t1_directional",
             "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
             "lambda_saturation", "lambda_positive_rate", "lambda_interval",
             "weekly_median_cap_abs_median_multiple",
@@ -991,34 +1559,61 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     return replace(cfg, model=new_model, asro=new_asro, weekly_loss=new_weekly_loss, training=new_training)
 
 
-def _persist_tft_metadata(symbol: str, result: dict) -> None:
-    """Save TFT model metadata to DB."""
-    try:
-        from app.db import SessionLocal
-        from app.models import TFTModelMetadata
+def persist_promoted_tft_metadata(symbol: str, result: dict) -> None:
+    """Persist the active model only after gate and Hub promotion succeed.
 
-        with SessionLocal() as session:
-            existing = session.query(TFTModelMetadata).filter(
-                TFTModelMetadata.symbol == symbol
-            ).first()
+    Candidate training must not overwrite the single active row. The caller is
+    expected to invoke this after the artifact upload returns successfully;
+    the gate is deliberately re-evaluated here so a workflow ordering mistake
+    still fails closed.
+    """
+    from app.db import SessionLocal, ensure_tft_model_metadata_schema
+    from app.models import TFTModelMetadata
+    from app.quality_gate import evaluate_quality_gate_metrics
 
-            if existing:
-                existing.config_json = json.dumps(result.get("config", {}))
-                existing.metrics_json = json.dumps(result.get("test_metrics", {}))
-                existing.checkpoint_path = result.get("checkpoint_path", "")
-                existing.trained_at = datetime.now(timezone.utc)
-            else:
-                session.add(TFTModelMetadata(
+    metrics = result.get("test_metrics") or {}
+    gate_passed, reasons = evaluate_quality_gate_metrics(metrics)
+    if not gate_passed:
+        raise ValueError(
+            "Refusing to persist rejected TFT candidate as active: "
+            + "; ".join(reasons)
+        )
+
+    ensure_tft_model_metadata_schema()
+
+    trained_at = datetime.now(timezone.utc)
+    raw_trained_at = result.get("trained_at")
+    if isinstance(raw_trained_at, str):
+        try:
+            trained_at = datetime.fromisoformat(raw_trained_at.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning("Invalid TFT trained_at timestamp during promotion: %s", raw_trained_at)
+
+    with SessionLocal() as session:
+        existing = session.query(TFTModelMetadata).filter(
+            TFTModelMetadata.symbol == symbol
+        ).first()
+
+        if existing:
+            existing.config_json = json.dumps(result.get("config", {}))
+            existing.metrics_json = json.dumps(metrics)
+            existing.checkpoint_path = result.get("checkpoint_path", "")
+            existing.trained_at = trained_at
+            existing.quality_gate_passed = True
+        else:
+            session.add(
+                TFTModelMetadata(
                     symbol=symbol,
                     config_json=json.dumps(result.get("config", {})),
-                    metrics_json=json.dumps(result.get("test_metrics", {})),
+                    metrics_json=json.dumps(metrics),
                     checkpoint_path=result.get("checkpoint_path", ""),
-                ))
+                    trained_at=trained_at,
+                    quality_gate_passed=True,
+                )
+            )
 
-            session.commit()
-            logger.info("TFT metadata persisted for %s", symbol)
-    except Exception as exc:
-        logger.warning("Could not persist TFT metadata: %s", exc)
+        session.commit()
+        logger.info("Promoted TFT metadata persisted for %s", symbol)
 
 
 # ---------------------------------------------------------------------------

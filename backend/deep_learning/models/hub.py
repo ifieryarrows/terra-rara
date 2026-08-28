@@ -77,33 +77,9 @@ def build_artifact_health(local_dir: str | Path) -> dict:
     gate_error = None
     if metrics:
         try:
-            from app.quality_gate import evaluate_quality_gate
+            from app.quality_gate import evaluate_quality_gate_metrics
 
-            quality_gate_passed, reasons = evaluate_quality_gate(
-                da=float(metrics.get("directional_accuracy", 0.5)),
-                sharpe=float(metrics.get("sharpe_ratio", 0.0)),
-                vr=float(metrics.get("variance_ratio", 1.0)),
-                tail_capture=metrics.get("tail_capture_rate"),
-                quantile_crossing_rate=metrics.get("quantile_crossing_rate"),
-                median_sort_gap_max=metrics.get("median_sort_gap_max"),
-                pi80_width=metrics.get("pi80_width"),
-                pi96_width=metrics.get("pi96_width"),
-                weekly_directional_accuracy=metrics.get("weekly_directional_accuracy"),
-                weekly_magnitude_ratio=metrics.get("weekly_magnitude_ratio"),
-                weekly_tail_capture_rate=metrics.get("weekly_tail_capture_rate"),
-                weekly_pi80_coverage=metrics.get("weekly_pi80_coverage"),
-                weekly_pi80_width=metrics.get("weekly_pi80_width"),
-                weekly_pi80_width_ratio=metrics.get("weekly_pi80_width_ratio"),
-                weekly_pi96_coverage=metrics.get("weekly_pi96_coverage"),
-                weekly_pi96_width=metrics.get("weekly_pi96_width"),
-                weekly_pi96_width_ratio=metrics.get("weekly_pi96_width_ratio"),
-                weekly_quantile_crossing_rate=metrics.get("weekly_quantile_crossing_rate"),
-                weekly_sorted_quantile_crossing_rate=metrics.get(
-                    "weekly_sorted_quantile_crossing_rate"
-                ),
-                weekly_median_sort_gap_max=metrics.get("weekly_median_sort_gap_max"),
-                weekly_sample_count=metrics.get("weekly_sample_count"),
-            )
+            quality_gate_passed, reasons = evaluate_quality_gate_metrics(metrics)
             if not quality_gate_passed:
                 gate_error = "; ".join(reasons)
         except Exception as exc:

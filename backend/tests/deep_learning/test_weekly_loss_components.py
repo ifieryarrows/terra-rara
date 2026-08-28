@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from deep_learning.models.tft_copper import (
@@ -44,8 +45,30 @@ def test_weekly_scale_losses_penalize_bearish_bias_symmetrically():
     assert torch.isclose(bullish["bias_loss"], bearish["bias_loss"], rtol=1e-5, atol=1e-6)
 
 
+def test_weekly_dispersion_loss_is_bounded_for_collapsed_batches():
+    actual_weekly = torch.tensor([-0.040, -0.010, 0.015, 0.035])
+    collapsed = torch.zeros_like(actual_weekly)
+
+    dispersion = _weekly_scale_losses(collapsed, actual_weekly)["dispersion_loss"]
+
+    assert torch.isfinite(dispersion)
+    assert dispersion.item() <= 1.5
+
+
+def test_weekly_scale_optimization_keeps_median_ratio_as_diagnostic_only():
+    actual_weekly = torch.tensor([-0.040, -0.010, 0.015, 0.035])
+    pred_weekly = torch.tensor([-0.080, -0.020, 0.030, 0.070], requires_grad=True)
+
+    losses = _weekly_scale_losses(pred_weekly, actual_weekly)
+    losses["magnitude_loss"].backward()
+
+    assert losses["magnitude_ratio"].item() == pytest.approx(2.0)
+    assert losses["mean_magnitude_ratio"].item() == pytest.approx(2.0)
+    assert torch.isfinite(pred_weekly.grad).all()
+
+
 def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
-    actual_weekly = torch.tensor([-0.030, 0.010, 0.020, 0.040])
+    actual_weekly = torch.tensor([-0.030, -0.010, 0.020, 0.040])
     pred_mid_rate = torch.tensor([-0.018, -0.012, 0.014, 0.020])
     pred_all_positive = torch.tensor([0.040, 0.050, 0.060, 0.070])
     pred_all_negative = torch.tensor([-0.070, -0.060, -0.050, -0.040])
@@ -54,9 +77,21 @@ def test_weekly_positive_rate_loss_only_penalizes_extreme_sign_collapse():
     all_positive_loss = _weekly_positive_rate_loss(pred_all_positive, actual_weekly)
     all_negative_loss = _weekly_positive_rate_loss(pred_all_negative, actual_weekly)
 
-    assert mid_loss.item() == 0.0
+    assert mid_loss.item() > 0.0
     assert all_positive_loss.item() > mid_loss.item()
     assert all_negative_loss.item() > mid_loss.item()
+
+
+def test_weekly_positive_rate_loss_tracks_observed_batch_sign_rate():
+    actual_weekly = torch.tensor([-0.030, 0.010, 0.020, 0.040])
+    pred_target_rate = torch.tensor([-0.020, -0.010, 0.020, 0.030])
+    pred_all_positive = torch.tensor([0.040, 0.050, 0.060, 0.070])
+
+    target_rate_loss = _weekly_positive_rate_loss(pred_target_rate, actual_weekly)
+    all_positive_loss = _weekly_positive_rate_loss(pred_all_positive, actual_weekly)
+
+    assert target_rate_loss.item() > 0.0
+    assert all_positive_loss.item() > target_rate_loss.item()
 
 
 def test_weekly_interval_undercoverage_loss_prefers_wider_pi80_without_moving_q50():
@@ -125,3 +160,29 @@ def test_weekly_saturation_loss_penalizes_raw_paths_near_and_above_cap():
     assert _weekly_saturation_loss(above_cap, weekly_median_cap=0.05).item() > (
         _weekly_saturation_loss(near_cap, weekly_median_cap=0.05).item() * 10.0
     )
+
+
+def test_weekly_saturation_loss_has_a_sublinear_far_violation_tail():
+    """A single absurd raw forecast must not dominate the first epoch."""
+    cap = 0.05
+    moderate = _weekly_saturation_loss(
+        torch.tensor([cap * 20.0]), weekly_median_cap=cap
+    )
+    extreme = _weekly_saturation_loss(
+        torch.tensor([cap * 100.0]), weekly_median_cap=cap
+    )
+
+    assert extreme.item() > moderate.item()
+    assert extreme.item() < 4.0 * moderate.item()
+
+
+def test_weekly_saturation_loss_keeps_pressure_on_moderate_cap_violations():
+    cap = 0.05
+    raw_weekly = torch.tensor([cap * 2.0], requires_grad=True)
+
+    loss = _weekly_saturation_loss(raw_weekly, weekly_median_cap=cap)
+    loss.backward()
+
+    assert loss.item() > 2.0
+    assert torch.isfinite(raw_weekly.grad).all()
+    assert raw_weekly.grad.item() > 0.0

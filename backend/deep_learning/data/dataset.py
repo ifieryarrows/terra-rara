@@ -241,13 +241,13 @@ def _resolve_num_workers(configured: int) -> int:
     the script to be inside an ``if __name__ == '__main__'`` guard, which is
     not the case in training scripts. Force 0 to avoid deadlocks.
 
-    On Linux/macOS (GitHub Actions, HF Spaces), use the configured value;
-    default to 2 when the config still carries the old 0.
+    On Linux/macOS (GitHub Actions, HF Spaces), honor the configured value as
+    well. In particular, configured ``0`` is intentional for strict
+    reproducibility and must not silently become multiprocessing.
     """
     if os.name == "nt":
         return 0
-    # On POSIX: honour config; upgrade 0 → 2 as a sensible floor
-    return max(configured, 2)
+    return max(int(configured), 0)
 
 
 def create_dataloaders(
@@ -268,10 +268,22 @@ def create_dataloaders(
         nw, os.name, cfg.training.num_workers,
     )
 
+    # Keep the training windows shuffled, as required by the stochastic
+    # optimizer, but do not let the sampler derive its seed from the
+    # process-global torch RNG. Model construction and Lightning callbacks
+    # consume that RNG before the first epoch, so an explicit generator is
+    # required for replayable runs. Validation/test loaders remain ordered.
+    import torch
+
+    train_generator = torch.Generator(device="cpu")
+    train_generator.manual_seed(int(cfg.training.seed))
+
     train_dl = training_dataset.to_dataloader(
         train=True,
         batch_size=cfg.training.batch_size,
         num_workers=nw,
+        shuffle=True,
+        generator=train_generator,
     )
     val_dl = validation_dataset.to_dataloader(
         train=False,

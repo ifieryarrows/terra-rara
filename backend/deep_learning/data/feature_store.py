@@ -14,7 +14,9 @@ TFT data categories:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -23,6 +25,153 @@ import pandas as pd
 from deep_learning.config import TFTASROConfig, get_tft_config
 
 logger = logging.getLogger(__name__)
+
+_FEATURE_SNAPSHOT_FORMAT_VERSION = 1
+
+
+def data_snapshot_sha256(master_df: pd.DataFrame) -> str:
+    """Return the digest used to identify an exact TFT feature frame."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in master_df.columns).encode())
+    digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
+    digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _feature_snapshot_metadata_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".json")
+
+
+def _load_feature_snapshot(
+    path: Path,
+    *,
+    drop_missing_target: bool,
+) -> Optional[tuple[pd.DataFrame, list[str], list[str], list[str], float]]:
+    """Load a previously captured post-selection TFT feature frame."""
+    if not path.exists():
+        return None
+
+    metadata_path = _feature_snapshot_metadata_path(path)
+    if not metadata_path.exists():
+        raise RuntimeError(
+            f"TFT feature snapshot metadata is missing: {metadata_path}"
+        )
+
+    import json
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("format_version") != _FEATURE_SNAPSHOT_FORMAT_VERSION:
+        raise RuntimeError(
+            "Unsupported TFT feature snapshot format: "
+            f"{metadata.get('format_version')!r}"
+        )
+    if bool(metadata.get("drop_missing_target", True)) != drop_missing_target:
+        raise RuntimeError(
+            "TFT feature snapshot target mode does not match the requested run: "
+            f"snapshot={metadata.get('drop_missing_target')!r} "
+            f"requested={drop_missing_target!r}"
+        )
+
+    requested_as_of = os.environ.get("TFT_DATA_AS_OF", "").strip() or None
+    captured_as_of = metadata.get("tft_data_as_of") or None
+    if requested_as_of and captured_as_of and requested_as_of != captured_as_of:
+        raise RuntimeError(
+            "TFT feature snapshot cutoff mismatch: "
+            f"snapshot={captured_as_of!r} requested={requested_as_of!r}"
+        )
+
+    master_df = pd.read_pickle(path)
+    actual_sha = data_snapshot_sha256(master_df)
+    expected_sha = str(metadata.get("sha256", "")).lower()
+    if actual_sha != expected_sha:
+        raise RuntimeError(
+            "TFT feature snapshot integrity check failed: "
+            f"expected={expected_sha} actual={actual_sha}"
+        )
+
+    configured_sha = os.environ.get("TFT_EXPECTED_DATA_SNAPSHOT_SHA", "").strip().lower()
+    if configured_sha and actual_sha != configured_sha:
+        raise RuntimeError(
+            "TFT feature snapshot does not match TFT_EXPECTED_DATA_SNAPSHOT_SHA: "
+            f"expected={configured_sha} actual={actual_sha}"
+        )
+
+    logger.info(
+        "Loaded immutable TFT feature snapshot: sha256=%s rows=%d first=%s last=%s",
+        actual_sha,
+        len(master_df),
+        metadata.get("first_index"),
+        metadata.get("last_index"),
+    )
+    return (
+        master_df,
+        list(metadata["time_varying_unknown_reals"]),
+        list(metadata["time_varying_known_reals"]),
+        list(metadata["target_cols"]),
+        float(metadata["last_close"]),
+    )
+
+
+def _write_feature_snapshot(
+    path: Path,
+    master_df: pd.DataFrame,
+    *,
+    time_varying_unknown: list[str],
+    time_varying_known: list[str],
+    target_cols: list[str],
+    last_close: float,
+    drop_missing_target: bool,
+) -> None:
+    """Persist the exact post-selection frame used by a replayable run."""
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    digest = data_snapshot_sha256(master_df)
+    master_df.to_pickle(path)
+    metadata = {
+        "format_version": _FEATURE_SNAPSHOT_FORMAT_VERSION,
+        "sha256": digest,
+        "rows": int(len(master_df)),
+        "columns": int(master_df.shape[1]),
+        "first_index": str(master_df.index.min()) if len(master_df) else None,
+        "last_index": str(master_df.index.max()) if len(master_df) else None,
+        "tft_data_as_of": os.environ.get("TFT_DATA_AS_OF") or None,
+        "drop_missing_target": drop_missing_target,
+        "time_varying_unknown_reals": time_varying_unknown,
+        "time_varying_known_reals": time_varying_known,
+        "target_cols": target_cols,
+        "last_close": last_close,
+    }
+    _feature_snapshot_metadata_path(path).write_text(
+        json.dumps(metadata, indent=2, default=str),
+        encoding="utf-8",
+    )
+    logger.info(
+        "Wrote immutable TFT feature snapshot: path=%s sha256=%s rows=%d",
+        path,
+        digest,
+        len(master_df),
+    )
+
+
+def _resolve_data_end_date() -> datetime:
+    """Resolve the feature-store cutoff, allowing reproducible replay runs."""
+    raw_value = os.environ.get("TFT_DATA_AS_OF", "").strip()
+    if not raw_value:
+        return datetime.now(timezone.utc)
+
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            "TFT_DATA_AS_OF must be an ISO-8601 timestamp, for example "
+            "2026-08-23T23:59:59Z"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +463,20 @@ def build_tft_dataframe(
     if cfg is None:
         cfg = get_tft_config()
 
+    snapshot_path_raw = os.environ.get("TFT_FEATURE_SNAPSHOT_PATH", "").strip()
+    snapshot_path = Path(snapshot_path_raw) if snapshot_path_raw else None
+    if snapshot_path is not None:
+        captured = _load_feature_snapshot(
+            snapshot_path,
+            drop_missing_target=drop_missing_target,
+        )
+        if captured is not None:
+            return captured
+
     target_symbol = cfg.feature_store.target_symbol
-    end_date = datetime.now(timezone.utc)
+    end_date = _resolve_data_end_date()
     start_date = end_date - timedelta(days=cfg.training.lookback_days)
+    logger.info("Feature store cutoff: %s", end_date.isoformat())
 
     # ---- 1. Price & technical indicators ----
     # Use screener-validated symbols from active.json
@@ -398,14 +558,23 @@ def build_tft_dataframe(
     from deep_learning.data.lme_warehouse import fetch_lme_data, compute_lme_features, compute_proxy_lme_features
     from deep_learning.data.futures_curve import build_futures_features_from_yfinance
 
-    lme_raw = fetch_lme_data(cfg.lme)
+    lme_raw = fetch_lme_data(
+        cfg.lme,
+        start_date=start_date.date().isoformat(),
+        end_date=end_date.date().isoformat(),
+    )
     if not lme_raw.empty:
         lme_features = compute_lme_features(lme_raw, windows=cfg.lme.stock_change_windows)
         lme_features = lme_features.reindex(target_index).ffill(limit=cfg.lme.max_ffill_days)
     else:
         lme_features = compute_proxy_lme_features(price_df)
 
-    futures_features = build_futures_features_from_yfinance(session, target_symbol, cfg.training.lookback_days)
+    futures_features = build_futures_features_from_yfinance(
+        session,
+        target_symbol,
+        cfg.training.lookback_days,
+        end_date=end_date,
+    )
     if not futures_features.empty:
         futures_features = futures_features.reindex(target_index).ffill(limit=3)
     else:
@@ -578,5 +747,25 @@ def build_tft_dataframe(
     # Also return the last valid close price for baseline_price calculation
     valid_close = close.dropna()
     last_close = float(valid_close.iloc[-1]) if len(valid_close) > 0 else float('nan')
+
+    configured_sha = os.environ.get("TFT_EXPECTED_DATA_SNAPSHOT_SHA", "").strip().lower()
+    if configured_sha:
+        actual_sha = data_snapshot_sha256(master)
+        if actual_sha != configured_sha:
+            raise RuntimeError(
+                "Built TFT feature frame does not match TFT_EXPECTED_DATA_SNAPSHOT_SHA: "
+                f"expected={configured_sha} actual={actual_sha}"
+            )
+
+    if snapshot_path is not None:
+        _write_feature_snapshot(
+            snapshot_path,
+            master,
+            time_varying_unknown=time_varying_unknown,
+            time_varying_known=time_varying_known,
+            target_cols=target_cols,
+            last_close=last_close,
+            drop_missing_target=drop_missing_target,
+        )
 
     return master, time_varying_unknown, time_varying_known, target_cols, last_close
