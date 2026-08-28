@@ -125,6 +125,44 @@ These replayed test windows now inform the cap choice and are not an unbiased
 final acceptance set. One new fresh immutable snapshot is still required after
 the `1.20` default is frozen.
 
+## Fresh-snapshot raw-scale follow-up
+
+Run
+[33190434601](https://github.com/ifieryarrows/terra-rara/actions/runs/33190434601)
+tested the frozen `1.20` cap on commit `db24df0` and the 665-row `3d302527…`
+snapshot. The bounded magnitude moved inside the unchanged gate as intended:
+WeeklyMR fell from `1.3866` to `1.3311`. WeeklyDA remained `0.6774`, weekly
+Sharpe `2.4988`, tail `0.6875`, PI80 `0.8226`, and daily Sharpe `1.4692`.
+The only failing reason was `WeeklyRawMagnitudeExplosion=3.0397 > 3.0`, a
+`1.32%` miss. Hub upload and DB promotion were skipped, so the active passing
+`c93fc45` model remained unchanged.
+
+The exact promoted checkpoint and pinned package versions replayed locally at
+raw MR `2.8397` on Windows, while Linux CI recorded `3.0397`. The bounded gate
+metrics remained close. This is not evidence that the CI result is wrong; it
+shows that a candidate near `3.0` lacks enough cross-platform numerical margin.
+The remote Linux gate remains authoritative.
+
+All retained checkpoints and soup candidates were compared before changing the
+loss. The best single checkpoint replayed at raw MR `2.9608`; the other two
+single checkpoints were `8.8842` and `10.5684`, while top-3 soup was `3.1288`.
+Changing the two-checkpoint weight was also rejected. A `0.40/0.60` blend was
+the only tested fixed ratio that avoided regressions across the retained old
+windows, but its current raw MR (`2.8721`) had less local margin than the
+existing uniform soup. Ratios with more current-run margin caused old PI80 or
+daily-Sharpe regressions. Production therefore keeps the validation-ranked
+uniform top-2 rule.
+
+The remaining issue is direct reliance on the train-derived q50 cap: `72.58%`
+of test weekly medians were bounded. The existing logarithmic saturation tail
+is intentionally sublinear because earlier quadratic/Huber tails made extreme
+first-epoch predictions dominate the objective. The next change keeps that
+tail and adds a bounded `tanh(excess)^2` barrier for ordinary `1-3x` cap
+violations. Its value is at most one per sample, so it strengthens pressure in
+the observed moderate-violation regime without recreating the unbounded early
+training loss. Gate thresholds, cap resolution, soup ranking, direction
+calibration, and interval calibration remain unchanged.
+
 ## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
@@ -156,6 +194,7 @@ the later successful remote run is recorded above.
 | [33117940637](https://github.com/ifieryarrows/terra-rara/actions/runs/33117940637) | `c93fc45`, snapshot `200ce6d4…` | Pass | Promotion order proven; WeeklyDA `0.6774`, MR `1.3367`, tail `0.6875`, PI80 `0.8387`, weekly Sharpe `2.3982`; raw MR `2.9573`, cap rate `0.7097` |
 | [33120071397](https://github.com/ifieryarrows/terra-rara/actions/runs/33120071397) | `9e4006f`, snapshot `200ce6d4…` | Fail | Smooth sign surrogate lowered raw MR to `2.1567`, but PI80 rose to `0.9032` and daily Sharpe fell to `-1.0652`; Hub/DB promotion blocked |
 | [33188247918](https://github.com/ifieryarrows/terra-rara/actions/runs/33188247918) | `95882a3`, snapshot `3d302527…` | Fail | Top-2 soup preserved WeeklyDA `0.6774`, weekly Sharpe `2.4988`, PI80 `0.8548`, and daily Sharpe `2.5572`; only bounded MR `1.3866` failed; promotion blocked |
+| [33190434601](https://github.com/ifieryarrows/terra-rara/actions/runs/33190434601) | `db24df0`, snapshot `3d302527…` | Fail | Cap margin fixed bounded MR at `1.3311`; WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, and PI80 `0.8226` held; only raw MR `3.0397` failed; promotion blocked |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -214,6 +253,8 @@ sign-collapse guard is not triggered.
 
 ## Verification
 
+- Backend suite after adding the bounded moderate-violation barrier:
+  **519 passed, 7 warnings**.
 - Backend suite after adding validation-ranked top-2 checkpoint stabilization:
   **518 passed, 7 warnings**.
 - Focused TFT calibration, hyperopt, direction, conformal, trainer, and
@@ -224,11 +265,11 @@ sign-collapse guard is not triggered.
 
 ## Remaining acceptance step
 
-Runs `33120071397` and `33188247918` prove that rejected candidates leave Hub
-and DB untouched; the active model therefore remains the passing `c93fc45`
-artifact. The top-2 soup remains fixed, and the train-derived absolute-median
-cap multiplier is reduced from `1.25` to `1.20` as the only new model variable.
-The remaining acceptance step is one fresh immutable-snapshot run after this
-default is committed. It must pass the unchanged gate while preserving
-WeeklyDA, PI80, tail capture, daily/weekly Sharpe, and raw-scale safety. No new
-long pipeline has been started.
+Runs `33120071397`, `33188247918`, and `33190434601` prove that rejected
+candidates leave Hub and DB untouched; the active model therefore remains the
+passing `c93fc45` artifact. The top-2 soup and `1.20` train-derived cap remain
+fixed. The remaining acceptance step is one fresh immutable-snapshot run after
+the bounded moderate-violation saturation barrier is committed. It must pass
+the unchanged gate while preserving WeeklyDA, PI80, tail capture,
+daily/weekly Sharpe, bounded magnitude, and raw-scale safety. No new long
+pipeline has been started.

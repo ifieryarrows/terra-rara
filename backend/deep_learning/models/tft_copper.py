@@ -101,9 +101,19 @@ def _weekly_saturation_loss(
     def _robust_squared(excess: torch.Tensor) -> torch.Tensor:
         return torch.log1p(excess).pow(2)
 
+    # The logarithmic tail keeps pathological first-epoch forecasts stable, but
+    # it became too permissive once a candidate was only moderately above the
+    # cap: the fresh Linux gate finished at raw MR=3.0397 with 72.6% of weekly
+    # medians still relying on the cap.  Add a bounded barrier whose gradient is
+    # strongest for ordinary 1-3x cap violations and whose value cannot exceed
+    # one per sample.  This creates deployment margin without letting extreme
+    # initialization outliers dominate the objective again.
+    moderate_violation_barrier = torch.tanh(above_cap_excess).pow(2)
+
     return (
         0.10 * _robust_squared(near_cap_excess).mean()
         + 2.0 * _robust_squared(above_cap_excess).mean()
+        + moderate_violation_barrier.mean()
     )
 
 

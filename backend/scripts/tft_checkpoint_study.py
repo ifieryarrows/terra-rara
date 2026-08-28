@@ -182,6 +182,7 @@ def _validation_rank(metrics: dict, checkpoint_loss: float) -> tuple:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifact_dir", type=Path)
+    parser.add_argument("--output", type=Path, help="Write JSON results to this path")
     parser.add_argument("--include-soups", action="store_true")
     parser.add_argument("--candidate", help="Evaluate only one checkpoint filename")
     parser.add_argument(
@@ -378,7 +379,11 @@ def main() -> None:
         )
 
     rows.sort(key=lambda row: row["validation_rank"])
-    print(json.dumps(rows, indent=2, default=float))
+    rendered = json.dumps(rows, indent=2, default=float)
+    if args.output is not None:
+        args.output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        print(rendered)
 
 
 if __name__ == "__main__":

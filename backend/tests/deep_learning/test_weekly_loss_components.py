@@ -174,3 +174,15 @@ def test_weekly_saturation_loss_has_a_sublinear_far_violation_tail():
 
     assert extreme.item() > moderate.item()
     assert extreme.item() < 4.0 * moderate.item()
+
+
+def test_weekly_saturation_loss_keeps_pressure_on_moderate_cap_violations():
+    cap = 0.05
+    raw_weekly = torch.tensor([cap * 2.0], requires_grad=True)
+
+    loss = _weekly_saturation_loss(raw_weekly, weekly_median_cap=cap)
+    loss.backward()
+
+    assert loss.item() > 2.0
+    assert torch.isfinite(raw_weekly.grad).all()
+    assert raw_weekly.grad.item() > 0.0
