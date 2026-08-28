@@ -200,6 +200,46 @@ versus `0.4980` (`0.94%` relatively lower). The weekly promotion result remains
 valid; the small daily-direction deficit is retained as a separate development
 signal and must not be conflated with the 5-day WeeklyDA contract.
 
+## Deterministic immutable-replay acceptance
+
+Deterministic validation run
+[33195418753](https://github.com/ifieryarrows/terra-rara/actions/runs/33195418753)
+froze a 660-row snapshot at the explicit `2026-08-20T04:00:00Z` cutoff. Run
+[33197383801](https://github.com/ifieryarrows/terra-rara/actions/runs/33197383801)
+then downloaded that exact artifact and required snapshot SHA
+`bf08a68c4c6641fcffb9021ac7bc2fd43f040a6a7ec671565f850a36669e25fe`.
+Both used commit `6b1928c`, Python `3.11.15`, the pinned dependency set, seed
+and process controls, and no model/config change between runs.
+
+| Evidence | Validation `33195418753` | Immutable replay `33197383801` |
+| --- | ---: | ---: |
+| Quality gate | Pass | Pass |
+| Snapshot rows | 660 | 660 |
+| WeeklyDA | 0.6129032258 | 0.6129032258 |
+| Weekly Sharpe | 1.5209683305 | 1.5209683305 |
+| Weekly tail capture | 0.6875 | 0.6875 |
+| Weekly magnitude ratio | 1.2292124617 | 1.2292124617 |
+| Weekly raw magnitude ratio | 2.7452075801 | 2.7452075801 |
+| Weekly PI80 | 0.8225806452 | 0.8225806452 |
+| Daily DA | 0.5806451613 | 0.5806451613 |
+| Daily Sharpe | 2.1809 | 2.1809 |
+| Promoted source epochs | 24 + 14 | 24 + 14 |
+| Promoted epoch / global step | 24 / 325 | 24 / 325 |
+
+The serialized checkpoint files have different outer-file hashes because the
+PyTorch checkpoint containers include run-specific serialization metadata.
+Loading both promoted checkpoints and comparing all `1,929` `state_dict`
+tensors bit-for-bit found zero differing tensors. Test metrics, config,
+checkpoint-selection metadata, dependency versions, and process controls also
+matched exactly. This closes the remaining reproducibility acceptance step at
+the model-state level rather than relying only on rounded log metrics.
+
+Both deterministic runs retain non-blocking stabilization warnings:
+`MAEvsNaiveZero=1.7318`, cap-applied rate `64.52%`, and raw MR `2.7452` versus
+the `1.8` warning target. They remain explicit roadmap signals, but all
+mandatory unchanged promotion gates pass and raw MR remains below the hard
+`3.0` structural limit.
+
 ## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
@@ -233,6 +273,8 @@ the later successful remote run is recorded above.
 | [33188247918](https://github.com/ifieryarrows/terra-rara/actions/runs/33188247918) | `95882a3`, snapshot `3d302527…` | Fail | Top-2 soup preserved WeeklyDA `0.6774`, weekly Sharpe `2.4988`, PI80 `0.8548`, and daily Sharpe `2.5572`; only bounded MR `1.3866` failed; promotion blocked |
 | [33190434601](https://github.com/ifieryarrows/terra-rara/actions/runs/33190434601) | `db24df0`, snapshot `3d302527…` | Fail | Cap margin fixed bounded MR at `1.3311`; WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, and PI80 `0.8226` held; only raw MR `3.0397` failed; promotion blocked |
 | [33192762447](https://github.com/ifieryarrows/terra-rara/actions/runs/33192762447) | `e867857`, snapshot `3d302527…` | Pass | WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, bounded MR `1.3311`, raw MR `1.6506`, PI80 `0.8548`, and daily Sharpe `3.2388`; Hub/DB promotion and backtest succeeded |
+| [33195418753](https://github.com/ifieryarrows/terra-rara/actions/runs/33195418753) | `6b1928c`, snapshot `bf08a68c…` | Pass | Deterministic cutoff validation; WeeklyDA `0.6129`, weekly Sharpe `1.5210`, MR `1.2292`, raw MR `2.7452`, PI80 `0.8226` |
+| [33197383801](https://github.com/ifieryarrows/terra-rara/actions/runs/33197383801) | `6b1928c`, replayed snapshot `bf08a68c…` | Pass | Exact immutable replay; all gate metrics, selected epochs, and 1,929 promoted model-state tensors matched the source run |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -301,17 +343,19 @@ sign-collapse guard is not triggered.
 - Frontend TypeScript and Vite production build passed. Vite retained its
   existing large-main-chunk warning (`852.08 kB`, `253.53 kB` gzip).
 
-## Remaining acceptance step
+## Acceptance outcome
 
 Runs `33120071397`, `33188247918`, and `33190434601` prove that rejected
 candidates leave Hub and DB untouched. Run `33192762447` then passed and
 replaced the active metadata only after Hub upload succeeded. The top-2 soup,
 `1.20` train-derived cap, and quality thresholds remain fixed.
 
-The model-quality hypothesis is now supported by a passing fresh-snapshot run
-with substantial raw-scale margin. The remaining reproducibility acceptance
-step is a deterministic validation followed by an immutable-snapshot replay at
-the same commit and dependency contract. Those runs must preserve all required
-weekly/daily metrics without further tuning between them. The separate daily
-backtest direction gap remains a later roadmap item, not a reason to alter the
-now-passing weekly gate.
+The model-quality hypothesis is supported by a passing fresh-snapshot run with
+substantial raw-scale margin. Deterministic validation `33195418753` and exact
+immutable replay `33197383801` then preserved all required weekly/daily metrics
+and produced bit-identical promoted model weights without tuning between runs.
+The reproducibility and promotion-reliability acceptance criteria are met.
+
+The separate daily backtest direction gap and non-blocking cap/raw-scale
+warnings remain later roadmap items. They do not justify changing the now
+passing weekly gate or withholding the quality-gated promoted model.
