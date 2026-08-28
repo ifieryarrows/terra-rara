@@ -924,7 +924,11 @@ def apply_weekly_sign_correction_np(
     adjusted_sign = (weekly_pred - float(threshold)) > 0.0
     flip = raw_sign != adjusted_sign
     if np.any(flip):
-        desired_weekly = np.where(flip, -np.abs(weekly_pred), weekly_pred)
+        desired_weekly = np.where(
+            flip,
+            np.where(adjusted_sign, np.abs(weekly_pred), -np.abs(weekly_pred)),
+            weekly_pred,
+        )
         delta = desired_weekly - weekly_pred
         arr[flip, horizon - 1, :] += delta[flip, None]
     return arr
