@@ -163,6 +163,43 @@ the observed moderate-violation regime without recreating the unbounded early
 training loss. Gate thresholds, cap resolution, soup ranking, direction
 calibration, and interval calibration remain unchanged.
 
+## Raw-scale margin pass and live promotion
+
+Run
+[33192762447](https://github.com/ifieryarrows/terra-rara/actions/runs/33192762447)
+tested the bounded moderate-violation barrier on commit `e867857` and the same
+665-row `3d302527…` snapshot. The unchanged quality gate passed. The top-2
+validation soup used epochs 20 and 29 (`val_weekly_loss=2.3906` and `2.4340`)
+without test-label selection.
+
+| Metric | Previous run `33190434601` | Passing run `33192762447` | Gate status |
+| --- | ---: | ---: | --- |
+| WeeklyDA | 0.6774 | 0.6774 | Pass |
+| Weekly Sharpe | 2.4988 | 2.4988 | Pass |
+| Weekly tail capture | 0.6875 | 0.6875 | Pass |
+| Weekly magnitude ratio | 1.3311 | 1.3311 | Pass |
+| Weekly raw magnitude ratio | 3.0397 | 1.6506 | Pass with margin |
+| Weekly cap-applied rate | 0.7258 | 0.6452 | Warning improved |
+| Weekly PI80 | 0.8226 | 0.8548 | Pass |
+| Daily DA | 0.5000 | 0.5484 | Pass |
+| Daily Sharpe | 1.4692 | 3.2388 | Pass |
+| Daily tail capture | 0.5500 | 0.6500 | Pass |
+
+The artifact manifest marks the candidate `quality_gate_passed=true`,
+`safe_for_inference=true`, and `safe_to_upload_to_hub=true`; the promoted
+checkpoint SHA-256 is `7a34aa07…`. Hub upload, promoted DB metadata persistence,
+and the chained backtest all completed successfully. A live API read after the
+workflow returned `trained_at=2026-08-28T17:10:10Z`, `quality_gate.passed=true`,
+and no rejection reasons, confirming that the production Models page is backed
+by this passed model rather than a rejected candidate.
+
+The chained daily walk-forward comparison is supportive on error but not a
+replacement for the weekly gate. TFT MAE was `0.077388` versus XGBoost
+`0.124224` (`37.7%` lower), while daily directional accuracy was `0.4933`
+versus `0.4980` (`0.94%` relatively lower). The weekly promotion result remains
+valid; the small daily-direction deficit is retained as a separate development
+signal and must not be conflated with the 5-day WeeklyDA contract.
+
 ## Earlier diagnosis
 
 The remaining OOS failure was narrowed to two separate post-training effects:
@@ -195,6 +232,7 @@ the later successful remote run is recorded above.
 | [33120071397](https://github.com/ifieryarrows/terra-rara/actions/runs/33120071397) | `9e4006f`, snapshot `200ce6d4…` | Fail | Smooth sign surrogate lowered raw MR to `2.1567`, but PI80 rose to `0.9032` and daily Sharpe fell to `-1.0652`; Hub/DB promotion blocked |
 | [33188247918](https://github.com/ifieryarrows/terra-rara/actions/runs/33188247918) | `95882a3`, snapshot `3d302527…` | Fail | Top-2 soup preserved WeeklyDA `0.6774`, weekly Sharpe `2.4988`, PI80 `0.8548`, and daily Sharpe `2.5572`; only bounded MR `1.3866` failed; promotion blocked |
 | [33190434601](https://github.com/ifieryarrows/terra-rara/actions/runs/33190434601) | `db24df0`, snapshot `3d302527…` | Fail | Cap margin fixed bounded MR at `1.3311`; WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, and PI80 `0.8226` held; only raw MR `3.0397` failed; promotion blocked |
+| [33192762447](https://github.com/ifieryarrows/terra-rara/actions/runs/33192762447) | `e867857`, snapshot `3d302527…` | Pass | WeeklyDA `0.6774`, weekly Sharpe `2.4988`, tail `0.6875`, bounded MR `1.3311`, raw MR `1.6506`, PI80 `0.8548`, and daily Sharpe `3.2388`; Hub/DB promotion and backtest succeeded |
 
 The two failing `.40` runs used the same snapshot SHA, cutoff, Optuna
 artifact, and pinned package family, but selected different best checkpoints
@@ -266,10 +304,14 @@ sign-collapse guard is not triggered.
 ## Remaining acceptance step
 
 Runs `33120071397`, `33188247918`, and `33190434601` prove that rejected
-candidates leave Hub and DB untouched; the active model therefore remains the
-passing `c93fc45` artifact. The top-2 soup and `1.20` train-derived cap remain
-fixed. The remaining acceptance step is one fresh immutable-snapshot run after
-the bounded moderate-violation saturation barrier is committed. It must pass
-the unchanged gate while preserving WeeklyDA, PI80, tail capture,
-daily/weekly Sharpe, bounded magnitude, and raw-scale safety. No new long
-pipeline has been started.
+candidates leave Hub and DB untouched. Run `33192762447` then passed and
+replaced the active metadata only after Hub upload succeeded. The top-2 soup,
+`1.20` train-derived cap, and quality thresholds remain fixed.
+
+The model-quality hypothesis is now supported by a passing fresh-snapshot run
+with substantial raw-scale margin. The remaining reproducibility acceptance
+step is a deterministic validation followed by an immutable-snapshot replay at
+the same commit and dependency contract. Those runs must preserve all required
+weekly/daily metrics without further tuning between them. The separate daily
+backtest direction gap remains a later roadmap item, not a reason to alter the
+now-passing weekly gate.
