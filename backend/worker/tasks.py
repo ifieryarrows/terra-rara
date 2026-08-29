@@ -40,19 +40,16 @@ logger = logging.getLogger(__name__)
 # Helper functions for metrics tracking
 # =============================================================================
 
-def _create_pipeline_session() -> tuple[Session, Optional[Any]]:
-    """Return a work session pinned to one PostgreSQL backend connection.
+def _create_pipeline_lock_connection() -> Optional[Any]:
+    """Hold the production advisory lock on a dedicated DB connection.
 
-    PostgreSQL advisory locks are session-scoped. A normal SQLAlchemy Session
-    may return its connection to the pool after each commit, leaking the lock
-    on the original backend and attempting the final unlock on another one.
-    Binding to an explicitly held Connection keeps every stage commit and the
-    eventual unlock on the same physical database session.
+    Stage code intentionally commits and rolls back many transactions. Keeping
+    the session-scoped advisory lock on a separate physical connection makes
+    its lifetime independent of ORM transaction/pool behavior.
     """
     if get_db_type() == "postgresql":
-        connection = get_engine().connect()
-        return Session(bind=connection, autoflush=False), connection
-    return SessionLocal(), None
+        return get_engine().connect()
+    return None
 
 def create_run_metrics(
     session: Session,
@@ -233,7 +230,9 @@ async def run_pipeline(
     
     # Get a dedicated session for this pipeline run
     # IMPORTANT: This session holds the advisory lock
-    session, pinned_connection = _create_pipeline_session()
+    session: Session = SessionLocal()
+    lock_connection = _create_pipeline_lock_connection()
+    lock_handle = lock_connection if lock_connection is not None else session
     quality_state = "ok"
     result = {}
     
@@ -250,7 +249,7 @@ async def run_pipeline(
         session.commit()
         
         # 1. Acquire distributed lock
-        if not try_acquire_lock(session, PIPELINE_LOCK_KEY):
+        if not try_acquire_lock(lock_handle, PIPELINE_LOCK_KEY):
             logger.warning(f"[run_id={run_id}] Pipeline skipped: lock held by another process")
             finalize_run_metrics(session, run_id, status="skipped_locked", quality_state="skipped")
             session.commit()
@@ -328,15 +327,15 @@ async def run_pipeline(
     finally:
         # Always release lock and cleanup
         try:
-            release_lock(session, PIPELINE_LOCK_KEY)
+            release_lock(lock_handle, PIPELINE_LOCK_KEY)
             clear_lock_visibility(session, PIPELINE_LOCK_KEY)
             session.commit()
         except Exception:
             session.rollback()
         finally:
             session.close()
-            if pinned_connection is not None:
-                pinned_connection.close()
+            if lock_connection is not None:
+                lock_connection.close()
 
 
 async def _execute_pipeline_stages_v2(
