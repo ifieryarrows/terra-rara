@@ -96,6 +96,7 @@ def _deterministic_stance_from_inputs(predicted_return: float, sentiment_index: 
 
 def _build_commentary_template_fallback(
     current_price: Optional[float],
+    baseline_price: Optional[float],
     predicted_price: Optional[float],
     predicted_return: float,
     sentiment_index: float,
@@ -117,10 +118,12 @@ def _build_commentary_template_fallback(
             f"3. News sample size ({news_count}) may be insufficient for stable short-horizon inference.",
             "Opportunities:",
             (
-                f"1. Predicted price path implies a move from ${current_price:.4f} to ${predicted_price:.4f}."
-                if predicted_price is not None and current_price is not None
+                f"1. The model-derived price is ${predicted_price:.4f} from the finite baseline "
+                f"${baseline_price:.4f}; the live display price"
+                + (f" is ${current_price:.4f} and is a separate observation." if current_price is not None else " is unavailable.")
+                if predicted_price is not None and baseline_price is not None
                 else (
-                    f"1. Current live price is unavailable; the model-derived predicted price is ${predicted_price:.4f}."
+                    f"1. The model-derived predicted price is ${predicted_price:.4f}, but its finite baseline metadata is unavailable."
                     if predicted_price is not None
                     else "1. Predicted price is unavailable because no finite reference close was available."
                 )
@@ -224,12 +227,16 @@ async def _generate_commentary_and_stance(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int,
+    baseline_price: Optional[float] = None,
+    baseline_price_date: Optional[str] = None,
+    price_basis: Optional[str] = None,
     model_status_note: str | None = None,
 ) -> CommentaryGenerationResult:
     settings = get_settings()
     deterministic_stance = _deterministic_stance_from_inputs(predicted_return, sentiment_index)
     fallback_commentary = _build_commentary_template_fallback(
         current_price=current_price,
+        baseline_price=baseline_price,
         predicted_price=predicted_price,
         predicted_return=predicted_return,
         sentiment_index=sentiment_index,
@@ -253,13 +260,23 @@ async def _generate_commentary_and_stance(
     )
 
     current_price_text = f"{current_price:.4f}" if current_price is not None else "unavailable"
+    baseline_price_text = f"{baseline_price:.4f}" if baseline_price is not None else "unavailable"
     predicted_price_text = f"{predicted_price:.4f}" if predicted_price is not None else "unavailable"
+    live_gap_text = (
+        f"{(predicted_price / current_price) - 1.0:.6f}"
+        if current_price not in (None, 0) and predicted_price is not None
+        else "unavailable"
+    )
     user_prompt = f"""You are now executing your analytical mandate. Based exclusively on the data provided below, produce a professional-grade market commentary and directional stance on copper.
 
 DATA INPUTS:
-- Current Price: {current_price_text}
-- Predicted Price: {predicted_price_text}
-- Predicted Return: {predicted_return:.6f}
+- Current Live/Display Price (not the model baseline): {current_price_text}
+- Model Baseline Price: {baseline_price_text}
+- Model Baseline Date: {baseline_price_date or "unavailable"}
+- Predicted Price Derived From Baseline: {predicted_price_text}
+- Predicted Return Relative To Baseline: {predicted_return:.6f}
+- Predicted-vs-Live Display Gap (predicted/current - 1): {live_gap_text}
+- Price Basis: {price_basis or "unavailable"}
 - Sentiment Index: {sentiment_index:.6f}
 - Sentiment Label: {sentiment_label}
 - News Count: {news_count}
@@ -270,7 +287,9 @@ DATA INPUTS:
 ANALYTICAL FRAMEWORK:
 
 1. Primary Signal Interpretation:
-   - Evaluate predicted return magnitude and direction as your core directional indicator
+   - Evaluate predicted return magnitude and direction relative to the model baseline
+   - Current live price is a separate observation. Never describe the predicted price as a move "from current price" unless you explicitly use the predicted-vs-live display gap
+   - If baseline-relative return and predicted-vs-live gap have different signs, state that divergence plainly; never call a lower numeric target an advance from a higher live price
    - Assess whether the move represents a minor fluctuation, meaningful trend shift, or major structural change
    - Consider price levels relative to historical support/resistance zones if contextually relevant
 
@@ -449,12 +468,15 @@ Write as a seasoned commodities strategist would for institutional clients—pre
 
 async def generate_commentary(
     current_price: Optional[float],
-    predicted_price: float,
+    predicted_price: Optional[float],
     predicted_return: float,
     sentiment_index: float,
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int = 0,
+    baseline_price: Optional[float] = None,
+    baseline_price_date: Optional[str] = None,
+    price_basis: Optional[str] = None,
     model_status_note: str | None = None,
 ) -> Optional[str]:
     """
@@ -468,6 +490,9 @@ async def generate_commentary(
         sentiment_label=sentiment_label,
         top_influencers=top_influencers,
         news_count=news_count,
+        baseline_price=baseline_price,
+        baseline_price_date=baseline_price_date,
+        price_basis=price_basis,
         model_status_note=model_status_note,
     )
     return result.commentary
@@ -566,6 +591,9 @@ async def generate_and_save_commentary(
     sentiment_label: str,
     top_influencers: list[dict],
     news_count: int = 0,
+    baseline_price: Optional[float] = None,
+    baseline_price_date: Optional[str] = None,
+    price_basis: Optional[str] = None,
     model_status_note: str | None = None,
 ) -> Optional[str]:
     """
@@ -580,6 +608,9 @@ async def generate_and_save_commentary(
         sentiment_label=sentiment_label,
         top_influencers=top_influencers,
         news_count=news_count,
+        baseline_price=baseline_price,
+        baseline_price_date=baseline_price_date,
+        price_basis=price_basis,
         model_status_note=model_status_note,
     )
 

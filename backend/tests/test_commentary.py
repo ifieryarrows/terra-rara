@@ -105,6 +105,11 @@ def test_generate_commentary_single_call_json_success(monkeypatch):
     async def fake_openrouter(**kwargs):
         assert kwargs.get("response_format") == commentary_module.COMMENTARY_RESPONSE_FORMAT
         assert kwargs.get("provider") == {"require_parameters": True}
+        prompt = kwargs["messages"][1]["content"]
+        assert "Model Baseline Price: 6.5870" in prompt
+        assert "Current Live/Display Price (not the model baseline): 6.6590" in prompt
+        assert "Predicted-vs-Live Display Gap" in prompt
+        assert "never call a lower numeric target an advance" in prompt
         return {
             "choices": [
                 {
@@ -123,9 +128,12 @@ def test_generate_commentary_single_call_json_success(monkeypatch):
 
     async def run_call():
         return await commentary_module._generate_commentary_and_stance(
-            current_price=4.1,
-            predicted_price=4.0,
-            predicted_return=-0.02,
+            current_price=6.659,
+            baseline_price=6.587,
+            baseline_price_date="2026-08-27",
+            price_basis="predicted_price = baseline_price * (1 + predicted_return)",
+            predicted_price=6.6046,
+            predicted_return=0.002678,
             sentiment_index=-0.1,
             sentiment_label="Bearish",
             top_influencers=[],
@@ -135,6 +143,28 @@ def test_generate_commentary_single_call_json_success(monkeypatch):
     commentary, stance = asyncio.run(run_call())
     assert stance == "BEARISH"
     assert "This is NOT financial advice." in commentary
+
+
+def test_commentary_fallback_does_not_describe_baseline_forecast_as_live_price_path(monkeypatch):
+    fake_settings = SimpleNamespace(openrouter_api_key=None)
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+
+    result = asyncio.run(commentary_module._generate_commentary_and_stance(
+        current_price=6.659,
+        baseline_price=6.587,
+        baseline_price_date="2026-08-27",
+        price_basis="predicted_price = baseline_price * (1 + predicted_return)",
+        predicted_price=6.6046,
+        predicted_return=0.002678,
+        sentiment_index=0.1955,
+        sentiment_label="Bullish",
+        top_influencers=[],
+        news_count=189,
+    ))
+
+    assert "from $6.6590 to $6.6046" not in result.commentary
+    assert "baseline $6.5870" in result.commentary
+    assert "live display price is $6.6590 and is a separate observation" in result.commentary
 
 
 def test_generate_commentary_repairs_invalid_json(monkeypatch):

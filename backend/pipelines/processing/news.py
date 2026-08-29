@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import case, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -242,8 +242,11 @@ def backfill_content_dedup(session: Session, *, dry_run: bool = True) -> dict:
         .all()
     )
     canonical_by_key: dict[str, int] = {}
-    duplicate_updates = 0
+    duplicate_relationship_updates = 0
+    version_updates = 0
     publisher_updates = 0
+    processed_updates: list[dict] = []
+    raw_updates: list[dict] = []
     for processed, raw in rows:
         publisher = normalize_publisher(raw.publisher)
         if publisher is None and isinstance(raw.raw_payload, dict):
@@ -252,20 +255,59 @@ def backfill_content_dedup(session: Session, *, dry_run: bool = True) -> dict:
         key = compute_content_dedup_key(raw.title, publisher, raw.published_at)
         canonical_id = canonical_by_key.setdefault(key, processed.id)
         desired_duplicate = None if canonical_id == processed.id else canonical_id
-        if processed.duplicate_of_id != desired_duplicate or processed.dedup_version != "content_v2":
-            duplicate_updates += 1
-            if not dry_run:
-                processed.duplicate_of_id = desired_duplicate
-                processed.dedup_version = "content_v2"
+        duplicate_changed = processed.duplicate_of_id != desired_duplicate
+        version_changed = processed.dedup_version != "content_v2"
+        if duplicate_changed:
+            duplicate_relationship_updates += 1
+        if version_changed:
+            version_updates += 1
+        if not dry_run and (duplicate_changed or version_changed):
+            # Keep every mapping the same shape so SQLAlchemy can send one
+            # executemany batch instead of flushing thousands of individual
+            # UPDATE statements over the production DB connection.
+            processed_updates.append(
+                {
+                    "id": processed.id,
+                    "duplicate_of_id": desired_duplicate,
+                    "dedup_version": "content_v2",
+                }
+            )
         if raw.publisher != publisher:
             publisher_updates += 1
             if not dry_run:
-                raw.publisher = publisher
+                raw_updates.append({"id": raw.id, "publisher": publisher})
     if not dry_run:
+        # UPDATE executemany is still serialized by several PostgreSQL drivers.
+        # CASE-based chunks keep the same transaction semantics while reducing
+        # a historical backfill from tens of thousands of round trips to a few
+        # bounded statements.
+        chunk_size = 500
+        for start in range(0, len(raw_updates), chunk_size):
+            chunk = raw_updates[start:start + chunk_size]
+            ids = [item["id"] for item in chunk]
+            publisher_by_id = {item["id"]: item["publisher"] for item in chunk}
+            session.execute(
+                update(NewsRaw)
+                .where(NewsRaw.id.in_(ids))
+                .values(publisher=case(publisher_by_id, value=NewsRaw.id))
+            )
+        for start in range(0, len(processed_updates), chunk_size):
+            chunk = processed_updates[start:start + chunk_size]
+            ids = [item["id"] for item in chunk]
+            duplicate_by_id = {item["id"]: item["duplicate_of_id"] for item in chunk}
+            session.execute(
+                update(NewsProcessed)
+                .where(NewsProcessed.id.in_(ids))
+                .values(
+                    duplicate_of_id=case(duplicate_by_id, value=NewsProcessed.id),
+                    dedup_version="content_v2",
+                )
+            )
         session.commit()
     return {
         "rows_scanned": len(rows),
-        "duplicate_updates": duplicate_updates,
+        "duplicate_updates": duplicate_relationship_updates,
+        "dedup_version_updates": version_updates,
         "publisher_updates": publisher_updates,
         "dry_run": dry_run,
     }

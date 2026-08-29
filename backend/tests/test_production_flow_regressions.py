@@ -16,7 +16,7 @@ import xgboost as xgb
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import ModelArtifact, NewsProcessed, NewsRaw, NewsSentimentV2, PipelineRunMetrics, PriceBar
+from app.models import ModelArtifact, NewsEmbedding, NewsProcessed, NewsRaw, NewsSentimentV2, PipelineRunMetrics, PriceBar
 
 
 def _session_for(*tables):
@@ -122,6 +122,64 @@ def test_news_processing_consumes_more_than_two_batches_and_marks_wrapper_duplic
         assert session.query(NewsProcessed).filter(NewsProcessed.duplicate_of_id.isnot(None)).count() == 1
         assert session.query(NewsProcessed).filter(NewsProcessed.duplicate_of_id.is_(None)).count() == 205
         assert {row.language for row in session.query(NewsProcessed).all()} == {"en"}
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_historical_news_backfill_is_idempotent_and_keeps_duplicate_audit_rows():
+    from pipelines.processing.news import backfill_content_dedup
+
+    engine = create_engine("sqlite:///:memory:")
+    NewsRaw.__table__.create(bind=engine)
+    NewsProcessed.__table__.create(bind=engine)
+    session = sessionmaker(bind=engine)()
+    run_id = uuid.uuid4()
+    published = datetime(2026, 8, 28, 12, tzinfo=timezone.utc)
+    try:
+        for idx in range(2):
+            raw = NewsRaw(
+                url=f"https://news.google.com/articles/wrapper-{idx}",
+                url_hash=f"{idx:064x}",
+                title="Copper supply disruption",
+                description="The same syndicated copper report.",
+                source="google_news",
+                publisher=" Reuters ",
+                source_feed=f"google_news:query-{idx}",
+                published_at=published,
+                run_id=run_id,
+            )
+            session.add(raw)
+            session.flush()
+            session.add(
+                NewsProcessed(
+                    raw_id=raw.id,
+                    canonical_title="copper supply disruption",
+                    canonical_title_hash=f"{idx + 2:064x}",
+                    cleaned_text=raw.description,
+                    dedup_key=f"{idx + 4:064x}",
+                    dedup_version="url_v1",
+                    language="en",
+                    run_id=run_id,
+                )
+            )
+        session.commit()
+
+        applied = backfill_content_dedup(session, dry_run=False)
+        assert applied["duplicate_updates"] == 1
+        assert applied["dedup_version_updates"] == 2
+        assert applied["publisher_updates"] == 2
+        processed = session.query(NewsProcessed).order_by(NewsProcessed.id).all()
+        assert processed[0].duplicate_of_id is None
+        assert processed[1].duplicate_of_id == processed[0].id
+        assert {row.dedup_version for row in processed} == {"content_v2"}
+        assert {row.publisher for row in session.query(NewsRaw).all()} == {"Reuters"}
+
+        second_pass = backfill_content_dedup(session, dry_run=True)
+        assert second_pass["duplicate_updates"] == 0
+        assert second_pass["dedup_version_updates"] == 0
+        assert second_pass["publisher_updates"] == 0
+        assert session.query(NewsProcessed).count() == 2
     finally:
         session.close()
         engine.dispose()
@@ -277,6 +335,85 @@ def test_shared_feature_preprocessing_has_bounded_fill_and_no_nonfinite_values()
     assert result.loc[index[4], "sentiment__index"] == pytest.approx(0.0)
 
 
+def test_daily_embedding_backfill_only_runs_model_for_missing_rows(monkeypatch, tmp_path):
+    from app import db
+    from deep_learning import config
+    from deep_learning.data import embeddings
+
+    engine = create_engine("sqlite:///:memory:")
+    for model in (NewsRaw, NewsProcessed, NewsEmbedding):
+        model.__table__.create(bind=engine, checkfirst=True)
+    Session = sessionmaker(bind=engine)
+    run_id = uuid.uuid4()
+    published = datetime.now(timezone.utc) - timedelta(hours=1)
+    with Session() as session:
+        processed_ids = []
+        for idx in range(2):
+            raw = NewsRaw(
+                url=f"https://example.test/article-{idx}",
+                url_hash=f"{idx:064x}",
+                title=f"Copper article {idx}",
+                description=f"Copper market description {idx}",
+                source="test",
+                publisher="Reuters",
+                source_feed="test",
+                published_at=published,
+                run_id=run_id,
+            )
+            session.add(raw)
+            session.flush()
+            processed = NewsProcessed(
+                raw_id=raw.id,
+                canonical_title=f"copper article {idx}",
+                canonical_title_hash=f"{idx + 2:064x}",
+                cleaned_text=f"unique cleaned text {idx}",
+                dedup_key=f"{idx + 4:064x}",
+                dedup_version="content_v2",
+                language="en",
+                run_id=run_id,
+            )
+            session.add(processed)
+            session.flush()
+            processed_ids.append(processed.id)
+        session.add(
+            NewsEmbedding(
+                news_processed_id=processed_ids[0],
+                embedding_full=b"existing-full",
+                embedding_pca=b"existing-pca",
+                pca_version="pca2_v1",
+            )
+        )
+        session.commit()
+
+    pca_path = tmp_path / "pca.joblib"
+    pca_path.touch()
+    seen_texts = []
+
+    class FakePCA:
+        def transform(self, values):
+            return values[:, :2]
+
+    monkeypatch.setattr(db, "SessionLocal", Session)
+    monkeypatch.setattr(
+        config,
+        "get_tft_config",
+        lambda: SimpleNamespace(embedding=SimpleNamespace(pca_model_path=str(pca_path))),
+    )
+    monkeypatch.setattr(
+        embeddings,
+        "extract_embeddings_batch",
+        lambda texts, **_kwargs: seen_texts.extend(texts) or np.ones((len(texts), 768), dtype=np.float32),
+    )
+    monkeypatch.setattr(embeddings, "load_pca", lambda _path: FakePCA())
+
+    stats = embeddings.backfill_embeddings(days=30, pca_dim=2, batch_size=64)
+    assert stats["embedded"] == 1
+    assert seen_texts == ["unique cleaned text 1"]
+    with Session() as session:
+        assert session.query(NewsEmbedding).count() == 2
+    engine.dispose()
+
+
 def _tiny_booster():
     features = ["feature_a", "feature_b"]
     matrix = xgb.DMatrix(
@@ -347,3 +484,40 @@ def test_pipeline_evaluator_fails_stale_artifact_and_marks_llm_fallback_degraded
     assert "artifact_version" in critical
     assert quality == "degraded"
     assert "operational fallback" in message
+
+    critical, quality, _message = evaluate_pipeline_result(
+        {
+            "snapshot_generated": True,
+            "cutoff_error": "cutoff failed",
+            "news_raw_inserted": 1,
+            "news_processed_inserted": 1,
+        },
+        train_model=False,
+    )
+    assert critical["cutoff_error"] == "cutoff failed"
+    assert quality == "ok"
+
+
+def test_production_lock_visibility_uses_worker_advisory_lock(monkeypatch):
+    from adapters.db import lock as db_lock
+    from app import db, lock as app_lock
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    observed = {}
+    monkeypatch.setattr(db, "get_db_type", lambda: "postgresql")
+    monkeypatch.setattr(db, "SessionLocal", FakeSession)
+    monkeypatch.setattr(
+        db_lock,
+        "is_lock_held",
+        lambda session, key: observed.update(session=session, key=key) or True,
+    )
+
+    assert app_lock.is_pipeline_locked() is True
+    assert isinstance(observed["session"], FakeSession)
+    assert observed["key"] == db_lock.PIPELINE_LOCK_KEY

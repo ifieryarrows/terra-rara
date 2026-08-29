@@ -1,6 +1,7 @@
-"""
-Pipeline lock mechanism to prevent concurrent heavy operations.
-Uses file-based locking for simplicity and cross-process compatibility.
+"""Pipeline lock helpers.
+
+PostgreSQL advisory locks are authoritative for the distributed production
+worker. File locking remains the local/SQLite fallback.
 """
 
 import logging
@@ -111,6 +112,22 @@ def is_pipeline_locked() -> bool:
     Check if the pipeline is currently locked.
     Non-blocking check.
     """
+    # The API and ARQ worker are separate processes in production, so a local
+    # file lock cannot describe the worker's PostgreSQL advisory lock. Use the
+    # same authority as the worker for health and enqueue preflight checks.
+    from app.db import SessionLocal, get_db_type
+
+    if get_db_type() == "postgresql":
+        from adapters.db.lock import PIPELINE_LOCK_KEY, is_lock_held
+
+        try:
+            with SessionLocal() as session:
+                return is_lock_held(session, PIPELINE_LOCK_KEY)
+        except Exception as exc:
+            # This is only a preflight visibility check. The worker still uses
+            # try_acquire_lock as the race-safe authority.
+            logger.warning("Could not inspect PostgreSQL pipeline lock: %s", exc)
+
     settings = get_settings()
     lock_file = Path(settings.pipeline_lock_file)
     

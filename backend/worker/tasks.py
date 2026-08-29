@@ -107,6 +107,7 @@ def evaluate_pipeline_result(result: dict, *, train_model: bool) -> tuple[dict, 
         if key in {
             "news_raw_error",
             "news_processed_error",
+            "cutoff_error",
             "price_error",
             "scoring_error",
             "aggregation_error",
@@ -684,7 +685,6 @@ async def _execute_pipeline_stages_v2(
                 persisted = False
                 try:
                     from app.models import TFTPredictionSnapshot
-                    from datetime import datetime, timezone
 
                     prediction = tft_report.get("prediction") or {}
                     reference_price_date = prediction.get("reference_price_date")
@@ -780,6 +780,9 @@ async def _execute_pipeline_stages_v2(
             
             # Default XGBoost Variable Extraction
             current_price = report.get("current_price")
+            baseline_price = report.get("baseline_price")
+            baseline_price_date = report.get("baseline_price_date")
+            price_basis = report.get("price_basis")
             predicted_price = report.get("predicted_price")
             predicted_return = report.get("predicted_return", 0.0)
             sentiment_index = report.get("sentiment_index", 0.0)
@@ -791,6 +794,9 @@ async def _execute_pipeline_stages_v2(
             is_tft = report.get("model_type") == "TFT-ASRO"
             if is_tft:
                 prediction = report.get("prediction", {})
+                baseline_price = prediction.get("reference_price")
+                baseline_price_date = prediction.get("reference_price_date")
+                price_basis = prediction.get("return_basis")
                 predicted_price = prediction.get("predicted_price_median")
                 predicted_return = prediction.get("predicted_return_median", 0.0)
                 
@@ -819,6 +825,7 @@ async def _execute_pipeline_stages_v2(
 
             # --- None-safety guard: f-string formatters crash on None ---
             current_price = float(current_price) if current_price is not None else None
+            baseline_price = float(baseline_price) if baseline_price is not None else None
             predicted_price = float(predicted_price) if predicted_price is not None else None
             predicted_return = float(predicted_return or 0.0)
             sentiment_index = float(sentiment_index or 0.0)
@@ -831,6 +838,9 @@ async def _execute_pipeline_stages_v2(
                 session=session,
                 symbol="HG=F",
                 current_price=current_price,
+                baseline_price=baseline_price,
+                baseline_price_date=baseline_price_date,
+                price_basis=price_basis,
                 predicted_price=predicted_price,
                 predicted_return=predicted_return,
                 sentiment_index=sentiment_index,

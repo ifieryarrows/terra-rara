@@ -196,7 +196,7 @@ def backfill_embeddings(
         4. Store reduced embeddings in news_embeddings table.
     """
     from app.db import SessionLocal
-    from app.models import NewsProcessed, NewsRaw
+    from app.models import NewsEmbedding, NewsProcessed, NewsRaw
     from deep_learning.config import get_tft_config
 
     cfg = get_tft_config()
@@ -217,7 +217,12 @@ def backfill_embeddings(
                 NewsRaw.description,
             )
             .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
+            .outerjoin(
+                NewsEmbedding,
+                NewsEmbedding.news_processed_id == NewsProcessed.id,
+            )
             .filter(NewsRaw.published_at >= cutoff)
+            .filter(NewsEmbedding.id.is_(None))
             .order_by(NewsProcessed.id.asc())
             .all()
         )
