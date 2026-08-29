@@ -51,8 +51,18 @@ jobs:
               "OPENROUTER_FALLBACK_MODELS": "google/gemma-4-26b-a4b-it:free,z-ai/glm-5.2:free",
               "XGB_ARTIFACT_SOURCE": "auto",
           }
+          current_variables = api.get_space_variables("ifieryarrows/copper-mind")
           for key, value in variables.items():
-              api.add_space_variable(
+              # Existing production configuration stored some runtime model
+              # keys as Space secrets. HF rejects a secret+variable collision,
+              # so standardize these environment entries as secrets without
+              # printing their values.
+              if key in current_variables:
+                  api.delete_space_variable(
+                      repo_id="ifieryarrows/copper-mind",
+                      key=key,
+                  )
+              api.add_space_secret(
                   repo_id="ifieryarrows/copper-mind",
                   key=key,
                   value=value,
