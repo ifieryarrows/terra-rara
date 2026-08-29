@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db import SessionLocal, init_db, get_db_type
+from app.db import SessionLocal, get_engine, init_db, get_db_type
 from app.settings import get_settings
 from app.models import PipelineRunMetrics
 from adapters.db.lock import (
@@ -39,6 +39,20 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Helper functions for metrics tracking
 # =============================================================================
+
+def _create_pipeline_session() -> tuple[Session, Optional[Any]]:
+    """Return a work session pinned to one PostgreSQL backend connection.
+
+    PostgreSQL advisory locks are session-scoped. A normal SQLAlchemy Session
+    may return its connection to the pool after each commit, leaking the lock
+    on the original backend and attempting the final unlock on another one.
+    Binding to an explicitly held Connection keeps every stage commit and the
+    eventual unlock on the same physical database session.
+    """
+    if get_db_type() == "postgresql":
+        connection = get_engine().connect()
+        return Session(bind=connection, autoflush=False), connection
+    return SessionLocal(), None
 
 def create_run_metrics(
     session: Session,
@@ -219,7 +233,7 @@ async def run_pipeline(
     
     # Get a dedicated session for this pipeline run
     # IMPORTANT: This session holds the advisory lock
-    session: Session = SessionLocal()
+    session, pinned_connection = _create_pipeline_session()
     quality_state = "ok"
     result = {}
     
@@ -321,6 +335,8 @@ async def run_pipeline(
             session.rollback()
         finally:
             session.close()
+            if pinned_connection is not None:
+                pinned_connection.close()
 
 
 async def _execute_pipeline_stages_v2(

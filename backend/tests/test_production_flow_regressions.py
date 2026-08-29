@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xgboost as xgb
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.models import ModelArtifact, NewsEmbedding, NewsProcessed, NewsRaw, NewsSentimentV2, PipelineRunMetrics, PriceBar
@@ -538,3 +538,24 @@ def test_production_lock_visibility_uses_worker_advisory_lock(monkeypatch):
     assert app_lock.is_pipeline_locked() is True
     assert isinstance(observed["session"], FakeSession)
     assert observed["key"] == db_lock.PIPELINE_LOCK_KEY
+
+
+def test_worker_pipeline_session_stays_pinned_across_stage_commits(monkeypatch):
+    from worker import tasks
+
+    engine = create_engine("sqlite:///:memory:")
+    monkeypatch.setattr(tasks, "get_db_type", lambda: "postgresql")
+    monkeypatch.setattr(tasks, "get_engine", lambda: engine)
+
+    session, connection = tasks._create_pipeline_session()
+    try:
+        assert connection is not None
+        assert session.get_bind() is connection
+        session.execute(text("SELECT 1"))
+        session.commit()
+        assert session.get_bind() is connection
+        assert connection.closed is False
+    finally:
+        session.close()
+        connection.close()
+        engine.dispose()
