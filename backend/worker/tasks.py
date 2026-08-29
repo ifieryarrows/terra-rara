@@ -147,6 +147,25 @@ def evaluate_pipeline_result(result: dict, *, train_model: bool) -> tuple[dict, 
     return critical_errors, "ok", None
 
 
+def prepare_commentary_report(
+    report: Optional[dict],
+    tft_status_note: Optional[str] = None,
+) -> tuple[dict, Optional[str]]:
+    """Keep usable model inputs when only freshness/news quality is degraded."""
+    prepared = report or {}
+    notes = [tft_status_note] if tft_status_note else []
+    model_unusable = (
+        prepared.get("model_state") in {"retrain_required", "offline"}
+        or prepared.get("is_forecast_healthy") is False
+    )
+    if prepared.get("quality_state") == "degraded" and prepared.get("message"):
+        notes.append(str(prepared["message"]))
+    if model_unusable:
+        notes.append("Primary forecast model is unavailable; commentary excludes its price signal.")
+        prepared = {}
+    return prepared, " ".join(dict.fromkeys(notes)) or None
+
+
 # =============================================================================
 # Main pipeline task
 # =============================================================================
@@ -762,21 +781,14 @@ async def _execute_pipeline_stages_v2(
         try:
             from app.commentary import generate_and_save_commentary
 
-            report = snapshot_report or {}
-            report_is_degraded = (
-                report.get("quality_state") == "degraded"
-                or report.get("model_state") == "retrain_required"
-                or report.get("is_forecast_healthy") is False
+            report, model_status_note = prepare_commentary_report(
+                snapshot_report,
+                tft_commentary_note,
             )
-            if report_is_degraded:
-                tft_commentary_note = (
-                    tft_commentary_note
-                    or "TFT weekly model unavailable due to incompatible checkpoint metadata; commentary excludes TFT signal."
-                )
+            if not report:
                 logger.warning(
-                    f"[run_id={run_id}] Excluding degraded TFT payload from commentary inputs"
+                    f"[run_id={run_id}] Excluding unusable forecast payload from commentary inputs"
                 )
-                report = {}
             
             # Default XGBoost Variable Extraction
             current_price = report.get("current_price")
@@ -847,7 +859,7 @@ async def _execute_pipeline_stages_v2(
                 sentiment_label=sentiment_label,
                 top_influencers=top_influencers,
                 news_count=news_count,
-                model_status_note=tft_commentary_note,
+                model_status_note=model_status_note,
             )
             session.commit()
 

@@ -470,7 +470,7 @@ def test_xgb_artifact_promotes_atomically_and_reloads_same_bundle(monkeypatch):
 
 
 def test_pipeline_evaluator_fails_stale_artifact_and_marks_llm_fallback_degraded():
-    from worker.tasks import evaluate_pipeline_result
+    from worker.tasks import evaluate_pipeline_result, prepare_commentary_report
 
     critical, quality, message = evaluate_pipeline_result({
         "snapshot_generated": True,
@@ -496,6 +496,23 @@ def test_pipeline_evaluator_fails_stale_artifact_and_marks_llm_fallback_degraded
     )
     assert critical["cutoff_error"] == "cutoff failed"
     assert quality == "ok"
+
+    report = {
+        "quality_state": "degraded",
+        "model_state": "ok",
+        "message": "No fresh news data",
+        "current_price": 6.659,
+        "baseline_price": 6.587,
+        "predicted_price": 6.6046,
+    }
+    prepared, note = prepare_commentary_report(report)
+    assert prepared["baseline_price"] == pytest.approx(6.587)
+    assert note == "No fresh news data"
+    assert "TFT" not in note
+
+    prepared, note = prepare_commentary_report({"model_state": "retrain_required"})
+    assert prepared == {}
+    assert "Primary forecast model is unavailable" in note
 
 
 def test_production_lock_visibility_uses_worker_advisory_lock(monkeypatch):
