@@ -30,6 +30,36 @@ jobs:
       - name: Install huggingface_hub
         run: pip install huggingface_hub
 
+      - name: Configure production runtime variables
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          variables = {
+              "OPENROUTER_MODEL": "minimax/minimax-m2.7:free",
+              "LLM_SENTIMENT_MODEL": "minimax/minimax-m2.7:free",
+              "OPENROUTER_MODEL_SCORING": "minimax/minimax-m2.7:free",
+              "OPENROUTER_MODEL_SCORING_FAST": "minimax/minimax-m2.7:free",
+              "OPENROUTER_MODEL_SCORING_RELIABLE": "minimax/minimax-m3:free",
+              "OPENROUTER_MODEL_COMMENTARY": "minimax/minimax-m3:free",
+              "OPENROUTER_MAX_RETRIES": "1",
+              "OPENROUTER_TIMEOUT_SECONDS": "45",
+              "OPENROUTER_CHAIN_DEADLINE_SECONDS": "120",
+              "MAX_LLM_ARTICLES_PER_RUN": "100",
+              "OPENROUTER_FALLBACK_MODELS": "google/gemma-4-26b-a4b-it:free,z-ai/glm-5.2:free",
+              "XGB_ARTIFACT_SOURCE": "auto",
+          }
+          for key, value in variables.items():
+              api.add_space_variable(
+                  repo_id="ifieryarrows/copper-mind",
+                  key=key,
+                  value=value,
+              )
+          print("Configured production runtime roles and bounded retry policy")
+          PY
+
       - name: Prepare files for upload
         run: |
           mkdir -p backend/data/models
