@@ -474,6 +474,20 @@ class TFTPredictor:
             conformal_adjustment=conformal_adjustment,
         )
 
+        # The decoder frame is the authority for horizon/date alignment. Do
+        # not let the API or frontend recreate forecast dates from "today".
+        future_dates = [self._date_label(value) for value in future.index]
+        decoder_is_after_baseline = bool(
+            future_dates
+            and reference_price_date
+            and future_dates[0]
+            and future_dates[0] > reference_price_date
+        )
+        if decoder_is_after_baseline:
+            for index, forecast in enumerate(result.get("daily_forecasts", [])):
+                if index < len(future_dates) and future_dates[index]:
+                    forecast["forecast_date"] = future_dates[index]
+
         result["model_info"] = {
             "type": "TFT-ASRO",
             "checkpoint": self._checkpoint_path,
@@ -601,16 +615,11 @@ class TFTPredictor:
         reference_price_date = fallback_date
 
         try:
-            from app.models import PriceBar
+            from app.price_utils import finite_positive_price, latest_finite_price_bar
 
-            latest_bar = (
-                session.query(PriceBar)
-                .filter(PriceBar.symbol == symbol)
-                .order_by(PriceBar.date.desc())
-                .first()
-            )
-            if latest_bar is not None and latest_bar.close is not None:
-                baseline_price = float(latest_bar.close)
+            latest_bar = latest_finite_price_bar(session, symbol)
+            if latest_bar is not None and finite_positive_price(latest_bar.close) is not None:
+                baseline_price = finite_positive_price(latest_bar.close)
                 reference_price_date = self._date_label(latest_bar.date)
         except Exception as exc:
             logger.warning(
@@ -631,23 +640,18 @@ class TFTPredictor:
             (staleness_days, ingest_triggered)
         """
         try:
-            from app.models import PriceBar
+            from app.price_utils import latest_finite_price_bar
 
-            latest = (
-                session.query(PriceBar.date)
-                .filter(PriceBar.symbol == symbol)
-                .order_by(PriceBar.date.desc())
-                .first()
-            )
+            latest = latest_finite_price_bar(session, symbol)
         except Exception as exc:
             logger.warning("Freshness check skipped: %s", exc)
             return (0, False)
 
-        if latest is None or latest[0] is None:
+        if latest is None or latest.date is None:
             logger.warning("No PriceBar rows for %s — triggering ingest", symbol)
             return self._trigger_lazy_ingest(session, reason="no-bars")
 
-        last_date = latest[0]
+        last_date = latest.date
         if last_date.tzinfo is None:
             last_date = last_date.replace(tzinfo=timezone.utc)
         staleness = (datetime.now(timezone.utc) - last_date).days
@@ -673,21 +677,18 @@ class TFTPredictor:
         """Run a short incremental price fetch and return updated staleness."""
         try:
             from app.data_manager import ingest_prices
-            from app.models import PriceBar
+            from app.price_utils import latest_finite_price_bar
 
             logger.info("Lazy price ingest triggered (reason=%s)", reason)
             ingest_prices(session)
             session.commit()
 
-            latest = (
-                session.query(PriceBar.date)
-                .filter(PriceBar.symbol == self.cfg.feature_store.target_symbol)
-                .order_by(PriceBar.date.desc())
-                .first()
+            latest = latest_finite_price_bar(
+                session, self.cfg.feature_store.target_symbol
             )
-            if latest is None or latest[0] is None:
+            if latest is None or latest.date is None:
                 return (0, True)
-            last_date = latest[0]
+            last_date = latest.date
             if last_date.tzinfo is None:
                 last_date = last_date.replace(tzinfo=timezone.utc)
             updated = max(int((datetime.now(timezone.utc) - last_date).days), 0)

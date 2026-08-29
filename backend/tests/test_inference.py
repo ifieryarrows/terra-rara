@@ -96,15 +96,15 @@ class TestAnalysisReportFields:
             def predict(self, _dmatrix):
                 return np.array([0.001], dtype=float)
 
-        monkeypatch.setattr(inference, "load_model", lambda _symbol: FakeModel())
         monkeypatch.setattr(
             inference,
-            "load_model_metadata",
-            lambda _symbol: {
+            "load_active_model_bundle",
+            lambda _symbol: (FakeModel(), {
                 "features": ["f1"],
                 "importance": [{"feature": "f1", "importance": 1.0}],
                 "metrics": {"target_type": "simple_return"},
-            },
+                "artifact_version": "test-artifact",
+            }),
         )
         monkeypatch.setattr(inference, "build_features_for_prediction", lambda *_args, **_kwargs: pd.DataFrame({"f1": [1.0]}))
         monkeypatch.setattr(inference, "get_current_price", lambda *_args, **_kwargs: 100.0)
@@ -125,7 +125,7 @@ class TestAnalysisReportFields:
 
         session = MagicMock()
         latest_bar = SimpleNamespace(close=100.0, date=datetime(2026, 1, 1, tzinfo=timezone.utc))
-        session.query.return_value.filter.return_value.order_by.return_value.first.return_value = latest_bar
+        monkeypatch.setattr(inference, "latest_finite_price_bar", lambda *_args: latest_bar)
 
         report = inference.generate_analysis_report(session=session, target_symbol="HG=F")
 
@@ -135,3 +135,6 @@ class TestAnalysisReportFields:
         assert report["sentiment_adjustment_applied"] is True
         assert report["predicted_return_capped"] is False
         assert "sentiment_multiplier" in report
+        assert report["artifact_version"] == "test-artifact"
+        assert report["baseline_price"] == pytest.approx(100.0)
+        assert report["predicted_price"] == pytest.approx(100.25)

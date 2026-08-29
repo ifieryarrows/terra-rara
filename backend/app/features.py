@@ -72,6 +72,15 @@ def load_price_data(
         return pd.DataFrame()
     
     df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "adj_close"])
+    numeric_columns = ["open", "high", "low", "close", "volume", "adj_close"]
+    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, errors="coerce")
+    df[numeric_columns] = df[numeric_columns].replace([np.inf, -np.inf], np.nan)
+    invalid_close = df["close"].isna() | (df["close"] <= 0.0)
+    if invalid_close.any():
+        logger.warning("Excluded %s invalid close rows for %s", int(invalid_close.sum()), symbol)
+        df = df.loc[~invalid_close].copy()
+    if df.empty:
+        return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
     df = df.set_index("date")
     
@@ -268,6 +277,37 @@ def align_to_target_calendar(
     return aligned
 
 
+def build_shared_feature_frame(
+    target_df: pd.DataFrame,
+    other_dfs: dict[str, pd.DataFrame],
+    sentiment_df: pd.DataFrame,
+    *,
+    sentiment_missing_fill: float,
+    max_ffill: int = 3,
+) -> pd.DataFrame:
+    """Single preprocessing contract used by XGBoost training and inference."""
+    aligned = align_to_target_calendar(target_df, other_dfs, max_ffill=max_ffill)
+    all_features = generate_symbol_features(target_df, target_df.attrs.get("symbol", "HG=F"))
+    for symbol, frame in aligned.items():
+        if not frame.empty:
+            all_features = all_features.join(generate_symbol_features(frame, symbol), how="left")
+
+    if not sentiment_df.empty:
+        sentiment_aligned = sentiment_df.reindex(target_df.index).ffill(limit=max_ffill)
+        sentiment_parts = [
+            sentiment_aligned["sentiment_index"].fillna(sentiment_missing_fill).rename("sentiment__index"),
+            sentiment_aligned["news_count"].fillna(0).rename("sentiment__news_count"),
+        ]
+    else:
+        sentiment_parts = [
+            pd.Series(sentiment_missing_fill, index=all_features.index, name="sentiment__index"),
+            pd.Series(0, index=all_features.index, name="sentiment__news_count"),
+        ]
+    return pd.concat([all_features] + sentiment_parts, axis=1).replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(0.0)
+
+
 def build_feature_matrix(
     session: Session,
     target_symbol: str = "HG=F",
@@ -294,6 +334,7 @@ def build_feature_matrix(
     if target_df.empty:
         logger.error(f"No price data for target symbol {target_symbol}")
         return pd.DataFrame(), pd.Series()
+    target_df.attrs["symbol"] = target_symbol
     
     logger.info(f"Target symbol {target_symbol}: {len(target_df)} bars")
     
@@ -306,49 +347,15 @@ def build_feature_matrix(
                 other_dfs[symbol] = df
                 logger.info(f"Symbol {symbol}: {len(df)} bars")
     
-    # Align to target calendar
-    aligned = align_to_target_calendar(target_df, other_dfs, max_ffill=max_ffill)
-    
-    # Generate features for target
-    all_features = generate_symbol_features(target_df, target_symbol)
-    
-    # Generate features for other symbols
-    for symbol, df in aligned.items():
-        if not df.empty:
-            symbol_features = generate_symbol_features(df, symbol)
-            all_features = all_features.join(symbol_features, how="left")
-    
     # Load and join sentiment data
     sentiment_df = load_sentiment_data(session, start_date, end_date)
-    
-    # Build sentiment features as separate Series, then concat (avoids fragmentation warning)
-    sentiment_parts = []
-    
-    if not sentiment_df.empty:
-        # Reindex sentiment to target calendar
-        sentiment_aligned = sentiment_df.reindex(target_df.index)
-        sentiment_aligned = sentiment_aligned.ffill(limit=max_ffill)
-        
-        sentiment_parts.append(
-            sentiment_aligned["sentiment_index"].fillna(settings.sentiment_missing_fill).rename("sentiment__index")
-        )
-        sentiment_parts.append(
-            sentiment_aligned["news_count"].fillna(0).rename("sentiment__news_count")
-        )
-        
-        logger.info(f"Sentiment data joined: {sentiment_df.shape[0]} daily records")
-    else:
-        # No sentiment data - use defaults
-        sentiment_parts.append(
-            pd.Series(settings.sentiment_missing_fill, index=all_features.index, name="sentiment__index")
-        )
-        sentiment_parts.append(
-            pd.Series(0, index=all_features.index, name="sentiment__news_count")
-        )
-        logger.warning("No sentiment data available, using default values")
-    
-    # Concat all at once to avoid fragmentation
-    all_features = pd.concat([all_features] + sentiment_parts, axis=1)
+    all_features = build_shared_feature_frame(
+        target_df,
+        other_dfs,
+        sentiment_df,
+        sentiment_missing_fill=settings.sentiment_missing_fill,
+        max_ffill=max_ffill,
+    )
     
     # Create target: next-day return
     # IMPORTANT: Shift by -1 to get FUTURE return (what we're predicting)
@@ -367,7 +374,6 @@ def build_feature_matrix(
     # Fill remaining NaN features with 0 (instead of dropping rows)
     # This is important for new symbols that may have missing data
     nan_count_before = X.isna().sum().sum()
-    X = X.fillna(0)
     
     if nan_count_before > 0:
         logger.info(f"Filled {nan_count_before} NaN values in features with 0")

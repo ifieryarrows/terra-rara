@@ -24,6 +24,14 @@ from app.db import get_db_type
 logger = logging.getLogger(__name__)
 
 
+def normalize_publisher(value) -> Optional[str]:
+    """Normalize provider-specific publisher shapes into one DB field."""
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("title")
+    normalized = " ".join(str(value or "").split()).strip()
+    return normalized[:300] or None
+
+
 def compute_url_hash(url: Optional[str]) -> Optional[str]:
     """
     Compute deterministic hash of normalized URL.
@@ -54,6 +62,7 @@ def insert_raw_article(
     published_at: Optional[datetime],
     run_id: uuid.UUID,
     raw_payload: Optional[dict] = None,
+    publisher: Optional[str] = None,
 ) -> tuple[Optional[int], str]:
     """
     Insert single article to news_raw.
@@ -86,6 +95,7 @@ def insert_raw_article(
         published_at = fetched_at
     
     url_hash = compute_url_hash(url)
+    publisher = normalize_publisher(publisher)
     
     try:
         db_type = get_db_type()
@@ -98,6 +108,7 @@ def insert_raw_article(
                 title=title,
                 description=description[:2000] if description else None,
                 source=source,
+                publisher=publisher,
                 source_feed=source_feed[:500] if source_feed else None,
                 published_at=published_at,
                 fetched_at=fetched_at,
@@ -129,6 +140,7 @@ def insert_raw_article(
                 title=title,
                 description=description[:2000] if description else None,
                 source=source,
+                publisher=publisher,
                 source_feed=source_feed[:500] if source_feed else None,
                 published_at=published_at,
                 fetched_at=fetched_at,
@@ -224,6 +236,7 @@ def ingest_news_to_raw(
                             published_at=article.get("published_at"),
                             run_id=run_id,
                             raw_payload={"query": query, "source": article.get("source")},
+                            publisher=article.get("source"),
                         )
                         
                         if status == "inserted":
@@ -262,7 +275,8 @@ def ingest_news_to_raw(
                             source_feed=f"newsapi:{query}",
                             published_at=article.get("published_at"),
                             run_id=run_id,
-                            raw_payload={"query": query, "author": article.get("author")},
+                            raw_payload={"query": query, "author": article.get("author"), "source": article.get("source")},
+                            publisher=(article.get("source") or article.get("author")),
                         )
                         
                         if status == "inserted":

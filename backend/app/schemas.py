@@ -49,7 +49,7 @@ class AnalysisReport(BaseModel):
     symbol: str = Field(..., description="Trading symbol (e.g., HG=F)")
     
     # Core prediction data (nullable for degraded modes)
-    current_price: Optional[float] = Field(0.0, description="Most recent closing price")
+    current_price: Optional[float] = Field(None, description="Most recent finite closing price")
     predicted_return: Optional[float] = Field(0.0, description="Predicted next-day return")
     raw_predicted_return: Optional[float] = Field(
         None, description="Raw model output converted to return before sentiment adjustment"
@@ -63,7 +63,13 @@ class AnalysisReport(BaseModel):
     predicted_return_capped: Optional[bool] = Field(
         None, description="Whether final predicted return was clipped by safety cap"
     )
-    predicted_price: Optional[float] = Field(0.0, description="Predicted next-day price")
+    predicted_price: Optional[float] = Field(None, description="Predicted next-day price")
+    baseline_price: Optional[float] = Field(None, description="Historical close used to convert return into price")
+    baseline_price_date: Optional[str] = Field(None, description="Date of the historical baseline close")
+    target_type: Optional[str] = Field(None, description="Model output semantics")
+    price_source: Optional[str] = Field(None, description="Source of current and baseline prices")
+    price_basis: Optional[str] = Field(None, description="Explicit predicted-price equation")
+    artifact_version: Optional[str] = Field(None, description="Active XGBoost artifact version")
     confidence_lower: Optional[float] = Field(0.0, description="Lower bound of confidence interval")
     confidence_upper: Optional[float] = Field(0.0, description="Upper bound of confidence interval")
     sentiment_index: Optional[float] = Field(0.0, description="Current sentiment index (-1 to 1)")
@@ -299,6 +305,9 @@ class NewsSentimentBlock(BaseModel):
     finbert: Optional[NewsFinbertProbs] = Field(None, description="FinBERT probability triplet")
     reasoning: Optional[str] = Field(None, description="Short textual rationale from the LLM")
     scored_at: Optional[str] = Field(None, description="ISO timestamp when the score was written")
+    scoring_mode: Optional[str] = Field(None, description="llm | deterministic_fallback")
+    model_name: Optional[str] = Field(None, description="Actual model that produced the score")
+    fallback_reason: Optional[str] = Field(None, description="Categorized fallback cause")
 
 
 class NewsItem(BaseModel):
@@ -329,6 +338,8 @@ class NewsListResponse(BaseModel):
     offset: int = Field(...)
     has_more: bool = Field(...)
     generated_at: str = Field(..., description="ISO timestamp the response was built")
+    as_of: str = Field(..., description="Stable pagination cutoff timestamp")
+    data_as_of: Optional[str] = Field(None, description="Latest sentiment timestamp included")
     filters: Dict[str, Any] = Field(
         default_factory=dict,
         description="Echo of the filter args applied server-side",

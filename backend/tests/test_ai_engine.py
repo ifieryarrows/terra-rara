@@ -955,7 +955,7 @@ class TestFinbertPipelineCaching:
 
 
 class TestSentimentV2Helpers:
-    def test_parse_llm_v2_accepts_classification_key(self):
+    def test_parse_llm_v2_rejects_non_contract_classification_key(self):
         from app.ai_engine import _parse_llm_v2_items
 
         raw_results = [
@@ -976,12 +976,11 @@ class TestSentimentV2Helpers:
             model_name="fast-model",
         )
 
-        assert failed == []
-        assert parsed[11]["label"] == "BULLISH"
-        assert parsed[11]["impact_score"] == pytest.approx(0.52)
+        assert failed == [11]
+        assert parsed == {}
 
-    def test_parse_llm_v2_missing_confidence_defaults_to_half(self):
-        """Missing confidence should default to 0.5, not fail."""
+    def test_parse_llm_v2_missing_confidence_is_rejected(self):
+        """The parser must not invent a confidence omitted by the model."""
         from app.ai_engine import _parse_llm_v2_items
 
         raw_results = [
@@ -1001,10 +1000,8 @@ class TestSentimentV2Helpers:
             model_name="fast-model",
         )
 
-        assert failed == []
-        assert 22 in parsed
-        assert parsed[22]["confidence"] == pytest.approx(0.5)
-        assert parsed[22]["impact_score"] == pytest.approx(-0.41)
+        assert failed == [22]
+        assert parsed == {}
 
     def test_compute_final_score_v2_supply_disruption_is_positive(self):
         from app.ai_engine import compute_final_score_v2

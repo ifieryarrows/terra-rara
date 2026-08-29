@@ -386,6 +386,7 @@ class TestNewsSchemas:
             offset=0,
             has_more=False,
             generated_at="2026-04-21T10:00:00+00:00",
+            as_of="2026-04-21T10:00:00+00:00",
         )
         assert payload.items == []
         assert payload.has_more is False

@@ -145,6 +145,15 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
           </span>
         )}
 
+        {sentiment?.scoring_mode === 'deterministic_fallback' && (
+          <span
+            className="text-[9px] font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full"
+            title={sentiment.fallback_reason || 'Model service unavailable'}
+          >
+            Local fallback
+          </span>
+        )}
+
         <div className="flex items-center gap-2 ml-auto text-[9px] font-mono text-gray-500 shrink-0">
           <div className="flex items-center gap-1" title={`Relevance ${relevancePct}%`}>
             <span className="text-gray-600">R</span>

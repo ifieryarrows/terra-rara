@@ -119,14 +119,9 @@ export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
 /**
  * Fetch TFT-ASRO deep learning analysis
  */
-export async function fetchTFTAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<TFTAnalysisResponse | null> {
-  try {
-    const response = await api.get<TFTAnalysisResponse>(`/analysis/tft/${symbol}`);
-    return response.data;
-  } catch {
-    // TFT model may not be available yet — return null instead of throwing
-    return null;
-  }
+export async function fetchTFTAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<TFTAnalysisResponse> {
+  const response = await api.get<TFTAnalysisResponse>(`/analysis/tft/${symbol}`);
+  return response.data;
 }
 
 export default api;
@@ -260,6 +255,9 @@ function toNewsParams(filters: NewsFeedFilters = {}): Record<string, string | nu
   }
   if (filters.search && filters.search.trim()) {
     params.search = filters.search.trim();
+  }
+  if (filters.as_of) {
+    params.as_of = filters.as_of;
   }
   return params;
 }

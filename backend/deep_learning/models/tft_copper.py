@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Sequence
 import torch
 import torch.nn.functional as F
 import numpy as np
+import pandas as pd
 
 from deep_learning.contract import RETURN_SPACE, log_to_simple_return
 from deep_learning.config import TFTASROConfig, get_tft_config
@@ -1152,6 +1153,16 @@ def format_prediction(
 
     daily_forecasts = []
     cum_log_median = 0.0
+    forecast_dates: list[Optional[str]] = []
+    if reference_price_date:
+        try:
+            base_date = pd.Timestamp(reference_price_date)
+            forecast_dates = [
+                value.date().isoformat()
+                for value in pd.bdate_range(base_date + pd.offsets.BDay(1), periods=n_days)
+            ]
+        except Exception:
+            forecast_dates = []
     for d in range(n_days):
         raw_med = float(raw_pred[d, median_idx])
         daily_log = float(bounded_pred[d, median_idx])
@@ -1161,6 +1172,7 @@ def format_prediction(
         daily_forecasts.append(
             {
                 "day": d + 1,
+                "forecast_date": forecast_dates[d] if d < len(forecast_dates) else None,
                 "daily_return": log_to_simple_return(daily_log),
                 "daily_log_return": daily_log,
                 "raw_daily_log_return": raw_med,
@@ -1230,7 +1242,7 @@ def format_prediction(
         "weekly_interval_calibrated": conformal_adjustment > 0,
         "prediction_horizon_days": n_days,
         "daily_forecasts": daily_forecasts,
-        "reference_price": float(baseline_price),
+        "reference_price": float(baseline_price) if _valid_price_base() else None,
         "reference_price_date": reference_price_date,
         "return_basis": "daily_log_return_path",
         "return_space": RETURN_SPACE,

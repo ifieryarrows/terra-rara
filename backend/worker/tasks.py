@@ -9,10 +9,11 @@ Faz 2: Integrated news_raw/news_processed pipeline with proper
 """
 
 import logging
+import json
 import os
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -45,12 +46,13 @@ def create_run_metrics(
     started_at: datetime,
 ) -> PipelineRunMetrics:
     """Create initial pipeline_run_metrics record."""
-    metrics = PipelineRunMetrics(
-        run_id=run_id,
-        run_started_at=started_at,
-        status="running",
-    )
-    session.add(metrics)
+    metrics = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
+    if metrics is None:
+        metrics = PipelineRunMetrics(run_id=run_id, run_started_at=started_at)
+        session.add(metrics)
+    metrics.run_started_at = started_at
+    metrics.worker_started_at = started_at
+    metrics.status = "running"
     session.flush()
     return metrics
 
@@ -95,6 +97,53 @@ def finalize_run_metrics(
         if error_message:
             metrics.error_message = error_message
         session.flush()
+
+
+def evaluate_pipeline_result(result: dict, *, train_model: bool) -> tuple[dict, str, Optional[str]]:
+    """Return critical failures, quality state, and user-visible status message."""
+    critical_errors = {
+        key: value
+        for key, value in result.items()
+        if key in {
+            "news_raw_error",
+            "news_processed_error",
+            "price_error",
+            "scoring_error",
+            "aggregation_error",
+            "snapshot_error",
+        }
+        and value
+    }
+    if train_model and (result.get("training_error") or not result.get("model_trained")):
+        critical_errors["training_error"] = (
+            result.get("training_error") or "training did not promote an artifact"
+        )
+    if not result.get("snapshot_generated"):
+        critical_errors["snapshot"] = (
+            result.get("snapshot_degraded_reason") or "snapshot not generated"
+        )
+    if train_model and result.get("promoted_artifact_version") != result.get("artifact_version"):
+        critical_errors["artifact_version"] = (
+            f"promoted={result.get('promoted_artifact_version')} "
+            f"snapshot={result.get('artifact_version')}"
+        )
+
+    operational_fallbacks = int(result.get("operational_fallback_count") or 0)
+    llm_successes = int(result.get("llm_success_count") or 0)
+    if operational_fallbacks > 0 and llm_successes == 0:
+        return critical_errors, "degraded", "All LLM-eligible articles used operational fallback"
+    if result.get("commentary_generation_mode") == "deterministic_fallback":
+        return critical_errors, "degraded", "Commentary used deterministic fallback"
+    if result.get("tft_persistence_error") or result.get("tft_snapshot_degraded"):
+        return critical_errors, "degraded", "TFT inference snapshot was not persisted as healthy"
+
+    raw_inserted = int(result.get("news_raw_inserted") or 0)
+    processed_inserted = int(result.get("news_processed_inserted") or 0)
+    if raw_inserted == 0 and processed_inserted == 0:
+        return critical_errors, "stale", "No new articles - sources may not have updated"
+    if raw_inserted > 0 and processed_inserted == 0:
+        return critical_errors, "ok", f"All {raw_inserted} articles were duplicates"
+    return critical_errors, "ok", None
 
 
 # =============================================================================
@@ -157,6 +206,13 @@ async def run_pipeline(
     try:
         # 0. Create run metrics record
         create_run_metrics(session, run_id, started_at)
+        update_run_metrics(
+            session,
+            run_id,
+            trigger_source=trigger_source,
+            train_model_requested=train_model,
+            enqueued_at=(datetime.fromisoformat(enqueued_at) if enqueued_at else None),
+        )
         session.commit()
         
         # 1. Acquire distributed lock
@@ -183,28 +239,17 @@ async def run_pipeline(
             run_uuid=run_uuid,
             train_model=train_model,
         )
-        
-        # Determine quality state from result
-        # More nuanced logic to avoid false alarms
-        raw_inserted = result.get("news_raw_inserted", 0)
-        proc_inserted = result.get("news_processed_inserted", 0)
-        raw_error = result.get("news_raw_error")
-        proc_error = result.get("news_processed_error")
-        
-        if raw_error or proc_error:
-            # Actual errors during ingestion/processing
-            quality_state = "degraded"
-            result["message"] = f"Pipeline errors: {raw_error or ''} {proc_error or ''}".strip()
-        elif raw_inserted == 0 and proc_inserted == 0:
-            # No new data at all - could be dedup working or sources haven't updated
-            quality_state = "stale"
-            result["message"] = "No new articles - sources may not have updated"
-        elif raw_inserted > 0 and proc_inserted == 0:
-            # Got raw but nothing processed - potential dedup anomaly
-            quality_state = "ok"  # This is actually fine - all duplicates
-            result["message"] = f"All {raw_inserted} articles were duplicates"
-        else:
-            quality_state = "ok"
+
+        critical_errors, quality_state, quality_message = evaluate_pipeline_result(
+            result,
+            train_model=train_model,
+        )
+        update_run_metrics(session, run_id, stage_results_json=json.dumps(result, default=str, ensure_ascii=True))
+        session.commit()
+        if critical_errors:
+            raise RuntimeError(f"Critical pipeline stages failed: {json.dumps(critical_errors, default=str)}")
+        if quality_message:
+            result["message"] = quality_message
         
         # 3. Record success
         finished_at = datetime.now(timezone.utc)
@@ -212,7 +257,7 @@ async def run_pipeline(
         
         finalize_run_metrics(
             session, run_id, 
-            status="success", 
+            status="degraded" if quality_state == "degraded" else "success",
             quality_state=quality_state,
         )
         session.commit()
@@ -221,7 +266,7 @@ async def run_pipeline(
         
         return {
             "run_id": run_id,
-            "status": "success",
+            "status": "degraded" if quality_state == "degraded" else "success",
             "quality_state": quality_state,
             "started_at": started_at.isoformat(),
             "finished_at": finished_at.isoformat(),
@@ -244,11 +289,7 @@ async def run_pipeline(
         except Exception:
             session.rollback()
         
-        return {
-            "run_id": run_id,
-            "status": "failed",
-            "error": str(e),
-        }
+        raise
         
     finally:
         # Always release lock and cleanup
@@ -405,6 +446,9 @@ async def _execute_pipeline_stages_v2(
         result["llm_parse_fail_count"] = int(scoring_stats.get("parse_fail_count", 0))
         result["escalation_count"] = int(scoring_stats.get("escalation_count", 0))
         result["fallback_count"] = int(scoring_stats.get("fallback_count", 0))
+        result["llm_success_count"] = int(scoring_stats.get("llm_success_count", 0))
+        result["operational_fallback_count"] = int(scoring_stats.get("operational_fallback_count", 0))
+        result["policy_fallback_count"] = int(scoring_stats.get("policy_fallback_count", 0))
 
         update_run_metrics(
             session,
@@ -413,6 +457,9 @@ async def _execute_pipeline_stages_v2(
             llm_parse_fail_count=result["llm_parse_fail_count"],
             escalation_count=result["escalation_count"],
             fallback_count=result["fallback_count"],
+            llm_success_count=result["llm_success_count"],
+            operational_fallback_count=result["operational_fallback_count"],
+            policy_fallback_count=result["policy_fallback_count"],
         )
         session.commit()
         
@@ -484,11 +531,13 @@ async def _execute_pipeline_stages_v2(
             
             result["model_trained"] = True
             result["model_metrics"] = train_result.get("metrics", {})
+            result["promoted_artifact_version"] = train_result.get("artifact_version")
             
             update_run_metrics(
                 session, run_id,
-                train_mae=train_result.get("metrics", {}).get("mae"),
+                train_mae=train_result.get("metrics", {}).get("train_mae"),
                 val_mae=train_result.get("metrics", {}).get("val_mae"),
+                promoted_artifact_version=result["promoted_artifact_version"],
             )
             session.commit()
             
@@ -528,8 +577,14 @@ async def _execute_pipeline_stages_v2(
             session.commit()
             
             result["snapshot_generated"] = True
+            result["artifact_version"] = report.get("artifact_version")
             snapshot_report = report  # Save for Stage 6
-            update_run_metrics(session, run_id, snapshot_generated=True)
+            update_run_metrics(
+                session,
+                run_id,
+                snapshot_generated=True,
+                artifact_version=result["artifact_version"],
+            )
             session.commit()
         else:
             result["snapshot_generated"] = False
@@ -616,11 +671,17 @@ async def _execute_pipeline_stages_v2(
                         "t1_return",
                         prediction.get("predicted_return_median") if is_forecast_healthy else None,
                     )
-                except Exception:
-                    pass
+                except Exception as contract_exc:
+                    result["tft_contract_error"] = str(contract_exc)
+                    logger.warning(
+                        "[run_id=%s] TFT response contract enrichment failed: %s",
+                        run_id,
+                        contract_exc,
+                    )
                 # Persist the full report so /api/analysis/tft/{symbol}
                 # can serve it without re-running inference. This is the
                 # canonical source the frontend reads from.
+                persisted = False
                 try:
                     from app.models import TFTPredictionSnapshot
                     from datetime import datetime, timezone
@@ -637,6 +698,7 @@ async def _execute_pipeline_stages_v2(
                     )
                     session.add(snapshot_row)
                     session.flush()
+                    persisted = True
                     logger.info(
                         f"[run_id={run_id}] TFT prediction persisted "
                         f"(reference_price_date={reference_price_date})"
@@ -648,14 +710,15 @@ async def _execute_pipeline_stages_v2(
                         exc_info=True,
                     )
                     session.rollback()
+                    result["tft_persistence_error"] = str(persist_exc)
 
                 is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))
-                result["tft_snapshot_generated"] = is_forecast_healthy
-                if is_forecast_healthy:
+                result["tft_snapshot_generated"] = bool(is_forecast_healthy and persisted)
+                if is_forecast_healthy and persisted:
                     update_run_metrics(session, run_id, tft_snapshot_generated=True)
                     session.commit()
                     logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
-                else:
+                elif persisted:
                     result["tft_snapshot_degraded"] = True
                     tft_commentary_note = (
                         "TFT weekly model unavailable due to incompatible checkpoint metadata; "
@@ -672,7 +735,7 @@ async def _execute_pipeline_stages_v2(
                 # wasn't generated. The commentary layer consumes a flat
                 # structure so we expose top-level price/return fields
                 # derived from the TFT `prediction` block here.
-                if is_forecast_healthy and not snapshot_report:
+                if is_forecast_healthy and persisted and not snapshot_report:
                     snapshot_report = tft_report
             else:
                 result["tft_snapshot_generated"] = False
@@ -716,8 +779,8 @@ async def _execute_pipeline_stages_v2(
                 report = {}
             
             # Default XGBoost Variable Extraction
-            current_price = report.get("current_price", 0.0)
-            predicted_price = report.get("predicted_price", 0.0)
+            current_price = report.get("current_price")
+            predicted_price = report.get("predicted_price")
             predicted_return = report.get("predicted_return", 0.0)
             sentiment_index = report.get("sentiment_index", 0.0)
             sentiment_label = report.get("sentiment_label", "Neutral")
@@ -728,7 +791,7 @@ async def _execute_pipeline_stages_v2(
             is_tft = report.get("model_type") == "TFT-ASRO"
             if is_tft:
                 prediction = report.get("prediction", {})
-                predicted_price = prediction.get("predicted_price_median", 0.0)
+                predicted_price = prediction.get("predicted_price_median")
                 predicted_return = prediction.get("predicted_return_median", 0.0)
                 
                 try:
@@ -755,8 +818,8 @@ async def _execute_pipeline_stages_v2(
             # --------------------------------
 
             # --- None-safety guard: f-string formatters crash on None ---
-            current_price = float(current_price or 0.0)
-            predicted_price = float(predicted_price or 0.0)
+            current_price = float(current_price) if current_price is not None else None
+            predicted_price = float(predicted_price) if predicted_price is not None else None
             predicted_return = float(predicted_return or 0.0)
             sentiment_index = float(sentiment_index or 0.0)
             sentiment_label = sentiment_label or "Neutral"
@@ -778,8 +841,22 @@ async def _execute_pipeline_stages_v2(
             )
             session.commit()
 
+            from app.models import AICommentary
+            commentary_row = session.query(AICommentary).filter(AICommentary.symbol == "HG=F").first()
+            result["commentary_generation_mode"] = (
+                commentary_row.generation_mode if commentary_row is not None else "unknown"
+            )
+            result["commentary_fallback_reason"] = (
+                commentary_row.fallback_reason if commentary_row is not None else None
+            )
+
             result["commentary_generated"] = True
-            update_run_metrics(session, run_id, commentary_generated=True)
+            update_run_metrics(
+                session,
+                run_id,
+                commentary_generated=True,
+                commentary_generation_mode=result["commentary_generation_mode"],
+            )
             session.commit()
 
         except Exception as e:
@@ -800,6 +877,23 @@ async def startup(ctx: dict) -> None:
     """Called when worker starts."""
     logger.info("Worker starting up...")
     init_db()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(
+        minutes=get_settings().pipeline_orphan_timeout_minutes
+    )
+    with SessionLocal() as session:
+        orphans = session.query(PipelineRunMetrics).filter(
+            PipelineRunMetrics.status.in_(("queued", "running")),
+            PipelineRunMetrics.run_started_at < cutoff,
+        ).all()
+        for orphan in orphans:
+            orphan.status = "failed"
+            orphan.quality_state = "failed"
+            orphan.error_message = "worker_interrupted"
+            orphan.run_completed_at = now
+        if orphans:
+            session.commit()
+            logger.warning("Closed %s orphaned pipeline run(s)", len(orphans))
 
 
 async def shutdown(ctx: dict) -> None:

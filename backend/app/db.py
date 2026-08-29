@@ -33,6 +33,36 @@ TFT_MODEL_METADATA_COLUMNS = (
     ("quality_gate_passed", "BOOLEAN", "BOOLEAN"),
 )
 
+PRODUCTION_FLOW_AI_COMMENTARY_COLUMNS = (
+    ("generation_mode", "VARCHAR(32) DEFAULT 'unknown'", "VARCHAR(32) DEFAULT 'unknown'"),
+    ("fallback_reason", "VARCHAR(64)", "VARCHAR(64)"),
+    ("attempts_json", "TEXT", "TEXT"),
+)
+
+PRODUCTION_FLOW_PIPELINE_COLUMNS = (
+    ("enqueued_at", "TIMESTAMPTZ", "TIMESTAMP"),
+    ("worker_started_at", "TIMESTAMPTZ", "TIMESTAMP"),
+    ("trigger_source", "VARCHAR(32)", "VARCHAR(32)"),
+    ("train_model_requested", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT FALSE"),
+    ("job_id", "VARCHAR(128)", "VARCHAR(128)"),
+    ("llm_success_count", "INTEGER", "INTEGER"),
+    ("operational_fallback_count", "INTEGER", "INTEGER"),
+    ("policy_fallback_count", "INTEGER", "INTEGER"),
+    ("commentary_generation_mode", "VARCHAR(32)", "VARCHAR(32)"),
+    ("artifact_version", "VARCHAR(80)", "VARCHAR(80)"),
+    ("promoted_artifact_version", "VARCHAR(80)", "VARCHAR(80)"),
+    ("stage_results_json", "TEXT", "TEXT"),
+)
+
+PRODUCTION_FLOW_NEWS_RAW_COLUMNS = (
+    ("publisher", "VARCHAR(300)", "VARCHAR(300)"),
+)
+
+PRODUCTION_FLOW_NEWS_PROCESSED_COLUMNS = (
+    ("dedup_version", "VARCHAR(20) DEFAULT 'legacy_v1'", "VARCHAR(20) DEFAULT 'legacy_v1'"),
+    ("duplicate_of_id", "BIGINT", "BIGINT"),
+)
+
 # SQLAlchemy declarative base
 Base = declarative_base()
 
@@ -209,6 +239,27 @@ def ensure_tft_model_metadata_schema() -> None:
         )
 
 
+def _ensure_production_flow_schema(conn, is_sqlite: bool) -> None:
+    """Additive schema used by production-flow observability and news dedup."""
+    _ensure_columns(conn, "ai_commentaries", PRODUCTION_FLOW_AI_COMMENTARY_COLUMNS, is_sqlite)
+    _ensure_columns(conn, "pipeline_run_metrics", PRODUCTION_FLOW_PIPELINE_COLUMNS, is_sqlite)
+    _ensure_columns(conn, "news_raw", PRODUCTION_FLOW_NEWS_RAW_COLUMNS, is_sqlite)
+    _ensure_columns(conn, "news_processed", PRODUCTION_FLOW_NEWS_PROCESSED_COLUMNS, is_sqlite)
+
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_news_raw_publisher ON news_raw(publisher)"))
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_news_processed_duplicate_of_id "
+            "ON news_processed(duplicate_of_id)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_pipeline_run_metrics_enqueued_at "
+            "ON pipeline_run_metrics(enqueued_at)"
+        )
+    )
+
 def _run_migrations(engine):
     """
     Run necessary database migrations for schema changes.
@@ -321,6 +372,15 @@ def _run_migrations(engine):
         except Exception:
             conn.rollback()
             logger.exception("Migration failed for TFT model promotion schema")
+            raise
+
+        try:
+            _ensure_production_flow_schema(conn, is_sqlite)
+            conn.commit()
+            logger.info("Migration: Ensured production-flow schema exists")
+        except Exception:
+            conn.rollback()
+            logger.exception("Migration failed for production-flow schema")
             raise
 
 

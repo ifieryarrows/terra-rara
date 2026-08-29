@@ -254,3 +254,40 @@ def test_generate_and_save_commentary_includes_degraded_model_note(monkeypatch):
 
     commentary = asyncio.run(run_call())
     assert "commentary excludes TFT signal" in commentary
+
+
+def test_commentary_fallback_is_observable_and_does_not_invent_zero_price(monkeypatch):
+    fake_settings = SimpleNamespace(
+        openrouter_api_key="test-key",
+        resolved_commentary_model="removed-model",
+        resolved_scoring_fast_model="different-repair-model",
+        openrouter_max_retries=1,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: fake_settings)
+
+    async def fail_openrouter(**_kwargs):
+        raise OpenRouterError(
+            "model removed",
+            status_code=404,
+            category="model_unavailable",
+            attempts=[{"model": "removed-model", "category": "model_unavailable"}],
+        )
+
+    monkeypatch.setattr(commentary_module, "create_chat_completion", fail_openrouter)
+    result = asyncio.run(commentary_module._generate_commentary_and_stance(
+        current_price=6.6,
+        predicted_price=None,
+        predicted_return=0.002,
+        sentiment_index=0.1,
+        sentiment_label="Bullish",
+        top_influencers=[],
+        news_count=5,
+    ))
+
+    assert result.generation_mode == "deterministic_fallback"
+    assert result.fallback_reason == "model_unavailable"
+    assert result.attempts[0]["model"] == "removed-model"
+    assert "$0.0000" not in result.commentary
+    assert "unavailable" in result.commentary.lower()

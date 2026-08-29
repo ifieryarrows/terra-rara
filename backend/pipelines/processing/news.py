@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models import NewsRaw, NewsProcessed
 from app.utils import canonical_title, clean_text
+from app.data_manager import detect_language
 from app.db import get_db_type
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,27 @@ def compute_dedup_key(
     return hashlib.sha256(fallback_input.encode()).hexdigest()
 
 
+def normalize_publisher(value: Optional[str]) -> Optional[str]:
+    """Normalize whitespace while retaining a user-facing publisher name."""
+    normalized = " ".join(str(value or "").split()).strip()
+    return normalized[:300] or None
+
+
+def compute_content_dedup_key(title: str, publisher: Optional[str], published_at: datetime) -> str:
+    """Content identity that is stable across Google wrapper/query URLs."""
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=timezone.utc)
+    publication_date = published_at.astimezone(timezone.utc).date().isoformat()
+    identity = "|".join(
+        (
+            canonical_title(title),
+            (normalize_publisher(publisher) or "unknown").casefold(),
+            publication_date,
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def process_single_raw(
     session: Session,
     raw: NewsRaw,
@@ -90,58 +112,48 @@ def process_single_raw(
         cleaned += " " + clean_text(raw.description)
     cleaned = cleaned[:5000]  # Reasonable limit
     
-    # Compute dedup key
-    dedup = compute_dedup_key(
-        url_hash=raw.url_hash,
-        source=raw.source or "unknown",
-        canonical_title_hash=canon_hash,
-    )
+    publisher = normalize_publisher(raw.publisher)
+    dedup = compute_content_dedup_key(raw.title, publisher, raw.published_at)
     
-    # Detect language (optional, use simple heuristic for now)
-    # Full langdetect is slow; Faz 3 can improve this
-    language = "en"  # Assume English for now
+    language = detect_language(cleaned)
     language_confidence = None
     
     try:
-        db_type = get_db_type()
-        
-        if db_type == "postgresql":
-            stmt = pg_insert(NewsProcessed).values(
-                raw_id=raw.id,
-                canonical_title=canon[:500],
-                canonical_title_hash=canon_hash,
-                cleaned_text=cleaned,
-                dedup_key=dedup,
-                language=language,
-                language_confidence=language_confidence,
-                run_id=run_id,
-            ).on_conflict_do_nothing(index_elements=["dedup_key"])
-            
-            result = session.execute(stmt)
-            
-            if result.rowcount > 0:
-                return raw.id  # Successfully inserted
-            return None  # Duplicate
-            
-        else:
-            # SQLite fallback
+        # Isolate a bad/contended article without rolling back the other rows
+        # already processed in this batch.
+        with session.begin_nested():
+            raw.publisher = publisher
+            canonical = (
+                session.query(NewsProcessed)
+                .filter(
+                    NewsProcessed.dedup_key == dedup,
+                    NewsProcessed.duplicate_of_id.is_(None),
+                )
+                .first()
+            )
+            duplicate_of_id = canonical.id if canonical is not None else None
+            row_key = dedup if canonical is None else hashlib.sha256(
+                f"duplicate|{raw.id}|{dedup}".encode("utf-8")
+            ).hexdigest()
             processed = NewsProcessed(
                 raw_id=raw.id,
                 canonical_title=canon[:500],
                 canonical_title_hash=canon_hash,
                 cleaned_text=cleaned,
-                dedup_key=dedup,
+                dedup_key=row_key,
+                dedup_version="content_v2",
+                duplicate_of_id=duplicate_of_id,
                 language=language,
                 language_confidence=language_confidence,
                 run_id=run_id,
             )
             session.add(processed)
             session.flush()
-            return processed.id
+            processed_id = processed.id
+        return processed_id
             
     except Exception as e:
         logger.debug(f"Process raw article failed: {e}")
-        session.rollback()
         return None
 
 
@@ -188,10 +200,10 @@ def process_raw_to_processed(
     if total == 0:
         return stats
     
-    # Process in batches
-    offset = 0
+    # The query shrinks after every commit. Always consume its first page;
+    # offset pagination here used to skip every second batch.
     while True:
-        batch = unprocessed_query.limit(batch_size).offset(offset).all()
+        batch = unprocessed_query.limit(batch_size).all()
         
         if not batch:
             break
@@ -202,15 +214,15 @@ def process_raw_to_processed(
             result = process_single_raw(session, raw, run_id)
             
             if result:
-                stats["inserted"] += 1
+                processed = session.get(NewsProcessed, result)
+                if processed is not None and processed.duplicate_of_id is not None:
+                    stats["duplicates"] += 1
+                else:
+                    stats["inserted"] += 1
             else:
                 stats["duplicates"] += 1
         
         session.commit()
-        offset += batch_size
-        
-        if offset >= total:
-            break
     
     logger.info(
         f"[run_id={run_id}] Processing complete: "
@@ -219,3 +231,41 @@ def process_raw_to_processed(
     )
     
     return stats
+
+
+def backfill_content_dedup(session: Session, *, dry_run: bool = True) -> dict:
+    """Idempotently mark historical duplicates without deleting audit rows."""
+    rows = (
+        session.query(NewsProcessed, NewsRaw)
+        .join(NewsRaw, NewsRaw.id == NewsProcessed.raw_id)
+        .order_by(NewsRaw.published_at.asc(), NewsProcessed.id.asc())
+        .all()
+    )
+    canonical_by_key: dict[str, int] = {}
+    duplicate_updates = 0
+    publisher_updates = 0
+    for processed, raw in rows:
+        publisher = normalize_publisher(raw.publisher)
+        if publisher is None and isinstance(raw.raw_payload, dict):
+            source = raw.raw_payload.get("source")
+            publisher = normalize_publisher(source.get("name") if isinstance(source, dict) else source)
+        key = compute_content_dedup_key(raw.title, publisher, raw.published_at)
+        canonical_id = canonical_by_key.setdefault(key, processed.id)
+        desired_duplicate = None if canonical_id == processed.id else canonical_id
+        if processed.duplicate_of_id != desired_duplicate or processed.dedup_version != "content_v2":
+            duplicate_updates += 1
+            if not dry_run:
+                processed.duplicate_of_id = desired_duplicate
+                processed.dedup_version = "content_v2"
+        if raw.publisher != publisher:
+            publisher_updates += 1
+            if not dry_run:
+                raw.publisher = publisher
+    if not dry_run:
+        session.commit()
+    return {
+        "rows_scanned": len(rows),
+        "duplicate_updates": duplicate_updates,
+        "publisher_updates": publisher_updates,
+        "dry_run": dry_run,
+    }

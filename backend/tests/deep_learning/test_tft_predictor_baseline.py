@@ -120,6 +120,7 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     assert result["reference_price_date"] == "2026-04-27"
     assert result["predicted_price_median"] == pytest.approx(6.0180 * np.exp(0.01))
     assert result["return_basis"] == "daily_log_return_path"
+    assert result["daily_forecasts"][0]["forecast_date"] == "2026-04-28"
 
 
 def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):

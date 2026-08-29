@@ -2,9 +2,10 @@ name: Daily Pipeline Trigger
 
 on:
     schedule:
-        # Run daily at 02:00 Istanbul time (23:00 UTC in winter, 22:00 UTC in summer)
-        # Using 23:00 UTC as a safe default
-        - cron: "0 23 * * *"
+        # Preserve the established 23:00 UTC runtime while making the weekly
+        # training decision depend on the triggered schedule, not runner delay.
+        - cron: "0 23 * * 1-6"
+        - cron: "0 23 * * 0"
 
     workflow_dispatch:
         inputs:
@@ -24,13 +25,11 @@ jobs:
         steps:
             - name: Trigger Pipeline
               run: |
-                  # For manual triggers, use the provided input.
-                  # For cron triggers, auto-enable XGBoost retraining on Sundays.
                   if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
                     TRAIN_MODEL="${{ github.event.inputs.train_model || 'false' }}"
-                  elif [ "$(date +%u)" == "7" ]; then
+                  elif [ "${{ github.event.schedule }}" == "0 23 * * 0" ]; then
                     TRAIN_MODEL="true"
-                    echo "Sunday detected — enabling XGBoost retraining"
+                    echo "Weekly cron triggered — enabling XGBoost retraining"
                   else
                     TRAIN_MODEL="false"
                   fi
@@ -38,7 +37,7 @@ jobs:
                   echo "Triggering pipeline with train_model=$TRAIN_MODEL"
 
                   RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-                    "${{ secrets.API_BASE_URL }}/api/pipeline/trigger?train_model=$TRAIN_MODEL&trigger_source=cron" \
+                    "${{ secrets.API_BASE_URL }}/api/pipeline/trigger?train_model=$TRAIN_MODEL&trigger_source=github-actions" \
                     -H "Authorization: Bearer ${{ secrets.PIPELINE_TRIGGER_SECRET }}" \
                     -H "Content-Type: application/json")
 
@@ -53,5 +52,48 @@ jobs:
                     exit 1
                   fi
 
-                  echo "Pipeline job enqueued successfully"
-                  echo "$BODY" | jq -r '.run_id' || true
+                  RUN_ID=$(echo "$BODY" | jq -er '.run_id')
+                  echo "Pipeline job enqueued: $RUN_ID"
+
+                  for ATTEMPT in $(seq 1 120); do
+                    STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" \
+                      "${{ secrets.API_BASE_URL }}/api/pipeline/runs/$RUN_ID" \
+                      -H "Authorization: Bearer ${{ secrets.PIPELINE_TRIGGER_SECRET }}")
+                    STATUS_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+                    STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+
+                    if [ "$STATUS_CODE" -eq 404 ]; then
+                      sleep 30
+                      continue
+                    fi
+                    if [ "$STATUS_CODE" -ne 200 ]; then
+                      echo "Status polling failed with HTTP $STATUS_CODE"
+                      exit 1
+                    fi
+
+                    RUN_STATUS=$(echo "$STATUS_BODY" | jq -r '.status')
+                    QUALITY_STATE=$(echo "$STATUS_BODY" | jq -r '.quality_state')
+                    echo "Poll $ATTEMPT: status=$RUN_STATUS quality=$QUALITY_STATE"
+
+                    case "$RUN_STATUS" in
+                      success)
+                        echo "$STATUS_BODY" | jq .
+                        exit 0
+                        ;;
+                      failed|degraded|skipped_locked)
+                        echo "$STATUS_BODY" | jq .
+                        exit 1
+                        ;;
+                      queued|running)
+                        sleep 30
+                        ;;
+                      *)
+                        echo "Unexpected terminal status: $RUN_STATUS"
+                        echo "$STATUS_BODY" | jq .
+                        exit 1
+                        ;;
+                    esac
+                  done
+
+                  echo "Pipeline did not reach a terminal state within 60 minutes"
+                  exit 1

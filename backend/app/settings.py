@@ -90,27 +90,28 @@ class Settings(BaseSettings):
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
     # Deprecated - kept for backward compatibility
-    openrouter_model: str = "minimax/minimax-m2.5:free"
-    # Scoring models:
-    #   fast   → stepfun/step-3.5-flash:free  (196B MoE, 256K ctx, system prompt + JSON OK)
-    #   reliable → mistralai/mistral-small-3.1-24b-instruct:free (128K ctx, 24B, reliable JSON)
-    #   commentary → same as fast for balanced quality/speed
-    # NOTE: google/gemma-3-4b-it:free fails on Google AI Studio (system prompt blocked).
-    #        google/gemma-3n-e4b-it:free (nano) also blocks system prompts — do NOT use.
-    openrouter_model_scoring: str = "minimax/minimax-m2.5:free"
-    openrouter_model_scoring_fast: Optional[str] = None
-    openrouter_model_scoring_reliable: Optional[str] = "minimax/minimax-m2.5:free"
-    openrouter_model_commentary: str = "minimax/minimax-m2.5:free"
+    openrouter_model: str = "minimax/minimax-m2.7:free"
+    # Keep fast and reliable roles independent so one provider/model removal
+    # cannot collapse the entire LLM path. These defaults passed the project's
+    # exact scoring/commentary contract probe on 2026-08-29.
+    openrouter_model_scoring: str = "minimax/minimax-m2.7:free"
+    openrouter_model_scoring_fast: Optional[str] = "minimax/minimax-m2.7:free"
+    openrouter_model_scoring_reliable: Optional[str] = "minimax/minimax-m3:free"
+    openrouter_model_commentary: str = "minimax/minimax-m3:free"
     openrouter_rpm: int = 18
-    openrouter_max_retries: int = 3
+    openrouter_max_retries: int = 1
+    openrouter_timeout_seconds: float = 45.0
+    openrouter_chain_deadline_seconds: float = 120.0
     # Free tier: ~50 req/day per model. At chunk_size=12 a run of 60 articles
     # costs ~5 chunks (=5–10 requests incl. escalation) which leaves headroom
     # for multiple runs per day before hitting the ceiling. Raise cautiously.
-    max_llm_articles_per_run: int = 60
+    max_llm_articles_per_run: int = 100
     # Comma-separated list of additional OpenRouter model slugs used by the
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
-    openrouter_fallback_models: Optional[str] = None
+    openrouter_fallback_models: Optional[str] = (
+        "google/gemma-4-26b-a4b-it:free,z-ai/glm-5.2:free"
+    )
     tokenizers_parallelism: str = "false"
     
     # Twelve Data (Live Price)
@@ -127,10 +128,12 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "minimax/minimax-m2.5:free"
+    llm_sentiment_model: str = "minimax/minimax-m2.7:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
+    pipeline_orphan_timeout_minutes: int = 120
+    xgb_artifact_source: str = "auto"  # auto | db_required | filesystem
     
     # Faz 2: Market cut-off for news aggregation
     market_timezone: str = "America/New_York"  # NYSE timezone
@@ -246,7 +249,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model,
             )
-            or "arcee-ai/trinity-large-preview:free"
+            or "minimax/minimax-m2.7:free"
         )
 
     @property
@@ -264,7 +267,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model_scoring,
             )
-            or "arcee-ai/trinity-large-preview:free"
+            or "minimax/minimax-m3:free"
         )
 
     @property
@@ -276,7 +279,7 @@ class Settings(BaseSettings):
                 self.openrouter_model,
                 self.llm_sentiment_model,
             )
-            or "arcee-ai/trinity-large-preview:free"
+            or "minimax/minimax-m3:free"
         )
 
     @property

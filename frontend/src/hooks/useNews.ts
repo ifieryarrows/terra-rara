@@ -61,14 +61,14 @@ function buildNewsStatsKey(filters: NewsFeedFilters) {
 export function useNewsFeed(filters: NewsFeedFilters = {}) {
   return useInfiniteQuery<NewsListResponse, Error>({
     queryKey: buildNewsKey(filters),
-    initialPageParam: 0,
+    initialPageParam: { offset: 0, asOf: undefined as string | undefined },
     queryFn: async ({ pageParam }) => {
-      const offset = typeof pageParam === 'number' ? pageParam : 0;
-      return fetchNews({ ...filters, offset, limit: filters.limit ?? NEWS_PAGE_SIZE });
+      const page = pageParam as { offset: number; asOf?: string };
+      return fetchNews({ ...filters, offset: page.offset, as_of: page.asOf, limit: filters.limit ?? NEWS_PAGE_SIZE });
     },
     getNextPageParam: (lastPage) => {
       if (!lastPage.has_more) return undefined;
-      return lastPage.offset + lastPage.limit;
+      return { offset: lastPage.offset + lastPage.limit, asOf: lastPage.as_of };
     },
     staleTime: 30_000,
     refetchInterval: NEWS_POLL_MS,

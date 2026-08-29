@@ -20,11 +20,17 @@ export interface DataQuality {
 
 export interface AnalysisReport {
   symbol: string;
-  current_price: number;
+  current_price: number | null;
   predicted_return: number;
-  predicted_price: number;
-  confidence_lower: number;
-  confidence_upper: number;
+  predicted_price: number | null;
+  baseline_price?: number | null;
+  baseline_price_date?: string | null;
+  target_type?: string | null;
+  price_source?: string | null;
+  price_basis?: string | null;
+  artifact_version?: string | null;
+  confidence_lower: number | null;
+  confidence_upper: number | null;
   sentiment_index: number;
   sentiment_label: 'Bullish' | 'Bearish' | 'Neutral';
   top_influencers: Influencer[];
@@ -85,37 +91,41 @@ export interface CommentaryResponse {
   error: string | null;
   generated_at: string | null;
   ai_stance?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+  generation_mode?: 'llm' | 'llm_repaired' | 'deterministic_fallback' | 'unavailable' | string;
+  model_name?: string | null;
+  fallback_reason?: string | null;
 }
 
 export interface TFTDailyForecast {
   day: number;
+  forecast_date: string | null;
   daily_return: number;
   daily_log_return?: number;
   raw_daily_return?: number;
   raw_daily_log_return?: number;
   cumulative_return: number;
   cumulative_log_return?: number;
-  price_median: number;
-  price_q10: number;
-  price_q90: number;
-  price_q02: number;
-  price_q98: number;
+  price_median: number | null;
+  price_q10: number | null;
+  price_q90: number | null;
+  price_q02: number | null;
+  price_q98: number | null;
 }
 
 export interface TFTPrediction {
   predicted_return_median: number;
   predicted_return_q10: number;
   predicted_return_q90: number;
-  predicted_price_median: number;
-  predicted_price_q10: number;
-  predicted_price_q90: number;
-  confidence_band_96: [number, number];
+  predicted_price_median: number | null;
+  predicted_price_q10: number | null;
+  predicted_price_q90: number | null;
+  confidence_band_96: [number | null, number | null];
   volatility_estimate: number;
   quantiles: Record<string, number>;
   quantiles_log?: Record<string, number>;
   weekly_return: number;
   weekly_log_return?: number;
-  weekly_price: number;
+  weekly_price: number | null;
   weekly_return_q10_raw?: number;
   weekly_return_q90_raw?: number;
   weekly_return_q10_calibrated?: number | null;
@@ -125,7 +135,7 @@ export interface TFTPrediction {
   prediction_horizon_days: number;
   daily_forecasts: TFTDailyForecast[];
   /** Explicit contract: the close used as the basis for all returns/prices */
-  reference_price?: number;
+  reference_price?: number | null;
   reference_price_date?: string | null;
   return_basis?: string;
   raw_predicted_return_median?: number;
@@ -253,6 +263,9 @@ export interface NewsSentimentBlock {
   finbert: NewsFinbertProbs | null;
   reasoning: string | null;
   scored_at: string | null;
+  scoring_mode: 'llm' | 'deterministic_fallback' | string | null;
+  model_name: string | null;
+  fallback_reason: string | null;
 }
 
 export interface NewsItem {
@@ -282,6 +295,7 @@ export interface NewsFeedFilters {
   channel?: 'all' | 'google_news' | 'newsapi' | string;
   publisher?: string;
   search?: string;
+  as_of?: string;
 }
 
 export interface NewsListResponse {
@@ -291,6 +305,8 @@ export interface NewsListResponse {
   offset: number;
   has_more: boolean;
   generated_at: string;
+  as_of: string;
+  data_as_of: string | null;
   filters: Record<string, unknown>;
 }
 

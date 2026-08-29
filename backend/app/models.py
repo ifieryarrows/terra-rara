@@ -39,6 +39,8 @@ from sqlalchemy.orm import relationship
 
 from app.db import Base
 
+BIGINT_PK_TYPE = BigInteger().with_variant(Integer, "sqlite")
+
 
 class NewsArticle(Base):
     """
@@ -241,6 +243,9 @@ class AICommentary(Base):
     
     # Model used
     model_name = Column(String(100), nullable=True)
+    generation_mode = Column(String(32), nullable=False, default="llm")
+    fallback_reason = Column(String(64), nullable=True)
+    attempts_json = Column(Text, nullable=True)
     
     def __repr__(self):
         return f"<AICommentary(symbol={self.symbol}, generated_at={self.generated_at})>"
@@ -275,6 +280,29 @@ class ModelMetadata(Base):
         return f"<ModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
 
 
+class ModelArtifact(Base):
+    """Versioned, self-contained XGBoost artifact promoted atomically in DB."""
+
+    __tablename__ = "model_artifacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    version = Column(String(80), nullable=False, unique=True, index=True)
+    status = Column(String(20), nullable=False, default="candidate", index=True)
+    model_blob = Column(LargeBinary, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    features_json = Column(Text, nullable=False)
+    metrics_json = Column(Text, nullable=False)
+    importance_json = Column(Text, nullable=False)
+    manifest_json = Column(Text, nullable=False)
+    trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    promoted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_model_artifacts_symbol_status_trained", "symbol", "status", "trained_at"),
+    )
+
+
 class PipelineRunMetrics(Base):
     """
     Metrics captured after each pipeline run for monitoring.
@@ -292,6 +320,11 @@ class PipelineRunMetrics(Base):
     run_id = Column(String(64), nullable=False, unique=True, index=True)
     run_started_at = Column(DateTime(timezone=True), nullable=False, index=True)
     run_completed_at = Column(DateTime(timezone=True), nullable=True)
+    enqueued_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    worker_started_at = Column(DateTime(timezone=True), nullable=True)
+    trigger_source = Column(String(32), nullable=True)
+    train_model_requested = Column(Boolean, nullable=False, default=False)
+    job_id = Column(String(128), nullable=True)
     
     # Duration
     duration_seconds = Column(Float, nullable=True)
@@ -327,10 +360,17 @@ class PipelineRunMetrics(Base):
     llm_parse_fail_count = Column(Integer, nullable=True)
     escalation_count = Column(Integer, nullable=True)
     fallback_count = Column(Integer, nullable=True)
+    llm_success_count = Column(Integer, nullable=True)
+    operational_fallback_count = Column(Integer, nullable=True)
+    policy_fallback_count = Column(Integer, nullable=True)
     
     # Snapshot info
     snapshot_generated = Column(Boolean, default=False)
     commentary_generated = Column(Boolean, default=False)
+    commentary_generation_mode = Column(String(32), nullable=True)
+    artifact_version = Column(String(80), nullable=True)
+    promoted_artifact_version = Column(String(80), nullable=True)
+    stage_results_json = Column(Text, nullable=True)
 
     # TFT-ASRO deep learning pipeline stats
     tft_embeddings_computed = Column(Integer, nullable=True)
@@ -370,7 +410,7 @@ class NewsRaw(Base):
     """
     __tablename__ = "news_raw"
     
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     
     # URL (nullable - RSS'te eksik olabilir)
     url = Column(String(2000), nullable=True)
@@ -382,6 +422,7 @@ class NewsRaw(Base):
     
     # Metadata
     source = Column(String(200), nullable=True)  # "google_news", "newsapi"
+    publisher = Column(String(300), nullable=True, index=True)
     source_feed = Column(String(500), nullable=True)  # Exact RSS URL or query
     published_at = Column(DateTime(timezone=True), nullable=False, index=True)
     fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -390,7 +431,7 @@ class NewsRaw(Base):
     run_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     
     # Raw payload (debug/audit)
-    raw_payload = Column(JSONB, nullable=True)
+    raw_payload = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
     
     # Relationship
     processed_items = relationship("NewsProcessed", back_populates="raw")
@@ -411,7 +452,7 @@ class NewsProcessed(Base):
     """
     __tablename__ = "news_processed"
     
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     
     # FK to raw (RESTRICT - raw silinirse processed da silinmemeli)
     raw_id = Column(
@@ -428,6 +469,13 @@ class NewsProcessed(Base):
     
     # Dedup key - ASIL OTORİTE
     dedup_key = Column(String(64), unique=True, nullable=False, index=True)  # sha256
+    dedup_version = Column(String(20), nullable=False, default="content_v2")
+    duplicate_of_id = Column(
+        BigInteger,
+        ForeignKey("news_processed.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     
     # Language
     language = Column(String(10), nullable=True, default="en")
@@ -456,7 +504,7 @@ class NewsSentimentV2(Base):
 
     __tablename__ = "news_sentiments_v2"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
 
     news_processed_id = Column(
         BigInteger,
@@ -508,7 +556,7 @@ class DailySentimentV2(Base):
 
     __tablename__ = "daily_sentiments_v2"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     date = Column(DateTime(timezone=True), nullable=False, unique=True, index=True)
 
     sentiment_index = Column(Float, nullable=False, index=True)
@@ -546,7 +594,7 @@ class NewsEmbedding(Base):
 
     __tablename__ = "news_embeddings"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     news_processed_id = Column(
         BigInteger,
         ForeignKey("news_processed.id", ondelete="CASCADE"),
@@ -574,7 +622,7 @@ class LMEWarehouseData(Base):
 
     __tablename__ = "lme_warehouse_data"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     date = Column(DateTime(timezone=True), unique=True, nullable=False, index=True)
 
     total_stock_tonnes = Column(Float, nullable=False)
@@ -621,7 +669,7 @@ class TFTPredictionSnapshot(Base):
 
     __tablename__ = "tft_prediction_snapshots"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
     symbol = Column(String(20), nullable=False, index=True, default="HG=F")
 
     # Full `generate_tft_analysis(...)` payload; keeps the response intact
@@ -682,7 +730,7 @@ class BacktestReport(Base):
 
     __tablename__ = "backtest_reports"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BIGINT_PK_TYPE, primary_key=True, autoincrement=True)
 
     symbol = Column(String(20), nullable=False, index=True, default="HG=F")
     run_id = Column(String(80), nullable=True, index=True)

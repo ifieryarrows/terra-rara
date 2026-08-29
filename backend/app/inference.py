@@ -43,8 +43,10 @@ from app.features import (
     generate_symbol_features,
     align_to_target_calendar,
     get_feature_descriptions,  # legacy, still re-exported
+    build_shared_feature_frame,
 )
-from app.ai_engine import load_model, load_model_metadata
+from app.ai_engine import load_active_model_bundle
+from app.price_utils import finite_positive_price, latest_finite_price_bar
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -141,9 +143,9 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
     # --- Spot copper path: Twelve Data ----------------------------------
     if is_spot_xcuusd:
         twelve_price = _fetch_twelvedata_price("XCU/USD", settings)
-        if twelve_price is not None:
+        if finite_positive_price(twelve_price) is not None:
             logger.info(f"Using Twelve Data price for {symbol}: ${twelve_price:.4f}")
-            return twelve_price
+            return finite_positive_price(twelve_price)
 
     # --- Futures / everything else: yfinance first ----------------------
     if not is_spot_xcuusd:
@@ -151,22 +153,17 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
             ticker = yf.Ticker(symbol)
             info = ticker.info
             live_price = info.get("regularMarketPrice") or info.get("currentPrice")
-            if live_price is not None:
+            if finite_positive_price(live_price) is not None:
                 logger.info(f"Using yfinance price for {symbol}: ${live_price:.4f}")
-                return float(live_price)
+                return finite_positive_price(live_price)
         except Exception as e:
             logger.debug(f"yfinance price fetch failed for {symbol}: {e}")
 
     # --- Final fallback: DB close for the EXACT symbol ------------------
-    latest = (
-        session.query(PriceBar)
-        .filter(PriceBar.symbol == symbol)
-        .order_by(PriceBar.date.desc())
-        .first()
-    )
+    latest = latest_finite_price_bar(session, symbol)
     if latest:
         logger.info(f"Using DB price for {symbol}: ${latest.close:.4f}")
-        return latest.close
+        return finite_positive_price(latest.close)
 
     return None
 
@@ -232,7 +229,8 @@ def get_data_quality_stats(
         news_count = session.query(func.count(NewsProcessed.id)).join(
             NewsRaw, NewsProcessed.raw_id == NewsRaw.id
         ).filter(
-            NewsRaw.published_at >= cutoff
+            NewsRaw.published_at >= cutoff,
+            NewsProcessed.duplicate_of_id.is_(None),
         ).scalar()
 
         scored_count = session.query(func.count(NewsSentimentV2.id)).join(
@@ -244,6 +242,7 @@ def get_data_quality_stats(
         ).filter(
             NewsRaw.published_at >= cutoff,
             NewsSentimentV2.horizon_days == horizon_days,
+            NewsProcessed.duplicate_of_id.is_(None),
         ).scalar()
     else:
         # Legacy article-level stats
@@ -258,10 +257,13 @@ def get_data_quality_stats(
     
     # Price bar coverage
     expected_days = days
-    actual_bars = session.query(func.count(PriceBar.id)).filter(
+    price_rows = session.query(PriceBar.close).filter(
         PriceBar.symbol == symbol,
         PriceBar.date >= cutoff
-    ).scalar()
+    ).all()
+    from app.price_utils import finite_positive_price
+
+    actual_bars = sum(1 for row in price_rows if finite_positive_price(row.close) is not None)
     
     # Account for weekends (roughly 5/7 of days should have bars)
     expected_trading_days = int(expected_days * 5 / 7)
@@ -303,7 +305,9 @@ def calculate_confidence_band(
         # Not enough data, use 5% band
         return predicted_price * 0.95, predicted_price * 1.05
     
-    closes = [p[0] for p in prices]
+    closes = [valid for p in prices if (valid := finite_positive_price(p[0])) is not None]
+    if len(closes) < 10:
+        return predicted_price * 0.95, predicted_price * 1.05
     returns = pd.Series(closes).pct_change().dropna()
     
     # 1 standard deviation of daily returns
@@ -422,6 +426,7 @@ def build_features_for_prediction(
     if target_df.empty:
         logger.error(f"No price data for {target_symbol}")
         return None
+    target_df.attrs["symbol"] = target_symbol
     
     # Load other symbols
     other_dfs = {}
@@ -431,38 +436,14 @@ def build_features_for_prediction(
             if not df.empty:
                 other_dfs[symbol] = df
     
-    # Align
-    aligned = align_to_target_calendar(target_df, other_dfs, max_ffill=3)
-    
-    # Generate features
-    all_features = generate_symbol_features(target_df, target_symbol)
-    
-    for symbol, df in aligned.items():
-        if not df.empty:
-            symbol_features = generate_symbol_features(df, symbol)
-            all_features = all_features.join(symbol_features, how="left")
-    
-    # Add sentiment (use concat to avoid fragmentation warning)
     sentiment_df = load_sentiment_data(session, start_date, end_date)
-    sentiment_parts = []
-    
-    if not sentiment_df.empty:
-        sentiment_aligned = sentiment_df.reindex(target_df.index).ffill(limit=3)
-        sentiment_parts.append(
-            sentiment_aligned["sentiment_index"].fillna(settings.sentiment_missing_fill).rename("sentiment__index")
-        )
-        sentiment_parts.append(
-            sentiment_aligned["news_count"].fillna(0).rename("sentiment__news_count")
-        )
-    else:
-        sentiment_parts.append(
-            pd.Series(settings.sentiment_missing_fill, index=all_features.index, name="sentiment__index")
-        )
-        sentiment_parts.append(
-            pd.Series(0, index=all_features.index, name="sentiment__news_count")
-        )
-    
-    all_features = pd.concat([all_features] + sentiment_parts, axis=1)
+    all_features = build_shared_feature_frame(
+        target_df,
+        other_dfs,
+        sentiment_df,
+        sentiment_missing_fill=settings.sentiment_missing_fill,
+        max_ffill=3,
+    )
     
     # Get latest row
     latest = all_features.iloc[[-1]].copy()
@@ -478,6 +459,7 @@ def build_features_for_prediction(
     # - Extra features are dropped
     # - Column order matches expected feature_names
     latest = _align_features_to_model(latest, feature_names)
+    latest = latest.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     
     # Ensure float dtype for XGBoost
     latest = latest.astype(float)
@@ -499,13 +481,12 @@ def generate_analysis_report(
     settings = get_settings()
     
     # Load model
-    model = load_model(target_symbol)
+    model, metadata = load_active_model_bundle(target_symbol)
     if model is None:
         logger.error(f"No model found for {target_symbol}")
         return None
     
     # Load metadata
-    metadata = load_model_metadata(target_symbol)
     features = metadata.get("features", [])
     importance = metadata.get("importance", [])
     metrics = metadata.get("metrics", {})
@@ -532,12 +513,10 @@ def generate_analysis_report(
     
     # Get latest DB close price for prediction base (baseline_price)
     # Model predicts based on historical closes, not intraday prices
-    latest_bar = session.query(PriceBar).filter(
-        PriceBar.symbol == target_symbol
-    ).order_by(PriceBar.date.desc()).first()
+    latest_bar = latest_finite_price_bar(session, target_symbol)
     
     if latest_bar:
-        baseline_price = latest_bar.close
+        baseline_price = finite_positive_price(latest_bar.close)
         baseline_price_date = latest_bar.date.strftime("%Y-%m-%d") if latest_bar.date else None
         price_source = "yfinance_db_close"
     else:
@@ -594,7 +573,9 @@ def generate_analysis_report(
         news_count_7d,
         current_sentiment,
     )
-    predicted_price = baseline_price * (1 + predicted_return)
+    from app.price_utils import price_from_simple_return
+
+    predicted_price = price_from_simple_return(baseline_price, predicted_return)
     
     # Validate prediction after sentiment adjustment/cap.
     prediction_invalid = False
@@ -656,6 +637,8 @@ def generate_analysis_report(
         "predicted_price": _sanitize_float(predicted_price, 4),
         "target_type": target_type,
         "price_source": price_source,
+        "price_basis": "predicted_price = baseline_price * (1 + predicted_return)",
+        "artifact_version": metadata.get("artifact_version"),
         "confidence_lower": _sanitize_float(conf_lower, 4),
         "confidence_upper": _sanitize_float(conf_upper, 4),
         "sentiment_index": _sanitize_float(current_sentiment, 4),

@@ -23,6 +23,7 @@ import type {
   CommentaryResponse, TFTAnalysisResponse
 } from '../types';
 import { useSentimentSummary } from '../hooks/useQueries';
+import { mapTftForecastRows } from '../utils/forecast';
 import '../App.css';
 
 // Lazy load heavy components
@@ -126,16 +127,6 @@ const ProgressBar = memo(({ value, max = 100, color = 'bg-emerald-500' }: { valu
 ));
 ProgressBar.displayName = 'ProgressBar';
 
-function addBusinessDays(start: Date, n: number): Date {
-  const result = new Date(start);
-  let added = 0;
-  while (added < n) {
-    result.setDate(result.getDate() + 1);
-    if (result.getDay() !== 0 && result.getDay() !== 6) added++;
-  }
-  return result;
-}
-
 const ForecastTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
@@ -169,33 +160,53 @@ export const OverviewPage = () => {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
   const sentimentSummary = useSentimentSummary(7, 6);
 
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
-    try {
-      const [analysisData, historyData, tftData] = await Promise.all([
+    const [analysisResult, historyResult, tftResult] = await Promise.allSettled([
         fetchAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
         fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
-      ]);
-      setAnalysis(analysisData);
-      setHistory(historyData);
-      setTftAnalysis(tftData);
-      if (!silent) setIsInitialLoad(false);
-    } catch (err) {
-      console.error('Data load failed:', err);
-      if (!silent) setIsInitialLoad(false);
+    ]);
+    const nextErrors: Record<string, string> = {};
+    if (analysisResult.status === 'fulfilled') setAnalysis(analysisResult.value);
+    else {
+      setAnalysis(null);
+      nextErrors['Price forecast'] = String(analysisResult.reason);
     }
+    if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
+    else {
+      setHistory(null);
+      nextErrors['Price history'] = String(historyResult.reason);
+    }
+    if (tftResult.status === 'fulfilled') setTftAnalysis(tftResult.value);
+    else {
+      setTftAnalysis(null);
+      nextErrors['Deep-learning forecast'] = String(tftResult.reason);
+    }
+    setLoadErrors((previous) => ({
+      ...(previous['AI commentary'] ? { 'AI commentary': previous['AI commentary'] } : {}),
+      ...nextErrors,
+    }));
+    if (!silent) setIsInitialLoad(false);
   }, []);
 
   const loadCommentary = useCallback(async () => {
     try {
       const data = await fetchCommentary(DEFAULT_COPPER_SYMBOL);
       setCommentary(data);
+      setLoadErrors((previous) => {
+        const next = { ...previous };
+        delete next['AI commentary'];
+        return next;
+      });
     } catch (err) {
+      setCommentary(null);
+      setLoadErrors((previous) => ({ ...previous, 'AI commentary': String(err) }));
       console.error(err);
     }
   }, []);
@@ -264,16 +275,7 @@ export const OverviewPage = () => {
     };
 
     const forecasts = hasForecast
-      ? tftAnalysis!.prediction!.daily_forecasts.slice(0, 5).map((fc: any) => {
-          const d = addBusinessDays(new Date(last.date), fc.day);
-          return {
-            date: d.toISOString().split('T')[0],
-            priceMedian: fc.price_median,
-            priceQ10: fc.price_q10,
-            priceQ90: fc.price_q90,
-            isForecast: true as const,
-          };
-        })
+      ? mapTftForecastRows(tftAnalysis!.prediction!.daily_forecasts)
       : [];
 
     const data = [...hist, bridge, ...forecasts];
@@ -431,6 +433,16 @@ export const OverviewPage = () => {
             </div>
           </div>
         </header>
+
+        {Object.keys(loadErrors).length > 0 && (
+          <div className="flex flex-wrap gap-2" role="status">
+            {Object.keys(loadErrors).map((endpoint) => (
+              <span key={endpoint} className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200">
+                <AlertTriangle size={12} /> {endpoint} is temporarily unavailable
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Dashboard Grid + persistent News sidebar (desktop).
             On mobile/tablet the news panel stacks under the dashboard.
@@ -813,6 +825,19 @@ export const OverviewPage = () => {
               {commentary?.generated_at && (
                 <span className="text-[10px] text-gray-600 font-mono">
                   {new Date(commentary.generated_at).toLocaleTimeString()}
+                </span>
+              )}
+              {commentary?.generation_mode && (
+                <span
+                  className={clsx(
+                    "text-[9px] font-mono px-1.5 py-0.5 rounded-full border",
+                    commentary.generation_mode === 'deterministic_fallback'
+                      ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
+                      : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10",
+                  )}
+                  title={commentary.fallback_reason || commentary.model_name || undefined}
+                >
+                  {commentary.generation_mode === 'deterministic_fallback' ? 'Local fallback' : 'AI generated'}
                 </span>
               )}
             </div>

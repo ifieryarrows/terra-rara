@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from app.db import init_db, SessionLocal, get_db_type
-from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw
+from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw, PipelineRunMetrics
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
 from app.instruments import (
@@ -326,7 +326,7 @@ async def get_history(
         start_date = end_date - timedelta(days=days)
         
         # Query prices
-        prices = session.query(
+        raw_prices = session.query(
             PriceBar.date,
             PriceBar.close
         ).filter(
@@ -334,6 +334,14 @@ async def get_history(
             PriceBar.date >= start_date
         ).order_by(PriceBar.date.asc()).all()
         
+        from app.price_utils import finite_positive_price
+
+        prices = [
+            (row.date, finite_positive_price(row.close))
+            for row in raw_prices
+            if finite_positive_price(row.close) is not None
+        ]
+
         if not prices:
             raise HTTPException(
                 status_code=404,
@@ -374,8 +382,8 @@ async def get_history(
         
         # Build response data
         data_points = []
-        for price in prices:
-            date_str = price.date.strftime("%Y-%m-%d") if hasattr(price.date, 'strftime') else str(price.date)[:10]
+        for price_date, close in prices:
+            date_str = price_date.strftime("%Y-%m-%d") if hasattr(price_date, 'strftime') else str(price_date)[:10]
             
             sent = sentiment_lookup.get(date_str)
             
@@ -385,7 +393,7 @@ async def get_history(
             
             data_points.append(HistoryDataPoint(
                 date=date_str,
-                price=round(price.close, 4),
+                price=round(close, 4),
                 sentiment_index=sentiment_idx,
                 sentiment_news_count=news_count
             ))
@@ -524,15 +532,11 @@ async def health_check():
                 tft_model_trained_at = _iso(latest_tft_model.trained_at)
 
             # --- PriceBar freshness -----------------------------------------
-            target = TARGET_SYMBOL
-            latest_bar = (
-                session.query(PriceBar.date)
-                .filter(PriceBar.symbol == target)
-                .order_by(PriceBar.date.desc())
-                .first()
-            )
-            if latest_bar and latest_bar[0]:
-                bar_date = latest_bar[0]
+            from app.price_utils import latest_finite_price_bar
+
+            latest_bar = latest_finite_price_bar(session, TARGET_SYMBOL)
+            if latest_bar is not None and latest_bar.date:
+                bar_date = latest_bar.date
                 if bar_date.tzinfo is None:
                     bar_date = bar_date.replace(tzinfo=timezone.utc)
                 price_bar_latest_date = bar_date.strftime("%Y-%m-%d")
@@ -994,6 +998,9 @@ async def get_commentary(
             "error": None,
             "generated_at": result["generated_at"],
             "ai_stance": result.get("ai_stance", "NEUTRAL"),
+            "generation_mode": result.get("generation_mode", "unknown"),
+            "model_name": result.get("model_name"),
+            "fallback_reason": result.get("fallback_reason"),
         }
     else:
         return {
@@ -1002,6 +1009,9 @@ async def get_commentary(
             "error": "No commentary available. Commentary is generated after pipeline runs.",
             "generated_at": None,
             "ai_stance": "NEUTRAL",
+            "generation_mode": "unavailable",
+            "model_name": None,
+            "fallback_reason": "not_generated",
         }
 
 
@@ -1328,11 +1338,44 @@ async def trigger_pipeline(
     
     try:
         from adapters.queue.jobs import enqueue_pipeline_job
-        
+        import uuid
+
+        now = datetime.now(timezone.utc)
+        run_id = str(uuid.uuid4())
+        orphan_cutoff = now - timedelta(minutes=get_settings().pipeline_orphan_timeout_minutes)
+        with SessionLocal() as session:
+            orphans = session.query(PipelineRunMetrics).filter(
+                PipelineRunMetrics.status.in_(("queued", "running")),
+                PipelineRunMetrics.run_started_at < orphan_cutoff,
+            ).all()
+            for orphan in orphans:
+                orphan.status = "failed"
+                orphan.quality_state = "failed"
+                orphan.error_message = "worker_interrupted"
+                orphan.run_completed_at = now
+            session.add(
+                PipelineRunMetrics(
+                    run_id=run_id,
+                    run_started_at=now,
+                    enqueued_at=now,
+                    trigger_source=trigger_source,
+                    train_model_requested=train_model,
+                    status="queued",
+                    quality_state="queued",
+                )
+            )
+            session.commit()
+
         result = await enqueue_pipeline_job(
             train_model=train_model,
             trigger_source=trigger_source,
+            run_id=run_id,
         )
+        with SessionLocal() as session:
+            queued = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
+            if queued is not None:
+                queued.job_id = result["job_id"]
+                session.commit()
         
         logger.info(f"Pipeline job enqueued: run_id={result['run_id']}, trigger={trigger_source}")
         
@@ -1347,10 +1390,56 @@ async def trigger_pipeline(
         
     except Exception as e:
         logger.error(f"Failed to enqueue pipeline job: {e}")
+        if "run_id" in locals():
+            with SessionLocal() as session:
+                queued = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
+                if queued is not None:
+                    queued.status = "failed"
+                    queued.quality_state = "failed"
+                    queued.error_message = f"enqueue_failed: {str(e)[:800]}"
+                    queued.run_completed_at = datetime.now(timezone.utc)
+                    session.commit()
         raise HTTPException(
             status_code=503,
             detail=f"Failed to enqueue job. Redis may be unavailable: {str(e)}"
         )
+
+
+@app.get(
+    "/api/pipeline/runs/{run_id}",
+    summary="Get terminal-aware pipeline run status (requires authentication)",
+)
+async def get_pipeline_run_status(
+    run_id: str,
+    _auth: None = Depends(verify_pipeline_secret),
+):
+    with SessionLocal() as session:
+        record = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
+        if record is None:
+            raise HTTPException(status_code=404, detail="Pipeline run not found")
+        try:
+            stages = json.loads(record.stage_results_json or "{}")
+        except (TypeError, ValueError):
+            stages = {}
+        return {
+            "run_id": record.run_id,
+            "status": record.status,
+            "quality_state": record.quality_state,
+            "enqueued_at": record.enqueued_at.isoformat() if record.enqueued_at else None,
+            "worker_started_at": record.worker_started_at.isoformat() if record.worker_started_at else None,
+            "completed_at": record.run_completed_at.isoformat() if record.run_completed_at else None,
+            "error_message": record.error_message,
+            "stage_results": stages,
+            "fallback_counts": {
+                "llm_success": record.llm_success_count or 0,
+                "operational": record.operational_fallback_count or 0,
+                "policy": record.policy_fallback_count or 0,
+            },
+            "commentary_generation_mode": record.commentary_generation_mode,
+            "artifact_version": record.artifact_version,
+            "promoted_artifact_version": record.promoted_artifact_version,
+            "train_model_requested": bool(record.train_model_requested),
+        }
 
 
 # =============================================================================
@@ -1708,7 +1797,11 @@ async def get_sentiment_summary(
             )
             .join(NewsProcessed, NewsProcessed.id == NewsSentimentV2.news_processed_id)
             .join(NewsRaw, NewsRaw.id == NewsProcessed.raw_id)
-            .filter(NewsRaw.published_at >= window_start)
+            .filter(
+                NewsRaw.published_at >= window_start,
+                NewsProcessed.duplicate_of_id.is_(None),
+                NewsSentimentV2.horizon_days == max(1, int(get_settings().sentiment_horizon_days)),
+            )
             .one()
         )
 
@@ -1852,7 +1945,7 @@ class _NewsSentimentProjection:
     scored_at: Optional[datetime]
 
 
-def _news_projection_query(session):
+def _news_projection_query(session, horizon_days: Optional[int] = None):
     """
     Build a backward-compatible query for news + sentiment.
 
@@ -1860,6 +1953,8 @@ def _news_projection_query(session):
     endpoint keeps working even before weekly-contract migrations are applied
     on older databases.
     """
+    if horizon_days is None:
+        horizon_days = max(1, int(get_settings().sentiment_horizon_days))
     return (
         session.query(
             NewsRaw,
@@ -1880,8 +1975,10 @@ def _news_projection_query(session):
         .join(NewsProcessed, NewsProcessed.raw_id == NewsRaw.id)
         .outerjoin(
             NewsSentimentV2,
-            NewsSentimentV2.news_processed_id == NewsProcessed.id,
+            (NewsSentimentV2.news_processed_id == NewsProcessed.id)
+            & (NewsSentimentV2.horizon_days == horizon_days),
         )
+        .filter(NewsProcessed.duplicate_of_id.is_(None))
     )
 
 
@@ -1935,6 +2032,14 @@ def _extract_publisher(raw_payload) -> Optional[str]:
 def _build_news_sentiment_block(sent: Optional[_NewsSentimentProjection]) -> Optional[NewsSentimentBlock]:
     if sent is None:
         return None
+    metadata: dict = {}
+    try:
+        metadata = json.loads(sent.reasoning_json or "{}")
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except (TypeError, ValueError):
+        metadata = {}
+    finbert_available = metadata.get("finbert_available", True)
     return NewsSentimentBlock(
         label=sent.label,
         final_score=float(sent.final_score) if sent.final_score is not None else None,
@@ -1942,14 +2047,34 @@ def _build_news_sentiment_block(sent: Optional[_NewsSentimentProjection]) -> Opt
         confidence=float(sent.confidence_calibrated) if sent.confidence_calibrated is not None else None,
         relevance=float(sent.relevance_score) if sent.relevance_score is not None else None,
         event_type=sent.event_type,
-        finbert=NewsFinbertProbs(
-            pos=float(sent.finbert_pos or 0.0),
-            neu=float(sent.finbert_neu or 0.0),
-            neg=float(sent.finbert_neg or 0.0),
+        finbert=(
+            NewsFinbertProbs(
+                pos=float(sent.finbert_pos),
+                neu=float(sent.finbert_neu),
+                neg=float(sent.finbert_neg),
+            )
+            if finbert_available and all(v is not None for v in (sent.finbert_pos, sent.finbert_neu, sent.finbert_neg))
+            else None
         ),
         reasoning=_extract_reasoning_text(sent.reasoning_json),
         scored_at=sent.scored_at.isoformat() if sent.scored_at else None,
+        scoring_mode="deterministic_fallback" if metadata.get("fallback_used") else "llm",
+        model_name=metadata.get("llm_model"),
+        fallback_reason=metadata.get("fallback_reason"),
     )
+
+
+def _completed_pipeline_cache_version(session) -> str:
+    try:
+        latest = (
+            session.query(PipelineRunMetrics.run_id)
+            .filter(PipelineRunMetrics.status.in_(("success", "degraded")))
+            .order_by(PipelineRunMetrics.run_completed_at.desc())
+            .first()
+        )
+        return str(latest[0]) if latest else "no-completed-run"
+    except Exception:
+        return "no-completed-run"
 
 
 def _extract_reasoning_text(reasoning_json: Optional[str]) -> Optional[str]:
@@ -1987,6 +2112,7 @@ async def get_news_feed(
     channel: str = Query(default="all"),
     publisher: Optional[str] = Query(default=None, max_length=200),
     search: Optional[str] = Query(default=None, max_length=200),
+    as_of: Optional[datetime] = Query(default=None, description="Stable pagination cutoff from the first page"),
 ):
     from sqlalchemy import desc as _desc
 
@@ -2001,21 +2127,26 @@ async def get_news_feed(
         "publisher": publisher,
         "search": search,
     }
-    cache_key = tuple(sorted(filters_echo.items()))
-    now_ts = datetime.now(timezone.utc).timestamp()
-    cached = _news_list_cache.get(cache_key)
-    if cached and (now_ts - cached[0]) < _NEWS_LIST_TTL_S:
-        return cached[1]
-
     label_upper = label.upper()
     if label_upper != "ALL" and label_upper not in _VALID_LABELS:
         raise HTTPException(status_code=400, detail=f"Invalid label '{label}'")
 
     with SessionLocal() as session:
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=since_hours)
+        stable_as_of = as_of or now.replace(microsecond=0)
+        if stable_as_of.tzinfo is None:
+            stable_as_of = stable_as_of.replace(tzinfo=timezone.utc)
+        cutoff = stable_as_of - timedelta(hours=since_hours)
+        cache_key = tuple(sorted({**filters_echo, "as_of": stable_as_of.isoformat(), "pipeline": _completed_pipeline_cache_version(session)}.items()))
+        now_ts = now.timestamp()
+        cached = _news_list_cache.get(cache_key)
+        if cached and (now_ts - cached[0]) < _NEWS_LIST_TTL_S:
+            return cached[1]
 
-        q = _news_projection_query(session).filter(NewsRaw.published_at >= cutoff)
+        q = _news_projection_query(session).filter(
+            NewsRaw.published_at >= cutoff,
+            NewsRaw.fetched_at <= stable_as_of,
+        )
 
         if channel.lower() != "all":
             q = q.filter(NewsRaw.source == channel)
@@ -2027,27 +2158,15 @@ async def get_news_feed(
             q = q.filter(NewsSentimentV2.relevance_score >= min_relevance)
         if search:
             q = q.filter(NewsRaw.title.ilike(f"%{search}%"))
+        if publisher and publisher.strip():
+            q = q.filter(NewsRaw.publisher.ilike(f"%{publisher.strip()}%"))
 
-        q = q.order_by(_desc(NewsRaw.published_at))
-
-        publisher_needle = publisher.strip().lower() if publisher and publisher.strip() else None
-
-        if publisher_needle:
-            # Publisher filter requires JSON extraction; do it in Python to
-            # remain backend-agnostic (sqlite/postgres) and keep the endpoint
-            # simple. Scope is bounded by the time window filter above.
-            rows = q.limit(500).all()
-            filtered = [
-                row for row in rows
-                if (
-                    _extract_publisher(row[0].raw_payload) or ""
-                ).lower().find(publisher_needle) >= 0
-            ]
-            total = len(filtered)
-            page_rows = filtered[offset: offset + limit]
-        else:
-            total = q.count()
-            page_rows = q.offset(offset).limit(limit).all()
+        data_as_of_value = q.order_by(None).with_entities(
+            func.max(NewsSentimentV2.scored_at)
+        ).scalar()
+        q = q.order_by(_desc(NewsRaw.published_at), _desc(NewsProcessed.id))
+        total = q.count()
+        page_rows = q.offset(offset).limit(limit).all()
 
         items: list[NewsItem] = []
         for row in page_rows:
@@ -2060,7 +2179,7 @@ async def get_news_feed(
                     description=str(raw.description or "") or None,
                     url=str(raw.url or "") or None,
                     channel=str(raw.source or "unknown"),
-                    publisher=_extract_publisher(raw.raw_payload),
+                    publisher=getattr(raw, "publisher", None) or _extract_publisher(raw.raw_payload),
                     source_feed=str(raw.source_feed or "") or None,
                     published_at=raw.published_at.isoformat() if raw.published_at else None,
                     fetched_at=raw.fetched_at.isoformat() if raw.fetched_at else None,
@@ -2076,6 +2195,8 @@ async def get_news_feed(
             offset=offset,
             has_more=(offset + limit) < int(total),
             generated_at=now.isoformat(),
+            as_of=stable_as_of.isoformat(),
+            data_as_of=data_as_of_value.isoformat() if data_as_of_value else None,
             filters=filters_echo,
         )
 
@@ -2114,12 +2235,6 @@ async def get_news_stats(
         "publisher": publisher,
         "search": search,
     }
-    cache_key = tuple(sorted(filters_echo.items()))
-    now_ts = datetime.now(timezone.utc).timestamp()
-    cached = _news_stats_cache.get(cache_key)
-    if cached and (now_ts - cached[0]) < _NEWS_STATS_TTL_S:
-        return cached[1]
-
     label_upper = label.upper()
     if label_upper != "ALL" and label_upper not in _VALID_LABELS:
         raise HTTPException(status_code=400, detail=f"Invalid label '{label}'")
@@ -2127,6 +2242,11 @@ async def get_news_stats(
     with SessionLocal() as session:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=since_hours)
+        cache_key = tuple(sorted({**filters_echo, "pipeline": _completed_pipeline_cache_version(session)}.items()))
+        now_ts = now.timestamp()
+        cached = _news_stats_cache.get(cache_key)
+        if cached and (now_ts - cached[0]) < _NEWS_STATS_TTL_S:
+            return cached[1]
 
         q = _news_projection_query(session).filter(NewsRaw.published_at >= cutoff)
 
@@ -2140,18 +2260,12 @@ async def get_news_stats(
             q = q.filter(NewsSentimentV2.relevance_score >= min_relevance)
         if search:
             q = q.filter(NewsRaw.title.ilike(f"%{search}%"))
+        if publisher and publisher.strip():
+            q = q.filter(NewsRaw.publisher.ilike(f"%{publisher.strip()}%"))
 
         q = q.order_by(_desc(NewsRaw.published_at))
 
-        publisher_needle = publisher.strip().lower() if publisher and publisher.strip() else None
-        if publisher_needle:
-            rows = q.limit(500).all()
-            rows = [
-                row for row in rows
-                if ((_extract_publisher(row[0].raw_payload) or "").lower().find(publisher_needle) >= 0)
-            ]
-        else:
-            rows = q.all()
+        rows = q.all()
 
         label_dist: dict[str, int] = {"BULLISH": 0, "BEARISH": 0, "NEUTRAL": 0}
         event_dist: dict[str, int] = {}
@@ -2167,7 +2281,7 @@ async def get_news_stats(
             raw, _processed, sent = _unpack_news_projection_row(row)
             ch = str(raw.source or "unknown")
             channel_dist[ch] = channel_dist.get(ch, 0) + 1
-            pub = _extract_publisher(raw.raw_payload)
+            pub = getattr(raw, "publisher", None) or _extract_publisher(raw.raw_payload)
             if pub:
                 acc = publisher_acc.setdefault(pub, {"count": 0, "score_sum": 0.0})
                 acc["count"] += 1
@@ -2247,7 +2361,7 @@ async def get_news_item(processed_id: int):
             description=str(raw.description or "") or None,
             url=str(raw.url or "") or None,
             channel=str(raw.source or "unknown"),
-            publisher=_extract_publisher(raw.raw_payload),
+            publisher=getattr(raw, "publisher", None) or _extract_publisher(raw.raw_payload),
             source_feed=str(raw.source_feed or "") or None,
             published_at=raw.published_at.isoformat() if raw.published_at else None,
             fetched_at=raw.fetched_at.isoformat() if raw.fetched_at else None,

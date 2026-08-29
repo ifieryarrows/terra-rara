@@ -493,13 +493,14 @@ def ingest_prices(session: Session) -> dict:
     for i, symbol in enumerate(symbols):
         try:
             # Check latest bar in DB for incremental fetch
-            latest_bar = session.query(PriceBar.date).filter(
-                PriceBar.symbol == symbol
-            ).order_by(PriceBar.date.desc()).first()
+            from app.price_utils import finite_number, finite_positive_price, latest_finite_price_bar
+
+            latest_price_bar = latest_finite_price_bar(session, symbol)
+            latest_bar = latest_price_bar.date if latest_price_bar is not None else None
             
-            if latest_bar and latest_bar.date:
+            if latest_bar:
                 # Incremental: fetch from (latest - overlap) to now
-                latest_date = latest_bar.date
+                latest_date = latest_bar
                 if latest_date.tzinfo is None:
                     latest_date = latest_date.replace(tzinfo=timezone.utc)
                 start_date = latest_date - timedelta(days=OVERLAP_DAYS)
@@ -521,9 +522,21 @@ def ingest_prices(session: Session) -> dict:
             
             imported = 0
             updated = 0
+            rejected = 0
             
             for date_idx, row in df.iterrows():
                 try:
+                    close = finite_positive_price(row.get("Close"))
+                    if close is None:
+                        rejected += 1
+                        logger.warning("%s: rejecting non-finite/non-positive close at %s", symbol, date_idx)
+                        continue
+
+                    open_price = finite_positive_price(row.get("Open"))
+                    high_price = finite_positive_price(row.get("High"))
+                    low_price = finite_positive_price(row.get("Low"))
+                    adj_close = finite_positive_price(row.get("Adj Close")) or close
+                    volume = finite_number(row.get("Volume"))
                     # Convert index to datetime
                     if hasattr(date_idx, 'to_pydatetime'):
                         bar_date = date_idx.to_pydatetime()
@@ -540,18 +553,22 @@ def ingest_prices(session: Session) -> dict:
                         values={
                             "symbol": symbol,
                             "date": bar_date,
-                            "open": float(row.get("Open", 0)) if row.get("Open") else None,
-                            "high": float(row.get("High", 0)) if row.get("High") else None,
-                            "low": float(row.get("Low", 0)) if row.get("Low") else None,
-                            "close": float(row["Close"]),
-                            "volume": float(row.get("Volume", 0)) if row.get("Volume") else None,
-                            "adj_close": float(row.get("Adj Close", row["Close"])),
+                            "open": open_price,
+                            "high": high_price,
+                            "low": low_price,
+                            "close": close,
+                            "volume": volume,
+                            "adj_close": adj_close,
                             "fetched_at": datetime.now(timezone.utc),
                         },
                         index_elements=["symbol", "date"],
                         update_set={
-                            "close": float(row["Close"]),
-                            "adj_close": float(row.get("Adj Close", row["Close"])),
+                            "open": open_price,
+                            "high": high_price,
+                            "low": low_price,
+                            "close": close,
+                            "volume": volume,
+                            "adj_close": adj_close,
                             "fetched_at": datetime.now(timezone.utc),
                         }
                     )
@@ -569,7 +586,7 @@ def ingest_prices(session: Session) -> dict:
             
             session.commit()
             
-            stats[symbol] = {"imported": imported, "updated": updated, "mode": mode}
+            stats[symbol] = {"imported": imported, "updated": updated, "rejected": rejected, "mode": mode}
             logger.info(f"{symbol}: {imported} bars imported, {updated} unchanged ({mode}, {len(df)} fetched)")
             
             # Add delay between symbols to avoid rate limiting
