@@ -98,7 +98,8 @@ Bu çalışma news sentiment, AI commentary, günlük pipeline, XGBoost training
 - Canlı XGB response: baseline `6.562` (2026-08-28 DB close), public rounded return `0.002678`, predicted `6.5796`, current/live display `6.659`. Public yuvarlanmış alanlarla denklem farkı yalnız `0.000027`; hesap içte yuvarlanmamış return ile tek price-basis fonksiyonunda yapılır.
 - Canlı TFT response: reference `6.56199979782104` (2026-08-28), `return_basis=daily_log_return_path`; ilk horizon 2026-08-31 ve `6.56199979782104 × exp(-0.050546199...) = 6.238558865...`. Frontend bu fiyatı/tarihi yeniden hesaplamıyor.
 - Canlı news pagination’da aynı `as_of` ile iki ardışık 5’li sayfa arasında id çakışması sıfırdı. Commentary normal LLM modunda ve fallback reason null kaldı.
-- Son uygulama commit’indeki CI `33280521186`, HF deploy `33280626051` ve final daily smoke `33280721767` başarılıdır.
+- Lock implementation commit’indeki CI `33280521186`, HF deploy `33280626051` ve final daily smoke `33280721767` başarılıdır.
+- Provider-404 seed cleanup commit’i `3ac7a45` için CI `33307176310` ve HF sync `33307282058` başarılı oldu. Space revision `69d3733daf5a6b8307e02fc0ad4a0bc0260a4c41` `RUNNING` olduktan sonra heatmap refresh 202 universe row’dan 194 canlı öğe üretti; `refresh_error=null`, kaldırılan dört ticker payload’da yok ve deploy sonrası container logunda bunlara ait yeni hata oluşmadı.
 
 ## Kalan riskler
 
