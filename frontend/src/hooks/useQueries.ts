@@ -5,6 +5,7 @@ import {
   fetchTftModelSummary, 
   fetchLatestBacktest, 
   fetchMarketHeatmap,
+  fetchHeatmapCategoryContext,
   fetchAnalysis,
   fetchHistory,
   fetchTFTAnalysis,
@@ -46,28 +47,41 @@ export function useBacktestReport() {
   });
 }
 
-export function useMarketHeatmap() {
+export function useMarketHeatmap(view: 'market' | 'themes' = 'market') {
   return useQuery({
-    queryKey: ['market-heatmap'],
-    queryFn: fetchMarketHeatmap,
-    // Adaptive polling: short interval while the cache is empty or a refresh
-    // is in flight; long interval once we have a healthy payload. This prevents
-    // the UI from getting stuck on "Loading…" when the first snapshot is
-    // still being built by the background task.
+    queryKey: ['market-heatmap', view],
+    queryFn: () => fetchMarketHeatmap(view),
     refetchInterval: (query) => {
       const data: any = query.state.data;
       const meta = data?._meta;
       const count = meta?.payload_count ?? (data?.children?.length ? -1 : 0);
-      const refreshing = !!meta?.refresh_in_progress;
-      const hasContent = count > 0;
-
-      if (!hasContent) return 3_000;
-      if (refreshing) return 5_000;
-      return 900_000;
+      if (meta?.refresh_in_progress) return 5_000;
+      const nextDelay = meta?.next_refresh_at
+        ? Math.max(1_000, new Date(meta.next_refresh_at).getTime() - Date.now())
+        : null;
+      if (count <= 0) return nextDelay ?? 3_000;
+      return nextDelay ?? 900_000;
     },
     refetchOnWindowFocus: false,
-    refetchOnMount: 'always',
-    staleTime: 0,
+    refetchOnMount: false,
+    staleTime: 900_000,
+    gcTime: 1_800_000,
+  });
+}
+
+export function useHeatmapCategoryContext(
+  categoryId: string,
+  view: 'market' | 'themes',
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['market-heatmap-context', view, categoryId],
+    queryFn: () => fetchHeatmapCategoryContext(categoryId, view),
+    enabled: enabled && !!categoryId,
+    staleTime: 300_000,
+    gcTime: 900_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 }
 

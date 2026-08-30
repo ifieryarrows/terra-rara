@@ -167,11 +167,41 @@ export async function fetchLatestBacktest(): Promise<any> {
   return response.data;
 }
 
-/**
- * Fetch Market Heatmap
- */
-export async function fetchMarketHeatmap(): Promise<any> {
-  const response = await api.get('/market-heatmap');
+/** Fetch the project taxonomy or the dynamic sector/industry heatmap. */
+export async function fetchMarketHeatmap(view: 'market' | 'themes' = 'market'): Promise<any> {
+  if (typeof document !== 'undefined') {
+    const root = document.documentElement;
+    root.dataset.heatmapRequestCount = String(Number(root.dataset.heatmapRequestCount || 0) + 1);
+  }
+  const response = await api.get('/market-heatmap', { params: { view } });
+  return response.data;
+}
+
+export interface HeatmapContextNewsItem {
+  id: number;
+  title: string;
+  summary: string | null;
+  url: string | null;
+  publisher: string | null;
+  publishedAt: string | null;
+  sentiment: string | null;
+}
+
+export interface HeatmapCategoryContext {
+  categoryId: string;
+  categoryName: string;
+  symbolCount: number;
+  news: HeatmapContextNewsItem | null;
+  stockNews?: Record<string, HeatmapContextNewsItem>;
+}
+
+export async function fetchHeatmapCategoryContext(
+  categoryId: string,
+  view: 'market' | 'themes' = 'market',
+): Promise<HeatmapCategoryContext> {
+  const response = await api.get<HeatmapCategoryContext>('/market-heatmap/context', {
+    params: { category_id: categoryId, view },
+  });
   return response.data;
 }
 

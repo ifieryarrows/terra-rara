@@ -9,6 +9,7 @@ Endpoints:
 
 import logging
 import json
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -20,9 +21,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func
+from fastapi.middleware.gzip import GZipMiddleware
+from sqlalchemy import func, desc
 
 from app.db import init_db, SessionLocal, get_db_type
 from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw, PipelineRunMetrics
@@ -118,6 +120,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 
 # =============================================================================
@@ -652,113 +655,239 @@ async def get_market_prices():
 # Market Heatmap Endpoint
 # =============================================================================
 
+
+def _render_heatmap_http_response(
+    *,
+    request: Request,
+    view: str,
+    persisted: dict,
+    cached_at: Optional[datetime],
+    expires_at: Optional[datetime],
+    refresh_error: Optional[str],
+    payload_count: int,
+    is_stale: bool,
+    refresh_in_progress: bool,
+    db_ms: float,
+    request_started: float,
+    memo_state: str,
+) -> Response:
+    """Serialize one snapshot once and attach cache/performance diagnostics."""
+    from app.heatmap import hierarchy_for_view
+
+    now = datetime.now(timezone.utc)
+    hierarchy_started = time.perf_counter()
+    payload = hierarchy_for_view(persisted, view)
+    hierarchy_ms = (time.perf_counter() - hierarchy_started) * 1000
+    cache_state = (
+        "empty" if payload_count == 0 else
+        "refreshing" if refresh_in_progress else
+        "stale" if is_stale else "fresh"
+    )
+    if cached_at and cached_at.tzinfo is None:
+        cached_at = cached_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    age = max(0, int((now - cached_at).total_seconds())) if cached_at else 0
+    remaining = max(0, int((expires_at - now).total_seconds())) if expires_at else 0
+    payload["_meta"] = {
+        "view": view,
+        "is_stale": is_stale or payload_count == 0,
+        "refresh_in_progress": refresh_in_progress,
+        "last_updated_at": cached_at.isoformat() if cached_at else None,
+        "next_refresh_at": expires_at.isoformat() if expires_at else None,
+        "source_delay_minutes": 15,
+        "payload_count": payload_count,
+        "refresh_error": refresh_error,
+        "cache_state": cache_state,
+        "cache_age_seconds": age,
+    }
+    import hashlib
+    etag_seed = f"{cached_at.isoformat() if cached_at else 'empty'}:{view}:{payload_count}:{refresh_error or ''}"
+    etag = f'"{hashlib.sha256(etag_seed.encode()).hexdigest()[:24]}"'
+    serialize_started = time.perf_counter()
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    serialize_ms = (time.perf_counter() - serialize_started) * 1000
+    headers = {
+        "ETag": etag,
+        "Cache-Control": f"public, max-age={remaining if cache_state == 'fresh' else 0}, stale-while-revalidate={60 if cache_state == 'fresh' else 30}",
+        "X-Heatmap-Cache": cache_state,
+        "X-Heatmap-Cache-Age": str(age),
+        "X-Heatmap-Memo": memo_state,
+        "Server-Timing": (
+            f"db;dur={db_ms:.2f}, hierarchy;dur={hierarchy_ms:.2f}, "
+            f"serialize;dur={serialize_ms:.2f}, total;dur={(time.perf_counter() - request_started) * 1000:.2f}"
+        ),
+    }
+    if request.headers.get("if-none-match") == etag and payload_count > 0:
+        return Response(status_code=304, headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
 @app.get(
     "/api/market-heatmap",
     summary="Get CopperMind universe heatmap (15-min cache)",
-    description=(
-        "Returns a group->subgroup->symbol treemap payload sourced exclusively from the "
-        "CopperMind project universe (broad_universe.csv). Uses stale-while-revalidate "
-        "caching with a 15-minute TTL. No general market indices are included."
-    )
+    description="Returns a backward-compatible theme tree or a dynamic market hierarchy.",
 )
-async def get_market_heatmap(background_tasks: BackgroundTasks):
+async def get_market_heatmap(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    view: str = Query(default="themes", pattern="^(themes|market)$"),
+):
     from app.models import HeatmapCache
-    from app.heatmap import refresh_market_heatmap
+    from app.heatmap import (
+        flatten_heatmap_leaves,
+        get_heatmap_snapshot_memo,
+        refresh_market_heatmap,
+        store_heatmap_snapshot_memo,
+    )
 
-    # Stuck refresh safety: if a refresh has been "in progress" for longer than
-    # this, assume the worker crashed and allow a fresh background refresh to
-    # be kicked off. yfinance batch fetch for the full universe finishes in
-    # under ~2 minutes under normal conditions.
-    STUCK_REFRESH_SECONDS = 180
-
+    request_started = time.perf_counter()
+    now = datetime.now(timezone.utc)
+    memo = get_heatmap_snapshot_memo(now)
+    if memo is not None:
+        memo_payload = memo["payload"]
+        return _render_heatmap_http_response(
+            request=request,
+            view=view,
+            persisted=memo_payload,
+            cached_at=memo["cached_at"],
+            expires_at=memo["expires_at"],
+            refresh_error=memo["refresh_error"],
+            payload_count=len(flatten_heatmap_leaves(memo_payload)),
+            is_stale=False,
+            refresh_in_progress=False,
+            db_ms=0.0,
+            request_started=request_started,
+            memo_state="hit",
+        )
     with SessionLocal() as session:
+        db_started = time.perf_counter()
         cache = session.query(HeatmapCache).first()
-        now = datetime.now(timezone.utc)
+        if cache is None:
+            cache = HeatmapCache(payload_json={}, cached_at=now, expires_at=now)
+            session.add(cache)
+            session.flush()
 
-        def _payload_count(payload) -> int:
-            if not isinstance(payload, dict):
-                return 0
-            total = 0
-            for grp in payload.get("children", []) or []:
-                for sub in grp.get("children", []) or []:
-                    total += len(sub.get("children", []) or [])
-            return total
+        persisted = cache.payload_json if isinstance(cache.payload_json, dict) else {}
+        persisted_leaves = flatten_heatmap_leaves(persisted)
+        payload_count = len(persisted_leaves)
+        needs_enrichment = any(not leaf.get("instrumentType") for leaf in persisted_leaves)
+        refresh_in_progress = cache.refresh_started_at is not None
+        if refresh_in_progress:
+            refresh_started = cache.refresh_started_at
+            if refresh_started.tzinfo is None:
+                refresh_started = refresh_started.replace(tzinfo=timezone.utc)
+            if (now - refresh_started).total_seconds() > 180:
+                logger.warning("Heatmap refresh appears stuck; clearing in-flight marker")
+                cache.refresh_started_at = None
+                refresh_in_progress = False
 
-        # If no cache or completely empty payload — trigger background refresh
-        if not cache or not cache.payload_json or _payload_count(cache.payload_json) == 0:
-            # Clear any stale "in progress" flag so we don't deadlock.
-            if cache and cache.refresh_started_at is not None:
-                started = cache.refresh_started_at
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-                age = (now - started).total_seconds()
-                if age > STUCK_REFRESH_SECONDS:
-                    cache.refresh_started_at = None
-                    session.commit()
-            background_tasks.add_task(refresh_market_heatmap)
-            return {
-                "name": "CopperMind Universe",
-                "children": [],
-                "_meta": {
-                    "is_stale": True,
-                    "refresh_in_progress": True,
-                    "last_updated_at": None,
-                    "next_refresh_at": None,
-                    "source_delay_minutes": 15,
-                    "payload_count": 0,
-                    "refresh_error": cache.refresh_error if cache else None,
-                    "cache_state": "empty",
-                },
-            }
-
-        # Check if stale
         expires_at = cache.expires_at
         if expires_at and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        is_stale = now > expires_at if expires_at else True
-
-        refresh_in_progress = cache.refresh_started_at is not None
-        # Recover from stuck "in progress" flags
-        if refresh_in_progress:
-            started = cache.refresh_started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-            if (now - started).total_seconds() > STUCK_REFRESH_SECONDS:
-                logger.warning(
-                    "Heatmap refresh appears stuck (started %.0fs ago) — clearing flag",
-                    (now - started).total_seconds(),
-                )
-                cache.refresh_started_at = None
-                session.commit()
-                refresh_in_progress = False
-
-        if is_stale and not refresh_in_progress:
-            background_tasks.add_task(refresh_market_heatmap)
+        retry_backoff = bool(cache.refresh_error) and bool(expires_at) and now < expires_at
+        is_stale = not expires_at or now >= expires_at or needs_enrichment or bool(cache.refresh_error)
+        if (payload_count == 0 or is_stale) and not refresh_in_progress and not retry_backoff:
+            # Persist before enqueueing so concurrent empty-cache requests do
+            # not each schedule a provider refresh.
             cache.refresh_started_at = now
             session.commit()
+            background_tasks.add_task(refresh_market_heatmap)
             refresh_in_progress = True
+        elif session.dirty or session.new:
+            session.commit()
+        db_ms = (time.perf_counter() - db_started) * 1000
+        cached_at = cache.cached_at
+        if cached_at and cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        if not is_stale and not refresh_in_progress and cached_at and expires_at:
+            store_heatmap_snapshot_memo(persisted, cached_at, expires_at, cache.refresh_error)
+        return _render_heatmap_http_response(
+            request=request,
+            view=view,
+            persisted=persisted,
+            cached_at=cached_at,
+            expires_at=expires_at,
+            refresh_error=cache.refresh_error,
+            payload_count=payload_count,
+            is_stale=is_stale,
+            refresh_in_progress=refresh_in_progress,
+            db_ms=db_ms,
+            request_started=request_started,
+            memo_state="miss",
+        )
 
-        payload = cache.payload_json
-        payload_count = _payload_count(payload)
-        cache_state = "fresh"
-        if is_stale:
-            cache_state = "stale"
-        if refresh_in_progress:
-            cache_state = "refreshing"
 
-        if isinstance(payload, dict):
-            payload["_meta"] = {
-                "is_stale": is_stale,
-                "refresh_in_progress": refresh_in_progress,
-                "last_updated_at": cache.cached_at.isoformat() if cache.cached_at else None,
-                "next_refresh_at": cache.expires_at.isoformat() if cache.expires_at else None,
-                "source_delay_minutes": 15,
-                "payload_count": payload_count,
-                "refresh_error": cache.refresh_error,
-                "cache_state": cache_state,
+@app.get("/api/market-heatmap/context", summary="Get cached news context for a heatmap category")
+async def get_market_heatmap_context(
+    response: Response,
+    category_id: str = Query(min_length=4, max_length=64),
+    view: str = Query(default="market", pattern="^(themes|market)$"),
+):
+    """Match seven-day cached news to a valid category without LLM work."""
+    from app.heatmap import find_category, flatten_heatmap_leaves, hierarchy_for_view, news_match_scores
+    from app.models import HeatmapCache
+
+    with SessionLocal() as session:
+        cache = session.query(HeatmapCache).first()
+        if not cache or not isinstance(cache.payload_json, dict):
+            raise HTTPException(status_code=404, detail="Heatmap snapshot is unavailable")
+        category = find_category(hierarchy_for_view(cache.payload_json, view), category_id)
+        if category is None:
+            raise HTTPException(status_code=404, detail="Unknown heatmap category")
+        leaves = flatten_heatmap_leaves(category)
+        rows = (
+            _news_projection_query(session)
+            .filter(NewsRaw.published_at >= datetime.now(timezone.utc) - timedelta(days=7))
+            .order_by(desc(NewsRaw.published_at))
+            .limit(250)
+            .all()
+        )
+        best = None
+        best_score = 0
+        stock_best: dict[str, tuple[int, object, object, object]] = {}
+        for row in rows:
+            raw, processed, sentiment = _unpack_news_projection_row(row)
+            title = str(raw.title or "")
+            description = str(raw.description or "")
+            scores = news_match_scores(title, description, leaves)
+            score = sum(scores.values())
+            if score > best_score:
+                best_score = score
+                best = (raw, processed, sentiment)
+
+            for symbol, stock_score in scores.items():
+                previous = stock_best.get(symbol)
+                if stock_score > 0 and (previous is None or stock_score > previous[0]):
+                    stock_best[symbol] = (stock_score, raw, processed, sentiment)
+
+        def serialize_news(match):
+            if match is None:
+                return None
+            raw, processed, sentiment = match
+            summary = str(raw.description or "").strip()[:360]
+            if not summary and sentiment is not None:
+                summary = _extract_reasoning_text(sentiment.reasoning_json) or ""
+            return {
+                "id": int(processed.id), "title": str(raw.title or ""),
+                "summary": summary or None, "url": str(raw.url or "") or None,
+                "publisher": getattr(raw, "publisher", None) or _extract_publisher(raw.raw_payload),
+                "publishedAt": raw.published_at.isoformat() if raw.published_at else None,
+                "sentiment": getattr(sentiment, "label", None) if sentiment else None,
             }
-
-        return payload
+        news = serialize_news(best)
+        stock_news = {
+            symbol: serialize_news((raw, processed, sentiment))
+            for symbol, (_score, raw, processed, sentiment) in stock_best.items()
+        }
+        response.headers["Cache-Control"] = "private, max-age=300"
+        return {
+            "categoryId": category_id,
+            "categoryName": category.get("name"),
+            "symbolCount": len(leaves),
+            "news": news,
+            "stockNews": stock_news,
+        }
 
 
 

@@ -1,25 +1,35 @@
-import { treemap, treemapSquarify, hierarchy, HierarchyRectangularNode } from 'd3-hierarchy';
+import {
+  hierarchy,
+  treemap,
+  treemapResquarify,
+  type HierarchyRectangularNode,
+} from 'd3-hierarchy';
 
 export interface HeatmapData {
+  id?: string;
   name: string;
   shortName?: string;
   price?: number;
   changePercent?: number;
-  /** Sizing weight: Market Cap, Dollar Volume, or Equal Weight (1.0) */
   weight?: number;
-  /** Human-readable label for the weight metric used */
   weightLabel?: string;
-  /** Top-level project group (e.g. "Copper Miners", "Battery Metals") */
   group?: string;
-  /** Second-level project subgroup (e.g. "Major Producers", "Lithium") */
   subgroup?: string;
-  /** Raw CSV category (e.g. "miner_major") */
   category?: string;
-  /** Raw CSV source_tag (e.g. "copper_core") */
   sourceTag?: string;
+  instrumentType?: string;
+  sector?: string | null;
+  industry?: string | null;
+  exchange?: string | null;
+  logoTicker?: string | null;
+  sparkline?: number[] | null;
+  asOf?: string | null;
+  aggregateCount?: number;
+  aggregateMembers?: HeatmapData[];
 }
 
 export interface HeatmapMeta {
+  view?: 'market' | 'themes';
   is_stale: boolean;
   refresh_in_progress: boolean;
   last_updated_at: string | null;
@@ -28,61 +38,141 @@ export interface HeatmapMeta {
   payload_count?: number;
   refresh_error?: string | null;
   cache_state?: 'fresh' | 'stale' | 'refreshing' | 'empty';
+  cache_age_seconds?: number;
 }
 
 export interface HeatmapNode {
+  id?: string;
   name: string;
   children?: (HeatmapNode | HeatmapData)[];
   _meta?: HeatmapMeta;
 }
 
-export interface TreemapLayoutNode extends HierarchyRectangularNode<HeatmapNode | HeatmapData> {}
+export type LayoutNode = HierarchyRectangularNode<HeatmapNode | HeatmapData>;
 
-export function buildTreemapLayout(
-  data: HeatmapNode,
-  width: number,
-  height: number,
-  paddingTop = 24,
-): HierarchyRectangularNode<HeatmapNode | HeatmapData> {
-  const root = hierarchy<HeatmapNode | HeatmapData>(data)
-    .sum((d: any) => {
-      return d.children ? 0 : (d.weight || 1);
-    })
-    .sort((a, b) => (b.value || 0) - (a.value || 0));
+export function createTreemapHierarchy(data: HeatmapNode): LayoutNode {
+  return hierarchy<HeatmapNode | HeatmapData>(data)
+    .sum((node) => ('children' in node && node.children ? 0 : Math.max(0.0001, (node as HeatmapData).weight || 1)))
+    .sort((a, b) => (b.value || 0) - (a.value || 0)) as LayoutNode;
+}
 
-  const layout = treemap<HeatmapNode | HeatmapData>()
+/** Mutates and reuses the hierarchy so resquarify preserves row topology on resize. */
+export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
+  treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
     .paddingInner(1)
     .paddingOuter(1)
-    .paddingTop(paddingTop)
+    .paddingTop((node) => (node.depth === 1 ? 22 : node.depth === 2 ? 16 : 0))
     .round(true)
-    .tile(treemapSquarify.ratio(1));
+    .tile(treemapResquarify)(root);
+  return root;
+}
 
-  layout(root);
+export function buildTreemapLayout(data: HeatmapNode, width: number, height: number): LayoutNode {
+  return layoutTreemap(createTreemapHierarchy(data), width, height);
+}
 
-  return root as HierarchyRectangularNode<HeatmapNode | HeatmapData>;
+export function leavesForCategory(root: HeatmapNode, categoryId: string, categoryName?: string): HeatmapData[] {
+  const find = (node: HeatmapNode | HeatmapData, byName = false): HeatmapNode | HeatmapData | null => {
+    const children = 'children' in node ? node.children : undefined;
+    if (node.id === categoryId || (byName && children?.length && node.name === categoryName)) return node;
+    for (const child of children || []) {
+      const match = find(child, byName);
+      if (match) return match;
+    }
+    return null;
+  };
+  const category = find(root) || (categoryName ? find(root, true) : null);
+  if (!category) return [];
+  const output: HeatmapData[] = [];
+  const walk = (node: HeatmapNode | HeatmapData) => {
+    const children = 'children' in node ? node.children : undefined;
+    if (children?.length) children.forEach(walk);
+    else output.push(node as HeatmapData);
+  };
+  walk(category);
+  return output;
+}
+
+export type DetailLevel = 'color' | 'ticker' | 'change' | 'logo' | 'price';
+
+export function detailLevel(width: number, height: number): DetailLevel {
+  const area = width * height;
+  if (width < 24 || height < 18 || area < 520) return 'color';
+  if (width < 44 || height < 25 || area < 1_250) return 'ticker';
+  if (width < 66 || height < 42 || area < 2_800) return 'change';
+  if (width < 100 || height < 72 || area < 6_800) return 'logo';
+  return 'price';
 }
 
 /**
- * Extract the list of leaf HeatmapData entries belonging to a given group or
- * subgroup. Used by the category inspector side panel.
+ * Collapse projected sub-pixel leaves per industry into a single +N cell.
+ * The aggregate retains the exact summed weight; the original tree is kept by
+ * the panel so every instrument remains discoverable.
  */
-export function leavesForCategory(
+export function aggregateTinyLeaves(
   root: HeatmapNode,
-  categoryName: string,
-): HeatmapData[] {
-  const out: HeatmapData[] = [];
+  width: number,
+  height: number,
+  minimumArea = 34,
+): HeatmapNode {
+  const totalWeight = (root.children || []).reduce((total, group) => {
+    const groupNode = group as HeatmapNode;
+    return total + (groupNode.children || []).reduce((subtotal, subgroup) => {
+      const subgroupNode = subgroup as HeatmapNode;
+      return subtotal + (subgroupNode.children || []).reduce(
+        (sum, leaf) => sum + Math.max(0.0001, (leaf as HeatmapData).weight || 1), 0,
+      );
+    }, 0);
+  }, 0);
+  if (!totalWeight || width <= 0 || height <= 0) return root;
+  const availableArea = width * height;
+  const children = (root.children || []).map((group) => {
+    const groupNode = group as HeatmapNode;
+    return {
+      ...groupNode,
+      children: (groupNode.children || []).map((subgroup) => {
+        const subgroupNode = subgroup as HeatmapNode;
+        const kept: HeatmapData[] = [];
+        const tiny: HeatmapData[] = [];
+        (subgroupNode.children || []).forEach((candidate) => {
+          const leaf = candidate as HeatmapData;
+          const projectedArea = ((leaf.weight || 1) / totalWeight) * availableArea;
+          (projectedArea < minimumArea ? tiny : kept).push(leaf);
+        });
+        if (tiny.length < 2) return { ...subgroupNode, children: [...kept, ...tiny] };
+        const weight = tiny.reduce((sum, leaf) => sum + (leaf.weight || 1), 0);
+        const weightedChange = tiny.reduce(
+          (sum, leaf) => sum + (leaf.changePercent || 0) * (leaf.weight || 1), 0,
+        ) / Math.max(weight, 1);
+        const aggregate: HeatmapData = {
+          id: `${subgroupNode.id || subgroupNode.name}-aggregate`,
+          name: `+${tiny.length}`,
+          shortName: `${tiny.length} smaller instruments`,
+          weight,
+          changePercent: weightedChange,
+          aggregateCount: tiny.length,
+          aggregateMembers: tiny,
+          group: tiny[0]?.group,
+          subgroup: subgroupNode.name,
+        };
+        return { ...subgroupNode, children: [...kept, aggregate] };
+      }),
+    };
+  });
+  return { ...root, children };
+}
 
-  const walk = (node: any, inside: boolean) => {
-    if (!node) return;
-    const isMatch = inside || node.name === categoryName;
-    if (node.children && node.children.length) {
-      node.children.forEach((c: any) => walk(c, isMatch));
-    } else if (isMatch) {
-      out.push(node as HeatmapData);
-    }
+export function categoryStats(leaves: HeatmapData[]) {
+  if (!leaves.length) return { averageChange: 0, advancing: 0, declining: 0, unchanged: 0 };
+  const totalWeight = leaves.reduce((sum, leaf) => sum + Math.max(1, leaf.weight || 1), 0);
+  const averageChange = leaves.reduce(
+    (sum, leaf) => sum + (leaf.changePercent || 0) * Math.max(1, leaf.weight || 1), 0,
+  ) / totalWeight;
+  return {
+    averageChange,
+    advancing: leaves.filter((leaf) => (leaf.changePercent || 0) > 0).length,
+    declining: leaves.filter((leaf) => (leaf.changePercent || 0) < 0).length,
+    unchanged: leaves.filter((leaf) => (leaf.changePercent || 0) === 0).length,
   };
-
-  walk(root, false);
-  return out;
 }

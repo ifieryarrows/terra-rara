@@ -366,7 +366,7 @@ export const OverviewPage = () => {
       {/* Background Gradient Mesh - kept for overview visual flavor */}
       <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-copper-500/10 via-transparent to-transparent pointer-events-none" />
 
-      <div className="relative z-10 grid gap-8">
+      <div className="relative z-10 grid min-w-0 grid-cols-1 gap-8">
 
         {/* Header */}
         <header className="flex justify-between items-end pb-8 border-b border-white/5">
@@ -850,13 +850,6 @@ export const OverviewPage = () => {
             </div>
           </GlassCard>
 
-          {/* CopperMind Universe Map - Lazy loaded */}
-          <div className="col-span-12">
-            <Suspense fallback={<MapSkeleton />}>
-              <HeatmapPanel />
-            </Suspense>
-          </div>
-
         </div>
         {/* Right sticky News Intelligence sidebar (desktop) / stacks under on mobile */}
         <aside className="lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-120px)] min-h-[480px]">
@@ -872,6 +865,14 @@ export const OverviewPage = () => {
             <NewsIntelligencePanel />
           </Suspense>
         </aside>
+        </div>
+
+        {/* The market map owns the full content width. News remains available
+            above without consuming horizontal heatmap space. */}
+        <div className="min-w-0 w-full">
+          <Suspense fallback={<MapSkeleton />}>
+            <HeatmapPanel />
+          </Suspense>
         </div>
       </div>
     </div>

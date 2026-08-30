@@ -1,100 +1,98 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
-import { HeatmapData } from './heatmap-layout';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import type { HeatmapData } from './heatmap-layout';
+import { CompanyLogo } from './CompanyLogo';
+import { Sparkline } from './Sparkline';
+import { clampTooltipPosition } from './heatmap-utils';
 
-interface HeatmapTooltipProps {
-  data: HeatmapData;
-  x: number;
-  y: number;
+export interface HeatmapTooltipHandle {
+  show: (data: HeatmapData, x: number, y: number) => void;
+  move: (x: number, y: number) => void;
+  hide: () => void;
 }
 
-/**
- * Viewport-aware tooltip. Measured with `useLayoutEffect` and flipped
- * to the opposite side of the cursor when it would otherwise overflow
- * the viewport, so tooltips never clip at the edges of the dashboard.
- */
-const HeatmapTooltip: React.FC<HeatmapTooltipProps> = ({ data, x, y }) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({
-    left: x + 15,
-    top: y + 15,
-  });
+const HeatmapTooltip = forwardRef<HeatmapTooltipHandle>(function HeatmapTooltip(_, ref) {
+  const [data, setData] = useState<HeatmapData | null>(null);
+  const dataRef = useRef<HeatmapData | null>(null);
+  const elementRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const frameRef = useRef<number | null>(null);
 
-  useLayoutEffect(() => {
-    if (!data) return;
-    const el = ref.current;
-    if (!el) return;
+  const applyPosition = useCallback(() => {
+    frameRef.current = null;
+    if (!elementRef.current) return;
+    const position = clampTooltipPosition(
+      pointerRef.current.x,
+      pointerRef.current.y,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    elementRef.current.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
+  }, []);
 
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    const vpW = window.innerWidth;
-    const vpH = window.innerHeight;
+  const move = useCallback((x: number, y: number) => {
+    pointerRef.current = { x, y };
+    if (frameRef.current === null) frameRef.current = requestAnimationFrame(applyPosition);
+  }, [applyPosition]);
 
-    const MARGIN = 8;
-    const OFFSET = 15;
+  useImperativeHandle(ref, () => ({
+    show(next, x, y) {
+      if (dataRef.current?.id !== next.id || dataRef.current?.name !== next.name) {
+        dataRef.current = next;
+        setData(next);
+      }
+      move(x, y);
+    },
+    move,
+    hide() {
+      dataRef.current = null;
+      setData(null);
+    },
+  }), [move]);
 
-    let left = x + OFFSET;
-    let top = y + OFFSET;
+  useEffect(() => {
+    if (data) move(pointerRef.current.x, pointerRef.current.y);
+  }, [data, move]);
 
-    if (left + w + MARGIN > vpW) {
-      left = Math.max(MARGIN, x - OFFSET - w);
-    }
-    if (top + h + MARGIN > vpH) {
-      top = Math.max(MARGIN, y - OFFSET - h);
-    }
-    left = Math.max(MARGIN, Math.min(left, vpW - w - MARGIN));
-    top = Math.max(MARGIN, Math.min(top, vpH - h - MARGIN));
+  useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+  }, []);
 
-    setPos({ left, top });
-  }, [data, x, y]);
-
-  if (!data) return null;
-
-  const formatWeight = () => {
-    if (data.weight === undefined) return 'N/A';
-    const label = data.weightLabel || '';
-    if (label === 'Market Cap') return `$${(data.weight / 1e9).toFixed(2)}B`;
-    if (label === 'Dollar Volume') return `$${(data.weight / 1e6).toFixed(1)}M/day`;
-    return 'Equal Weight';
-  };
-
-  return (
+  if (!data || typeof document === 'undefined') return null;
+  const change = data.changePercent || 0;
+  const body = (
     <div
-      ref={ref}
-      style={{
-        position: 'fixed',
-        left: pos.left,
-        top: pos.top,
-        zIndex: 50,
-        pointerEvents: 'none',
-      }}
-      className="bg-[#0f172a] border border-slate-700 shadow-xl rounded px-3 py-2 min-w-[220px] font-sans text-white text-sm"
+      ref={elementRef}
+      role="tooltip"
+      className="pointer-events-none fixed left-0 top-0 z-[80] w-[292px] rounded-lg border border-slate-600 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur"
+      style={{ willChange: 'transform' }}
     >
-      <div className="font-bold text-base mb-1 truncate">{data.shortName || data.name}</div>
-      <div className="text-slate-500 text-xs mb-2 uppercase tracking-wider">
-        {data.group}{data.subgroup ? ` · ${data.subgroup}` : ''}
+      <div className="flex items-center gap-3">
+        <CompanyLogo ticker={data.logoTicker || data.name} label={data.shortName} size={38} defer={false} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <strong className="text-base tracking-wide">{data.name}</strong>
+            <span className={change > 0 ? 'text-emerald-400' : change < 0 ? 'text-rose-400' : 'text-slate-400'}>
+              {change > 0 ? '+' : ''}{change.toFixed(2)}%
+            </span>
+          </div>
+          <p className="truncate text-xs text-slate-400">{data.shortName || data.name}</p>
+        </div>
       </div>
-
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        <div className="text-slate-400">Ticker</div>
-        <div className="text-right font-mono text-slate-200">{data.name}</div>
-
-        <div className="text-slate-400">Price</div>
-        <div className="text-right font-mono text-slate-200">
-          {data.price !== undefined ? `$${data.price.toFixed(data.price < 10 ? 4 : 2)}` : 'N/A'}
+      <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-3 border-t border-white/10 pt-2">
+        <div>
+          <div className="font-mono text-lg tabular-nums">
+            {data.price == null ? '—' : `$${data.price.toFixed(data.price < 10 ? 4 : 2)}`}
+          </div>
+          <p className="mt-1 truncate text-[10px] text-slate-500">
+            {[data.sector || data.group, data.industry || data.subgroup].filter(Boolean).join(' · ')}
+          </p>
         </div>
-
-        <div className="text-slate-400">Change</div>
-        <div className={`text-right font-mono font-semibold ${(data.changePercent ?? 0) > 0 ? 'text-green-400' : (data.changePercent ?? 0) < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-          {data.changePercent !== undefined
-            ? `${data.changePercent > 0 ? '+' : ''}${data.changePercent.toFixed(2)}%`
-            : 'N/A'}
-        </div>
-
-        <div className="text-slate-400">{data.weightLabel || 'Weight'}</div>
-        <div className="text-right font-mono text-slate-200">{formatWeight()}</div>
+        <Sparkline values={data.sparkline} positive={change >= 0} width={80} height={28} />
       </div>
     </div>
   );
-};
+  return createPortal(body, document.body);
+});
 
 export default HeatmapTooltip;

@@ -1,292 +1,268 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import HeatmapFilters from './HeatmapFilters';
-import HeatmapTreemap, { CategoryAnchor } from './HeatmapTreemap';
-import HeatmapCategoryPanel from './HeatmapCategoryPanel';
-import { HeatmapNode, leavesForCategory } from './heatmap-layout';
+import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
+import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
+import {
+  aggregateTinyLeaves,
+  leavesForCategory,
+  type HeatmapData,
+  type HeatmapMeta,
+  type HeatmapNode,
+} from './heatmap-layout';
+import { recordCommit, recordLongTask } from './performance';
 import { useMarketHeatmap } from '../../hooks/useQueries';
 
+const OPEN_DELAY_MS = 90;
+const CLOSE_DELAY_MS = 180;
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 2.5;
-// Minimum gap between two auto-refresh invocations. Protects the
-// backend + yfinance quota even if the server's next_refresh_at cycles
-// quickly (e.g., after a failed refresh).
-const AUTO_REFRESH_COOLDOWN_MS = 30_000;
-// Debounce for category hover — below this we assume the pointer is
-// transiting between cells and should NOT flash the inspector panel.
-const CATEGORY_HOVER_DEBOUNCE_MS = 150;
+const MAX_ZOOM = 4;
+
+function transformTree(
+  raw: HeatmapNode,
+  groupFilter: string,
+  sortFilter: 'Weight' | 'Performance',
+): HeatmapNode {
+  const transform = (node: HeatmapNode | HeatmapData): HeatmapNode | HeatmapData => {
+    if ('children' in node && node.children) {
+      return { ...node, children: node.children.map(transform) } as HeatmapNode;
+    }
+    const leaf = node as HeatmapData;
+    return sortFilter === 'Performance'
+      ? { ...leaf, weight: Math.max(0.01, Math.abs(leaf.changePercent || 0.01)) * 1_000, weightLabel: 'Performance' }
+      : { ...leaf };
+  };
+  const transformed = transform(raw) as HeatmapNode;
+  if (groupFilter !== 'ALL') {
+    transformed.children = (transformed.children || []).filter((group) => group.name === groupFilter);
+  }
+  return transformed;
+}
 
 export const HeatmapPanel: React.FC = () => {
-  const { data: rawData, isError, error, isLoading, refetch, isFetching } = useMarketHeatmap();
-
+  const [view, setView] = useState<'market' | 'themes'>('market');
+  const { data: rawData, isError, error, isLoading } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
-  const [sortFilter, setSortFilter] = useState('Weight');
+  const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
   const [zoom, setZoom] = useState(1);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
+  const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 600 });
-  const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const resizeFrame = useRef<number | null>(null);
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const categoryPanelRef = useRef<HeatmapCategoryPanelHandle>(null);
 
-  const measure = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const nextWidth = Math.max(0, Math.floor(rect.width));
-    const nextHeight = isFullscreen
-      ? Math.max(0, Math.floor(window.innerHeight - 120))
-      : 600;
-    setDimensions((prev) =>
-      prev.width === nextWidth && prev.height === nextHeight
-        ? prev
-        : { width: nextWidth, height: nextHeight },
-    );
-    setContainerRect(rect);
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const update = (width: number, height: number) => {
+      if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = null;
+        const next = { width: Math.max(0, Math.floor(width)), height: Math.max(0, Math.floor(height)) };
+        setDimensions((previous) => previous.width === next.width && previous.height === next.height ? previous : next);
+      });
+    };
+    const bounds = element.getBoundingClientRect();
+    update(bounds.width, bounds.height);
+    if (typeof ResizeObserver === 'undefined') {
+      const onResize = () => {
+        const next = element.getBoundingClientRect();
+        update(next.width, next.height);
+      };
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    }
+    const observer = new ResizeObserver(([entry]) => update(entry.contentRect.width, entry.contentRect.height));
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+    };
   }, [isFullscreen]);
 
   useEffect(() => {
-    measure();
-    if (typeof ResizeObserver === 'undefined') {
-      const handle = () => measure();
-      window.addEventListener('resize', handle);
-      window.addEventListener('scroll', handle, { passive: true });
-      return () => {
-        window.removeEventListener('resize', handle);
-        window.removeEventListener('scroll', handle);
-      };
+    if (typeof PerformanceObserver === 'undefined') return;
+    try {
+      const observer = new PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => recordLongTask(entry.duration));
+      });
+      observer.observe({ entryTypes: ['longtask'] });
+      return () => observer.disconnect();
+    } catch {
+      return undefined;
     }
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => measure());
-    ro.observe(el);
-    window.addEventListener('resize', measure);
-    window.addEventListener('scroll', measure, { passive: true });
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', measure);
-      window.removeEventListener('scroll', measure);
-    };
-  }, [measure]);
+  }, []);
+
+  const clearTimer = (ref: React.MutableRefObject<number | null>) => {
+    if (ref.current !== null) window.clearTimeout(ref.current);
+    ref.current = null;
+  };
+  const cancelClose = useCallback(() => clearTimer(closeTimer), []);
+  const scheduleClose = useCallback(() => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    closeTimer.current = window.setTimeout(() => {
+      setHoveredAnchor(null);
+      setHoveredLeaf(null);
+    }, CLOSE_DELAY_MS);
+  }, []);
+  const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
+    if (pinnedAnchor) return;
+    if (!anchor) {
+      scheduleClose();
+      return;
+    }
+    clearTimer(closeTimer);
+    clearTimer(openTimer);
+    if (hoveredAnchor?.id === anchor.id) {
+      setHoveredAnchor(anchor);
+      return;
+    }
+    openTimer.current = window.setTimeout(() => setHoveredAnchor(anchor), OPEN_DELAY_MS);
+  }, [hoveredAnchor, pinnedAnchor, scheduleClose]);
+
+  useEffect(() => () => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+  }, []);
 
   useEffect(() => {
-    const id = requestAnimationFrame(() => measure());
-    return () => cancelAnimationFrame(id);
-  }, [rawData, isFullscreen, measure]);
-
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (pinnedAnchor || hoveredAnchor) {
+        setPinnedAnchor(null);
+        setHoveredAnchor(null);
+      } else if (isFullscreen) {
         setIsFullscreen(false);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen]);
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [hoveredAnchor, isFullscreen, pinnedAnchor]);
 
-  const availableGroups = useMemo<string[]>(() => {
-    if (!rawData?.children) return [];
-    const groups = rawData.children.map((g: any) => g.name).filter(Boolean);
-    return Array.from(new Set<string>(groups)).sort();
-  }, [rawData]);
+  useEffect(() => {
+    setGroupFilter('ALL');
+    setHoveredAnchor(null);
+    setHoveredLeaf(null);
+    setPinnedAnchor(null);
+    setZoom(1);
+  }, [view]);
 
-  const filteredData = useMemo<HeatmapNode | null>(() => {
+  const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
+  const sourceTree = useMemo<HeatmapNode | null>(() => {
     if (!rawData) return null;
-
-    const { _meta: _stripped, ...rest } = rawData as any;
-    const clone: HeatmapNode = JSON.parse(JSON.stringify(rest));
-
-    if (groupFilter !== 'ALL' && clone.children) {
-      clone.children = clone.children.filter((g: any) => g.name === groupFilter);
-    }
-
-    if (sortFilter === 'Performance') {
-      const remap = (node: any) => {
-        if (node.children) {
-          node.children.forEach(remap);
-        } else {
-          node.weight = Math.abs(node.changePercent || 0.01) * 1000;
-          node.weightLabel = 'Performance';
-        }
-      };
-      remap(clone);
-    }
-
-    return clone;
-  }, [rawData, groupFilter, sortFilter]);
-
-  const meta = (rawData as any)?._meta || {};
-  const payloadCount: number | undefined = meta?.payload_count;
-  const refreshError: string | null | undefined = meta?.refresh_error;
-
-  const hasContent =
-    !!filteredData?.children && filteredData.children.length > 0 && dimensions.width > 0;
-
-  // Debounced hover: transit between cells <150ms is ignored so we
-  // don't flicker the inspector between subcategories. Pin (click)
-  // behavior still applies synchronously.
-  const hoverTimeout = useRef<number | null>(null);
-  const scheduleHover = useCallback((next: CategoryAnchor | null) => {
-    if (hoverTimeout.current !== null) {
-      window.clearTimeout(hoverTimeout.current);
-      hoverTimeout.current = null;
-    }
-    if (next === null) {
-      hoverTimeout.current = window.setTimeout(() => {
-        setHoveredAnchor(null);
-      }, CATEGORY_HOVER_DEBOUNCE_MS);
-    } else {
-      hoverTimeout.current = window.setTimeout(() => {
-        setHoveredAnchor(next);
-      }, CATEGORY_HOVER_DEBOUNCE_MS);
-    }
-  }, []);
-
-  useEffect(() => () => {
-    if (hoverTimeout.current !== null) window.clearTimeout(hoverTimeout.current);
-  }, []);
-
-  const activeAnchor = pinnedAnchor ?? hoveredAnchor;
-  const activeCategory = activeAnchor?.name ?? null;
-  const inspectorLeaves = useMemo(() => {
-    if (!activeCategory || !filteredData) return [];
-    return leavesForCategory(filteredData, activeCategory);
-  }, [activeCategory, filteredData]);
-
-  // Scroll-to-zoom — inside the heatmap only. Clamp to [MIN_ZOOM, MAX_ZOOM]
-  // and round to one decimal to keep layout recalculations stable.
-  const handleZoomDelta = useCallback((delta: number) => {
-    setZoom((z) => {
-      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(z + delta).toFixed(2)));
-      return next;
-    });
-  }, []);
-
-  // Auto-refresh when the countdown hits 00:00 — cooldown-guarded.
-  const lastAutoRefreshAt = useRef<number>(0);
-  const handleCountdownElapsed = useCallback(() => {
-    if (isFetching) return;
-    const now = Date.now();
-    if (now - lastAutoRefreshAt.current < AUTO_REFRESH_COOLDOWN_MS) return;
-    lastAutoRefreshAt.current = now;
-    refetch();
-  }, [isFetching, refetch]);
+    const { _meta: _meta, ...tree } = rawData as HeatmapNode;
+    return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
+  }, [groupFilter, rawData, sortFilter]);
+  const renderTree = useMemo(
+    () => sourceTree ? aggregateTinyLeaves(sourceTree, dimensions.width, dimensions.height) : null,
+    [dimensions.height, dimensions.width, sourceTree],
+  );
+  const groups = useMemo<string[]>(() => {
+    const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
+    return Array.from(new Set<string>(names)).sort();
+  }, [rawData]);
+  const activeAnchor = pinnedAnchor || hoveredAnchor;
+  const panelLeaves = useMemo(
+    () => activeAnchor && sourceTree ? leavesForCategory(sourceTree, activeAnchor.id, activeAnchor.name) : [],
+    [activeAnchor, sourceTree],
+  );
+  const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
+  const zoomBy = useCallback((delta: number) => setZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(current + delta).toFixed(2)))), []);
+  const moveCategoryPanel = useCallback((x: number, y: number) => {
+    if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
+  }, [pinnedAnchor]);
+  const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
+    if (!pinnedAnchor) setHoveredLeaf(leaf);
+  }, [pinnedAnchor]);
 
   return (
-    <div
-      className={`flex flex-col bg-[#0f172a] overflow-hidden font-sans ${
-        isFullscreen
-          ? 'fixed inset-0 z-50'
-          : 'relative rounded-lg shadow-xl border border-slate-700'
-      }`}
-    >
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700">
+    <section className={`flex min-w-0 max-w-full flex-col overflow-hidden bg-slate-950 font-sans ${isFullscreen ? 'fixed inset-0 z-50' : 'relative w-full rounded-xl border border-slate-700 shadow-xl'}`}>
+      <header className="flex items-center justify-between gap-3 border-b border-slate-700 bg-slate-900 px-4 py-3">
         <div>
-          <h2 className="text-base font-semibold text-white tracking-wide leading-tight">
-            CopperMind Universe Map
-          </h2>
-          <p className="text-[10px] text-slate-500 leading-none mt-0.5">
-            {availableGroups.length} groups
-            {typeof payloadCount === 'number' ? ` · ${payloadCount} symbols` : ''} · project universe only
+          <h2 className="text-base font-semibold tracking-wide text-white">Market Heatmap</h2>
+          <p className="mt-0.5 text-[10px] text-slate-500">
+            {groups.length} top-level groups · {meta.payload_count ?? 0} instruments · sector → industry → instrument
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {isFullscreen && (
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Press ESC</span>
-          )}
-          {/* Manual Refresh button intentionally removed: countdown-driven
-              auto-refresh covers the whole loop and prevents users from
-              spamming yfinance. Scroll wheel over the heatmap handles zoom. */}
-          <button
-            onClick={() => setIsFullscreen((f) => !f)}
-            className="text-slate-400 hover:text-white px-2 py-1 bg-slate-800 rounded border border-slate-600 transition-colors text-xs"
-          >
-            {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-          </button>
-        </div>
-      </div>
+        <button type="button" onClick={() => setIsFullscreen((current) => !current)} className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:text-white">
+          {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        </button>
+      </header>
 
       <HeatmapFilters
         groupFilter={groupFilter}
         setGroupFilter={setGroupFilter}
         sortFilter={sortFilter}
         setSortFilter={setSortFilter}
-        availableGroups={availableGroups}
+        view={view}
+        setView={setView}
+        availableGroups={groups}
         meta={meta}
-        onCountdownElapsed={handleCountdownElapsed}
       />
-
-      {refreshError && (
-        <div className="px-4 py-2 bg-rose-900/40 border-b border-rose-800 text-xs text-rose-200">
-          Last refresh failed: {refreshError}
-        </div>
-      )}
+      {meta.refresh_error && <div className="border-b border-rose-800 bg-rose-950/60 px-4 py-2 text-xs text-rose-200">Last refresh failed; showing the last healthy snapshot. {meta.refresh_error}</div>}
 
       <div
         ref={containerRef}
-        className="relative flex-1"
-        style={{
-          height: isFullscreen ? 'calc(100vh - 120px)' : '600px',
-          minHeight: 400,
-        }}
+        className="relative min-w-0 flex-1"
+        style={{ height: isFullscreen ? 'calc(100vh - 112px)' : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 400 : 560 }}
       >
         {isError ? (
-          <div className="absolute inset-0 flex items-center justify-center text-red-400 text-sm">
-            Error loading universe data: {(error as Error)?.message}
-          </div>
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-rose-300">Heatmap data is temporarily unavailable: {(error as Error)?.message}</div>
         ) : !hasContent ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-2 text-sm">
-            {isLoading || meta?.refresh_in_progress ? (
-              <>
-                <div className="w-6 h-6 border-2 border-slate-600 border-t-amber-400 rounded-full animate-spin" />
-                <span>Loading CopperMind universe…</span>
-              </>
-            ) : rawData ? (
-              'No symbols match the selected group filter.'
-            ) : (
-              'Waiting for universe data…'
-            )}
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
+            {(isLoading || meta.refresh_in_progress) && <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-copper-400" />}
+            <span>{isLoading || meta.refresh_in_progress ? 'Preparing the market snapshot…' : 'No instruments match this filter.'}</span>
           </div>
         ) : (
-          <>
-            {/* Treemap keeps its full width — the inspector floats on top
-                instead of shrinking the layout. */}
+          <Profiler
+            id="MarketHeatmap"
+            onRender={(_id, phase, actualDuration) => recordCommit(phase, actualDuration)}
+          >
             <HeatmapTreemap
-              data={filteredData!}
+              data={renderTree!}
               width={dimensions.width}
               height={dimensions.height}
               zoom={zoom}
-              hoveredCategory={activeCategory}
-              onCategoryHover={(anchor) => {
-                if (pinnedAnchor) return;
-                scheduleHover(anchor);
-              }}
+              hoveredCategoryId={activeAnchor?.id || null}
+              onCategoryHover={handleCategoryHover}
+              onCategoryPointerMove={moveCategoryPanel}
+              onLeafHover={handleLeafHover}
               onCategoryClick={(anchor) => {
-                setPinnedAnchor((prev) =>
-                  prev && prev.name === anchor.name ? null : anchor,
-                );
+                clearTimer(openTimer);
+                clearTimer(closeTimer);
+                setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
                 setHoveredAnchor(anchor);
               }}
-              onZoomDelta={handleZoomDelta}
+              onZoomDelta={zoomBy}
             />
-            {activeAnchor && (
-              <HeatmapCategoryPanel
-                categoryName={activeAnchor.name}
-                leaves={inspectorLeaves}
-                anchor={activeAnchor.rect}
-                containerRect={containerRect}
-                onClose={() => {
-                  setPinnedAnchor(null);
-                  setHoveredAnchor(null);
-                }}
-              />
-            )}
-          </>
+          </Profiler>
+        )}
+        {activeAnchor && (
+          <HeatmapCategoryPanel
+            ref={categoryPanelRef}
+            categoryId={activeAnchor.id}
+            categoryName={activeAnchor.name}
+            leaves={panelLeaves}
+            activeLeaf={hoveredLeaf}
+            anchor={activeAnchor}
+            view={view}
+            pinned={!!pinnedAnchor}
+            onPointerEnter={cancelClose}
+            onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
+            onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
+          />
         )}
       </div>
-    </div>
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-950 px-3 py-1.5 text-[9px] text-slate-600">
+        <span>Mouse wheel zooms · Drag zoomed map to pan · Double-click a ticker for details · Enter pins · Esc closes</span>
+        <a href="https://www.logo.dev" target="_blank" rel="noopener" className="text-slate-500 hover:text-copper-300">Logos provided by Logo.dev</a>
+      </footer>
+    </section>
   );
 };
 
