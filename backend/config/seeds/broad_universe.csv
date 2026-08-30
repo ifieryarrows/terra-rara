@@ -28,11 +28,11 @@ NEXA,miner_mid,copper_regional
 
 # Junior Copper/Exploration
 ARIS,miner_junior,copper_junior
-COP.AX,miner_junior,copper_junior
 EDV.TO,miner_junior,copper_junior
 FIL.TO,miner_junior,copper_junior
 LAC,miner_junior,copper_junior
-NOVR,miner_junior,copper_junior
+# COP.AX and NOVR were removed: Yahoo returned persistent quote-not-found
+# responses in production on 2026-08-30, so neither could populate the heatmap.
 
 # Diversified Miners
 VALE,miner_diversified,diversified
@@ -120,8 +120,7 @@ PA=F,commodity_precious,commodity_precious
 # Base Metals
 ALI=F,commodity_base,commodity_base
 ZN=F,commodity_base,commodity_base
-NI=F,commodity_base,commodity_base
-PB=F,commodity_base,commodity_base
+# NI=F and PB=F were removed: Yahoo does not expose these futures symbols.
 
 # Agricultural (Demand Proxy)
 ZC=F,commodity_agri,commodity_agri
