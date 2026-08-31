@@ -201,7 +201,7 @@ Frontend testleri:
 
 Son kapılar (2026-08-31 follow-up dahil):
 
-- Backend heatmap: **12 passed** (`test_heatmap.py`). Tüm backend paketi: **530 passed, 15 skipped, 1 failed**; kalan hata heatmap’ten bağımsız, `as_of` almayan 48 saatlik news-stats testinin tarih sınırına bağlı beklentisidir.
+- Backend heatmap: **12 passed** (`test_heatmap.py`). GitHub workflow ile aynı offline seçiminde yerel backend paketi: **531 passed, 15 skipped**. Sabit 29 Ağustos fixture’ı nedeniyle zamanla 48 saatlik news-stats penceresinin dışına çıkan regression testi, çalışma anına bağlı kararlı `as_of` kullanacak şekilde düzeltildi.
 - Frontend: **20 passed**.
 - ESLint: warning/error yok.
 - TypeScript + Vite production build: geçti.

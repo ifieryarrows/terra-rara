@@ -221,7 +221,10 @@ def test_news_api_uses_current_horizon_publisher_filter_and_stable_as_of(monkeyp
     for model in (NewsRaw, NewsProcessed, NewsSentimentV2, PipelineRunMetrics):
         model.__table__.create(bind=engine, checkfirst=True)
     Session = sessionmaker(bind=engine)
-    stable_as_of = datetime(2026, 8, 29, 10, tzinfo=timezone.utc)
+    # Keep the fixture inside the stats endpoint's rolling 48-hour window.
+    # A fixed calendar date turns this regression into a time bomb even though
+    # the behavior under test is the feed's stable relative cutoff.
+    stable_as_of = datetime.now(timezone.utc).replace(microsecond=0)
     run_id = uuid.uuid4()
     with Session() as session:
         raw = NewsRaw(
