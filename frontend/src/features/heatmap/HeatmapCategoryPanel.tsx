@@ -65,10 +65,11 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     if (activeLeaf.id && item.id) return activeLeaf.id !== item.id;
     return activeLeaf.name !== item.name;
   }), [activeLeaf, sorted]);
-  const headingLeaf = activeLeaf || leaves[0];
-  const sectorName = headingLeaf?.sector || headingLeaf?.group;
-  const industryName = headingLeaf?.industry || headingLeaf?.subgroup || categoryName;
-  const heading = sectorName && sectorName !== industryName ? `${sectorName} - ${industryName}` : industryName;
+  const sectorName = activeLeaf?.sector || activeLeaf?.group;
+  const industryName = activeLeaf?.industry || activeLeaf?.subgroup || categoryName;
+  const heading = activeLeaf && sectorName && sectorName !== industryName
+    ? `${sectorName} - ${industryName}`
+    : industryName;
   const { data: context } = useHeatmapCategoryContext(categoryId, view, true);
   const contextMatchesIndustry = !activeLeaf
     || (context?.categoryName || '').trim().toLocaleLowerCase() === (industryName || '').trim().toLocaleLowerCase();

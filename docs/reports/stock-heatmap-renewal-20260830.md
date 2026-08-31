@@ -68,6 +68,10 @@ DB p95 100 ms eşiğini açık biçimde geçtiği için yalnızca bir fresh snap
 - PostgreSQL advisory lock refresh’i process’ler arasında deduplike ediyor.
 - Yeni snapshot coverage sağlıksızsa payload overwrite edilmiyor; son başarılı payload, hata metadata’sıyla korunuyor.
 - Profil sırasında provider error sonrasında her 5 saniyede yeniden refresh başlatan retry fırtınası bulundu. Error yoluna 60 saniyelik backoff eklendi; payload stale kalıyor, `next_refresh_at` backoff sonunu gösteriyor ve React Query tek zamanlayıcıyla bunu izliyor.
+- 31 Ağustos HF log incelemesinde tekrar eden advisory-lock dedup mesajlarının kök neden değil, eşzamanlı stale isteklerinin sonucu olduğu doğrulandı. Asıl hata yfinance’ın HF/runtime üzerinde varsayılan SQLite cookie/timezone cache’ini açamamasıydı: history ve `ticker.info` çağrıları `OperationalError: unable to open database file` ile 0/202 coverage üretiyordu.
+- yfinance cache’i yazılabilir runtime temp altındaki `coppermind-yfinance-cache` dizinine yönlendirildi. İlk 202-symbol threaded download’dan önce timezone ve cookie SQLite cache’leri seri initialize edilerek lazy-init yarışı ve `database is locked` yolu kaldırıldı.
+- Zaten batch indirilen history’nin son iki geçerli kapanışı fiyat ve günlük değişim fallback’i olarak kullanılıyor; bu yol yeni provider isteği açmıyor. `ticker.info` başarısız olsa da sağlıklı chart/history coverage snapshot yayımlayabiliyor.
+- Yavaş metadata hot path’i price refresh’inden ayrıldı: metadata 24 saat TTL ile en fazla 12 sembollük incremental batch halinde yenileniyor; kalan leaf’ler son başarılı isim/sector/industry/exchange/weight metadata’sını koruyor. Provider sayaçları (`info_success/error/skipped`, `history_price_fallback`, `missing_price`, `metadata_scheduled`) structured refresh log’una eklendi.
 
 Yeni snapshot market-tree serialization’ı 58.806 byte raw, 11.546 byte gzip oldu. Gerçek HTTP ölçümünde `Content-Encoding: gzip` ve yaklaşık 11.315 byte wire response görüldü. Başlangıçtaki sıkıştırılmamış 50,4 KB wire payload’a göre azalma yaklaşık %77,5; 20 KB hedefinin altında.
 
@@ -115,17 +119,19 @@ Yerel yeni endpoint için beş fresh wall-clock örneği p50 yaklaşık 386 ms, 
 - Peers aktif hissenin sector/industry metadata’sına göre yerelde filtreleniyor; geniş/fallback cached category altında başka endüstriler karta karışmıyor. Satırlar `Ticker | Sparkline | Price | % Change` hizasında, 40 px ve alternating subtle background kullanıyor.
 - 40 satır üzeri listede 40 px fixed-row, 9 görünür satır ve 6 satır overscan ile dependency-free virtualization var. Yalnız liste en fazla 360 px içinde scroll oluyor; seçili hisse görünür kalıyor.
 - Panel category değiştiğinde scroll sıfırlanıyor; scroll state rAF ile batch ediliyor.
-- Video-referanslı revizyonda category panel pointer koordinatını ref üzerinden izliyor; dikey konum `requestAnimationFrame` ve `translate3d` ile React commit üretmeden akıcı güncelleniyor. Yatay konum aktif stock hücresinin sınırına bağlanıyor: kart uygun tarafta hücreden 18 px uzakta açılıyor, sağ/sol flip ediyor ve viewport dışına çıkmıyor.
+- Video-referanslı revizyonda category panel pointer koordinatını ref üzerinden izliyor; X/Y konumu `requestAnimationFrame` ve `translate3d` ile React commit üretmeden akıcı güncelleniyor. Aktif stock hücresi sağ/sol açılma tarafını kararlı seçiyor; kart hücrenin dışında kalırken imlecin hücre içindeki yatay ilerlemesini %45 parallax oranıyla takip ediyor. Böylece panel hover’ı çalmadan Finviz-benzeri iki eksenli hareket, edge flip ve viewport clamp birlikte korunuyor.
 - Video geri bildirimi sonrası paralel stock tooltip kaldırıldı. Hover edilen stock, industry peer panelinin üst satırına logo/ticker/şirket/fiyat/değişim/sparkline olarak birleşiyor; aynı anda ikinci kart oluşturulmuyor.
 - 30 aynı-stock pointer hareketinde React commit sayısı değişmedi. Unit test normal wheel’in doğrudan zoom yaptığını, zoomed map’in drag ile pan edildiğini ve pan sonunda category click oluşmadığını doğruluyor.
 - Browser testinde panel içine geçişten 350 ms sonra panel açık kaldı; pin sonrası alan dışına çıkınca kapanmadı ve Escape ile kapandı.
 - Son 1280×720 browser doğrulamasında NVDA hücresi sağında kart `x=434,8`, hücre sağ kenarı `x=416,8`; BABA hücresi solunda kart sağ kenarı `x=1138,8`, hücre sol kenarı `x=1156,8` ölçüldü. Her iki tarafta boşluk 18 px, overlap 0 ve kart viewport içinde kaldı.
+- İki eksenli follow doğrulamasında aynı NVDA hücresi içinde pointer X=110’dan X=300’e ilerlediğinde panel X=432,19’dan X=517,69’a taşındı; 190 px pointer hareketi 85,5 px yatay panel hareketi üretti ve kart hücrenin dışında kaldı.
 - Aynı-industry NVDA → AVGO geçişinde seçili satır 120 ms kontrol noktasında günceldi, seçili ticker DOM’da bir kez bulundu ve `/market-heatmap/context` request sayısı artmadı. Stale geniş category altında NVDA kartı yalnız QCOM/AVGO/AMD/INTC/TXN peer’larını gösterdi; alakasız broad-category haberini göstermedi.
 - Stock-news browser kontrolünde FCX için cache’teki GuruFocus haberi, tarih ve sentiment gösterildi. Aynı category içinde NVDA’ya 120 ms geçişte `No recent news is available for NVDA.` mesajı göründü ve context request sayısı 1’de kaldı. 152 hisselik fallback category response’unda 24 ticker haberi toplu eşleşti; refactor sonrası tek yerel context örneği 622,51 ms sürdü (production latency kanıtı değildir).
 - Wheel testi content genişliğini 1.199 px’den 1.487 px’e çıkardı ve cursor anchor’ını scroll offset ile korudu; drag testi scroll offset’i `(188,90)` → `(288,134)` taşıdı.
 - Ticker double-click yeni sekmede quote detayını açıyor. Industry peer sparkline batch penceresi 1 aydan 3 aya çıkarıldı; normalize edilen nokta sayısı aynı kaldığı için payload büyümedi.
 - Zoomed map pointer-down’da native selection/drag engelleniyor; map ve logo katmanlarında `user-select:none`, logo görsellerinde `draggable=false` uygulanıyor. Browser drag testinde pan offset’i değişirken selection metni boş kaldı.
 - Legacy/stale cache içindeki category ID ile render ID ayrışırsa peer listesi stabil ad üzerinden ilk eşleşmeye güvenli fallback yapıyor. Browser kontrolünde Semiconductors paneli yeniden 6 peer gösterdi.
+- Category-level hover başlığı ilk leaf’in `group/subgroup` değerinden türetilmiyor; doğrudan hover edilen node adını kullanıyor. Gerçek browser kontrolünde `Basic Materials` hover kartı `Basic Materials` başlığıyla açıldı; ilk stock metadata’sı başlığa sızmadı. Stock hover’da `Sector - Industry` hiyerarşisi korunuyor.
 
 ## Logo.dev entegrasyonu
 
@@ -168,7 +174,7 @@ Vite env değerlerini process başlangıcında okuduğu için `.env.local` deği
 
 DOM ölçeği ve 1.000 araç layout p95 hedefleri geçtiği için Web Worker/canvas eklenmedi. Erişilebilir DOM ve logo kullanımını koruyan pruning/virtualization yeterli kaldı.
 
-Provider refresh’in beş karşılaştırılabilir koşusunda süre dağılımı alınmadığı için metadata/price cadence ayrımı yapılmadı. Başarısız yerel provider denemesi kıyaslanabilir production performansı değildir.
+31 Ağustos gerçek provider tanısında yazılamayan yfinance cache ile history 0/202 ve `ticker.info` 0/202 kaldı. Cache yönlendirmesi ve seri initialization sonrası aynı 202-symbol history batch’i 194 geçerli sembol üretti; yalnız sekiz provider tarafından veri bulunamayan/delist edilmiş sembol dışarıda kaldı. Eski tüm-symbol metadata yolu yaklaşık 177 saniyede tamamlandığı için metadata 24 saatlik, en fazla 12 sembollük incremental cadence’e ayrıldı. Başarılı snapshot 194 leaf ile yayımlandı; `refresh_error=null`, cache state `fresh` ve `Last refresh failed` durumu temizlendi. Bu doğrulama yerel yeni kodun paylaşılan DB cache’ine yaptığı provider refresh’tir; HF runtime kod deploy’u sonrası aynı structured sayaçlarla ayrıca izlenecektir.
 
 ## Test kapsamı ve doğrulama
 
@@ -201,8 +207,8 @@ Frontend testleri:
 
 Son kapılar (2026-08-31 follow-up dahil):
 
-- Backend heatmap: **12 passed** (`test_heatmap.py`). GitHub workflow ile aynı offline seçiminde yerel backend paketi: **531 passed, 15 skipped**. Sabit 29 Ağustos fixture’ı nedeniyle zamanla 48 saatlik news-stats penceresinin dışına çıkan regression testi, çalışma anına bağlı kararlı `as_of` kullanacak şekilde düzeltildi.
-- Frontend: **20 passed**.
+- Backend heatmap: **15 passed** (`test_heatmap.py`). GitHub workflow ile aynı offline seçiminde yerel backend paketi: **534 passed, 15 skipped**. Sabit 29 Ağustos fixture’ı nedeniyle zamanla 48 saatlik news-stats penceresinin dışına çıkan regression testi, çalışma anına bağlı kararlı `as_of` kullanacak şekilde düzeltildi.
+- Frontend: **21 passed**.
 - ESLint: warning/error yok.
 - TypeScript + Vite production build: geçti.
 - Heatmap lazy chunk: 33,92 KB raw / 12,28 KB gzip.
@@ -213,5 +219,5 @@ Son kapılar (2026-08-31 follow-up dahil):
 1. Aynı production bölgesinde 10+ fresh ve warm istekle p50/p95, `Server-Timing`, memo hit ve 304 oranı.
 2. Performance panel/trace ile first-visible heatmap, interaction frame p95, FPS ve long-task attribution.
 3. Gerçek Logo.dev publishable token ile LOD-eligible request sayısı, CDN/browser cache hit ve fallback oranı.
-4. Beş normal provider refresh’te history/quotes stage dağılımı; `ticker.info` toplamın %70’ini veya süre 120 saniyeyi aşarsa metadata cadence ayrımı.
-5. Enriched snapshot yayımlandıktan sonra gerçek sector/industry sayıları ve category news hit oranı.
+4. HF deploy sonrası beş normal provider refresh’te history/quotes stage dağılımı ile incremental metadata sayaçları.
+5. Deployed `view=market` ağacında gerçek sector/industry sayıları, placeholder fallback sayısı ve category news hit oranı.

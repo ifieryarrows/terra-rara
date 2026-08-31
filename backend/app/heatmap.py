@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import re
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,9 +20,13 @@ from app.models import HeatmapCache
 
 logger = logging.getLogger(__name__)
 HEATMAP_TTL = timedelta(minutes=15)
+HEATMAP_METADATA_TTL = timedelta(hours=24)
+HEATMAP_METADATA_BATCH_SIZE = 12
 HEATMAP_REFRESH_LOCK = "heatmap:refresh"
 _snapshot_memo_lock = RLock()
 _snapshot_memo: Optional[dict] = None
+_yfinance_cache_lock = RLock()
+_yfinance_cache_location: Optional[Path] = None
 
 # The legacy project taxonomy remains the source of ``view=themes``.
 HEATMAP_GROUP_MAP: dict[str, tuple[str, str]] = {
@@ -180,6 +185,11 @@ def _clean_label(value: object, fallback: str) -> str:
     return label if label and label.lower() not in {"none", "nan", "n/a"} else fallback
 
 
+def _equity_metadata_label(value: object, placeholder: str) -> Optional[str]:
+    label = _clean_label(value, "")
+    return None if not label or label.casefold() == placeholder.casefold() else label
+
+
 def _instrument_type(info: dict, category: str, ticker: str) -> str:
     quote_type = str(info.get("quoteType") or "").upper()
     supported = {"EQUITY", "ETF", "MUTUALFUND", "FUTURE", "CRYPTOCURRENCY", "CURRENCY"}
@@ -199,9 +209,11 @@ def _instrument_type(info: dict, category: str, ticker: str) -> str:
 def _market_path(item: dict) -> tuple[str, str]:
     instrument_type = str(item.get("instrumentType") or "equity").lower()
     if instrument_type == "equity":
+        sector = _equity_metadata_label(item.get("sector"), "Other Equities")
+        industry = _equity_metadata_label(item.get("industry"), "Unclassified Equities")
         return (
-            _clean_label(item.get("sector"), "Other Equities"),
-            _clean_label(item.get("industry"), "Unclassified Equities"),
+            _clean_label(sector or item.get("group"), "Other Equities"),
+            _clean_label(industry or item.get("subgroup"), "Unclassified Equities"),
         )
     asset_labels = {
         "etf": "Funds & ETFs",
@@ -293,22 +305,144 @@ def find_category(payload: dict, category_id: str) -> Optional[dict]:
     return None
 
 
+def _history_close_series(frame: pd.DataFrame, symbol: str) -> Optional[pd.Series]:
+    if frame is None or frame.empty:
+        return None
+    try:
+        if isinstance(frame.columns, pd.MultiIndex):
+            if symbol in frame.columns.get_level_values(0):
+                return frame[symbol]["Close"]
+            if symbol in frame.columns.get_level_values(1):
+                return frame["Close"][symbol]
+            return None
+        return frame["Close"]
+    except (KeyError, TypeError):
+        return None
+
+
 def _history_sparklines(frame: pd.DataFrame, symbols: list[str], points: int = 10) -> dict[str, list[float]]:
     output: dict[str, list[float]] = {}
     if frame is None or frame.empty:
         return output
     for symbol in symbols:
         try:
-            if isinstance(frame.columns, pd.MultiIndex):
-                series = frame[symbol]["Close"] if symbol in frame.columns.get_level_values(0) else frame["Close"][symbol]
-            else:
-                series = frame["Close"]
+            series = _history_close_series(frame, symbol)
+            if series is None:
+                continue
             values = [float(value) for value in series.dropna().tail(points).tolist() if math.isfinite(float(value))]
             if len(values) >= 2 and values[0] != 0:
                 output[symbol] = [round(value / values[0] * 100.0, 3) for value in values]
         except (KeyError, TypeError, ValueError):
             continue
     return output
+
+
+def _history_quotes(frame: pd.DataFrame, symbols: list[str]) -> dict[str, dict]:
+    """Extract latest price/change from the already-batched chart response."""
+    output: dict[str, dict] = {}
+    if frame is None or frame.empty:
+        return output
+    for symbol in symbols:
+        series = _history_close_series(frame, symbol)
+        if series is None:
+            continue
+        try:
+            finite = series.dropna()
+            values = [float(value) for value in finite.tail(2).tolist() if math.isfinite(float(value))]
+            if not values or values[-1] <= 0:
+                continue
+            previous = values[-2] if len(values) >= 2 else None
+            change = ((values[-1] / previous) - 1.0) * 100.0 if previous and previous > 0 else 0.0
+            as_of = None
+            if len(finite.index):
+                timestamp = pd.Timestamp(finite.index[-1])
+                timestamp = timestamp.tz_localize(timezone.utc) if timestamp.tzinfo is None else timestamp.tz_convert(timezone.utc)
+                as_of = timestamp.isoformat()
+            output[symbol] = {
+                "price": values[-1],
+                "changePercent": change,
+                "asOf": as_of,
+            }
+        except (TypeError, ValueError, ZeroDivisionError, OSError):
+            continue
+    return output
+
+
+def _finite_float(*values: object) -> Optional[float]:
+    for value in values:
+        if value is None:
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            return parsed
+    return None
+
+
+def _utc_timestamp(value: object) -> Optional[datetime]:
+    if value is None:
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _metadata_refresh_symbols(
+    symbols: list[str],
+    previous_by_symbol: dict[str, dict],
+    previous_cached_at: object,
+    now: datetime,
+) -> set[str]:
+    cached_at = _utc_timestamp(previous_cached_at)
+    due: list[str] = []
+    for symbol in symbols:
+        previous = previous_by_symbol.get(symbol)
+        if not previous:
+            due.append(symbol)
+            continue
+        metadata_at = (
+            _utc_timestamp(previous.get("metadataAsOf"))
+            if "metadataAsOf" in previous
+            else cached_at
+        )
+        if metadata_at is None or now - metadata_at >= HEATMAP_METADATA_TTL:
+            due.append(symbol)
+    return set(due[:HEATMAP_METADATA_BATCH_SIZE])
+
+
+def _configure_yfinance_cache(yfinance_module: object) -> Path:
+    """Keep yfinance's SQLite caches off read-only runtime filesystems."""
+    global _yfinance_cache_location
+    cache_dir = Path(tempfile.gettempdir()) / "coppermind-yfinance-cache"
+    with _yfinance_cache_lock:
+        if _yfinance_cache_location == cache_dir:
+            return cache_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        setter = getattr(yfinance_module, "set_tz_cache_location", None)
+        if not callable(setter):
+            raise RuntimeError("installed yfinance does not support a custom cache location")
+        setter(str(cache_dir))
+        # yfinance's first threaded download can race while lazily creating its
+        # SQLite timezone/cookie databases. Initialise both caches serially
+        # before the 202-symbol batch starts.
+        cache_module = getattr(yfinance_module, "cache", None)
+        for getter_name in ("get_tz_cache", "get_cookie_cache"):
+            getter = getattr(cache_module, getter_name, None)
+            if not callable(getter):
+                raise RuntimeError(f"installed yfinance is missing cache initializer {getter_name}")
+            cache = getter()
+            initialise = getattr(cache, "initialise", None)
+            if not callable(initialise):
+                raise RuntimeError(f"installed yfinance cache {getter_name} cannot be initialized")
+            initialise()
+        _yfinance_cache_location = cache_dir
+    return cache_dir
 
 
 def _coverage_is_healthy(new_count: int, requested_count: int, previous_count: int) -> bool:
@@ -350,6 +484,19 @@ def refresh_market_heatmap() -> None:
             session.commit()
             previous_payload = cache.payload_json if isinstance(cache.payload_json, dict) else {}
             previous_count = len(flatten_heatmap_leaves(previous_payload))
+            previous_by_symbol = {
+                str(leaf.get("name")): leaf for leaf in flatten_heatmap_leaves(previous_payload)
+                if leaf.get("name")
+            }
+            provider_stats = {
+                "info_success": 0,
+                "info_empty": 0,
+                "info_error": 0,
+                "info_without_price": 0,
+                "history_price_fallback": 0,
+                "missing_price": 0,
+                "batch_error": 0,
+            }
             try:
                 stage_start = time.perf_counter()
                 universe_rows = _load_universe()
@@ -359,14 +506,18 @@ def refresh_market_heatmap() -> None:
 
                 import yfinance as yf
 
+                _configure_yfinance_cache(yf)
+
                 stage_start = time.perf_counter()
                 sparkline_by_symbol: dict[str, list[float]] = {}
+                quote_by_symbol: dict[str, dict] = {}
                 try:
                     history = yf.download(
                         tickers=" ".join(symbols), period="3mo", interval="1d",
                         group_by="ticker", auto_adjust=False, progress=False, threads=True,
                     )
                     sparkline_by_symbol = _history_sparklines(history, symbols)
+                    quote_by_symbol = _history_quotes(history, symbols)
                 except Exception as history_error:
                     logger.warning("Heatmap sparkline batch failed; publishing quotes: %s", history_error)
                 stage_ms["history"] = (time.perf_counter() - stage_start) * 1000
@@ -374,6 +525,11 @@ def refresh_market_heatmap() -> None:
                 stage_start = time.perf_counter()
                 all_data: list[dict] = []
                 snapshot_time = _utcnow()
+                metadata_symbols = _metadata_refresh_symbols(
+                    symbols, previous_by_symbol, cache.cached_at, snapshot_time,
+                )
+                provider_stats["metadata_scheduled"] = len(metadata_symbols)
+                provider_stats["info_skipped"] = 0
                 for offset in range(0, len(symbols), 50):
                     if offset:
                         time.sleep(1.5)
@@ -381,39 +537,84 @@ def refresh_market_heatmap() -> None:
                     try:
                         tickers = yf.Tickers(" ".join(batch))
                         for symbol in batch:
+                            info: dict = {}
                             try:
                                 ticker = tickers.tickers.get(symbol)
-                                info = ticker.info or {} if ticker else {}
-                                raw_price = info.get("regularMarketPrice") or info.get("currentPrice")
-                                if raw_price is None:
+                                history_quote = quote_by_symbol.get(symbol, {})
+                                should_fetch_info = symbol in metadata_symbols or not history_quote
+                                if should_fetch_info:
+                                    try:
+                                        info = (ticker.info or {}) if ticker else {}
+                                        provider_stats["info_success" if info else "info_empty"] += 1
+                                    except Exception as info_error:
+                                        provider_stats["info_error"] += 1
+                                        logger.debug("Heatmap metadata failed for %s: %s", symbol, info_error)
+                                else:
+                                    provider_stats["info_skipped"] += 1
+                                info_price = _finite_float(info.get("regularMarketPrice"), info.get("currentPrice"))
+                                if info and info_price is None:
+                                    provider_stats["info_without_price"] += 1
+                                raw_price = info_price or _finite_float(history_quote.get("price"))
+                                if raw_price is None or raw_price <= 0:
+                                    provider_stats["missing_price"] += 1
                                     continue
-                                price = float(raw_price)
+                                if info_price is None:
+                                    provider_stats["history_price_fallback"] += 1
+                                price = raw_price
                                 row = row_by_symbol[symbol]
+                                previous = previous_by_symbol.get(symbol, {})
                                 category = str(row.get("category") or "")
                                 group, subgroup = HEATMAP_GROUP_MAP.get(category, ("Other", category or "Uncategorized"))
                                 weight, weight_label = _derive_weight(info, price)
+                                if weight_label == "Equal Weight":
+                                    previous_weight = _finite_float(previous.get("weight"))
+                                    if previous_weight is not None and previous_weight > 0:
+                                        weight = previous_weight
+                                        weight_label = str(previous.get("weightLabel") or "Previous Snapshot")
                                 instrument_type = _instrument_type(info, category, symbol)
+                                sector = (
+                                    _equity_metadata_label(info.get("sector"), "Other Equities")
+                                    or _equity_metadata_label(previous.get("sector"), "Other Equities")
+                                )
+                                industry = (
+                                    _equity_metadata_label(info.get("industry"), "Unclassified Equities")
+                                    or _equity_metadata_label(previous.get("industry"), "Unclassified Equities")
+                                )
+                                change_percent = _finite_float(
+                                    info.get("regularMarketChangePercent"), history_quote.get("changePercent"), 0.0,
+                                )
+                                has_market_time = info.get("regularMarketTime") is not None
+                                if should_fetch_info:
+                                    metadata_as_of = snapshot_time.isoformat()
+                                elif "metadataAsOf" in previous:
+                                    metadata_as_of = previous.get("metadataAsOf")
+                                elif previous:
+                                    metadata_as_of = (_utc_timestamp(cache.cached_at) or snapshot_time).isoformat()
+                                else:
+                                    metadata_as_of = None
                                 all_data.append({
                                     "id": stable_node_id("instrument", symbol),
                                     "name": symbol,
-                                    "shortName": info.get("shortName") or info.get("longName") or symbol,
+                                    "shortName": info.get("shortName") or info.get("longName") or previous.get("shortName") or symbol,
                                     "price": round(price, 4),
-                                    "changePercent": round(float(info.get("regularMarketChangePercent") or 0.0), 4),
+                                    "changePercent": round(change_percent or 0.0, 4),
                                     "weight": round(weight, 2),
                                     "weightLabel": weight_label,
                                     "group": group, "subgroup": subgroup,
                                     "category": category, "sourceTag": row.get("source_tag", ""),
                                     "instrumentType": instrument_type,
-                                    "sector": _clean_label(info.get("sector"), "Other Equities") if instrument_type == "equity" else None,
-                                    "industry": _clean_label(info.get("industry"), "Unclassified Equities") if instrument_type == "equity" else None,
-                                    "exchange": info.get("exchange") or info.get("fullExchangeName"),
+                                    "sector": sector if instrument_type == "equity" else None,
+                                    "industry": industry if instrument_type == "equity" else None,
+                                    "exchange": info.get("exchange") or info.get("fullExchangeName") or previous.get("exchange"),
                                     "logoTicker": symbol if instrument_type in {"equity", "etf", "mutualfund"} else None,
-                                    "sparkline": sparkline_by_symbol.get(symbol),
-                                    "asOf": _as_of(info, snapshot_time),
+                                    "sparkline": sparkline_by_symbol.get(symbol) or previous.get("sparkline"),
+                                    "asOf": _as_of(info, snapshot_time) if has_market_time else history_quote.get("asOf") or snapshot_time.isoformat(),
+                                    "metadataAsOf": metadata_as_of,
                                 })
                             except Exception as symbol_error:
                                 logger.debug("Heatmap quote failed for %s: %s", symbol, symbol_error)
                     except Exception as batch_error:
+                        provider_stats["batch_error"] += len(batch)
                         logger.warning("Heatmap quote batch %d failed: %s", offset // 50, batch_error)
                 stage_ms["quotes"] = (time.perf_counter() - stage_start) * 1000
                 if not _coverage_is_healthy(len(all_data), len(symbols), previous_count):
@@ -432,6 +633,7 @@ def refresh_market_heatmap() -> None:
                 invalidate_heatmap_snapshot_memo()
                 logger.info("heatmap_refresh %s", json.dumps({
                     "status": "success", "symbols": len(all_data), "requested": len(symbols),
+                    "provider": provider_stats,
                     "stage_ms": {key: round(value, 2) for key, value in stage_ms.items()},
                     "total_ms": round((time.perf_counter() - started) * 1000, 2),
                 }, sort_keys=True))
@@ -448,6 +650,7 @@ def refresh_market_heatmap() -> None:
                     session.commit()
                 logger.error("heatmap_refresh %s", json.dumps({
                     "status": "error", "error": str(error)[:500], "preserved_symbols": previous_count,
+                    "provider": provider_stats,
                     "stage_ms": {key: round(value, 2) for key, value in stage_ms.items()},
                     "total_ms": round((time.perf_counter() - started) * 1000, 2),
                 }, sort_keys=True), exc_info=True)

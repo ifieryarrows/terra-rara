@@ -28,7 +28,8 @@ def test_dynamic_market_hierarchy_and_stable_ids():
 
     data = [
         _leaf("FCX"),
-        _leaf("UNKNOWN", sector=None, industry=None),
+        _leaf("LEGACY", sector="Other Equities", industry="Unclassified Equities"),
+        _leaf("UNKNOWN", sector=None, industry=None, group=None, subgroup=None),
         _leaf("COPX", instrumentType="etf", subgroup="Copper ETFs"),
         _leaf("HG=F", instrumentType="future", subgroup="Base Metal Futures"),
     ]
@@ -38,10 +39,12 @@ def test_dynamic_market_hierarchy_and_stable_ids():
     assert [node["id"] for node in first["children"]] == [node["id"] for node in second["children"]]
     groups = {node["name"]: node for node in first["children"]}
     assert "Basic Materials" in groups
+    assert "Copper Miners" in groups
     assert "Other Equities" in groups
     assert "Funds & ETFs" in groups
     assert "Commodities & Futures" in groups
     assert groups["Basic Materials"]["children"][0]["name"] == "Copper"
+    assert groups["Copper Miners"]["children"][0]["name"] == "Major Producers"
 
 
 def test_theme_view_and_leaf_fields_remain_backward_compatible():
@@ -67,12 +70,67 @@ def test_low_coverage_is_rejected_to_preserve_last_good_snapshot():
 
 
 def test_sparkline_normalization_and_provider_error_fallback():
-    from app.heatmap import _history_sparklines
+    from app.heatmap import _history_quotes, _history_sparklines
 
     index = pd.date_range("2026-01-01", periods=3)
     frame = pd.DataFrame({"Close": [10.0, 11.0, 12.0]}, index=index)
     assert _history_sparklines(frame, ["FCX"])["FCX"] == [100.0, 110.0, 120.0]
+    assert _history_quotes(frame, ["FCX"])["FCX"]["price"] == 12.0
+    assert round(_history_quotes(frame, ["FCX"])["FCX"]["changePercent"], 3) == 9.091
     assert _history_sparklines(pd.DataFrame(), ["FCX"]) == {}
+
+    multi = pd.DataFrame(
+        [[10.0, 20.0], [11.0, 18.0]],
+        index=pd.date_range("2026-01-01", periods=2),
+        columns=pd.MultiIndex.from_tuples([("FCX", "Close"), ("SCCO", "Close")]),
+    )
+    quotes = _history_quotes(multi, ["FCX", "SCCO"])
+    assert quotes["FCX"]["price"] == 11.0
+    assert round(quotes["SCCO"]["changePercent"], 3) == -10.0
+
+
+def test_yfinance_cache_is_redirected_to_writable_temp(monkeypatch, tmp_path):
+    from app import heatmap
+
+    observed = []
+    initialized = []
+    cache = SimpleNamespace(
+        get_tz_cache=lambda: SimpleNamespace(initialise=lambda: initialized.append("tz")),
+        get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: initialized.append("cookie")),
+    )
+    monkeypatch.setattr(heatmap, "_yfinance_cache_location", None)
+    monkeypatch.setattr(heatmap.tempfile, "gettempdir", lambda: str(tmp_path))
+    cache_dir = heatmap._configure_yfinance_cache(
+        SimpleNamespace(set_tz_cache_location=lambda path: observed.append(path), cache=cache)
+    )
+
+    assert cache_dir == tmp_path / "coppermind-yfinance-cache"
+    assert cache_dir.is_dir()
+    assert observed == [str(cache_dir)]
+    assert initialized == ["tz", "cookie"]
+
+
+def test_metadata_refresh_is_24_hour_incremental_batch():
+    from app.heatmap import HEATMAP_METADATA_BATCH_SIZE, _metadata_refresh_symbols
+
+    now = datetime.now(timezone.utc)
+    symbols = [f"SYM{index}" for index in range(20)]
+    previous = {
+        symbol: {"name": symbol, "metadataAsOf": (now - timedelta(hours=25)).isoformat()}
+        for symbol in symbols
+    }
+    first = _metadata_refresh_symbols(symbols, previous, now - timedelta(hours=25), now)
+    assert first == set(symbols[:HEATMAP_METADATA_BATCH_SIZE])
+
+    for symbol in first:
+        previous[symbol]["metadataAsOf"] = now.isoformat()
+    second = _metadata_refresh_symbols(symbols, previous, now - timedelta(hours=25), now)
+    assert second == set(symbols[HEATMAP_METADATA_BATCH_SIZE:])
+
+    legacy = {"LEGACY": {"name": "LEGACY"}}
+    assert _metadata_refresh_symbols(["LEGACY"], legacy, now, now) == set()
+    pending = {"PENDING": {"name": "PENDING", "metadataAsOf": None}}
+    assert _metadata_refresh_symbols(["PENDING"], pending, now, now) == {"PENDING"}
 
 
 def test_category_news_matching_uses_ticker_or_company_name():
@@ -223,6 +281,11 @@ def test_refresh_preserves_last_good_snapshot_on_unhealthy_coverage(monkeypatch)
         {"ticker": "SCCO", "category": "miner_major", "source_tag": "test"},
     ])
     fake_yfinance = SimpleNamespace(
+        set_tz_cache_location=lambda _path: None,
+        cache=SimpleNamespace(
+            get_tz_cache=lambda: SimpleNamespace(initialise=lambda: None),
+            get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
+        ),
         download=lambda **_kwargs: pd.DataFrame(),
         Tickers=lambda symbols: SimpleNamespace(
             tickers={symbol: SimpleNamespace(info={}) for symbol in symbols.split()}
@@ -235,6 +298,52 @@ def test_refresh_preserves_last_good_snapshot_on_unhealthy_coverage(monkeypatch)
     assert cache.refresh_started_at is None
     assert "unhealthy symbol coverage" in cache.refresh_error
     assert cache.expires_at > datetime.now(timezone.utc) + timedelta(seconds=50)
+
+
+def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
+    from app import db, heatmap
+    from app.heatmap import _build_hierarchy, flatten_heatmap_leaves
+    from app.models import HeatmapCache
+
+    now = datetime.now(timezone.utc)
+    payload = _build_hierarchy([_leaf("FCX", weight=500.0, weightLabel="Market Cap")])
+    cache = HeatmapCache(payload_json=payload, cached_at=now, expires_at=now + timedelta(minutes=5))
+    session = _FakeSession(cache)
+    monkeypatch.setattr(db, "SessionLocal", lambda: session)
+    monkeypatch.setattr(db, "get_db_type", lambda: "sqlite")
+    monkeypatch.setattr(heatmap, "_load_universe", lambda: [
+        {"ticker": "FCX", "category": "miner_major", "source_tag": "test"},
+        {"ticker": "SCCO", "category": "miner_major", "source_tag": "test"},
+    ])
+    history = pd.DataFrame(
+        [[10.0, 20.0], [11.0, 18.0]],
+        index=pd.date_range("2026-01-01", periods=2),
+        columns=pd.MultiIndex.from_tuples([("FCX", "Close"), ("SCCO", "Close")]),
+    )
+    fake_yfinance = SimpleNamespace(
+        set_tz_cache_location=lambda _path: None,
+        cache=SimpleNamespace(
+            get_tz_cache=lambda: SimpleNamespace(initialise=lambda: None),
+            get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
+        ),
+        download=lambda **_kwargs: history,
+        Tickers=lambda symbols: SimpleNamespace(
+            tickers={symbol: SimpleNamespace(info={}) for symbol in symbols.split()}
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+
+    heatmap.refresh_market_heatmap()
+
+    leaves = {leaf["name"]: leaf for leaf in flatten_heatmap_leaves(cache.payload_json)}
+    assert set(leaves) == {"FCX", "SCCO"}
+    assert leaves["FCX"]["price"] == 11.0
+    assert leaves["FCX"]["changePercent"] == 10.0
+    assert leaves["FCX"]["weight"] == 500.0
+    assert leaves["FCX"]["shortName"] == "FCX Corporation"
+    assert leaves["SCCO"]["price"] == 18.0
+    assert leaves["SCCO"]["sector"] is None
+    assert cache.refresh_error is None
 
 
 def test_refresh_error_backoff_serves_stale_without_retry_storm(monkeypatch):

@@ -3,6 +3,7 @@ const TOOLTIP_HEIGHT = 154;
 const TOOLTIP_GAP = 14;
 const PANEL_WIDTH = 380;
 const PANEL_GAP = 18;
+const PANEL_HORIZONTAL_FOLLOW = 0.45;
 
 const rgb = (hex: string) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
 const mix = (from: string, to: string, amount: number) => {
@@ -85,12 +86,25 @@ export function computePointerPanelPosition(
   const bottomEdge = Math.min(bounds.bottom, viewportHeight);
   const width = Math.min(panelWidth, Math.max(300, bounds.width - margin * 2));
   const height = Math.min(panelHeight, Math.max(180, bottomEdge - bounds.top - margin * 2));
-  const horizontalAnchor = avoidRect || { left: x, right: x };
-  const roomRight = rightEdge - horizontalAnchor.right - PANEL_GAP;
-  const roomLeft = horizontalAnchor.left - bounds.left - PANEL_GAP;
-  let left = roomRight >= width || roomRight >= roomLeft
-    ? horizontalAnchor.right + PANEL_GAP
-    : horizontalAnchor.left - width - PANEL_GAP;
+  // Use the active cell only to choose a stable opening side. Positioning from
+  // its fixed edge made the card follow Y but remain frozen on X while the
+  // pointer moved inside the same stock. The pointer now drives both axes;
+  // the cell-aware side choice still prevents left/right flicker.
+  const sideAnchor = avoidRect || { left: x, right: x };
+  const roomRight = rightEdge - sideAnchor.right - PANEL_GAP;
+  const roomLeft = sideAnchor.left - bounds.left - PANEL_GAP;
+  const opensRight = roomRight >= width || roomRight >= roomLeft;
+  let left: number;
+  if (avoidRect) {
+    const pointerInsideCell = Math.max(avoidRect.left, Math.min(x, avoidRect.right));
+    // Keep the interactive card outside the stock so it cannot steal hover,
+    // but add Finviz-like horizontal parallax as the pointer crosses the cell.
+    left = opensRight
+      ? avoidRect.right + PANEL_GAP + (pointerInsideCell - avoidRect.left) * PANEL_HORIZONTAL_FOLLOW
+      : avoidRect.left - width - PANEL_GAP - (avoidRect.right - pointerInsideCell) * PANEL_HORIZONTAL_FOLLOW;
+  } else {
+    left = opensRight ? x + PANEL_GAP : x - width - PANEL_GAP;
+  }
   let top = y + PANEL_GAP;
   if (top + height > bottomEdge - margin) top = y - height - PANEL_GAP;
   left = Math.max(bounds.left + margin, Math.min(left, rightEdge - width - margin));

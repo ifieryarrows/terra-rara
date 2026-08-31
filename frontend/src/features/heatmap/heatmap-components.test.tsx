@@ -118,8 +118,12 @@ describe('heatmap interaction primitives', () => {
     expect(pointerPosition.left).toBeLessThan(970);
     expect(pointerPosition.top).toBeLessThan(760);
     const wideCell = { left: 30, top: 120, right: 420, bottom: 520, width: 390, height: 400 };
-    const cellAwarePosition = computePointerPanelPosition(220, 300, bounds, 1_000, 800, 380, 480, wideCell);
-    expect(cellAwarePosition.left).toBeGreaterThan(wideCell.right);
+    const firstCellPosition = computePointerPanelPosition(160, 300, bounds, 1_000, 800, 380, 480, wideCell);
+    const movedCellPosition = computePointerPanelPosition(260, 300, bounds, 1_000, 800, 380, 480, wideCell);
+    expect(firstCellPosition.left).toBeGreaterThan(wideCell.right);
+    expect(movedCellPosition.left - firstCellPosition.left).toBe(45);
+    expect(movedCellPosition.top).toBe(firstCellPosition.top);
+    expect(movedCellPosition.left + movedCellPosition.width).toBeLessThanOrEqual(bounds.right - 10);
   });
 
   it('uses a vivid continuous red-neutral-green market scale', () => {
@@ -267,6 +271,35 @@ describe('heatmap interaction primitives', () => {
     expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '360px' });
     expect(within(panel).getAllByTestId('peer-row').length).toBeLessThan(leaves.length - 1);
     expect(within(panel).queryByText('Recent')).toBeNull();
+  });
+
+  it('uses the hovered category name instead of metadata from its first stock', () => {
+    const leaf = {
+      id: 'fcx', name: 'FCX', shortName: 'Freeport-McMoRan', weight: 100, price: 51, changePercent: 1,
+      group: 'Copper Miners', subgroup: 'Major Producers', sparkline: [1, 2, 3],
+    };
+    const anchor = {
+      id: 'other-equities', name: 'Other Equities', depth: 1, pointer: { x: 100, y: 100 },
+      rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+      containerRect: { left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560 },
+    };
+    render(
+      <HeatmapCategoryPanel
+        categoryId="other-equities"
+        categoryName="Other Equities"
+        leaves={[leaf]}
+        activeLeaf={null}
+        anchor={anchor}
+        view="market"
+        pinned={false}
+        onClose={() => {}}
+        onPointerEnter={() => {}}
+        onPointerLeave={() => {}}
+      />,
+    );
+    const panel = screen.getByLabelText(/Other Equities category details/i);
+    expect(within(panel).getByText('Other Equities')).toBeVisible();
+    expect(within(panel).queryByText('Copper Miners - Major Producers')).toBeNull();
   });
 
   it('keeps the peer list scoped to the selected stock industry', () => {
