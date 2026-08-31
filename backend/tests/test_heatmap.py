@@ -99,14 +99,23 @@ def test_sparkline_normalization_and_provider_error_fallback():
     assert round(_history_quotes(frame, ["FCX"])["FCX"]["changePercent"], 3) == 9.091
     assert _history_sparklines(pd.DataFrame(), ["FCX"]) == {}
 
-    monthly = pd.DataFrame(
-        {"Close": [100.0 + index for index in range(21)]},
-        index=pd.date_range("2026-01-01", periods=21, freq="B"),
+    quarterly = pd.DataFrame(
+        {"Close": [100.0 + index for index in range(65)]},
+        index=pd.date_range("2026-01-01", periods=65, freq="B"),
     )
-    monthly_sparkline = _history_sparklines(monthly, ["FCX"])["FCX"]
-    assert len(monthly_sparkline) == 10
-    assert monthly_sparkline[0] == 100.0
-    assert monthly_sparkline[-1] == 120.0
+    daily_sparkline = _history_sparklines(quarterly, ["FCX"])["FCX"]
+    assert len(daily_sparkline) == 65
+    assert daily_sparkline[0] == 100.0
+    assert daily_sparkline[-1] == 164.0
+
+    longer_than_quarter = pd.DataFrame(
+        {"Close": [100.0 + index for index in range(80)]},
+        index=pd.date_range("2026-01-01", periods=80, freq="B"),
+    )
+    capped_sparkline = _history_sparklines(longer_than_quarter, ["FCX"])["FCX"]
+    assert len(capped_sparkline) == 66
+    assert capped_sparkline[0] == 100.0
+    assert capped_sparkline[-1] == 179.0
 
     multi = pd.DataFrame(
         [[10.0, 20.0], [11.0, 18.0]],

@@ -122,7 +122,11 @@ describe('heatmap interaction primitives', () => {
     const firstCellPosition = computePointerPanelPosition(160, 300, bounds, 1_000, 800, 380, 480, wideCell);
     const movedCellPosition = computePointerPanelPosition(260, 300, bounds, 1_000, 800, 380, 480, wideCell);
     expect(firstCellPosition.left).toBeGreaterThan(wideCell.right);
-    expect(movedCellPosition.left - firstCellPosition.left).toBeGreaterThan(40);
+    expect(movedCellPosition.left - firstCellPosition.left).toBeGreaterThan(10);
+    const leftEdgePosition = computePointerPanelPosition(wideCell.left, 300, bounds, 1_000, 800, 380, 480, wideCell);
+    const rightEdgePosition = computePointerPanelPosition(wideCell.right, 300, bounds, 1_000, 800, 380, 480, wideCell);
+    expect(rightEdgePosition.left - leftEdgePosition.left).toBe(56);
+    expect(rightEdgePosition.left - wideCell.right).toBeLessThanOrEqual(18 + 56);
     expect(movedCellPosition.top).toBe(firstCellPosition.top);
     expect(movedCellPosition.left + movedCellPosition.width).toBeLessThanOrEqual(bounds.right - 10);
 

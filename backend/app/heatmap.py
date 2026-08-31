@@ -23,6 +23,7 @@ HEATMAP_TTL = timedelta(minutes=15)
 HEATMAP_METADATA_TTL = timedelta(hours=24)
 HEATMAP_METADATA_BATCH_SIZE = 12
 HEATMAP_HISTORY_PERIOD = "3mo"
+HEATMAP_SPARKLINE_POINTS = 66
 HEATMAP_REFRESH_LOCK = "heatmap:refresh"
 _snapshot_memo_lock = RLock()
 _snapshot_memo: Optional[dict] = None
@@ -336,7 +337,11 @@ def _history_close_series(frame: pd.DataFrame, symbol: str) -> Optional[pd.Serie
         return None
 
 
-def _history_sparklines(frame: pd.DataFrame, symbols: list[str], points: int = 10) -> dict[str, list[float]]:
+def _history_sparklines(
+    frame: pd.DataFrame,
+    symbols: list[str],
+    points: int = HEATMAP_SPARKLINE_POINTS,
+) -> dict[str, list[float]]:
     output: dict[str, list[float]] = {}
     if frame is None or frame.empty or points < 2:
         return output

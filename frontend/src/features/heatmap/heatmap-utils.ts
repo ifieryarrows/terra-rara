@@ -3,7 +3,7 @@ const TOOLTIP_HEIGHT = 154;
 const TOOLTIP_GAP = 14;
 const PANEL_WIDTH = 380;
 const PANEL_GAP = 18;
-const PANEL_HORIZONTAL_FOLLOW = 1;
+const PANEL_MAX_HORIZONTAL_TRAVEL = 56;
 
 const rgb = (hex: string) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
 const mix = (from: string, to: string, amount: number) => {
@@ -108,14 +108,16 @@ export function computePointerPanelPosition(
     if (opensRight) {
       const laneStart = avoidRect.right + PANEL_GAP;
       const laneWidth = Math.max(0, Math.min(
-        cellWidth * PANEL_HORIZONTAL_FOLLOW,
+        cellWidth,
+        PANEL_MAX_HORIZONTAL_TRAVEL,
         rightEdge - width - margin - laneStart,
       ));
       left = laneStart + pointerProgress * laneWidth;
     } else {
       const laneEnd = avoidRect.left - width - PANEL_GAP;
       const laneWidth = Math.max(0, Math.min(
-        cellWidth * PANEL_HORIZONTAL_FOLLOW,
+        cellWidth,
+        PANEL_MAX_HORIZONTAL_TRAVEL,
         laneEnd - (bounds.left + margin),
       ));
       left = laneEnd - laneWidth + pointerProgress * laneWidth;

@@ -32,7 +32,7 @@ Leaf sözleşmesine opsiyonel `id`, `instrumentType`, `sector`, `industry`, `exc
 
 ### Sparkline ve news context
 
-- Refresh başında bütün semboller için tek batched son-üç-aylık günlük history çağrısı yapılıyor; dönemin ilk ve son kapanışını koruyan, üç ay boyunca eşit aralıklı en fazla 10 finite close ilk değere göre 100 tabanına normalize ediliyor.
+- Refresh başında bütün semboller için tek batched son-üç-aylık günlük history çağrısı yapılıyor; üç aylık dönemdeki günlük kapanışlar ilk değere göre 100 tabanına normalize ediliyor ve sıra dışı uzun seriler en fazla 66 noktaya sınırlandırılıyor.
 - History çağrısı başarısızsa quote heatmap yayımlanmaya devam ediyor.
 - `/api/market-heatmap/context` yalnızca mevcut cached tree’de bulunan category ID’lerini kabul ediyor.
 - Son yedi günlük, en fazla 250 canonical news satırında ticker ve şirket adı deterministik olarak eşleştiriliyor.
@@ -128,7 +128,7 @@ Yerel yeni endpoint için beş fresh wall-clock örneği p50 yaklaşık 386 ms, 
 - Aynı-industry NVDA → AVGO geçişinde seçili satır 120 ms kontrol noktasında günceldi, seçili ticker DOM’da bir kez bulundu ve `/market-heatmap/context` request sayısı artmadı. Stale geniş category altında NVDA kartı yalnız QCOM/AVGO/AMD/INTC/TXN peer’larını gösterdi; alakasız broad-category haberini göstermedi.
 - Stock-news browser kontrolünde FCX için cache’teki GuruFocus haberi, tarih ve sentiment gösterildi. Aynı category içinde NVDA’ya 120 ms geçişte `No recent news is available for NVDA.` mesajı göründü ve context request sayısı 1’de kaldı. 152 hisselik fallback category response’unda 24 ticker haberi toplu eşleşti; refactor sonrası tek yerel context örneği 622,51 ms sürdü (production latency kanıtı değildir).
 - Wheel testi content genişliğini 1.199 px’den 1.487 px’e çıkardı ve cursor anchor’ını scroll offset ile korudu; drag testi scroll offset’i `(188,90)` → `(288,134)` taşıdı.
-- Ticker double-click yeni sekmede quote detayını açıyor. Industry peer sparkline batch penceresi Finviz referansıyla uyumlu olarak 3 ay kullanıyor; eşit aralıklı normalize nokta sayısı sabit kaldığı için payload büyümedi.
+- Ticker double-click yeni sekmede quote detayını açıyor. Industry peer sparkline batch penceresi Finviz referansıyla uyumlu olarak 3 ay ve 1 günlük interval kullanıyor; yaklaşık 63 işlem gününün tamamı sparkline'a taşınıyor.
 - Zoomed map pointer-down’da native selection/drag engelleniyor; map ve logo katmanlarında `user-select:none`, logo görsellerinde `draggable=false` uygulanıyor. Browser drag testinde pan offset’i değişirken selection metni boş kaldı.
 - Legacy/stale cache içindeki category ID ile render ID ayrışırsa peer listesi stabil ad üzerinden ilk eşleşmeye güvenli fallback yapıyor. Browser kontrolünde Semiconductors paneli yeniden 6 peer gösterdi.
 - Category-level hover başlığı ilk leaf’in `group/subgroup` değerinden türetilmiyor; doğrudan hover edilen node adını kullanıyor. Gerçek browser kontrolünde `Basic Materials` hover kartı `Basic Materials` başlığıyla açıldı; ilk stock metadata’sı başlığa sızmadı. Stock hover’da `Sector - Industry` hiyerarşisi korunuyor.
