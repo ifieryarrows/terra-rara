@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createRef } from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompanyLogo } from './CompanyLogo';
-import HeatmapCategoryPanel from './HeatmapCategoryPanel';
+import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import { HeatmapPanel } from './HeatmapPanel';
 import HeatmapTreemap from './HeatmapTreemap';
 import { clampTooltipPosition, computePanelPosition, computePointerPanelPosition, getColorForChange } from './heatmap-utils';
@@ -121,9 +122,48 @@ describe('heatmap interaction primitives', () => {
     const firstCellPosition = computePointerPanelPosition(160, 300, bounds, 1_000, 800, 380, 480, wideCell);
     const movedCellPosition = computePointerPanelPosition(260, 300, bounds, 1_000, 800, 380, 480, wideCell);
     expect(firstCellPosition.left).toBeGreaterThan(wideCell.right);
-    expect(movedCellPosition.left - firstCellPosition.left).toBe(45);
+    expect(movedCellPosition.left - firstCellPosition.left).toBeGreaterThan(40);
     expect(movedCellPosition.top).toBe(firstCellPosition.top);
     expect(movedCellPosition.left + movedCellPosition.width).toBeLessThanOrEqual(bounds.right - 10);
+
+    const moreRoomOnLeft = { left: 850, top: 120, right: 920, bottom: 320, width: 70, height: 200 };
+    const leftLanePosition = computePointerPanelPosition(885, 200, { ...bounds, right: 1_400, width: 1_400 }, 1_400, 800, 380, 480, moreRoomOnLeft);
+    expect(leftLanePosition.left + leftLanePosition.width).toBeLessThan(moreRoomOnLeft.left);
+  });
+
+  it('moves the category panel horizontally through its imperative rAF path', async () => {
+    vi.useFakeTimers();
+    const panelHandle = createRef<HeatmapCategoryPanelHandle>();
+    const selected = {
+      id: 'nvda', name: 'NVDA', shortName: 'NVIDIA', weight: 100, price: 100, changePercent: 2,
+      sector: 'Technology', industry: 'Semiconductors', sparkline: [1, 2, 3],
+    };
+    const anchor = {
+      id: 'industry', name: 'Semiconductors', depth: 2, pointer: { x: 300, y: 200 },
+      rect: { left: 200, top: 100, right: 500, bottom: 400, width: 300, height: 300 },
+      containerRect: { left: 0, top: 0, right: 1_400, bottom: 800, width: 1_400, height: 800 },
+    };
+    render(
+      <HeatmapCategoryPanel
+        ref={panelHandle}
+        categoryId="industry"
+        categoryName="Semiconductors"
+        leaves={[selected]}
+        activeLeaf={selected}
+        anchor={anchor}
+        view="market"
+        pinned={false}
+        onClose={() => {}}
+        onPointerEnter={() => {}}
+        onPointerLeave={() => {}}
+      />,
+    );
+    const panel = screen.getByLabelText(/Semiconductors category details/i);
+    const initialTransform = panel.style.transform;
+    expect(panel.style.transition).toBe('');
+    panelHandle.current?.move(400, 200);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(panel.style.transform).not.toBe(initialTransform);
   });
 
   it('keeps duplicate provider IDs isolated during React reconciliation and hover', () => {
@@ -255,6 +295,7 @@ describe('heatmap interaction primitives', () => {
     await vi.advanceTimersByTimeAsync(90);
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     expect(panel.style.width).toBe('380px');
+    expect(panel.style.transition).toBe('');
     expect(within(panel).getByText('Technology - Semiconductors')).toBeVisible();
     expect(within(panel).getAllByText('NVDA')).toHaveLength(1);
     expect(within(panel).getAllByTestId('peer-row')).toHaveLength(1);

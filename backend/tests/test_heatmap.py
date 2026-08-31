@@ -99,6 +99,15 @@ def test_sparkline_normalization_and_provider_error_fallback():
     assert round(_history_quotes(frame, ["FCX"])["FCX"]["changePercent"], 3) == 9.091
     assert _history_sparklines(pd.DataFrame(), ["FCX"]) == {}
 
+    monthly = pd.DataFrame(
+        {"Close": [100.0 + index for index in range(21)]},
+        index=pd.date_range("2026-01-01", periods=21, freq="B"),
+    )
+    monthly_sparkline = _history_sparklines(monthly, ["FCX"])["FCX"]
+    assert len(monthly_sparkline) == 10
+    assert monthly_sparkline[0] == 100.0
+    assert monthly_sparkline[-1] == 120.0
+
     multi = pd.DataFrame(
         [[10.0, 20.0], [11.0, 18.0]],
         index=pd.date_range("2026-01-01", periods=2),
@@ -340,13 +349,19 @@ def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
         index=pd.date_range("2026-01-01", periods=2),
         columns=pd.MultiIndex.from_tuples([("FCX", "Close"), ("SCCO", "Close")]),
     )
+    download_args = {}
+
+    def download_history(**kwargs):
+        download_args.update(kwargs)
+        return history
+
     fake_yfinance = SimpleNamespace(
         set_tz_cache_location=lambda _path: None,
         cache=SimpleNamespace(
             get_tz_cache=lambda: SimpleNamespace(initialise=lambda: None),
             get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
         ),
-        download=lambda **_kwargs: history,
+        download=download_history,
         Tickers=lambda symbols: SimpleNamespace(
             tickers={symbol: SimpleNamespace(info={}) for symbol in symbols.split()}
         ),
@@ -363,6 +378,8 @@ def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
     assert leaves["FCX"]["shortName"] == "FCX Corporation"
     assert leaves["SCCO"]["price"] == 18.0
     assert leaves["SCCO"]["sector"] is None
+    assert download_args["period"] == "3mo"
+    assert download_args["interval"] == "1d"
     assert cache.refresh_error is None
 
 

@@ -3,7 +3,7 @@ const TOOLTIP_HEIGHT = 154;
 const TOOLTIP_GAP = 14;
 const PANEL_WIDTH = 380;
 const PANEL_GAP = 18;
-const PANEL_HORIZONTAL_FOLLOW = 0.45;
+const PANEL_HORIZONTAL_FOLLOW = 1;
 
 const rgb = (hex: string) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
 const mix = (from: string, to: string, amount: number) => {
@@ -93,15 +93,33 @@ export function computePointerPanelPosition(
   const sideAnchor = avoidRect || { left: x, right: x };
   const roomRight = rightEdge - sideAnchor.right - PANEL_GAP;
   const roomLeft = sideAnchor.left - bounds.left - PANEL_GAP;
-  const opensRight = roomRight >= width || roomRight >= roomLeft;
+  // Pick the side with the larger tracking lane. Selecting the right merely
+  // because the card fits there can leave no room for horizontal movement,
+  // even when the left side has hundreds of usable pixels.
+  const opensRight = roomRight >= roomLeft;
   let left: number;
   if (avoidRect) {
     const pointerInsideCell = Math.max(avoidRect.left, Math.min(x, avoidRect.right));
+    const cellWidth = Math.max(1, avoidRect.width || avoidRect.right - avoidRect.left);
+    const pointerProgress = (pointerInsideCell - avoidRect.left) / cellWidth;
     // Keep the interactive card outside the stock so it cannot steal hover,
-    // but add Finviz-like horizontal parallax as the pointer crosses the cell.
-    left = opensRight
-      ? avoidRect.right + PANEL_GAP + (pointerInsideCell - avoidRect.left) * PANEL_HORIZONTAL_FOLLOW
-      : avoidRect.left - width - PANEL_GAP - (avoidRect.right - pointerInsideCell) * PANEL_HORIZONTAL_FOLLOW;
+    // while mapping the whole cell onto the available side lane. This avoids
+    // long clamped zones where X movement appeared frozen near a viewport edge.
+    if (opensRight) {
+      const laneStart = avoidRect.right + PANEL_GAP;
+      const laneWidth = Math.max(0, Math.min(
+        cellWidth * PANEL_HORIZONTAL_FOLLOW,
+        rightEdge - width - margin - laneStart,
+      ));
+      left = laneStart + pointerProgress * laneWidth;
+    } else {
+      const laneEnd = avoidRect.left - width - PANEL_GAP;
+      const laneWidth = Math.max(0, Math.min(
+        cellWidth * PANEL_HORIZONTAL_FOLLOW,
+        laneEnd - (bounds.left + margin),
+      ));
+      left = laneEnd - laneWidth + pointerProgress * laneWidth;
+    }
   } else {
     left = opensRight ? x + PANEL_GAP : x - width - PANEL_GAP;
   }

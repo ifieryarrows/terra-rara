@@ -97,7 +97,6 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     : {
         position: 'fixed', left: 0, top: 0, width: initialPosition.width, maxHeight: initialPosition.maxHeight, zIndex: 70,
         transform: `translate3d(${initialPosition.left}px, ${initialPosition.top}px, 0)`,
-        transition: 'transform 70ms cubic-bezier(0.22, 1, 0.36, 1)',
         willChange: 'transform',
       };
   const applyPosition = useCallback(() => {

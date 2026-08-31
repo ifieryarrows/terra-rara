@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 HEATMAP_TTL = timedelta(minutes=15)
 HEATMAP_METADATA_TTL = timedelta(hours=24)
 HEATMAP_METADATA_BATCH_SIZE = 12
+HEATMAP_HISTORY_PERIOD = "3mo"
 HEATMAP_REFRESH_LOCK = "heatmap:refresh"
 _snapshot_memo_lock = RLock()
 _snapshot_memo: Optional[dict] = None
@@ -337,14 +338,19 @@ def _history_close_series(frame: pd.DataFrame, symbol: str) -> Optional[pd.Serie
 
 def _history_sparklines(frame: pd.DataFrame, symbols: list[str], points: int = 10) -> dict[str, list[float]]:
     output: dict[str, list[float]] = {}
-    if frame is None or frame.empty:
+    if frame is None or frame.empty or points < 2:
         return output
     for symbol in symbols:
         try:
             series = _history_close_series(frame, symbol)
             if series is None:
                 continue
-            values = [float(value) for value in series.dropna().tail(points).tolist() if math.isfinite(float(value))]
+            finite_values = [float(value) for value in series.dropna().tolist() if math.isfinite(float(value))]
+            if len(finite_values) > points:
+                step = (len(finite_values) - 1) / (points - 1)
+                values = [finite_values[round(index * step)] for index in range(points)]
+            else:
+                values = finite_values
             if len(values) >= 2 and values[0] != 0:
                 output[symbol] = [round(value / values[0] * 100.0, 3) for value in values]
         except (KeyError, TypeError, ValueError):
@@ -528,7 +534,7 @@ def refresh_market_heatmap() -> None:
                 quote_by_symbol: dict[str, dict] = {}
                 try:
                     history = yf.download(
-                        tickers=" ".join(symbols), period="3mo", interval="1d",
+                        tickers=" ".join(symbols), period=HEATMAP_HISTORY_PERIOD, interval="1d",
                         group_by="ticker", auto_adjust=False, progress=False, threads=True,
                     )
                     sparkline_by_symbol = _history_sparklines(history, symbols)
