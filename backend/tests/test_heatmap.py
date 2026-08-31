@@ -61,6 +61,26 @@ def test_theme_view_and_leaf_fields_remain_backward_compatible():
     assert leaf["instrumentType"] == "equity"
 
 
+def test_duplicate_instruments_are_removed_from_hierarchy_and_provider_universe():
+    from app.heatmap import _build_hierarchy, _deduplicate_universe, flatten_heatmap_leaves
+
+    duplicates = [
+        _leaf("EWZ", id="instrument-ewz", group="Macro", subgroup="Currency"),
+        _leaf("EWZ", id="instrument-ewz", group="EM & China", subgroup="Commodity EM"),
+        _leaf("EWW", id="instrument-eww"),
+    ]
+    hierarchy = _build_hierarchy(duplicates)
+    assert [leaf["name"] for leaf in flatten_heatmap_leaves(hierarchy)] == ["EWW", "EWZ"]
+
+    universe = _deduplicate_universe([
+        {"ticker": "EWZ", "category": "macro_currency"},
+        {"ticker": "EWW", "category": "macro_currency"},
+        {"ticker": "EWZ", "category": "em_brazil"},
+    ])
+    assert [row["ticker"] for row in universe] == ["EWZ", "EWW"]
+    assert universe[0]["category"] == "em_brazil"
+
+
 def test_low_coverage_is_rejected_to_preserve_last_good_snapshot():
     from app.heatmap import _coverage_is_healthy
 

@@ -232,6 +232,7 @@ def _market_path(item: dict) -> tuple[str, str]:
 def _build_hierarchy(symbols: Iterable[dict], *, view: str = "themes") -> dict:
     """Build a stable D3-compatible hierarchy for either public view."""
     buckets: dict[tuple[str, str], list[dict]] = {}
+    seen_instrument_ids: set[str] = set()
     for original in symbols:
         item = dict(original)
         if not item.get("instrumentType"):
@@ -249,6 +250,10 @@ def _build_hierarchy(symbols: Iterable[dict], *, view: str = "themes") -> dict:
             group = _clean_label(item.get("group"), "Other")
             subgroup = _clean_label(item.get("subgroup"), "Uncategorized")
         item["id"] = item.get("id") or stable_node_id("instrument", str(item.get("name", "")))
+        instrument_id = str(item["id"])
+        if instrument_id in seen_instrument_ids:
+            continue
+        seen_instrument_ids.add(instrument_id)
         buckets.setdefault((group, subgroup), []).append(item)
 
     root_name = "Market by Sector" if view == "market" else "CopperMind Universe"
@@ -291,6 +296,16 @@ def hierarchy_for_view(payload: dict, view: str) -> dict:
     return _build_hierarchy(
         flatten_heatmap_leaves(payload), view="market" if view == "market" else "themes"
     )
+
+
+def _deduplicate_universe(rows: Iterable[dict]) -> list[dict]:
+    """Keep one provider request per ticker while retaining the last taxonomy row."""
+    unique: dict[str, dict] = {}
+    for row in rows:
+        symbol = str(row.get("ticker") or "").strip()
+        if symbol:
+            unique[symbol] = dict(row)
+    return list(unique.values())
 
 
 def find_category(payload: dict, category_id: str) -> Optional[dict]:
@@ -499,7 +514,7 @@ def refresh_market_heatmap() -> None:
             }
             try:
                 stage_start = time.perf_counter()
-                universe_rows = _load_universe()
+                universe_rows = _deduplicate_universe(_load_universe())
                 symbols = [str(row["ticker"]) for row in universe_rows]
                 row_by_symbol = {str(row["ticker"]): row for row in universe_rows}
                 stage_ms["universe"] = (time.perf_counter() - stage_start) * 1000

@@ -126,6 +126,37 @@ describe('heatmap interaction primitives', () => {
     expect(movedCellPosition.left + movedCellPosition.width).toBeLessThanOrEqual(bounds.right - 10);
   });
 
+  it('keeps duplicate provider IDs isolated during React reconciliation and hover', () => {
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'EM & China', children: [{
+          id: 'industry', name: 'Commodity EM', children: [
+            { id: 'duplicate-ewz', name: 'EWZ', shortName: 'First EWZ', weight: 100 },
+            { id: 'duplicate-ewz', name: 'EWZ', shortName: 'Second EWZ', weight: 90 },
+          ],
+        }],
+      }],
+    };
+    const hover = vi.fn();
+    const { container } = render(
+      <HeatmapTreemap
+        data={data}
+        width={700}
+        height={400}
+        zoom={1}
+        hoveredCategoryId={null}
+        onCategoryHover={() => {}}
+        onLeafHover={hover}
+      />,
+    );
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'));
+    const renderIds = cells.map((cell) => cell.dataset.hmLeafId);
+    expect(cells).toHaveLength(2);
+    expect(new Set(renderIds).size).toBe(2);
+    fireEvent.pointerOver(cells[1], { clientX: 300, clientY: 200 });
+    expect(hover).toHaveBeenLastCalledWith(expect.objectContaining({ shortName: 'Second EWZ' }));
+  });
+
   it('uses a vivid continuous red-neutral-green market scale', () => {
     expect(getColorForChange(-5)).toBe('rgb(255,48,72)');
     expect(getColorForChange(0)).toBe('#414852');

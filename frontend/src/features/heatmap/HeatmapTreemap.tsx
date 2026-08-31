@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
+  categoryHeaderPadding,
   createTreemapHierarchy,
   detailLevel,
   layoutTreemap,
@@ -80,9 +81,32 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     heatmapMetrics().resizeLayouts += 1;
     return next;
   }, [hierarchyRoot, scaledHeight, scaledWidth]);
-  const leaves = layout.leaves();
-  const parents = layout.descendants().filter((node) => node.depth > 0 && node.children) as LayoutNode[];
-  const leafById = useMemo(() => new Map(leaves.map((leaf) => [String((leaf.data as HeatmapData).id || (leaf.data as HeatmapData).name), leaf])), [leaves]);
+  const leaves = useMemo(() => layout.leaves(), [layout]);
+  const parents = useMemo(
+    () => layout.descendants().filter((node) => node.depth > 0 && node.children) as LayoutNode[],
+    [layout],
+  );
+  const leafEntries = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return leaves.map((leaf) => {
+      const item = leaf.data as HeatmapData;
+      const parent = leaf.parent as LayoutNode | null;
+      const parentId = parent ? String((parent.data as HeatmapNode).id || parent.data.name) : 'root';
+      const baseId = String(item.id || item.name);
+      const collisionKey = `${parentId}/${baseId}`;
+      const occurrence = occurrences.get(collisionKey) || 0;
+      occurrences.set(collisionKey, occurrence + 1);
+      return {
+        leaf,
+        parentId,
+        renderId: occurrence ? `${collisionKey}#${occurrence}` : collisionKey,
+      };
+    });
+  }, [leaves]);
+  const leafById = useMemo(
+    () => new Map(leafEntries.map(({ leaf, renderId }) => [renderId, leaf])),
+    [leafEntries],
+  );
   const categoryById = useMemo(() => new Map(parents.map((node) => [String((node.data as HeatmapNode).id || node.data.name), node])), [parents]);
 
   useEffect(() => {
@@ -349,6 +373,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           const nodeWidth = node.x1 - node.x0;
           const nodeHeight = node.y1 - node.y0;
           if (nodeWidth < 24 || nodeHeight < 20) return null;
+          const headerPadding = categoryHeaderPadding(node.depth, nodeWidth, nodeHeight);
           const active = hoveredCategoryId === id;
           return (
             <div
@@ -368,11 +393,12 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
                 zIndex: 1,
               }}
             >
-              {nodeWidth > 46 && (
+              {headerPadding > 1 && (
                 <div
                   className={node.depth === 1
-                    ? 'pointer-events-none h-[21px] truncate bg-slate-900/95 px-1.5 pt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200'
-                    : 'pointer-events-none h-[15px] truncate bg-slate-800/95 px-1 text-[8px] font-semibold uppercase tracking-wide text-slate-400'}
+                    ? 'pointer-events-none truncate bg-slate-900/95 px-1.5 pt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200'
+                    : 'pointer-events-none truncate bg-slate-800/95 px-1 text-[8px] font-semibold uppercase tracking-wide text-slate-400'}
+                  style={{ height: headerPadding - 1 }}
                 >
                   {nodeData.name}
                 </div>
@@ -381,16 +407,13 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           );
         })}
 
-        {leaves.map((leaf) => {
+        {leafEntries.map(({ leaf, parentId, renderId }) => {
           const item = leaf.data as HeatmapData;
-          const id = String(item.id || item.name);
           const cellWidth = leaf.x1 - leaf.x0;
           const cellHeight = leaf.y1 - leaf.y0;
           if (cellWidth < 4 || cellHeight < 4) return null;
           const level = detailLevel(cellWidth, cellHeight);
           const textSizes = stockTextSizes(cellWidth, cellHeight, level);
-          const parent = leaf.parent as LayoutNode | null;
-          const parentId = parent ? String((parent.data as HeatmapNode).id || parent.data.name) : '';
           const change = item.changePercent || 0;
           const showTicker = level !== 'color';
           const showChange = ['change', 'logo', 'price'].includes(level);
@@ -401,8 +424,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           const showLogo = ['logo', 'price'].includes(level) && !!logoTicker && !item.aggregateCount;
           return (
             <div
-              key={id}
-              data-hm-leaf-id={id}
+              key={renderId}
+              data-hm-leaf-id={renderId}
               data-hm-parent-id={parentId}
               role="button"
               tabIndex={0}

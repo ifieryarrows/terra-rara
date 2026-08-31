@@ -680,12 +680,13 @@ def _render_heatmap_http_response(
     memo_state: str,
 ) -> Response:
     """Serialize one snapshot once and attach cache/performance diagnostics."""
-    from app.heatmap import hierarchy_for_view
+    from app.heatmap import flatten_heatmap_leaves, hierarchy_for_view
 
     now = datetime.now(timezone.utc)
     hierarchy_started = time.perf_counter()
     payload = hierarchy_for_view(persisted, view)
     hierarchy_ms = (time.perf_counter() - hierarchy_started) * 1000
+    rendered_payload_count = len(flatten_heatmap_leaves(payload))
     cache_state = (
         "empty" if payload_count == 0 else
         "refreshing" if refresh_in_progress else
@@ -704,13 +705,13 @@ def _render_heatmap_http_response(
         "last_updated_at": cached_at.isoformat() if cached_at else None,
         "next_refresh_at": expires_at.isoformat() if expires_at else None,
         "source_delay_minutes": 15,
-        "payload_count": payload_count,
+        "payload_count": rendered_payload_count,
         "refresh_error": refresh_error,
         "cache_state": cache_state,
         "cache_age_seconds": age,
     }
     import hashlib
-    etag_seed = f"{cached_at.isoformat() if cached_at else 'empty'}:{view}:{payload_count}:{refresh_error or ''}"
+    etag_seed = f"{cached_at.isoformat() if cached_at else 'empty'}:{view}:{rendered_payload_count}:{refresh_error or ''}"
     etag = f'"{hashlib.sha256(etag_seed.encode()).hexdigest()[:24]}"'
     serialize_started = time.perf_counter()
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

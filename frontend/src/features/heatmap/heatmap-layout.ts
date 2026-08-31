@@ -84,13 +84,36 @@ export function createTreemapHierarchy(data: HeatmapNode): LayoutNode {
     .sort((a, b) => (b.value || 0) - (a.value || 0)) as LayoutNode;
 }
 
+const HEADER_WIDTH_THRESHOLD = 46;
+const MINIMUM_HEADER_CONTENT_HEIGHT = 4;
+
+/**
+ * Reserve a full category header only when the category can also contain a
+ * visible child row. D3 applies padding before laying out descendants; a fixed
+ * 16/22px top padding on a shorter node moves its descendants beyond the
+ * parent's bottom edge.
+ */
+export function categoryHeaderPadding(depth: number, width: number, height: number): number {
+  const target = depth === 1 ? 22 : depth === 2 ? 16 : 1;
+  return (
+    depth > 0
+    && depth < 3
+    && width > HEADER_WIDTH_THRESHOLD
+    && height >= target + MINIMUM_HEADER_CONTENT_HEIGHT
+  ) ? target : 1;
+}
+
 /** Mutates and reuses the hierarchy so resquarify preserves row topology on resize. */
 export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
   treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
     .paddingInner(1)
     .paddingOuter(1)
-    .paddingTop((node) => (node.depth === 1 ? 22 : node.depth === 2 ? 16 : 0))
+    .paddingTop((node) => categoryHeaderPadding(
+      node.depth,
+      Math.max(0, node.x1 - node.x0),
+      Math.max(0, node.y1 - node.y0),
+    ))
     .round(true)
     .tile(treemapResquarify)(root);
   return root;

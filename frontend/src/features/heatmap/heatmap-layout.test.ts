@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aggregateTinyLeaves,
   buildTreemapLayout,
+  categoryHeaderPadding,
   categoryStats,
   compressLeafWeights,
   detailLevel,
@@ -27,6 +28,43 @@ describe('heatmap layout', () => {
     const first = buildTreemapLayout(data, 800, 500).leaves().map((node) => [node.data.id, node.x0, node.y0, node.x1, node.y1]);
     const second = buildTreemapLayout(data, 800, 500).leaves().map((node) => [node.data.id, node.x0, node.y0, node.x1, node.y1]);
     expect(second).toEqual(first);
+  });
+
+  it('keeps descendants inside tiny category bounds at every supported viewport', () => {
+    const data: HeatmapNode = {
+      id: 'root',
+      name: 'Root',
+      children: Array.from({ length: 18 }, (_, groupIndex) => ({
+        id: `group-${groupIndex}`,
+        name: `Group ${groupIndex}`,
+        children: Array.from({ length: 5 }, (_, subgroupIndex) => ({
+          id: `group-${groupIndex}-subgroup-${subgroupIndex}`,
+          name: `Subgroup ${subgroupIndex}`,
+          children: Array.from({ length: 3 }, (_, leafIndex) => leaf(
+            `${groupIndex}-${subgroupIndex}-${leafIndex}`,
+            groupIndex === 0 ? 10_000 : 1 + leafIndex,
+          )),
+        })),
+      })),
+    };
+
+    for (const [width, height] of [[390, 560], [768, 560], [1_536, 820], [6_144, 3_280]]) {
+      const layout = buildTreemapLayout(data, width, height);
+      for (const node of layout.descendants()) {
+        if (!node.parent) continue;
+        expect(node.x0).toBeGreaterThanOrEqual(node.parent.x0);
+        expect(node.y0).toBeGreaterThanOrEqual(node.parent.y0);
+        expect(node.x1).toBeLessThanOrEqual(node.parent.x1);
+        expect(node.y1).toBeLessThanOrEqual(node.parent.y1);
+        expect(node.x1).toBeGreaterThanOrEqual(node.x0);
+        expect(node.y1).toBeGreaterThanOrEqual(node.y0);
+      }
+    }
+
+    expect(categoryHeaderPadding(1, 100, 20)).toBe(1);
+    expect(categoryHeaderPadding(2, 100, 16)).toBe(1);
+    expect(categoryHeaderPadding(1, 100, 40)).toBe(22);
+    expect(categoryHeaderPadding(2, 100, 40)).toBe(16);
   });
 
   it('aggregates projected tiny leaves while preserving total weight and panel access', () => {
