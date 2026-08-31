@@ -47,12 +47,15 @@ def test_dynamic_market_hierarchy_and_stable_ids():
 def test_theme_view_and_leaf_fields_remain_backward_compatible():
     from app.heatmap import _build_hierarchy, flatten_heatmap_leaves
 
-    payload = _build_hierarchy([_leaf("FCX", sparkline=[100, 101], logoTicker="FCX")])
+    payload = _build_hierarchy([
+        _leaf("FCX", sparkline=[100, 101], instrumentType=None, logoTicker=None)
+    ])
     leaf = flatten_heatmap_leaves(payload)[0]
     assert payload["name"] == "CopperMind Universe"
     assert leaf["name"] == "FCX"
     assert leaf["sparkline"] == [100, 101]
     assert leaf["logoTicker"] == "FCX"
+    assert leaf["instrumentType"] == "equity"
 
 
 def test_low_coverage_is_rejected_to_preserve_last_good_snapshot():

@@ -95,8 +95,10 @@ Yerel yeni endpoint için beş fresh wall-clock örneği p50 yaklaşık 386 ms, 
 
 - D3 hierarchy yalnızca data değiştiğinde kuruluyor; resize’da aynı hierarchy üzerinde `treemapResquarify` çalışıyor.
 - Stable IDs React key olarak kullanılıyor.
+- Eksik tam-ABD evreninde tek bir mega-cap’in alanı aşırı domine etmesini azaltmak için Weight görünümündeki leaf ağırlıkları görünür evren ortalamasına doğru %10 çekiliyor: `w' = 0,9w + 0,1μ`. Toplam ağırlık korunuyor ve herhangi iki araç arasındaki ağırlık farkı matematiksel olarak tam %10 azalıyor. Performance görünümü bu dönüşümden etkilenmiyor.
 - Industry içindeki projected-area eşiğinin altındaki en az iki küçük leaf, toplam ağırlığı ve weighted change’i koruyan `+N` hücresinde birleşiyor. Category panel kaynak ağacı kullandığı için bütün hisseler erişilebilir.
 - LOD seviyeleri: color-only → ticker → ticker/change → logo/ticker/change. Fiyat heatmap hücresinden kaldırıldı; ayrıntı kartında tek yerde gösteriliyor.
+- Ticker ve yüzde fontları sabit Tailwind boyutları yerine hücre eni, boyu ve LOD seviyesinden hesaplanıyor. Büyük hücrede ticker 44 px, değişim 28 px ile sınırlandırılıyor; daha küçük hücrelerde oran ve üst sınırlar kademeli düşüyor. Böylece ticker her seviyede yüzde değerinden daha güçlü kalırken içerik hücreye sığıyor.
 - Sürekli, yüksek doygunluklu kırmızı/nötr/yeşil finansal renk skalası, işaretli yüzde metni ve ayrıntılı ARIA label birlikte kullanılıyor. Bu revizyon videodaki Finviz kontrastını CopperMind tasarımına taşırken önceki sönük rose/teal görünümü kaldırdı.
 - Sector ve industry header’ları ayrı padding, zemin, sınır ve tipografiyle ayrılıyor.
 - Gerçek legacy snapshot’ta aggregation sonrası 120 rendered leaf ve 277 heatmap descendant ölçüldü; kaynak payload 194 araç olarak kaldı. Cached snapshot eski metadata taşıdığı için yerel `market` görünümü fallback branch gösterdi; yeni refresh sonrası dinamik sector/industry dalları backend testleriyle doğrulandı.
@@ -132,13 +134,14 @@ Yerel yeni endpoint için beş fresh wall-clock örneği p50 yaklaşık 386 ms, 
 - Yalnız LOD eşiğini geçen hücreler logo component’i oluşturuyor. IntersectionObserver, 48 px root margin, `loading="lazy"` ve `decoding="async"` kullanılıyor.
 - Başarısız URL session-level set’e alınarak tekrar denenmiyor; broken image yerine ticker initials gösteriliyor.
 - Eski/stale snapshot `logoTicker` taşımıyorsa equity/ETF/mutual-fund hücreleri normalize ticker’ı fallback olarak kullanıyor; future/currency gibi uygun olmayan araçlar için gereksiz logo isteği başlatılmıyor.
+- `instrumentType` ve `logoTicker` enrichment artık yalnız Market dalında değil hierarchy oluşturulmadan önce ortak uygulanıyor. Yerel API doğrulamasında hem Market hem Themes response’u 194/194 `instrumentType`, logo-uygun 175/194 `logoTicker` taşıdı.
 - Token yokken hiçbir Logo.dev request’i başlatılmıyor; mevcut test profilinde 0 logo request ölçüldü.
 - Footer’da görünür “Logos provided by Logo.dev” linki var; attribution linkinde `noreferrer` kullanılmıyor.
 - Logo self-host edilmiyor ve endorsement ima edilmiyor. Uygulama notları resmi [Stock Logo API](https://www.logo.dev/products/stock-ticker-logos), [attribution](https://www.logo.dev/docs/platform/attribution), [caching](https://www.logo.dev/docs/platform/caching), [fair-use](https://www.logo.dev/docs/platform/fair-use) ve [terms](https://www.logo.dev/legal/terms) belgelerine bağlı.
 
-Logo.dev publishable token kullanıcı tarafından Vercel Production config’ine eklendi; kod henüz deploy edilmediği için canlı CDN cache-hit, gerçek fallback oranı ve wire maliyeti için **Ölçüm bulunamadı**. Lazy URL üretimi, tek URL dedup ve error fallback jsdom component testiyle doğrulandı.
+Logo.dev publishable token kullanıcı tarafından Vercel Production config’ine ve Git tarafından ignore edilen yerel `frontend/.env.local` dosyasına eklendi. Yerel browser kontrolünde LOD-eligible Market hücrelerinde 16 Logo.dev görseli / 25 logo holder; Themes görünümünde 10 görsel / 15 holder oluştu. Sağlayıcıdan logo dönmeyen holder’lar broken image yerine initials fallback gösterdi. Kod henüz deploy edilmediği için canlı CDN cache-hit ve production fallback oranı için **Ölçüm bulunamadı**.
 
-Yerel geliştirme için Git tarafından ignore edilen `frontend/.env.local` şablonu oluşturuldu. Token değeri kullanıcı tarafından eklendikten sonra Vite sürecinin yeniden başlatılması gerekiyor; Vite env değerlerini process başlangıcında okuyor.
+Vite env değerlerini process başlangıcında okuduğu için `.env.local` değişikliğinden sonra Vite süreci yeniden başlatıldı; servis edilen modülün configured key’i içerdiği değer açığa çıkarılmadan doğrulandı.
 
 ## Performans sonuçları
 
@@ -150,8 +153,10 @@ Yerel geliştirme için Git tarafından ignore edilen `frontend/.env.local` şab
 | Read-only DB p50 / p95 | Ölçüm yok | 272,91 / 1.922,67 ms | Memo eşiği aşıldı |
 | Backend hierarchy p95 | Ölçüm yok | 2,03 ms | 10 gerçek snapshot koşusu |
 | Backend serialize p95 | Ölçüm yok | 1,05 ms | 10 gerçek snapshot koşusu |
-| Frontend layout p95, 194 | Ölçüm yok | 1,20 ms | ≤8 ms hedefi geçti |
-| Frontend layout p95, 1.000 | Ölçüm yok | 4,53 ms | ≤12 ms hedefi geçti |
+| Frontend layout p95, 194 | Ölçüm yok | 2,75 ms | Son tam frontend koşusu; ≤8 ms hedefi geçti |
+| Frontend layout p95, 1.000 | Ölçüm yok | 4,96 ms | Son tam frontend koşusu; ≤12 ms hedefi geçti |
+| NVDA hücre genişliği, aynı viewport | 382 px | 345 px | Ağırlık-spread sıkıştırması sonrası −%9,7 |
+| NVDA ticker / değişim fontu | 16 / 12 px | 44 / 28 px | Finviz-esintili responsive hierarchy |
 | İlk open heatmap request | Gözlenebilir değildi | 1 | Hedef geçti |
 | Warm SPA dönüşü request count | Gözlenebilir değildi | 1’de kaldı | Full-body tekrar yok |
 | Aynı-stock 30 pointer move | Önceki rAF regresyon adayı | 0 ek React commit | Hedef geçti |
@@ -181,6 +186,8 @@ Backend heatmap/API testleri:
 Frontend testleri:
 
 - Layout determinism, aggregate weight, LOD ve breadth.
+- Toplam ağırlığı koruyan tam %10 pairwise weight-gap sıkıştırması.
+- Büyük/küçük hücrelerde bounded responsive ticker/change tipografi oranları.
 - 194/1.000 araç p95 bütçesi.
 - Tooltip/panel viewport clamp.
 - 380 px compact panel, selected-stock dedup, long company name, missing sparkline/news ve industry-scoped peer filtering.
@@ -192,13 +199,13 @@ Frontend testleri:
 - Logo lazy loading, normalize URL ve initials fallback.
 - Mobil/tablet width ve map iç overflow browser doğrulaması.
 
-Son kapılar:
+Son kapılar (2026-08-31 follow-up dahil):
 
-- Backend: **41 passed** (`test_heatmap.py` + mevcut `test_api.py`).
-- Frontend: **18 passed**.
+- Backend heatmap: **12 passed** (`test_heatmap.py`). Tüm backend paketi: **530 passed, 15 skipped, 1 failed**; kalan hata heatmap’ten bağımsız, `as_of` almayan 48 saatlik news-stats testinin tarih sınırına bağlı beklentisidir.
+- Frontend: **20 passed**.
 - ESLint: warning/error yok.
 - TypeScript + Vite production build: geçti.
-- Heatmap lazy chunk: 32,97 KB raw / 11,96 KB gzip.
+- Heatmap lazy chunk: 33,92 KB raw / 12,28 KB gzip.
 - Mevcut ana bundle >500 KB Vite warning’i devam ediyor; heatmap zaten ayrı lazy chunk olduğundan bu çalışmanın runtime regresyonu değil.
 
 ## Deployment sonrası tekrar ölçülmesi gerekenler

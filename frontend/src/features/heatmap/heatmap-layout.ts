@@ -50,6 +50,34 @@ export interface HeatmapNode {
 
 export type LayoutNode = HierarchyRectangularNode<HeatmapNode | HeatmapData>;
 
+const safeLeafWeight = (leaf: HeatmapData) => Math.max(0.0001, leaf.weight || 1);
+
+/**
+ * Pull every leaf weight toward the visible-universe mean. A 10% compression
+ * preserves the total weight while reducing every pairwise weight gap by
+ * exactly 10%, so dominant names remain dominant without overwhelming the map.
+ */
+export function compressLeafWeights(root: HeatmapNode, compression = 0.1): HeatmapNode {
+  const leaves: HeatmapData[] = [];
+  const collect = (node: HeatmapNode | HeatmapData) => {
+    const children = 'children' in node ? node.children : undefined;
+    if (children?.length) children.forEach(collect);
+    else leaves.push(node as HeatmapData);
+  };
+  collect(root);
+  if (!leaves.length) return root;
+
+  const ratio = Math.max(0, Math.min(1, compression));
+  const mean = leaves.reduce((sum, leaf) => sum + safeLeafWeight(leaf), 0) / leaves.length;
+  const transform = (node: HeatmapNode | HeatmapData): HeatmapNode | HeatmapData => {
+    const children = 'children' in node ? node.children : undefined;
+    if (children?.length) return { ...node, children: children.map(transform) } as HeatmapNode;
+    const leaf = node as HeatmapData;
+    return { ...leaf, weight: safeLeafWeight(leaf) * (1 - ratio) + mean * ratio };
+  };
+  return transform(root) as HeatmapNode;
+}
+
 export function createTreemapHierarchy(data: HeatmapNode): LayoutNode {
   return hierarchy<HeatmapNode | HeatmapData>(data)
     .sum((node) => ('children' in node && node.children ? 0 : Math.max(0.0001, (node as HeatmapData).weight || 1)))
@@ -95,6 +123,33 @@ export function leavesForCategory(root: HeatmapNode, categoryId: string, categor
 }
 
 export type DetailLevel = 'color' | 'ticker' | 'change' | 'logo' | 'price';
+
+export interface StockTextSizes {
+  ticker: number;
+  change: number;
+}
+
+const clamp = (value: number, minimum: number, maximum: number) => (
+  Math.max(minimum, Math.min(maximum, value))
+);
+
+/** Finviz-inspired type scaling that remains bounded at every LOD level. */
+export function stockTextSizes(width: number, height: number, level: DetailLevel): StockTextSizes {
+  if (level === 'color') return { ticker: 0, change: 0 };
+  if (level === 'price') {
+    const ticker = clamp(Math.min(width / 6.5, height / 6), 16, 44);
+    return { ticker, change: clamp(ticker * 0.64, 11, 28) };
+  }
+  if (level === 'logo') {
+    const ticker = clamp(Math.min(width / 5.4, height / 4.8), 10.5, 20);
+    return { ticker, change: clamp(ticker * 0.68, 8.5, 14) };
+  }
+  if (level === 'change') {
+    const ticker = clamp(Math.min(width / 4.8, height / 3.2), 9.5, 16);
+    return { ticker, change: clamp(ticker * 0.7, 8, 12) };
+  }
+  return { ticker: clamp(Math.min(width / 4.6, height / 2.8), 8.5, 14), change: 0 };
+}
 
 export function detailLevel(width: number, height: number): DetailLevel {
   const area = width * height;

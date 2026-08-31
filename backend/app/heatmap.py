@@ -222,11 +222,16 @@ def _build_hierarchy(symbols: Iterable[dict], *, view: str = "themes") -> dict:
     buckets: dict[tuple[str, str], list[dict]] = {}
     for original in symbols:
         item = dict(original)
+        if not item.get("instrumentType"):
+            item["instrumentType"] = _instrument_type(
+                {}, str(item.get("category") or ""), str(item.get("name") or "")
+            )
+        if (
+            not item.get("logoTicker")
+            and str(item.get("instrumentType") or "").lower() in {"equity", "etf", "mutualfund"}
+        ):
+            item["logoTicker"] = str(item.get("name") or "") or None
         if view == "market":
-            if not item.get("instrumentType"):
-                item["instrumentType"] = _instrument_type(
-                    {}, str(item.get("category") or ""), str(item.get("name") or "")
-                )
             group, subgroup = _market_path(item)
         else:
             group = _clean_label(item.get("group"), "Other")

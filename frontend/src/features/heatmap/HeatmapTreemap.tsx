@@ -3,6 +3,7 @@ import {
   createTreemapHierarchy,
   detailLevel,
   layoutTreemap,
+  stockTextSizes,
   type HeatmapData,
   type HeatmapNode,
   type LayoutNode,
@@ -387,6 +388,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           const cellHeight = leaf.y1 - leaf.y0;
           if (cellWidth < 4 || cellHeight < 4) return null;
           const level = detailLevel(cellWidth, cellHeight);
+          const textSizes = stockTextSizes(cellWidth, cellHeight, level);
           const parent = leaf.parent as LayoutNode | null;
           const parentId = parent ? String((parent.data as HeatmapNode).id || parent.data.name) : '';
           const change = item.changePercent || 0;
@@ -416,8 +418,22 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
                   className="mb-1"
                 />
               )}
-              {showTicker && <strong className={level === 'price' ? 'max-w-full truncate px-1 text-base leading-tight' : 'max-w-full truncate px-1 text-[10px] leading-tight'}>{item.name}</strong>}
-              {showChange && <span className={level === 'price' ? 'text-xs font-semibold tabular-nums' : 'text-[9px] tabular-nums'}>{change > 0 ? '+' : ''}{change.toFixed(2)}%</span>}
+              {showTicker && (
+                <strong
+                  className="max-w-full truncate px-1 font-bold tracking-[-0.02em]"
+                  style={{ fontSize: textSizes.ticker, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
+                >
+                  {item.name}
+                </strong>
+              )}
+              {showChange && (
+                <span
+                  className="font-semibold tabular-nums tracking-[-0.015em]"
+                  style={{ fontSize: textSizes.change, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
+                >
+                  {change > 0 ? '+' : ''}{change.toFixed(2)}%
+                </span>
+              )}
             </div>
           );
         })}

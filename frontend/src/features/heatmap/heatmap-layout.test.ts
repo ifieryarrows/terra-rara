@@ -3,8 +3,10 @@ import {
   aggregateTinyLeaves,
   buildTreemapLayout,
   categoryStats,
+  compressLeafWeights,
   detailLevel,
   leavesForCategory,
+  stockTextSizes,
   type HeatmapData,
   type HeatmapNode,
 } from './heatmap-layout';
@@ -48,6 +50,25 @@ describe('heatmap layout', () => {
     expect(categoryStats([{ name: 'A', weight: 1, changePercent: 2 }, { name: 'B', weight: 1, changePercent: -1 }])).toMatchObject({
       averageChange: 0.5, advancing: 1, declining: 1,
     });
+  });
+
+  it('reduces leaf weight differences by exactly ten percent without changing the total', () => {
+    const compressed = compressLeafWeights(tree([leaf('NVDA', 100), leaf('SMALL', 10)]), 0.1);
+    const leaves = leavesForCategory(compressed, 'industry');
+    const weights = leaves.map((item) => item.weight || 0);
+    expect(weights).toEqual([95.5, 14.5]);
+    expect(weights[0] + weights[1]).toBe(110);
+    expect(weights[0] - weights[1]).toBe(81);
+  });
+
+  it('scales ticker and change type with cell size while keeping ticker dominant', () => {
+    const medium = stockTextSizes(100, 72, 'price');
+    const large = stockTextSizes(382, 389, 'price');
+    expect(large.ticker).toBeGreaterThan(medium.ticker);
+    expect(large.change).toBeGreaterThan(medium.change);
+    expect(large.ticker).toBeGreaterThan(large.change);
+    expect(large).toEqual({ ticker: 44, change: 28 });
+    expect(stockTextSizes(20, 16, 'color')).toEqual({ ticker: 0, change: 0 });
   });
 
   it('keeps real-size and 1,000-instrument layout p95 within the performance budget', () => {

@@ -4,6 +4,7 @@ import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import {
   aggregateTinyLeaves,
+  compressLeafWeights,
   leavesForCategory,
   type HeatmapData,
   type HeatmapMeta,
@@ -35,7 +36,7 @@ function transformTree(
   if (groupFilter !== 'ALL') {
     transformed.children = (transformed.children || []).filter((group) => group.name === groupFilter);
   }
-  return transformed;
+  return sortFilter === 'Weight' ? compressLeafWeights(transformed, 0.1) : transformed;
 }
 
 export const HeatmapPanel: React.FC = () => {
