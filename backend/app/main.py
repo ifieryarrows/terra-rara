@@ -70,6 +70,14 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     # Startup
     logger.info("Starting CopperMind API...")
+    # yfinance uses lazy SQLite cookie/timezone caches. Configure them before
+    # any endpoint (notably live-price) can initialize the default path on the
+    # read-only Space filesystem.
+    import yfinance as yf
+    from app.heatmap import _configure_yfinance_cache
+
+    yfinance_cache_dir = _configure_yfinance_cache(yf)
+    logger.info("yfinance runtime cache configured: %s", yfinance_cache_dir)
     init_db()
     logger.info("Database initialized")
     
