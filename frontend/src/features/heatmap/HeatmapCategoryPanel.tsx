@@ -8,6 +8,7 @@ import { computePointerPanelPosition } from './heatmap-utils';
 const ROW_HEIGHT = 40;
 const OVERSCAN = 6;
 const MAX_VISIBLE_ROWS = 9;
+const POINTER_INTERACTION_IDLE_MS = 120;
 
 interface Props {
   categoryId: string;
@@ -41,6 +42,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   const [scrollTop, setScrollTop] = useState(0);
   const scrollFrame = useRef<number | null>(null);
   const positionFrame = useRef<number | null>(null);
+  const interactionTimer = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const panelSizeRef = useRef({ width: 380, height: 480 });
@@ -123,12 +125,34 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     if (positionFrame.current === null) positionFrame.current = requestAnimationFrame(applyPosition);
   }, [applyPosition]);
 
+  const pausePointerInteraction = useCallback(() => {
+    const element = panelRef.current;
+    if (!element) return;
+    if (!activeLeaf || pinned || window.innerWidth <= 640) {
+      if (interactionTimer.current !== null) window.clearTimeout(interactionTimer.current);
+      interactionTimer.current = null;
+      element.style.pointerEvents = 'auto';
+      return;
+    }
+    element.style.pointerEvents = 'none';
+    if (interactionTimer.current !== null) window.clearTimeout(interactionTimer.current);
+    interactionTimer.current = window.setTimeout(() => {
+      interactionTimer.current = null;
+      if (panelRef.current) panelRef.current.style.pointerEvents = 'auto';
+    }, POINTER_INTERACTION_IDLE_MS);
+  }, [activeLeaf, pinned]);
+
   useImperativeHandle(ref, () => ({
     move(x, y) {
       pointerRef.current = { x, y };
-      schedulePosition();
+      if (positionFrame.current !== null) {
+        cancelAnimationFrame(positionFrame.current);
+        positionFrame.current = null;
+      }
+      pausePointerInteraction();
+      applyPosition();
     },
-  }), [schedulePosition]);
+  }), [applyPosition, pausePointerInteraction]);
 
   useLayoutEffect(() => {
     pointerRef.current = anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top };
@@ -140,7 +164,8 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       }
     }
     applyPosition();
-  }, [anchor, applyPosition]);
+    pausePointerInteraction();
+  }, [anchor, applyPosition, pausePointerInteraction]);
 
   useEffect(() => {
     setScrollTop(0);
@@ -163,6 +188,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   useEffect(() => () => {
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
     if (positionFrame.current !== null) cancelAnimationFrame(positionFrame.current);
+    if (interactionTimer.current !== null) window.clearTimeout(interactionTimer.current);
   }, []);
 
   return (

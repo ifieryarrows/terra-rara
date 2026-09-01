@@ -132,7 +132,7 @@ describe('heatmap interaction primitives', () => {
     expect(885 - (leftLanePosition.left + leftLanePosition.width)).toBe(18);
   });
 
-  it('moves the category panel horizontally through its imperative rAF path', async () => {
+  it('moves the stock panel synchronously without layout reads or intercepting rapid hover', async () => {
     vi.useFakeTimers();
     const panelHandle = createRef<HeatmapCategoryPanelHandle>();
     const selected = {
@@ -167,10 +167,14 @@ describe('heatmap interaction primitives', () => {
     Object.defineProperty(panel, 'offsetWidth', { configurable: true, get: widthRead });
     Object.defineProperty(panel, 'offsetHeight', { configurable: true, get: heightRead });
     panelHandle.current?.move(400, 200);
-    await vi.advanceTimersByTimeAsync(20);
     expect(panel.style.transform).not.toBe(initialTransform);
+    expect(panel.style.pointerEvents).toBe('none');
     expect(widthRead).not.toHaveBeenCalled();
     expect(heightRead).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(119);
+    expect(panel.style.pointerEvents).toBe('none');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(panel.style.pointerEvents).toBe('auto');
   });
 
   it('keeps duplicate provider IDs isolated during React reconciliation and hover', () => {
