@@ -24,11 +24,23 @@ HEATMAP_METADATA_TTL = timedelta(hours=24)
 HEATMAP_METADATA_BATCH_SIZE = 12
 HEATMAP_HISTORY_PERIOD = "3mo"
 HEATMAP_SPARKLINE_POINTS = 66
+HEATMAP_HISTORY_THREADS = 4
+HEATMAP_PROVIDER_BACKOFF = timedelta(minutes=5)
+HEATMAP_RATE_LIMIT_BACKOFF = timedelta(minutes=30)
 HEATMAP_REFRESH_LOCK = "heatmap:refresh"
 _snapshot_memo_lock = RLock()
 _snapshot_memo: Optional[dict] = None
 _yfinance_cache_lock = RLock()
 _yfinance_cache_location: Optional[Path] = None
+
+
+class HeatmapProviderUnavailableError(RuntimeError):
+    """A provider failure that should not be retried on every client poll."""
+
+
+class HeatmapProviderRateLimitError(HeatmapProviderUnavailableError):
+    """Yahoo rejected the batched history request due to rate limiting."""
+
 
 # The legacy project taxonomy remains the source of ``view=themes``.
 HEATMAP_GROUP_MAP: dict[str, tuple[str, str]] = {
@@ -471,6 +483,43 @@ def _configure_yfinance_cache(yfinance_module: object) -> Path:
     return cache_dir
 
 
+class _YFinanceLogCapture(logging.Handler):
+    """Capture yfinance's per-download errors without suppressing its logs."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+def _download_history_batch(yfinance_module: object, symbols: list[str]) -> tuple[object, list[str]]:
+    """Download history and retain errors yfinance 1.7 only exposes via logging."""
+    capture = _YFinanceLogCapture()
+    yfinance_logger = logging.getLogger("yfinance")
+    yfinance_logger.addHandler(capture)
+    try:
+        history = yfinance_module.download(
+            tickers=" ".join(symbols), period=HEATMAP_HISTORY_PERIOD, interval="1d",
+            group_by="ticker", auto_adjust=False, progress=False,
+            threads=HEATMAP_HISTORY_THREADS,
+        )
+    finally:
+        yfinance_logger.removeHandler(capture)
+    return history, capture.messages
+
+
+def _is_rate_limit_error(error: object) -> bool:
+    message = str(error).casefold()
+    return (
+        "ratelimit" in message
+        or "rate limit" in message
+        or "too many requests" in message
+        or "429" in message
+    )
+
+
 def _coverage_is_healthy(new_count: int, requested_count: int, previous_count: int) -> bool:
     if new_count <= 0:
         return False
@@ -520,6 +569,9 @@ def refresh_market_heatmap() -> None:
                 "info_error": 0,
                 "info_without_price": 0,
                 "history_price_fallback": 0,
+                "history_errors": 0,
+                "history_rate_limited": 0,
+                "history_quotes": 0,
                 "missing_price": 0,
                 "batch_error": 0,
             }
@@ -537,113 +589,140 @@ def refresh_market_heatmap() -> None:
                 stage_start = time.perf_counter()
                 sparkline_by_symbol: dict[str, list[float]] = {}
                 quote_by_symbol: dict[str, dict] = {}
+                history_exception: Optional[Exception] = None
+                history_messages: list[str] = []
                 try:
-                    history = yf.download(
-                        tickers=" ".join(symbols), period=HEATMAP_HISTORY_PERIOD, interval="1d",
-                        group_by="ticker", auto_adjust=False, progress=False, threads=True,
-                    )
+                    history, history_messages = _download_history_batch(yf, symbols)
                     sparkline_by_symbol = _history_sparklines(history, symbols)
                     quote_by_symbol = _history_quotes(history, symbols)
                 except Exception as history_error:
+                    history_exception = history_error
                     logger.warning("Heatmap sparkline batch failed; publishing quotes: %s", history_error)
+                history_missing = max(0, len(symbols) - len(quote_by_symbol))
+                history_rate_limited = (
+                    _is_rate_limit_error(history_exception)
+                    or any(_is_rate_limit_error(message) for message in history_messages)
+                )
+                provider_stats["history_errors"] = history_missing
+                provider_stats["history_rate_limited"] = history_missing if history_rate_limited else 0
+                provider_stats["history_quotes"] = len(quote_by_symbol)
                 stage_ms["history"] = (time.perf_counter() - stage_start) * 1000
-
+                if history_rate_limited:
+                    logger.warning(
+                        "Heatmap history rate limited for %d/%d symbols; metadata refresh deferred",
+                        history_missing, len(symbols),
+                    )
+                if not quote_by_symbol:
+                    if history_rate_limited:
+                        raise HeatmapProviderRateLimitError(
+                            f"provider rate limited {history_missing}/{len(symbols)} history symbols; usable=0"
+                        )
+                    raise HeatmapProviderUnavailableError("history batch returned no usable quotes")
                 stage_start = time.perf_counter()
                 all_data: list[dict] = []
                 snapshot_time = _utcnow()
-                metadata_symbols = _metadata_refresh_symbols(
+                # Never fan a partial/rate-limited history response out into
+                # one `.info` request per missing symbol. Metadata is optional,
+                # capped, and deferred entirely when Yahoo is already limiting
+                # the batch request.
+                metadata_due = _metadata_refresh_symbols(
                     symbols, previous_by_symbol, cache.cached_at, snapshot_time,
                 )
+                metadata_symbols = set() if history_rate_limited else metadata_due
                 provider_stats["metadata_scheduled"] = len(metadata_symbols)
-                provider_stats["info_skipped"] = 0
-                for offset in range(0, len(symbols), 50):
-                    if offset:
-                        time.sleep(1.5)
-                    batch = symbols[offset : offset + 50]
+                provider_stats["metadata_deferred"] = len(metadata_due) if history_rate_limited else 0
+                provider_stats["info_skipped"] = len(symbols) - len(metadata_symbols)
+                metadata_tickers: dict[str, object] = {}
+                if metadata_symbols:
                     try:
-                        tickers = yf.Tickers(" ".join(batch))
-                        for symbol in batch:
-                            info: dict = {}
+                        tickers = yf.Tickers(" ".join(sorted(metadata_symbols)))
+                        metadata_tickers = dict(getattr(tickers, "tickers", {}) or {})
+                    except Exception as metadata_batch_error:
+                        provider_stats["batch_error"] = len(metadata_symbols)
+                        logger.warning("Heatmap metadata batch failed: %s", metadata_batch_error)
+                        metadata_symbols = set()
+                        provider_stats["info_skipped"] = len(symbols)
+                for symbol in symbols:
+                    info: dict = {}
+                    try:
+                        history_quote = quote_by_symbol.get(symbol, {})
+                        should_fetch_info = symbol in metadata_symbols
+                        if should_fetch_info:
                             try:
-                                ticker = tickers.tickers.get(symbol)
-                                history_quote = quote_by_symbol.get(symbol, {})
-                                should_fetch_info = symbol in metadata_symbols or not history_quote
-                                if should_fetch_info:
-                                    try:
-                                        info = (ticker.info or {}) if ticker else {}
-                                        provider_stats["info_success" if info else "info_empty"] += 1
-                                    except Exception as info_error:
-                                        provider_stats["info_error"] += 1
-                                        logger.debug("Heatmap metadata failed for %s: %s", symbol, info_error)
-                                else:
-                                    provider_stats["info_skipped"] += 1
-                                info_price = _finite_float(info.get("regularMarketPrice"), info.get("currentPrice"))
-                                if info and info_price is None:
-                                    provider_stats["info_without_price"] += 1
-                                raw_price = info_price or _finite_float(history_quote.get("price"))
-                                if raw_price is None or raw_price <= 0:
-                                    provider_stats["missing_price"] += 1
-                                    continue
-                                if info_price is None:
-                                    provider_stats["history_price_fallback"] += 1
-                                price = raw_price
-                                row = row_by_symbol[symbol]
-                                previous = previous_by_symbol.get(symbol, {})
-                                category = str(row.get("category") or "")
-                                group, subgroup = HEATMAP_GROUP_MAP.get(category, ("Other", category or "Uncategorized"))
-                                weight, weight_label = _derive_weight(info, price)
-                                if weight_label == "Equal Weight":
-                                    previous_weight = _finite_float(previous.get("weight"))
-                                    if previous_weight is not None and previous_weight > 0:
-                                        weight = previous_weight
-                                        weight_label = str(previous.get("weightLabel") or "Previous Snapshot")
-                                instrument_type = _instrument_type(info, category, symbol)
-                                sector = (
-                                    _equity_metadata_label(info.get("sector"), "Other Equities")
-                                    or _equity_metadata_label(previous.get("sector"), "Other Equities")
-                                )
-                                industry = (
-                                    _equity_metadata_label(info.get("industry"), "Unclassified Equities")
-                                    or _equity_metadata_label(previous.get("industry"), "Unclassified Equities")
-                                )
-                                change_percent = _finite_float(
-                                    info.get("regularMarketChangePercent"), history_quote.get("changePercent"), 0.0,
-                                )
-                                has_market_time = info.get("regularMarketTime") is not None
-                                if should_fetch_info:
-                                    metadata_as_of = snapshot_time.isoformat()
-                                elif "metadataAsOf" in previous:
-                                    metadata_as_of = previous.get("metadataAsOf")
-                                elif previous:
-                                    metadata_as_of = (_utc_timestamp(cache.cached_at) or snapshot_time).isoformat()
-                                else:
-                                    metadata_as_of = None
-                                all_data.append({
-                                    "id": stable_node_id("instrument", symbol),
-                                    "name": symbol,
-                                    "shortName": info.get("shortName") or info.get("longName") or previous.get("shortName") or symbol,
-                                    "price": round(price, 4),
-                                    "changePercent": round(change_percent or 0.0, 4),
-                                    "weight": round(weight, 2),
-                                    "weightLabel": weight_label,
-                                    "group": group, "subgroup": subgroup,
-                                    "category": category, "sourceTag": row.get("source_tag", ""),
-                                    "instrumentType": instrument_type,
-                                    "sector": sector if instrument_type == "equity" else None,
-                                    "industry": industry if instrument_type == "equity" else None,
-                                    "exchange": info.get("exchange") or info.get("fullExchangeName") or previous.get("exchange"),
-                                    "logoTicker": symbol if instrument_type in {"equity", "etf", "mutualfund"} else None,
-                                    "sparkline": sparkline_by_symbol.get(symbol) or previous.get("sparkline"),
-                                    "asOf": _as_of(info, snapshot_time) if has_market_time else history_quote.get("asOf") or snapshot_time.isoformat(),
-                                    "metadataAsOf": metadata_as_of,
-                                })
-                            except Exception as symbol_error:
-                                logger.debug("Heatmap quote failed for %s: %s", symbol, symbol_error)
-                    except Exception as batch_error:
-                        provider_stats["batch_error"] += len(batch)
-                        logger.warning("Heatmap quote batch %d failed: %s", offset // 50, batch_error)
+                                ticker = metadata_tickers.get(symbol)
+                                info = (getattr(ticker, "info", None) or {}) if ticker else {}
+                                provider_stats["info_success" if info else "info_empty"] += 1
+                            except Exception as info_error:
+                                provider_stats["info_error"] += 1
+                                logger.debug("Heatmap metadata failed for %s: %s", symbol, info_error)
+                        info_price = _finite_float(info.get("regularMarketPrice"), info.get("currentPrice"))
+                        if info and info_price is None:
+                            provider_stats["info_without_price"] += 1
+                        raw_price = info_price or _finite_float(history_quote.get("price"))
+                        if raw_price is None or raw_price <= 0:
+                            provider_stats["missing_price"] += 1
+                            continue
+                        if info_price is None:
+                            provider_stats["history_price_fallback"] += 1
+                        price = raw_price
+                        row = row_by_symbol[symbol]
+                        previous = previous_by_symbol.get(symbol, {})
+                        category = str(row.get("category") or "")
+                        group, subgroup = HEATMAP_GROUP_MAP.get(category, ("Other", category or "Uncategorized"))
+                        weight, weight_label = _derive_weight(info, price)
+                        if weight_label == "Equal Weight":
+                            previous_weight = _finite_float(previous.get("weight"))
+                            if previous_weight is not None and previous_weight > 0:
+                                weight = previous_weight
+                                weight_label = str(previous.get("weightLabel") or "Previous Snapshot")
+                        instrument_type = _instrument_type(info, category, symbol)
+                        sector = (
+                            _equity_metadata_label(info.get("sector"), "Other Equities")
+                            or _equity_metadata_label(previous.get("sector"), "Other Equities")
+                        )
+                        industry = (
+                            _equity_metadata_label(info.get("industry"), "Unclassified Equities")
+                            or _equity_metadata_label(previous.get("industry"), "Unclassified Equities")
+                        )
+                        change_percent = _finite_float(
+                            info.get("regularMarketChangePercent"), history_quote.get("changePercent"), 0.0,
+                        )
+                        has_market_time = info.get("regularMarketTime") is not None
+                        if should_fetch_info and info:
+                            metadata_as_of = snapshot_time.isoformat()
+                        elif "metadataAsOf" in previous:
+                            metadata_as_of = previous.get("metadataAsOf")
+                        elif previous:
+                            metadata_as_of = (_utc_timestamp(cache.cached_at) or snapshot_time).isoformat()
+                        else:
+                            metadata_as_of = None
+                        all_data.append({
+                            "id": stable_node_id("instrument", symbol),
+                            "name": symbol,
+                            "shortName": info.get("shortName") or info.get("longName") or previous.get("shortName") or symbol,
+                            "price": round(price, 4),
+                            "changePercent": round(change_percent or 0.0, 4),
+                            "weight": round(weight, 2),
+                            "weightLabel": weight_label,
+                            "group": group, "subgroup": subgroup,
+                            "category": category, "sourceTag": row.get("source_tag", ""),
+                            "instrumentType": instrument_type,
+                            "sector": sector if instrument_type == "equity" else None,
+                            "industry": industry if instrument_type == "equity" else None,
+                            "exchange": info.get("exchange") or info.get("fullExchangeName") or previous.get("exchange"),
+                            "logoTicker": symbol if instrument_type in {"equity", "etf", "mutualfund"} else None,
+                            "sparkline": sparkline_by_symbol.get(symbol) or previous.get("sparkline"),
+                            "asOf": _as_of(info, snapshot_time) if has_market_time else history_quote.get("asOf") or snapshot_time.isoformat(),
+                            "metadataAsOf": metadata_as_of,
+                        })
+                    except Exception as symbol_error:
+                        logger.debug("Heatmap quote failed for %s: %s", symbol, symbol_error)
                 stage_ms["quotes"] = (time.perf_counter() - stage_start) * 1000
                 if not _coverage_is_healthy(len(all_data), len(symbols), previous_count):
+                    if history_rate_limited:
+                        raise HeatmapProviderRateLimitError(
+                            f"provider rate limited {history_missing}/{len(symbols)} history symbols; usable={len(all_data)}"
+                        )
                     raise RuntimeError(f"unhealthy symbol coverage {len(all_data)}/{len(symbols)}; previous={previous_count}")
 
                 stage_start = time.perf_counter()
@@ -665,6 +744,13 @@ def refresh_market_heatmap() -> None:
                 }, sort_keys=True))
             except Exception as error:
                 session.rollback()
+                if isinstance(error, HeatmapProviderRateLimitError):
+                    retry_backoff = HEATMAP_RATE_LIMIT_BACKOFF
+                elif isinstance(error, HeatmapProviderUnavailableError):
+                    retry_backoff = HEATMAP_PROVIDER_BACKOFF
+                else:
+                    retry_backoff = timedelta(seconds=60)
+                provider_stats["retry_after_seconds"] = int(retry_backoff.total_seconds())
                 current = session.query(HeatmapCache).first()
                 if current:
                     current.refresh_started_at = None
@@ -672,7 +758,7 @@ def refresh_market_heatmap() -> None:
                     # Keep serving the last healthy payload and bound provider
                     # retries. The API exposes this future instant as
                     # next_refresh_at while still marking the payload stale.
-                    current.expires_at = _utcnow() + timedelta(seconds=60)
+                    current.expires_at = _utcnow() + retry_backoff
                     session.commit()
                 logger.error("heatmap_refresh %s", json.dumps({
                     "status": "error", "error": str(error)[:500], "preserved_symbols": previous_count,

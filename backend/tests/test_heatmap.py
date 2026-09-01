@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
 import sys
@@ -334,8 +335,58 @@ def test_refresh_preserves_last_good_snapshot_on_unhealthy_coverage(monkeypatch)
     heatmap.refresh_market_heatmap()
     assert cache.payload_json == payload
     assert cache.refresh_started_at is None
-    assert "unhealthy symbol coverage" in cache.refresh_error
-    assert cache.expires_at > datetime.now(timezone.utc) + timedelta(seconds=50)
+    assert cache.refresh_error == "history batch returned no usable quotes"
+    assert cache.expires_at > datetime.now(timezone.utc) + timedelta(minutes=4, seconds=50)
+
+
+def test_refresh_rate_limit_does_not_fan_out_info_and_uses_long_backoff(monkeypatch):
+    from app import db, heatmap
+    from app.heatmap import _build_hierarchy
+    from app.models import HeatmapCache
+
+    now = datetime.now(timezone.utc)
+    payload = _build_hierarchy([_leaf("FCX"), _leaf("SCCO"), _leaf("BHP")])
+    cache = HeatmapCache(payload_json=payload, cached_at=now, expires_at=now)
+    session = _FakeSession(cache)
+    monkeypatch.setattr(db, "SessionLocal", lambda: session)
+    monkeypatch.setattr(db, "get_db_type", lambda: "sqlite")
+    monkeypatch.setattr(heatmap, "_load_universe", lambda: [
+        {"ticker": symbol, "category": "miner_major", "source_tag": "test"}
+        for symbol in ("FCX", "SCCO", "BHP", "RIO")
+    ])
+    history = pd.DataFrame(
+        [[10.0], [11.0]],
+        index=pd.date_range("2026-01-01", periods=2),
+        columns=pd.MultiIndex.from_tuples([("FCX", "Close")]),
+    )
+    download_args = {}
+
+    def download_history(**kwargs):
+        download_args.update(kwargs)
+        logging.getLogger("yfinance").error(
+            "['SCCO', 'BHP', 'RIO']: YFRateLimitError('Too Many Requests. Rate limited.')"
+        )
+        return history
+
+    fake_yfinance = SimpleNamespace(
+        set_tz_cache_location=lambda _path: None,
+        cache=SimpleNamespace(
+            get_tz_cache=lambda: SimpleNamespace(initialise=lambda: None),
+            get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
+        ),
+        download=download_history,
+        Tickers=Mock(side_effect=AssertionError("rate-limited history must defer all info calls")),
+    )
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+
+    heatmap.refresh_market_heatmap()
+
+    assert cache.payload_json == payload
+    assert cache.refresh_started_at is None
+    assert "provider rate limited 3/4 history symbols; usable=1" == cache.refresh_error
+    assert cache.expires_at > datetime.now(timezone.utc) + timedelta(minutes=29, seconds=50)
+    assert download_args["threads"] == heatmap.HEATMAP_HISTORY_THREADS
+    fake_yfinance.Tickers.assert_not_called()
 
 
 def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
@@ -359,6 +410,7 @@ def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
         columns=pd.MultiIndex.from_tuples([("FCX", "Close"), ("SCCO", "Close")]),
     )
     download_args = {}
+    ticker_args = []
 
     def download_history(**kwargs):
         download_args.update(kwargs)
@@ -371,7 +423,7 @@ def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
             get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
         ),
         download=download_history,
-        Tickers=lambda symbols: SimpleNamespace(
+        Tickers=lambda symbols: ticker_args.append(symbols) or SimpleNamespace(
             tickers={symbol: SimpleNamespace(info={}) for symbol in symbols.split()}
         ),
     )
@@ -389,6 +441,8 @@ def test_refresh_uses_batched_history_when_info_has_no_quotes(monkeypatch):
     assert leaves["SCCO"]["sector"] is None
     assert download_args["period"] == "3mo"
     assert download_args["interval"] == "1d"
+    assert download_args["threads"] == heatmap.HEATMAP_HISTORY_THREADS
+    assert ticker_args == ["SCCO"]
     assert cache.refresh_error is None
 
 

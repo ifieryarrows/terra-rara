@@ -45,6 +45,7 @@ export const HeatmapPanel: React.FC = () => {
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
   const [zoom, setZoom] = useState(1);
+  const [highlightedCategoryId, setHighlightedCategoryId] = useState<string | null>(null);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
@@ -115,9 +116,14 @@ export const HeatmapPanel: React.FC = () => {
   const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
     if (pinnedAnchor) return;
     if (!anchor) {
+      // Finviz paints selection on a dedicated hover canvas. Mirror that
+      // immediacy for the visual boundary while retaining the panel's close
+      // grace period.
+      setHighlightedCategoryId(null);
       scheduleClose();
       return;
     }
+    setHighlightedCategoryId(anchor.id);
     if (anchor.pointer) latestPointer.current = anchor.pointer;
     const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
@@ -142,6 +148,7 @@ export const HeatmapPanel: React.FC = () => {
       if (pinnedAnchor || hoveredAnchor) {
         setPinnedAnchor(null);
         setHoveredAnchor(null);
+        setHighlightedCategoryId(null);
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -152,6 +159,7 @@ export const HeatmapPanel: React.FC = () => {
 
   useEffect(() => {
     setGroupFilter('ALL');
+    setHighlightedCategoryId(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
@@ -235,7 +243,7 @@ export const HeatmapPanel: React.FC = () => {
               width={dimensions.width}
               height={dimensions.height}
               zoom={zoom}
-              hoveredCategoryId={activeAnchor?.id || null}
+              hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
               onCategoryHover={handleCategoryHover}
               onCategoryPointerMove={moveCategoryPanel}
               onLeafHover={handleLeafHover}
@@ -243,6 +251,7 @@ export const HeatmapPanel: React.FC = () => {
                 clearTimer(openTimer);
                 clearTimer(closeTimer);
                 setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
+                setHighlightedCategoryId(anchor.id);
                 setHoveredAnchor(anchor);
               }}
               onZoomDelta={zoomBy}
@@ -261,7 +270,7 @@ export const HeatmapPanel: React.FC = () => {
             pinned={!!pinnedAnchor}
             onPointerEnter={cancelClose}
             onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
-            onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
+            onClose={() => { setPinnedAnchor(null); setHighlightedCategoryId(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
           />
         )}
       </div>

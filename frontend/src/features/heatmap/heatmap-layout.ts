@@ -107,6 +107,10 @@ export function categoryHeaderPadding(depth: number, width: number, height: numb
 export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
   treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
+    // A single layout pixel is the shared boundary between adjacent cells.
+    // Cells do not draw their own borders, avoiding the old 1 + 1 + 1px
+    // stacked gutter while allowing the category backing layer to recolour
+    // every internal boundary on hover.
     .paddingInner(1)
     .paddingOuter(1)
     .paddingTop((node) => categoryHeaderPadding(

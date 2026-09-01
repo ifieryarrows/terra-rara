@@ -462,7 +462,7 @@ describe('heatmap interaction primitives', () => {
     expect(screen.getByText('No recent news is available for AMD.')).toBeVisible();
   });
 
-  it('uses hover intent and keeps the panel open while the pointer crosses into it', async () => {
+  it('highlights the industry grid immediately while retaining panel hover intent', async () => {
     vi.useFakeTimers();
     render(<HeatmapPanel />);
     await vi.advanceTimersByTimeAsync(20);
@@ -471,17 +471,25 @@ describe('heatmap interaction primitives', () => {
       x: 0, y: 0, left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560,
       toJSON: () => ({}),
     });
-    const industry = screen.getByRole('button', { name: /Industry or theme: Semiconductors/i });
-    fireEvent.pointerOver(industry, { clientX: 100, clientY: 100 });
+    const stock = map.querySelector<HTMLElement>('[data-hm-leaf-id]')!;
+    fireEvent.pointerOver(stock, { clientX: 100, clientY: 100 });
+    const industryCells = Array.from(map.querySelectorAll<HTMLElement>('[data-hm-parent-id="industry"]'));
+    const industry = map.querySelector<HTMLElement>('[data-hm-category-id="industry"]')!;
+    expect(industryCells.length).toBeGreaterThan(1);
+    industryCells.forEach((cell) => {
+      expect(cell.classList.contains('border')).toBe(false);
+    });
+    expect(industry).toHaveStyle({ backgroundColor: '#d99a5b' });
     await vi.advanceTimersByTimeAsync(89);
     expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
     await vi.advanceTimersByTimeAsync(1);
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     const initialTransform = panel.style.transform;
-    fireEvent.pointerMove(industry, { clientX: 620, clientY: 300 });
+    fireEvent.pointerMove(stock, { clientX: 620, clientY: 300 });
     await vi.advanceTimersByTimeAsync(20);
     expect(panel.style.transform).not.toBe(initialTransform);
-    fireEvent.pointerOut(industry, { relatedTarget: document.body });
+    fireEvent.pointerOut(stock, { relatedTarget: document.body });
+    expect(industry).toHaveStyle({ backgroundColor: '#020617' });
     await vi.advanceTimersByTimeAsync(100);
     fireEvent.pointerEnter(panel);
     await vi.advanceTimersByTimeAsync(200);

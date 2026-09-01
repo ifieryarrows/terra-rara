@@ -387,6 +387,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
               style={{
                 left: node.x0, top: node.y0, width: nodeWidth, height: nodeHeight,
                 border: active ? '2px solid #d99a5b' : node.depth === 1 ? '1px solid #334155' : '1px solid #1e293b',
+                backgroundColor: active ? '#d99a5b' : '#020617',
                 boxShadow: active ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)' : undefined,
                 // Category geometry stays below stock cells so the copper
                 // highlight never intercepts stock hover/focus events.
@@ -430,8 +431,14 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
               role="button"
               tabIndex={0}
               aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-              className={`absolute z-[2] flex flex-col items-center justify-center overflow-hidden border border-slate-950 text-center text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
-              style={{ left: leaf.x0, top: leaf.y0, width: cellWidth, height: cellHeight, backgroundColor: getColorForChange(item.changePercent) }}
+              className={`absolute z-[2] flex flex-col items-center justify-center overflow-hidden text-center text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+              style={{
+                left: leaf.x0,
+                top: leaf.y0,
+                width: cellWidth,
+                height: cellHeight,
+                backgroundColor: getColorForChange(item.changePercent),
+              }}
             >
               {showLogo && (
                 <CompanyLogo
