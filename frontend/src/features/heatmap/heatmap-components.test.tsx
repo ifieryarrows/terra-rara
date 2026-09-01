@@ -132,7 +132,7 @@ describe('heatmap interaction primitives', () => {
     expect(885 - (leftLanePosition.left + leftLanePosition.width)).toBe(18);
   });
 
-  it('moves the stock panel synchronously without layout reads or intercepting rapid hover', async () => {
+  it('moves the stock panel synchronously and never intercepts unpinned hover', async () => {
     vi.useFakeTimers();
     const panelHandle = createRef<HeatmapCategoryPanelHandle>();
     const selected = {
@@ -171,10 +171,8 @@ describe('heatmap interaction primitives', () => {
     expect(panel.style.pointerEvents).toBe('none');
     expect(widthRead).not.toHaveBeenCalled();
     expect(heightRead).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(119);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(panel.style.pointerEvents).toBe('none');
-    await vi.advanceTimersByTimeAsync(1);
-    expect(panel.style.pointerEvents).toBe('auto');
   });
 
   it('keeps duplicate provider IDs isolated during React reconciliation and hover', () => {
