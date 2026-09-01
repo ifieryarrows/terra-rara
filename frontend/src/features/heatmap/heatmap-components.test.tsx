@@ -121,18 +121,15 @@ describe('heatmap interaction primitives', () => {
     const wideCell = { left: 30, top: 120, right: 420, bottom: 520, width: 390, height: 400 };
     const firstCellPosition = computePointerPanelPosition(160, 300, bounds, 1_000, 800, 380, 480, wideCell);
     const movedCellPosition = computePointerPanelPosition(260, 300, bounds, 1_000, 800, 380, 480, wideCell);
-    expect(firstCellPosition.left).toBeGreaterThan(wideCell.right);
-    expect(movedCellPosition.left - firstCellPosition.left).toBeGreaterThan(10);
-    const leftEdgePosition = computePointerPanelPosition(wideCell.left, 300, bounds, 1_000, 800, 380, 480, wideCell);
-    const rightEdgePosition = computePointerPanelPosition(wideCell.right, 300, bounds, 1_000, 800, 380, 480, wideCell);
-    expect(rightEdgePosition.left - leftEdgePosition.left).toBe(56);
-    expect(rightEdgePosition.left - wideCell.right).toBeLessThanOrEqual(18 + 56);
+    expect(firstCellPosition.left - 160).toBe(18);
+    expect(movedCellPosition.left - firstCellPosition.left).toBe(100);
+    expect(firstCellPosition.top).toBe(300 - 48);
     expect(movedCellPosition.top).toBe(firstCellPosition.top);
     expect(movedCellPosition.left + movedCellPosition.width).toBeLessThanOrEqual(bounds.right - 10);
 
     const moreRoomOnLeft = { left: 850, top: 120, right: 920, bottom: 320, width: 70, height: 200 };
     const leftLanePosition = computePointerPanelPosition(885, 200, { ...bounds, right: 1_400, width: 1_400 }, 1_400, 800, 380, 480, moreRoomOnLeft);
-    expect(leftLanePosition.left + leftLanePosition.width).toBeLessThan(moreRoomOnLeft.left);
+    expect(885 - (leftLanePosition.left + leftLanePosition.width)).toBe(18);
   });
 
   it('moves the category panel horizontally through its imperative rAF path', async () => {
@@ -165,9 +162,15 @@ describe('heatmap interaction primitives', () => {
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     const initialTransform = panel.style.transform;
     expect(panel.style.transition).toBe('');
+    const widthRead = vi.fn(() => 380);
+    const heightRead = vi.fn(() => 480);
+    Object.defineProperty(panel, 'offsetWidth', { configurable: true, get: widthRead });
+    Object.defineProperty(panel, 'offsetHeight', { configurable: true, get: heightRead });
     panelHandle.current?.move(400, 200);
     await vi.advanceTimersByTimeAsync(20);
     expect(panel.style.transform).not.toBe(initialTransform);
+    expect(widthRead).not.toHaveBeenCalled();
+    expect(heightRead).not.toHaveBeenCalled();
   });
 
   it('keeps duplicate provider IDs isolated during React reconciliation and hover', () => {
@@ -296,10 +299,12 @@ describe('heatmap interaction primitives', () => {
       toJSON: () => ({}),
     });
     fireEvent.pointerOver(screen.getByRole('button', { name: /^NVDA,/i }), { clientX: 160, clientY: 160 });
+    fireEvent.pointerMove(map, { clientX: 220, clientY: 180 });
     await vi.advanceTimersByTimeAsync(90);
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     expect(panel.style.width).toBe('380px');
     expect(panel.style.transition).toBe('');
+    expect(panel.style.transform).toContain('translate3d(238px');
     expect(within(panel).getByText('Technology - Semiconductors')).toBeVisible();
     expect(within(panel).getAllByText('NVDA')).toHaveLength(1);
     expect(within(panel).getAllByTestId('peer-row')).toHaveLength(1);

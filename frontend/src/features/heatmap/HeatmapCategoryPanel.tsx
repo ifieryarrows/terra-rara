@@ -43,6 +43,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   const positionFrame = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const panelSizeRef = useRef({ width: 380, height: 480 });
   const pointerRef = useRef(anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top });
   const scopedLeaves = useMemo(() => {
     if (!activeLeaf) return leaves;
@@ -109,8 +110,8 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       anchor.containerRect,
       window.innerWidth,
       window.innerHeight,
-      element.offsetWidth || 380,
-      element.offsetHeight || 480,
+      panelSizeRef.current.width,
+      panelSizeRef.current.height,
       activeLeaf ? anchor.rect : undefined,
     );
     if (position.mode === 'float') {
@@ -131,6 +132,13 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
 
   useLayoutEffect(() => {
     pointerRef.current = anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top };
+    const element = panelRef.current;
+    if (element && window.innerWidth > 640) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0) {
+        panelSizeRef.current = { width: bounds.width, height: bounds.height };
+      }
+    }
     applyPosition();
   }, [anchor, applyPosition]);
 
@@ -142,7 +150,12 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   useEffect(() => {
     const element = panelRef.current;
     if (!element || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(schedulePosition);
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      const height = entry.contentRect.height;
+      if (width > 0 && height > 0) panelSizeRef.current = { width: Math.min(380, width), height };
+      schedulePosition();
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, [schedulePosition]);
@@ -156,7 +169,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     <aside
       ref={panelRef}
       style={style}
-      className="flex flex-col overflow-hidden rounded-lg border border-copper-400/40 bg-slate-950/95 text-slate-100 shadow-2xl backdrop-blur"
+      className="flex flex-col overflow-hidden rounded-lg border border-copper-400/40 bg-slate-950 text-slate-100 shadow-2xl"
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       aria-label={`${categoryName} category details`}

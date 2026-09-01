@@ -55,6 +55,7 @@ export const HeatmapPanel: React.FC = () => {
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const categoryPanelRef = useRef<HeatmapCategoryPanelHandle>(null);
+  const latestPointer = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -117,13 +118,17 @@ export const HeatmapPanel: React.FC = () => {
       scheduleClose();
       return;
     }
+    if (anchor.pointer) latestPointer.current = anchor.pointer;
+    const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
     clearTimer(openTimer);
     if (hoveredAnchor?.id === anchor.id) {
-      setHoveredAnchor(anchor);
+      setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
       return;
     }
-    openTimer.current = window.setTimeout(() => setHoveredAnchor(anchor), OPEN_DELAY_MS);
+    openTimer.current = window.setTimeout(() => {
+      setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
+    }, OPEN_DELAY_MS);
   }, [hoveredAnchor, pinnedAnchor, scheduleClose]);
 
   useEffect(() => () => {
@@ -175,6 +180,7 @@ export const HeatmapPanel: React.FC = () => {
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
   const zoomBy = useCallback((delta: number) => setZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(current + delta).toFixed(2)))), []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
+    latestPointer.current = { x, y };
     if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
   }, [pinnedAnchor]);
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {

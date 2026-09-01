@@ -3,7 +3,7 @@ const TOOLTIP_HEIGHT = 154;
 const TOOLTIP_GAP = 14;
 const PANEL_WIDTH = 380;
 const PANEL_GAP = 18;
-const PANEL_MAX_HORIZONTAL_TRAVEL = 56;
+const PANEL_POINTER_Y_OFFSET = 48;
 
 const rgb = (hex: string) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
 const mix = (from: string, to: string, amount: number) => {
@@ -86,47 +86,20 @@ export function computePointerPanelPosition(
   const bottomEdge = Math.min(bounds.bottom, viewportHeight);
   const width = Math.min(panelWidth, Math.max(300, bounds.width - margin * 2));
   const height = Math.min(panelHeight, Math.max(180, bottomEdge - bounds.top - margin * 2));
-  // Use the active cell only to choose a stable opening side. Positioning from
-  // its fixed edge made the card follow Y but remain frozen on X while the
-  // pointer moved inside the same stock. The pointer now drives both axes;
-  // the cell-aware side choice still prevents left/right flicker.
+  // The stock rect chooses a stable opening side, while the pointer drives the
+  // actual position at a 1:1 rate. Anchoring to the far edge of a large stock
+  // made the card feel detached; scaling the cell into a short lane made it
+  // visibly lag behind the pointer.
   const sideAnchor = avoidRect || { left: x, right: x };
   const roomRight = rightEdge - sideAnchor.right - PANEL_GAP;
   const roomLeft = sideAnchor.left - bounds.left - PANEL_GAP;
-  // Pick the side with the larger tracking lane. Selecting the right merely
-  // because the card fits there can leave no room for horizontal movement,
-  // even when the left side has hundreds of usable pixels.
   const opensRight = roomRight >= roomLeft;
-  let left: number;
-  if (avoidRect) {
-    const pointerInsideCell = Math.max(avoidRect.left, Math.min(x, avoidRect.right));
-    const cellWidth = Math.max(1, avoidRect.width || avoidRect.right - avoidRect.left);
-    const pointerProgress = (pointerInsideCell - avoidRect.left) / cellWidth;
-    // Keep the interactive card outside the stock so it cannot steal hover,
-    // while mapping the whole cell onto the available side lane. This avoids
-    // long clamped zones where X movement appeared frozen near a viewport edge.
-    if (opensRight) {
-      const laneStart = avoidRect.right + PANEL_GAP;
-      const laneWidth = Math.max(0, Math.min(
-        cellWidth,
-        PANEL_MAX_HORIZONTAL_TRAVEL,
-        rightEdge - width - margin - laneStart,
-      ));
-      left = laneStart + pointerProgress * laneWidth;
-    } else {
-      const laneEnd = avoidRect.left - width - PANEL_GAP;
-      const laneWidth = Math.max(0, Math.min(
-        cellWidth,
-        PANEL_MAX_HORIZONTAL_TRAVEL,
-        laneEnd - (bounds.left + margin),
-      ));
-      left = laneEnd - laneWidth + pointerProgress * laneWidth;
-    }
-  } else {
-    left = opensRight ? x + PANEL_GAP : x - width - PANEL_GAP;
-  }
-  let top = y + PANEL_GAP;
-  if (top + height > bottomEdge - margin) top = y - height - PANEL_GAP;
+  let left = opensRight ? x + PANEL_GAP : x - width - PANEL_GAP;
+  // Stock cards sit beside the pointer instead of diagonally below it. Keep
+  // the legacy category positioning because its larger anchor is already
+  // stable and intentionally flips at the viewport edge.
+  let top = avoidRect ? y - PANEL_POINTER_Y_OFFSET : y + PANEL_GAP;
+  if (!avoidRect && top + height > bottomEdge - margin) top = y - height - PANEL_GAP;
   left = Math.max(bounds.left + margin, Math.min(left, rightEdge - width - margin));
   top = Math.max(bounds.top + margin, Math.min(top, bottomEdge - height - margin));
   return { mode: 'float' as const, left, top, width, maxHeight: Math.min(560, bottomEdge - bounds.top - margin * 2) };
