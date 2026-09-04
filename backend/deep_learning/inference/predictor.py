@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -59,6 +61,59 @@ logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARN
 
 class IncompatibleTFTCheckpointError(RuntimeError):
     """Raised when a checkpoint predates the weekly log-return contract."""
+
+
+def _checkpoint_dataset_parameters(model: object) -> dict[str, Any]:
+    """Return the fitted TimeSeriesDataSet contract stored in the checkpoint."""
+    parameters = getattr(model, "dataset_parameters", None)
+    if not isinstance(parameters, Mapping):
+        hparams = getattr(model, "hparams", None)
+        if isinstance(hparams, Mapping):
+            parameters = hparams.get("dataset_parameters")
+        else:
+            parameters = getattr(hparams, "dataset_parameters", None)
+    if not isinstance(parameters, Mapping):
+        raise IncompatibleTFTCheckpointError(
+            "Incompatible TFT checkpoint: fitted dataset parameters are missing. Retraining required."
+        )
+    parameters = dict(parameters)
+
+    required = {
+        "time_varying_unknown_reals",
+        "time_varying_known_reals",
+        "max_encoder_length",
+        "max_prediction_length",
+    }
+    missing = sorted(required - set(parameters))
+    if missing:
+        raise IncompatibleTFTCheckpointError(
+            "Incompatible TFT checkpoint: incomplete fitted dataset parameters "
+            f"({', '.join(missing)}). Retraining required."
+        )
+    return parameters
+
+
+def _checkpoint_feature_contract(
+    parameters: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Extract the exact real-valued feature order fitted during training."""
+    unknown = [str(name) for name in parameters["time_varying_unknown_reals"]]
+    known = [str(name) for name in parameters["time_varying_known_reals"]]
+    if not unknown:
+        raise IncompatibleTFTCheckpointError(
+            "Incompatible TFT checkpoint: fitted unknown feature list is empty. Retraining required."
+        )
+    if len(unknown) != len(set(unknown)) or len(known) != len(set(known)):
+        raise IncompatibleTFTCheckpointError(
+            "Incompatible TFT checkpoint: fitted feature lists contain duplicates. Retraining required."
+        )
+    overlap = sorted(set(unknown) & set(known))
+    if overlap:
+        raise IncompatibleTFTCheckpointError(
+            "Incompatible TFT checkpoint: known and unknown feature lists overlap "
+            f"({', '.join(overlap[:5])}). Retraining required."
+        )
+    return unknown, known
 
 
 class TFTPredictor:
@@ -294,18 +349,61 @@ class TFTPredictor:
         """
         from deep_learning.data.feature_store import build_tft_dataframe
         from deep_learning.data.future_frame import build_future_decoder_rows
-        from deep_learning.data.dataset import _identity_target_normalizer
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
 
         # 1. Pre-flight: check PriceBar freshness and lazy-ingest if stale
         staleness_days, ingest_triggered = self._check_price_freshness(session, symbol)
 
-        master_df, tv_unknown, tv_known, target_cols, last_known_price = build_tft_dataframe(
-            session,
+        # A TFT checkpoint is fitted against an exact feature order, category
+        # encoder and set of scalers.  Re-running MRMR on a rolling live window
+        # can choose a different feature set even though all training features
+        # are still available.  Load the fitted dataset contract before feature
+        # assembly and use it as the sole inference schema.
+        try:
+            model = self.model
+            dataset_parameters = _checkpoint_dataset_parameters(model)
+            checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(
+                dataset_parameters
+            )
+        except IncompatibleTFTCheckpointError as exc:
+            logger.warning("TFT checkpoint incompatible: %s", exc)
+            return self._degraded_retrain_required(str(exc))
+
+        inference_cfg = replace(
             self.cfg,
-            drop_missing_target=False,
+            feature_store=replace(self.cfg.feature_store, mrmr_top_k=0),
         )
+
+        (
+            master_df,
+            tv_unknown,
+            tv_known,
+            _target_cols,
+            last_known_price,
+        ) = build_tft_dataframe(session, inference_cfg, drop_missing_target=False)
+        missing_checkpoint_features = [
+            name
+            for name in checkpoint_known + checkpoint_unknown
+            if name not in master_df.columns
+        ]
+        if missing_checkpoint_features:
+            message = (
+                "Incompatible live TFT features: checkpoint features are missing "
+                f"({', '.join(missing_checkpoint_features[:10])}). "
+                "Retraining or data repair required."
+            )
+            logger.warning(message)
+            return self._degraded_retrain_required(message)
+        logger.info(
+            "TFT inference feature contract: checkpoint unknown=%d known=%d; raw unknown=%d known=%d",
+            len(checkpoint_unknown),
+            len(checkpoint_known),
+            len(tv_unknown),
+            len(tv_known),
+        )
+        tv_unknown = checkpoint_unknown
+        tv_known = checkpoint_known
 
         # Track feature freshness separately from the baseline close. In live
         # inference the feature frame keeps the final bar with a dummy target,
@@ -335,8 +433,8 @@ class TFTPredictor:
             symbol,
         )
 
-        encoder_length = self.cfg.model.max_encoder_length
-        prediction_length = self.cfg.model.max_prediction_length
+        encoder_length = int(dataset_parameters["max_encoder_length"])
+        prediction_length = int(dataset_parameters["max_prediction_length"])
 
         history = master_df.tail(encoder_length).copy()
         future = build_future_decoder_rows(history, prediction_length, self.cfg)
@@ -346,24 +444,12 @@ class TFTPredictor:
 
         recent["time_idx"] = np.arange(len(recent))
 
-        target = target_cols[0] if target_cols else "target"
-
         try:
-            ds = TimeSeriesDataSet(
+            ds = TimeSeriesDataSet.from_parameters(
+                dataset_parameters,
                 recent,
-                time_idx="time_idx",
-                target=target,
-                group_ids=["group_id"],
-                max_encoder_length=encoder_length,
-                max_prediction_length=prediction_length,
-                time_varying_unknown_reals=tv_unknown,
-                time_varying_known_reals=tv_known,
-                static_categoricals=["group_id"],
-                target_normalizer=_identity_target_normalizer(),
-                add_relative_time_idx=True,
-                add_target_scales=True,
-                add_encoder_length=True,
-                allow_missing_timesteps=True,
+                predict=True,
+                stop_randomization=True,
             )
         except Exception as exc:
             logger.error("Failed to create inference dataset: %s", exc)
@@ -378,7 +464,7 @@ class TFTPredictor:
             # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
             # Avoids the inhomogeneous-shape error from mode="raw" which returns a
             # NamedTuple; np.array() cannot convert that to a uniform array.
-            pred_tensor = self.model.predict(dl, mode="quantiles")
+            pred_tensor = model.predict(dl, mode="quantiles")
 
             if isinstance(pred_tensor, torch.Tensor):
                 pred_np = pred_tensor.cpu().numpy()
@@ -495,6 +581,7 @@ class TFTPredictor:
             "prediction_length": prediction_length,
             "n_features_unknown": len(tv_unknown),
             "n_features_known": len(tv_known),
+            "feature_contract_source": "checkpoint_dataset_parameters",
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "return_space": RETURN_SPACE,

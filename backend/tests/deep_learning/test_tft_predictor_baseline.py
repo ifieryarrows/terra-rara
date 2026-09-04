@@ -23,14 +23,30 @@ from deep_learning.inference.predictor import TFTPredictor
 
 
 class _FakeTimeSeriesDataSet:
+    last_parameters = None
+    last_data = None
+
     def __init__(self, data, **_kwargs):
         self.data = data
+
+    @classmethod
+    def from_parameters(cls, parameters, data, **_kwargs):
+        cls.last_parameters = parameters
+        cls.last_data = data.copy()
+        return cls(data)
 
     def to_dataloader(self, **_kwargs):
         return ["fake-batch"]
 
 
 class _FakeModel:
+    dataset_parameters = {
+        "time_varying_unknown_reals": ["feat"],
+        "time_varying_known_reals": [],
+        "max_encoder_length": 2,
+        "max_prediction_length": 1,
+    }
+
     def predict(self, _dl, mode=None):
         assert mode == "quantiles"
         return np.array(
@@ -73,15 +89,14 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
 
     import deep_learning.data.feature_store as feature_store
-    import deep_learning.data.dataset as dataset_mod
-    monkeypatch.setattr(dataset_mod, "_identity_target_normalizer", lambda: None)
-
     def fake_build_tft_dataframe(_session, _cfg, *, drop_missing_target=True):
         assert drop_missing_target is False
+        assert _cfg.feature_store.mrmr_top_k == 0
         index = pd.to_datetime(["2026-04-22", "2026-04-23", "2026-04-24"])
         master = pd.DataFrame(
             {
                 "feat": [1.0, 1.1, 1.2],
+                "rolling_window_pick": [2.0, 2.1, 2.2],
                 "target": [0.001, -0.002, 0.0],
                 "target_1d_log_return": [0.001, -0.002, 0.0],
                 "target_5d_log_return": [0.01, 0.02, 0.0],
@@ -92,7 +107,9 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
             },
             index=index,
         )
-        return master, ["feat"], [], ["target"], 6.0235
+        # Simulate rolling-window MRMR choosing a different feature than the
+        # checkpoint. Inference must retain the fitted checkpoint order.
+        return master, ["rolling_window_pick"], [], ["target"], 6.0235
 
     monkeypatch.setattr(
         feature_store,
@@ -101,7 +118,9 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     )
 
     cfg = TFTASROConfig(
-        model=TFTModelConfig(max_encoder_length=2, max_prediction_length=1),
+        # Deliberately differ from the fitted checkpoint contract. A config
+        # change after training must not reshape live inference tensors.
+        model=TFTModelConfig(max_encoder_length=60, max_prediction_length=5),
         training=TrainingConfig(best_model_path="unused.ckpt"),
         feature_store=FeatureStoreConfig(target_symbol="HG=F", mrmr_top_k=0),
     )
@@ -121,6 +140,64 @@ def test_predict_uses_latest_price_bar_for_reference_date(monkeypatch, price_ses
     assert result["predicted_price_median"] == pytest.approx(6.0180 * np.exp(0.01))
     assert result["return_basis"] == "daily_log_return_path"
     assert result["daily_forecasts"][0]["forecast_date"] == "2026-04-28"
+    assert result["model_info"]["feature_contract_source"] == "checkpoint_dataset_parameters"
+    assert result["model_info"]["encoder_length"] == 2
+    assert result["model_info"]["prediction_length"] == 1
+    assert _FakeTimeSeriesDataSet.last_parameters == _FakeModel.dataset_parameters
+    assert "feat" in _FakeTimeSeriesDataSet.last_data.columns
+
+
+def test_predict_returns_degraded_payload_when_checkpoint_feature_is_missing(
+    monkeypatch,
+    price_session,
+):
+    fake_pf = types.ModuleType("pytorch_forecasting")
+    fake_pf.TimeSeriesDataSet = _FakeTimeSeriesDataSet
+    monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
+
+    import deep_learning.data.feature_store as feature_store
+
+    index = pd.to_datetime(["2026-04-22", "2026-04-23", "2026-04-24"])
+    master = pd.DataFrame(
+        {
+            "different_feat": [1.0, 1.1, 1.2],
+            "target": [0.001, -0.002, 0.0],
+            "group_id": ["copper", "copper", "copper"],
+            "time_idx": [0, 1, 2],
+        },
+        index=index,
+    )
+    monkeypatch.setattr(
+        feature_store,
+        "build_tft_dataframe",
+        lambda *_args, **_kwargs: (
+            master,
+            ["different_feat"],
+            [],
+            ["target"],
+            6.0235,
+        ),
+    )
+
+    cfg = TFTASROConfig(
+        model=TFTModelConfig(max_encoder_length=2, max_prediction_length=1),
+        training=TrainingConfig(best_model_path="unused.ckpt"),
+        feature_store=FeatureStoreConfig(target_symbol="HG=F", mrmr_top_k=80),
+    )
+    predictor = TFTPredictor(cfg=cfg)
+    predictor._model = _FakeModel()
+    monkeypatch.setattr(
+        predictor,
+        "_check_price_freshness",
+        lambda _session, _symbol: (1, False),
+    )
+
+    result = predictor.predict(price_session, "HG=F")
+
+    assert result["model_state"] == "retrain_required"
+    assert result["quality_state"] == "degraded"
+    assert result["weekly_forecast"] is None
+    assert "checkpoint features are missing (feat)" in result["message"]
 
 
 def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):
