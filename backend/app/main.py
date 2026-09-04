@@ -17,7 +17,7 @@ from dataclasses import dataclass
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -1161,14 +1161,34 @@ _tft_cache: dict = {}
 _TFT_CACHE_TTL_S = 300  # 5 minutes
 
 
+def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
+    """Return the latest persisted market bar date for a forecast symbol."""
+    latest = (
+        session.query(PriceBar)
+        .filter(PriceBar.symbol == symbol)
+        .order_by(PriceBar.date.desc())
+        .first()
+    )
+    if latest is None or latest.date is None:
+        return None
+    value = latest.date
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
 @app.get(
     "/api/analysis/tft/{symbol}",
     summary="Get TFT-ASRO deep learning analysis",
     description=(
         "Returns probabilistic multi-quantile prediction from the Temporal "
         "Fusion Transformer model. By default reads the latest TFT snapshot "
-        "produced by the daily pipeline worker (persistent, cheap). Pass "
-        "`source=live` to force a fresh inference run — useful for diagnostics."
+        "produced by the daily pipeline worker while it matches the newest "
+        "PriceBar (persistent, cheap). A newer market bar automatically rolls "
+        "the five-day forecast forward. Pass `source=live` to force a fresh "
+        "inference run — useful for diagnostics."
     ),
     responses={
         200: {"description": "TFT-ASRO analysis with quantile predictions"},
@@ -1185,9 +1205,12 @@ async def get_tft_analysis(
 
     `source` semantics:
       * `snapshot` (default) — serve the latest persisted TFTPredictionSnapshot
-        written by the worker. If none exists, transparently fall back to live.
+        only while it is anchored to the newest available PriceBar. When a new
+        market bar arrives, transparently generate a new rolling five-day
+        forecast instead of truncating the previous forecast vintage.
       * `live`                — always run a fresh inference. In-memory cached
-        for 5 minutes to protect the worker against the 60s polling loop.
+        per PriceBar date for 5 minutes to protect the worker against the 60s
+        polling loop.
     """
     source = (source or "snapshot").strip().lower()
     if source not in {"snapshot", "live"}:
@@ -1196,11 +1219,12 @@ async def get_tft_analysis(
             detail="source must be one of: snapshot, live",
         )
 
+    latest_price_date: Optional[date] = None
+
     # --- 1. Try persisted snapshot ------------------------------------------
     if source == "snapshot":
         try:
             from app.models import TFTPredictionSnapshot, TFTModelMetadata
-            from datetime import date
 
             def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
                 if dt is None:
@@ -1218,6 +1242,7 @@ async def get_tft_analysis(
                     return None
 
             with SessionLocal() as session:
+                latest_price_date = _latest_price_bar_date(session, symbol)
                 latest = (
                     session.query(TFTPredictionSnapshot)
                     .filter(TFTPredictionSnapshot.symbol == symbol)
@@ -1259,7 +1284,21 @@ async def get_tft_analysis(
                         or prediction.get("reference_price_date")
                     )
                     ref_date = _parse_ref_date(reference_price_date)
-                    if ref_date is not None:
+                    if ref_date is None:
+                        should_fallback_live = True
+                        fallback_reasons.append("snapshot reference_price_date missing")
+                    elif latest_price_date is not None and ref_date != latest_price_date:
+                        should_fallback_live = True
+                        fallback_reasons.append(
+                            "snapshot is not anchored to latest PriceBar "
+                            f"(snapshot={ref_date.isoformat()}, "
+                            f"latest_price_bar={latest_price_date.isoformat()})"
+                        )
+                    elif latest_price_date is None:
+                        # Defensive fallback for installations where PriceBar is
+                        # temporarily unavailable. Normally the exact market-bar
+                        # comparison above is authoritative and naturally handles
+                        # weekends and exchange holidays.
                         staleness_days = (datetime.now(timezone.utc).date() - ref_date).days
                         if staleness_days >= 3:
                             should_fallback_live = True
@@ -1297,7 +1336,19 @@ async def get_tft_analysis(
 
     # --- 2. Live inference (explicit request or snapshot miss) --------------
     now = datetime.now(timezone.utc)
-    cache_key = f"{symbol}:live"
+    if latest_price_date is None:
+        try:
+            with SessionLocal() as session:
+                latest_price_date = _latest_price_bar_date(session, symbol)
+        except Exception as exc:
+            logger.warning("Latest PriceBar date lookup failed for %s: %s", symbol, exc)
+
+    price_vintage = latest_price_date.isoformat() if latest_price_date else "unknown"
+    cache_key = f"{symbol}:live:{price_vintage}"
+    cache_prefix = f"{symbol}:live:"
+    for stale_key in tuple(_tft_cache):
+        if stale_key.startswith(cache_prefix) and stale_key != cache_key:
+            _tft_cache.pop(stale_key, None)
     cached = _tft_cache.get(cache_key)
     if cached:
         age = (now - cached["ts"]).total_seconds()

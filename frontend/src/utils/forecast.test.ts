@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapTftForecastRows } from './forecast';
+import { isForecastAligned, mapTftForecastRows } from './forecast';
 import type { TFTDailyForecast } from '../types';
 
 function row(overrides: Partial<TFTDailyForecast> = {}): TFTDailyForecast {
@@ -30,5 +30,26 @@ describe('mapTftForecastRows', () => {
 
   it('does not invent a date when the backend date is unavailable', () => {
     expect(mapTftForecastRows([row({ forecast_date: null })])).toEqual([]);
+  });
+
+  it('keeps only the next five dates after the forecast reference bar', () => {
+    const rows = [
+      row({ forecast_date: '2026-08-31' }),
+      row({ day: 2, forecast_date: '2026-09-01' }),
+      row({ day: 3, forecast_date: '2026-09-02' }),
+    ];
+
+    expect(mapTftForecastRows(rows, '2026-08-31')).toHaveLength(2);
+    expect(mapTftForecastRows(rows, '2026-08-31')[0].date).toBe('2026-09-01');
+  });
+});
+
+describe('isForecastAligned', () => {
+  it('aligns timestamps that represent the same market date', () => {
+    expect(isForecastAligned('2026-09-01', '2026-09-01T04:00:00Z')).toBe(true);
+  });
+
+  it('rejects a previous forecast vintage after a new market bar arrives', () => {
+    expect(isForecastAligned('2026-09-01', '2026-09-02')).toBe(false);
   });
 });

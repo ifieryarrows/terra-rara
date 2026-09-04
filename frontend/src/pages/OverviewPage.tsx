@@ -23,7 +23,7 @@ import type {
   CommentaryResponse, TFTAnalysisResponse
 } from '../types';
 import { useSentimentSummary } from '../hooks/useQueries';
-import { mapTftForecastRows } from '../utils/forecast';
+import { isForecastAligned, mapTftForecastRows } from '../utils/forecast';
 import '../App.css';
 
 // Lazy load heavy components
@@ -262,7 +262,9 @@ export const OverviewPage = () => {
 
     const hist = recent.slice(0, -1).map((p: any) => ({ date: p.date, price: p.price }));
 
-    const hasForecast = !!tftAnalysis?.prediction?.daily_forecasts?.length;
+    const forecastReferenceDate = tftAnalysis?.prediction?.reference_price_date;
+    const hasForecast = !!tftAnalysis?.prediction?.daily_forecasts?.length
+      && isForecastAligned(forecastReferenceDate, last.date);
 
     const bridge: any = {
       date: last.date,
@@ -275,7 +277,10 @@ export const OverviewPage = () => {
     };
 
     const forecasts = hasForecast
-      ? mapTftForecastRows(tftAnalysis!.prediction!.daily_forecasts)
+      ? mapTftForecastRows(
+          tftAnalysis!.prediction!.daily_forecasts,
+          forecastReferenceDate,
+        )
       : [];
 
     const data = [...hist, bridge, ...forecasts];
