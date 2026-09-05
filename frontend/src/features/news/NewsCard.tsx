@@ -82,7 +82,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       type="button"
       onClick={handleSelect}
       className={clsx(
-        'w-full text-left rounded-lg border px-2.5 py-2 transition-all duration-200',
+        'w-full text-left rounded-lg border px-2.5 py-2 transition-colors duration-200',
         'bg-midnight/50 hover:bg-midnight/80',
         'border-white/5 hover:border-copper-400/40',
         'focus:outline-none focus:ring-2 focus:ring-copper-400/50',
@@ -92,7 +92,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <div className="flex items-center justify-between gap-1.5 mb-1 text-[10px] font-mono text-gray-500">
+      <div className="flex items-center justify-between gap-1.5 mb-1 text-xs font-mono text-slate-400">
         <div className="flex items-center gap-1 min-w-0">
           <Globe size={10} className="text-copper-400/80 shrink-0" />
           <span className="truncate text-gray-400" title={item.publisher ?? item.channel}>
@@ -100,7 +100,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
           </span>
           {channelCode && (
             <span
-              className="px-1 py-0.5 rounded bg-white/5 text-[9px] tracking-wider text-gray-500 shrink-0"
+              className="px-1 py-0.5 rounded bg-white/5 text-xs tracking-wider text-slate-400 shrink-0"
               title={`Ingestion channel: ${item.channel}`}
             >
               {channelCode}
@@ -117,7 +117,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
       {reasoning && (
         <p
-          className="text-[11px] text-gray-400/90 italic leading-snug line-clamp-2 mb-1.5 pl-[18px] break-words"
+          className="text-xs text-gray-400/90 italic leading-snug line-clamp-2 mb-1.5 pl-[18px] break-words"
           title={reasoning}
         >
           {reasoning}
@@ -127,7 +127,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       <div className="flex items-center gap-1.5 flex-wrap">
         <span
           className={clsx(
-            'inline-flex items-center gap-0.5 text-[9px] font-mono tracking-wider uppercase',
+            'inline-flex items-center gap-0.5 text-xs font-mono tracking-wider uppercase',
             'px-1.5 py-0.5 rounded-full border',
             style.chip,
           )}
@@ -138,7 +138,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
         {sentiment?.event_type && (
           <span
-            className="text-[9px] font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
+            className="text-xs font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
             title={sentiment.event_type}
           >
             {formatEventType(sentiment.event_type)}
@@ -147,16 +147,16 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
         {sentiment?.scoring_mode === 'deterministic_fallback' && (
           <span
-            className="text-[9px] font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full"
+            className="text-xs font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full"
             title={sentiment.fallback_reason || 'Model service unavailable'}
           >
             Local fallback
           </span>
         )}
 
-        <div className="flex items-center gap-2 ml-auto text-[9px] font-mono text-gray-500 shrink-0">
+        <div className="flex items-center gap-2 ml-auto text-xs font-mono text-slate-400 shrink-0">
           <div className="flex items-center gap-1" title={`Relevance ${relevancePct}%`}>
-            <span className="text-gray-600">R</span>
+            <span className="text-slate-400">R</span>
             <div className="w-8 h-[3px] bg-white/5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-copper-400/80"

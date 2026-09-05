@@ -1,28 +1,5 @@
+import { MetricCard as Stat } from '../components/ui/MetricCard';
 import { useBacktestReport } from '../hooks/useQueries';
-
-const Stat = ({
-  label,
-  value,
-  tone = 'neutral',
-  hint,
-}: {
-  label: string;
-  value: React.ReactNode;
-  tone?: 'good' | 'bad' | 'neutral';
-  hint?: string;
-}) => (
-  <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-    <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">{label}</p>
-    <p
-      className={`font-mono text-xl tabular-nums ${
-        tone === 'good' ? 'text-emerald-400' : tone === 'bad' ? 'text-rose-400' : 'text-slate-100'
-      }`}
-    >
-      {value}
-    </p>
-    {hint && <p className="text-[10px] text-slate-500 mt-1">{hint}</p>}
-  </div>
-);
 
 const fmtPct = (v?: any) =>
   typeof v === 'number' ? `${(v * 100).toFixed(2)}%` : '—';
@@ -118,7 +95,7 @@ export const ValidationPage = () => {
       </div>
 
       <section>
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Summary Metrics</h3>
+        <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">Summary Metrics</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Stat
             label="Directional Accuracy"
@@ -138,7 +115,7 @@ export const ValidationPage = () => {
 
       {theta && Object.keys(theta).length > 0 && (
         <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
             Theta Baseline Comparison
           </h3>
           <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
@@ -151,7 +128,7 @@ export const ValidationPage = () => {
 
       {windows.length > 0 && (
         <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
             Per-Window Metrics ({windows.length} windows)
           </h3>
           <div className="overflow-x-auto bg-slate-900 border border-slate-800 rounded-lg">
@@ -169,7 +146,7 @@ export const ValidationPage = () => {
               <tbody className="font-mono text-slate-200">
                 {windows.map((w: any, i: number) => (
                   <tr key={i} className="border-t border-slate-800">
-                    <td className="px-3 py-1.5 text-slate-500">{w.window_id ?? i + 1}</td>
+                    <td className="px-3 py-1.5 text-slate-400">{w.window_id ?? i + 1}</td>
                     <td className="px-3 py-1.5">{fmtPct(w.directional_accuracy)}</td>
                     <td className="px-3 py-1.5">{fmtNum(w.sharpe_ratio)}</td>
                     <td className="px-3 py-1.5">{fmtNum(w.mae, 4)}</td>

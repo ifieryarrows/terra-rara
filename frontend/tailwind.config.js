@@ -9,8 +9,9 @@ export default {
             colors: {
                 midnight: '#0B1120',
                 copper: {
-                    400: '#F59E0B',
-                    500: '#D97706',
+                    300: '#F4C5A5',
+                    400: '#E6A47A',
+                    500: '#C78155',
                     glow: 'rgba(245, 158, 11, 0.1)',
                 },
                 rose: {

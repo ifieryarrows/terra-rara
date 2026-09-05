@@ -1,29 +1,6 @@
+import { MetricCard as Metric } from '../components/ui/MetricCard';
 import { useTftModelSummary } from '../hooks/useQueries';
 import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
-
-const Metric = ({
-  label,
-  value,
-  hint,
-  tone = 'neutral',
-}: {
-  label: string;
-  value: React.ReactNode;
-  hint?: string;
-  tone?: 'good' | 'bad' | 'neutral';
-}) => (
-  <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-    <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">{label}</p>
-    <p
-      className={`font-mono text-xl tabular-nums ${
-        tone === 'good' ? 'text-emerald-400' : tone === 'bad' ? 'text-rose-400' : 'text-slate-100'
-      }`}
-    >
-      {value}
-    </p>
-    {hint && <p className="text-[10px] text-slate-500 mt-1">{hint}</p>}
-  </div>
-);
 
 const fmtPct = (v?: number) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
 const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits));
@@ -131,7 +108,7 @@ export const ModelsPage = () => {
           <h3 className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
             Primary Horizon: Weekly Strategy (5-Day Cumulative)
           </h3>
-          <span className="text-[11px] text-slate-400 font-mono">
+          <span className="text-xs text-slate-400 font-mono">
             Target Horizon: 5 Trading Days · Annualized factor: √52
           </span>
         </div>
@@ -227,7 +204,7 @@ export const ModelsPage = () => {
           <h3 className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
             Diagnostic Path: Daily Step (T+1)
           </h3>
-          <span className="text-[11px] text-slate-500 font-mono">
+          <span className="text-xs text-slate-400 font-mono">
             Single-step path diagnostics · Annualized factor: √252
           </span>
         </div>
@@ -275,7 +252,7 @@ export const ModelsPage = () => {
       {/* Variable importance */}
       {data.variable_importance && data.variable_importance.length > 0 && (
         <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
             Variable Importance (Top 20)
           </h3>
           <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
@@ -288,16 +265,16 @@ export const ModelsPage = () => {
                   <div className="flex justify-between items-center text-xs mb-1 gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       {vi.category && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase tracking-wider shrink-0">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase tracking-wider shrink-0">
                           {vi.category}
                         </span>
                       )}
                       <span className="text-slate-200 truncate">{label}</span>
                       {vi.time_horizon && (
-                        <span className="text-[9px] font-mono text-slate-500 shrink-0">{vi.time_horizon}</span>
+                        <span className="text-xs font-mono text-slate-400 shrink-0">{vi.time_horizon}</span>
                       )}
                     </div>
-                    <span className="text-slate-500 font-mono shrink-0">{vi.importance.toFixed(4)}</span>
+                    <span className="text-slate-400 font-mono shrink-0">{vi.importance.toFixed(4)}</span>
                   </div>
                   <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                     <div
@@ -315,7 +292,7 @@ export const ModelsPage = () => {
       {/* Config */}
       {data.config && Object.keys(data.config).length > 0 && (
         <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Training Config</h3>
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">Training Config</h3>
           <pre className="bg-slate-900 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 font-mono overflow-x-auto">
             {JSON.stringify(data.config, null, 2)}
           </pre>
