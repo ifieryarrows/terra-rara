@@ -15,6 +15,8 @@ export default [
     ...js.configs.recommended,
   },
 
+  { files: ["scripts/*.mjs"], languageOptions: { globals: globals.node } },
+
   // TypeScript + React rules
   {
     files: ["**/*.{ts,tsx}"],

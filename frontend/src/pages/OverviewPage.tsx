@@ -3,7 +3,9 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine
 } from 'recharts';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
+import { FinancialPanel as GlassCard } from '../components/ui/FinancialPanel';
+import { chartTokens } from '../design/chart-tokens';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
   Brain, Crosshair, AlertTriangle, CheckCircle2, Clock, Minus
@@ -37,7 +39,7 @@ const ChartSkeleton = () => (
   <div className="h-[350px] w-full flex items-center justify-center">
     <div className="flex flex-col items-center gap-3">
       <div className="w-8 h-8 border-2 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
-      <span className="text-gray-500 text-xs font-mono">Loading chart...</span>
+      <span className="text-slate-400 text-xs font-mono">Loading chart...</span>
     </div>
   </div>
 );
@@ -46,7 +48,7 @@ const MapSkeleton = () => (
   <div className="h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl">
     <div className="flex flex-col items-center gap-3">
       <Globe size={32} className="text-copper-500/50 animate-pulse" />
-      <span className="text-gray-500 text-xs font-mono">Loading intelligence map...</span>
+      <span className="text-slate-400 text-xs font-mono">Loading intelligence map...</span>
     </div>
   </div>
 );
@@ -75,43 +77,9 @@ const driverCategoryLabel: Record<string, string> = {
 
 // --- Components ---
 
-const GlassCard = memo(({ title, icon: Icon, children, className = '', colSpan = 1 }: any) => (
-  <motion.div
-    className={clsx(
-      "glass-panel p-6 shadow-lg hover:shadow-xl transition-shadow duration-500",
-      className
-    )}
-    style={{ gridColumn: `span ${colSpan}` }}
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.5, ease: "easeOut" }}
-  >
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center gap-2 text-gray-400">
-        {Icon && <Icon size={18} className="text-copper-400" />}
-        <span className="text-xs font-bold tracking-widest uppercase">{title}</span>
-      </div>
-    </div>
-    <div className="relative">
-      {children}
-    </div>
-  </motion.div>
+const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), className = ''}: { value: number; format?: (v: number) => string; className?: string }) => (
+  <span className={clsx("font-mono tabular-nums", className)}>{format(value)}</span>
 ));
-GlassCard.displayName = 'GlassCard';
-
-const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), className = '' }: any) => {
-  return (
-    <motion.span
-      key={value}
-      initial={{ opacity: 0, filter: 'blur(4px)' }}
-      animate={{ opacity: 1, filter: 'blur(0px)' }}
-      transition={{ duration: 0.3 }}
-      className={clsx("font-mono", className)}
-    >
-      {format(value)}
-    </motion.span>
-  );
-});
 NumberTicker.displayName = 'NumberTicker';
 
 // Simple progress bar [0-100]
@@ -119,8 +87,8 @@ const ProgressBar = memo(({ value, max = 100, color = 'bg-emerald-500' }: { valu
   <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
     <motion.div
       className={clsx("h-full rounded-full", color)}
-      initial={{ width: 0 }}
-      animate={{ width: `${Math.min(100, (value / max) * 100)}%` }}
+      initial={false}
+      style={{ transformOrigin: "left", transform: "scaleX(" + Math.max(0, Math.min(1, value / max)) + ")" }}
       transition={{ duration: 0.8, ease: 'easeOut' }}
     />
   </div>
@@ -155,6 +123,8 @@ const ForecastTooltip = ({ active, payload, label }: any) => {
 // --- Main App ---
 
 export const OverviewPage = () => {
+  const reducedMotion = useReducedMotion();
+  const [showChartTable, setShowChartTable] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
@@ -304,13 +274,7 @@ export const OverviewPage = () => {
     };
   }, [history, tftAnalysis]);
 
-  const theme = {
-    bull: '#34D399',
-    bear: '#FB7185',
-    copper: '#F59E0B',
-    grid: 'rgba(255,255,255,0.05)',
-    text: '#9CA3AF'
-  };
+  const theme = chartTokens;
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
@@ -368,26 +332,24 @@ export const OverviewPage = () => {
   return (
     <div className="font-sans selection:bg-copper-500/30">
 
-      {/* Background Gradient Mesh - kept for overview visual flavor */}
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-copper-500/10 via-transparent to-transparent pointer-events-none" />
 
       <div className="relative z-10 grid min-w-0 grid-cols-1 gap-8">
 
         {/* Header */}
-        <header className="flex justify-between items-end pb-8 border-b border-white/5">
+        <header className="cm-overview-header">
           <div className="space-y-1">
             <motion.h1
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
-              className="text-4xl font-bold text-white tracking-tight"
+              className="text-3xl sm:text-4xl font-medium text-white tracking-tight"
             >
-              Terra Rara
+              Market overview
             </motion.h1>
-            <p className="text-gray-500 text-sm tracking-widest font-mono uppercase">Copper Intelligence Platform</p>
+            <p className="text-slate-400 text-sm tracking-widest font-mono uppercase">Copper Intelligence Platform</p>
           </div>
 
-          <div className="flex bg-slate-900 rounded-lg p-1.5 border border-slate-800 gap-1 shadow-sm">
-            <div className="px-3 py-2 rounded-xl bg-black min-w-[360px] overflow-hidden border border-slate-800">
+          <div className="cm-quote-strip">
+            <div className="cm-quote">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-md flex items-center justify-center shrink-0">
                   <img
@@ -398,11 +360,11 @@ export const OverviewPage = () => {
                   />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">
+                  <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">
                     Copper Futures
                   </p>
                   <div className="mt-1 flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900 text-[11px] text-white font-semibold tracking-wide">
+                    <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900 text-xs text-white font-semibold tracking-wide">
                       {COPPER_INSTRUMENT.canonicalSymbol}
                     </span>
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" title="Live price feed active" />
@@ -418,7 +380,7 @@ export const OverviewPage = () => {
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
+                  <p className="mt-0.5 text-xs text-slate-400">
                     {lastLiveUpdateAt
                       ? `As of ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
                       : 'Waiting for latest quote'}
@@ -427,8 +389,8 @@ export const OverviewPage = () => {
               </div>
             </div>
             <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
-              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">7D News Sentiment</span>
-              <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-semibold", newsSentimentMeta.chip)}>
+              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">7D News Sentiment</span>
+              <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-semibold", newsSentimentMeta.chip)}>
                 <SentimentIcon size={12} />
                 <span>{newsSentimentMeta.label}</span>
               </div>
@@ -468,7 +430,7 @@ export const OverviewPage = () => {
                   {tftDegradedMessage}
                 </p>
                 <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                  <span className="block text-[10px] text-amber-300 uppercase tracking-wider">Required action</span>
+                  <span className="block text-xs text-amber-300 uppercase tracking-wider">Required action</span>
                   <span className="text-xs text-gray-300">Run the weekly TFT training workflow and refresh HF artifacts.</span>
                 </div>
               </div>
@@ -501,13 +463,13 @@ export const OverviewPage = () => {
                         the same forecast entry (single source of truth). */}
                     <div>
                       <div className="mb-1 flex items-center justify-between gap-3">
-                        <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                        <span className="text-xs text-slate-400 uppercase tracking-widest">
                           Expected 5D Performance
                         </span>
                         {tftBaselineIsStale && (
                           <span
                             title={`Last PriceBar is ${tftStalenessDays}d old; lazy ingest attempted on next forecast request.`}
-                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] tracking-wider"
+                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs tracking-wider"
                           >
                             Stale {tftStalenessDays}d
                           </span>
@@ -519,12 +481,12 @@ export const OverviewPage = () => {
                         </span>
                         <span className="text-sm text-gray-400 font-mono">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
                         {tftReferencePrice && (
-                          <span className="text-[10px] text-gray-600 font-mono">
+                          <span className="text-xs text-slate-400 font-mono">
                             (from ${tftReferencePrice.toFixed(2)})
                           </span>
                         )}
                       </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
                         <div>
                           <span className="block uppercase tracking-wider">Instrument</span>
                           <span className="font-mono text-gray-300">{tftInstrument?.symbol || COPPER_INSTRUMENT.canonicalSymbol}</span>
@@ -535,7 +497,7 @@ export const OverviewPage = () => {
                         </div>
                       </div>
                       {tftAnomaly && (
-                        <p className="mt-1 text-[10px] text-amber-400">
+                        <p className="mt-1 text-xs text-amber-400">
                           Anomalous raw model output; value bounded to +/-12%. Check training logs.
                         </p>
                       )}
@@ -543,12 +505,12 @@ export const OverviewPage = () => {
 
                     {/* T+1 expected range */}
                     <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
+                      <p className="text-xs text-slate-400 uppercase tracking-widest mb-1.5">
                         5D Range {calibrated ? '(calibrated)' : '(raw)'}
                       </p>
                       <div className="flex items-center justify-between">
                         <div className="text-center">
-                          <p className="text-[10px] text-gray-600 mb-0.5">Low</p>
+                          <p className="text-xs text-slate-400 mb-0.5">Low</p>
                           <span className="text-sm font-mono text-rose-400/80">
                             {weeklyQ10 != null ? `${(weeklyQ10 * 100).toFixed(2)}%` : '--'}
                           </span>
@@ -557,7 +519,7 @@ export const OverviewPage = () => {
                           <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 via-gray-500/20 to-emerald-500/40 rounded-full" />
                         </div>
                         <div className="text-center">
-                          <p className="text-[10px] text-gray-600 mb-0.5">High</p>
+                          <p className="text-xs text-slate-400 mb-0.5">High</p>
                           <span className="text-sm font-mono text-emerald-400/80">
                             {weeklyQ90 != null ? `${weeklyQ90 >= 0 ? '+' : ''}${(weeklyQ90 * 100).toFixed(2)}%` : '--'}
                           </span>
@@ -567,7 +529,7 @@ export const OverviewPage = () => {
 
                     {/* Weekly trend — direction only, no price targets */}
                     <div className="flex items-center justify-between py-2 border-t border-white/5">
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">T+1 Impulse</span>
+                      <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
                       <div className="flex items-center gap-1.5">
                         {tftImpulse === 'BULLISH' ? <TrendingUp size={12} className="text-emerald-400" /> :
                          tftImpulse === 'BEARISH' ? <TrendingDown size={12} className="text-rose-400" /> :
@@ -584,13 +546,13 @@ export const OverviewPage = () => {
 
                     <div className="grid grid-cols-2 gap-2">
                       <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5">
-                        <span className="block text-[9px] text-gray-600 uppercase tracking-wider">Direction Score</span>
+                        <span className="block text-xs text-slate-400 uppercase tracking-wider">Direction Score</span>
                         <span className="font-mono text-xs text-gray-200">
                           {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
                         </span>
                       </div>
                       <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5 text-right">
-                        <span className="block text-[9px] text-gray-600 uppercase tracking-wider">Sharpe</span>
+                        <span className="block text-xs text-slate-400 uppercase tracking-wider">Sharpe</span>
                         <span className="font-mono text-xs text-gray-200">
                           {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
                         </span>
@@ -618,10 +580,10 @@ export const OverviewPage = () => {
               );
             })() : (
               <div className="flex flex-col items-center justify-center h-full py-10 text-center gap-3">
-                <Brain size={32} className="text-gray-700" />
+                <Brain size={32} className="text-slate-400" />
                 <div>
-                  <p className="text-xs text-gray-500">Model not trained yet</p>
-                  <p className="text-[10px] text-gray-700 mt-1">Run the TFT training workflow</p>
+                  <p className="text-xs text-slate-400">Model not trained yet</p>
+                  <p className="text-xs text-slate-400 mt-1">Run the TFT training workflow</p>
                 </div>
               </div>
             )}
@@ -630,9 +592,9 @@ export const OverviewPage = () => {
           {/* Price Forecast Chart */}
           <GlassCard title={`Price Forecast (${COPPER_INSTRUMENT.canonicalSymbol})`} icon={Activity} colSpan={8} className="min-h-[400px]">
             {forecastChartData.length > 0 ? (
-              <div className="h-[350px] w-full">
+              <div className="h-[350px] w-full" role="group" aria-label="Copper historical prices and daily forecast path. Expand View chart data below for the values.">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={forecastChartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                  <ComposedChart accessibilityLayer data={forecastChartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
@@ -643,7 +605,7 @@ export const OverviewPage = () => {
                     <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                      tick={{ fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                       axisLine={false}
                       tickLine={false}
@@ -652,7 +614,7 @@ export const OverviewPage = () => {
                     <YAxis
                       orientation="right"
                       domain={yDomain}
-                      tick={{ fill: theme.text, fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                      tick={{ fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       axisLine={false}
                       tickLine={false}
                       tickFormatter={(val) => `$${val.toFixed(2)}`}
@@ -661,7 +623,7 @@ export const OverviewPage = () => {
                     <Tooltip content={<ForecastTooltip />} />
 
                     {/* Historical price area */}
-                    <Area
+                    <Area isAnimationActive={!reducedMotion}
                       type="monotone"
                       dataKey="price"
                       stroke={theme.copper}
@@ -671,15 +633,15 @@ export const OverviewPage = () => {
                     />
 
                     {/* Q10-Q90 confidence band (80%) — lower edge */}
-                    <Line type="linear" dataKey="priceQ10" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
+                    <Line isAnimationActive={!reducedMotion} type="linear" dataKey="priceQ10" stroke={theme.forecast} strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
                     {/* Q10-Q90 confidence band (80%) — upper edge */}
-                    <Line type="linear" dataKey="priceQ90" stroke="#8B5CF6" strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
+                    <Line isAnimationActive={!reducedMotion} type="linear" dataKey="priceQ90" stroke={theme.forecast} strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
 
                     {/* Forecast median line */}
-                    <Line
+                    <Line isAnimationActive={!reducedMotion}
                       type="linear"
                       dataKey="priceMedian"
-                      stroke="#8B5CF6"
+                      stroke={theme.forecast}
                       strokeWidth={2}
                       strokeDasharray="6 3"
                       dot={false}
@@ -692,7 +654,7 @@ export const OverviewPage = () => {
                         x={lastHistDate}
                         stroke="rgba(255,255,255,0.15)"
                         strokeDasharray="3 3"
-                        label={{ value: 'Today', position: 'top', fill: '#6B7280', fontSize: 9, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                        label={{ value: 'Today', position: 'top', fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                       />
                     )}
                   </ComposedChart>
@@ -701,6 +663,14 @@ export const OverviewPage = () => {
             ) : (
               <ChartSkeleton />
             )}
+            {forecastChartData.length > 0 && <details className="mt-4 border-t border-cm-border pt-3" onToggle={event => setShowChartTable(event.currentTarget.open)}>
+              <summary className="cursor-pointer min-h-11 text-sm text-cm-muted">View chart data</summary>
+              {showChartTable && <div className="overflow-x-auto"><table className="w-full min-w-[36rem] text-xs text-left font-mono tabular-nums">
+                <caption className="text-left font-sans text-cm-muted pb-3">Historical prices and daily forecast path in USD. The primary weekly forecast is shown separately above.</caption>
+                <thead><tr>{['Date', 'Observed', 'Forecast median', 'Q10', 'Q90'].map(label => <th key={label} scope="col" className="py-2 px-2 border-b border-cm-border">{label}</th>)}</tr></thead>
+                <tbody>{forecastChartData.map((row, index) => <tr key={row.date + '-' + index}><th scope="row" className="py-2 px-2 font-normal">{row.date}</th>{[row.price, row.priceMedian, row.priceQ10, row.priceQ90].map((value, column) => <td key={column} className="py-2 px-2">{typeof value === 'number' ? value.toFixed(4) : '—'}</td>)}</tr>)}</tbody>
+              </table></div>}
+            </details>}
           </GlassCard>
 
           {/* Influencers Card — shows human-readable labels, category chips and
@@ -717,7 +687,7 @@ export const OverviewPage = () => {
                       <div className="flex justify-between items-start mb-1 gap-3">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
                           {inf.category && (
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
                               {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
                             </span>
                           )}
@@ -725,13 +695,13 @@ export const OverviewPage = () => {
                             {label}
                           </span>
                         </div>
-                        <span className="text-xs font-mono text-gray-500 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
+                        <span className="text-xs font-mono text-slate-400 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
                       </div>
                       <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
                         <motion.div
-                          className="h-full bg-gradient-to-r from-copper-500 to-rose-500"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${(inf.importance / maxImp) * 100}%` }}
+                          className="h-full bg-gradient-to-r from-copper-500 to-copper-400"
+                          initial={false}
+                          style={{ transformOrigin: "left", transform: "scaleX(" + Math.max(0, Math.min(1, inf.importance / maxImp)) + ")" }}
                           transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
                         />
                       </div>
@@ -740,9 +710,9 @@ export const OverviewPage = () => {
                 })
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
-                  <BarChart3 size={24} className="text-gray-700" />
-                  <p className="text-xs text-gray-500">Market drivers are unavailable</p>
-                  <p className="text-[10px] text-gray-700">They will appear after the next model refresh.</p>
+                  <BarChart3 size={24} className="text-slate-400" />
+                  <p className="text-xs text-slate-400">Market drivers are unavailable</p>
+                  <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
                 </div>
               )}
             </div>
@@ -768,7 +738,7 @@ export const OverviewPage = () => {
                 <div className="space-y-4">
                   {/* Overall status */}
                   <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-xs text-gray-500">Overall Status</span>
+                    <span className="text-xs text-slate-400">Overall Status</span>
                     <span className={clsx("text-xs font-bold tracking-wider", overallColor)}>{overallLabel}</span>
                   </div>
 
@@ -784,7 +754,7 @@ export const OverviewPage = () => {
                       </span>
                     </div>
                     <ProgressBar value={da} max={100} color={daGood ? "bg-emerald-500" : "bg-rose-500"} />
-                    <p className="text-[10px] text-gray-600">
+                    <p className="text-xs text-slate-400">
                       {weeklyDa == null
                         ? "Weekly metric unavailable"
                         : da >= 55
@@ -807,7 +777,7 @@ export const OverviewPage = () => {
                       </span>
                     </div>
                     <ProgressBar value={Math.min(Math.abs(sharpe) * 50, 100)} max={100} color={sharpeGood ? "bg-emerald-500" : "bg-rose-500"} />
-                    <p className="text-[10px] text-gray-600">
+                    <p className="text-xs text-slate-400">
                       {sharpe > 1 ? "Strong risk-adjusted returns" : sharpe > 0 ? "Positive expected return" : "Negative — do not trade"}
                     </p>
                   </div>
@@ -815,10 +785,10 @@ export const OverviewPage = () => {
               );
             })() : (
               <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <Clock size={28} className="text-gray-700" />
+                <Clock size={28} className="text-slate-400" />
                 <div>
-                  <p className="text-xs text-gray-500">No training data yet</p>
-                  <p className="text-[10px] text-gray-700 mt-1">Run pipeline with train_model=true</p>
+                  <p className="text-xs text-slate-400">No training data yet</p>
+                  <p className="text-xs text-slate-400 mt-1">Run pipeline with train_model=true</p>
                 </div>
               </div>
             )}
@@ -828,14 +798,14 @@ export const OverviewPage = () => {
           <GlassCard title="Neural Analysis" icon={Cpu} colSpan={4}>
             <div className="flex items-center justify-between mb-3">
               {commentary?.generated_at && (
-                <span className="text-[10px] text-gray-600 font-mono">
+                <span className="text-xs text-slate-400 font-mono">
                   {new Date(commentary.generated_at).toLocaleTimeString()}
                 </span>
               )}
               {commentary?.generation_mode && (
                 <span
                   className={clsx(
-                    "text-[9px] font-mono px-1.5 py-0.5 rounded-full border",
+                    "text-xs font-mono px-1.5 py-0.5 rounded-full border",
                     commentary.generation_mode === 'deterministic_fallback'
                       ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
                       : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10",
@@ -850,7 +820,7 @@ export const OverviewPage = () => {
               {commentary ? (
                 <p className="font-light whitespace-pre-wrap">{commentary.commentary || ''}</p>
               ) : (
-                <span className="text-gray-500 animate-pulse">Processing market signals...</span>
+                <span className="text-slate-400 animate-pulse">Processing market signals...</span>
               )}
             </div>
           </GlassCard>
@@ -861,7 +831,7 @@ export const OverviewPage = () => {
           <Suspense
             fallback={
               <div className="glass-panel h-full min-h-[480px] flex items-center justify-center">
-                <span className="text-xs text-gray-500 font-mono tracking-widest uppercase">
+                <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
                   Loading news…
                 </span>
               </div>
@@ -883,4 +853,3 @@ export const OverviewPage = () => {
     </div>
   );
 }
-

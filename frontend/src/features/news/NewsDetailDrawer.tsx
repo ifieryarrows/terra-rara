@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, ExternalLink, Globe, Radio } from 'lucide-react';
 import clsx from 'clsx';
@@ -35,7 +35,7 @@ function formatEventType(raw: string | null | undefined): string {
 function ProbBar({ label, value, color }: { label: string; value: number; color: string }) {
   const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
   return (
-    <div className="flex items-center gap-2 text-[11px] font-mono">
+    <div className="flex items-center gap-2 text-xs font-mono">
       <span className="w-10 text-gray-400 uppercase tracking-wider">{label}</span>
       <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
         <div className={clsx('h-full', color)} style={{ width: `${pct}%` }} />
@@ -51,15 +51,34 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
   // and the detail endpoint is the authoritative source for reasoning text.
   const { data: freshItem } = useNewsDetail(processedId);
   const displayed = freshItem ?? item;
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  const isOpen = Boolean(item);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
-    if (!item) return;
+    if (!isOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    panelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') { e.preventDefault(); closeRef.current(); }
+      if (e.key !== 'Tab') return;
+      const nodes = panelRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]');
+      if (!nodes?.length) { e.preventDefault(); return; }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [item, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [isOpen]);
 
   return (
     <AnimatePresence>
@@ -67,29 +86,35 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
         <>
           <motion.div
             key="news-drawer-backdrop"
-            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] bg-black/60"
+            aria-hidden="true"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
           />
           <motion.aside
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="news-drawer-title"
+            tabIndex={-1}
             key="news-drawer-panel"
-            className="fixed top-0 right-0 bottom-0 z-50 w-full sm:w-[480px] bg-midnight/95 border-l border-white/10 backdrop-blur-xl shadow-2xl overflow-y-auto"
+            className="fixed top-0 right-0 bottom-0 z-[70] w-full sm:w-[480px] bg-cm-surface border-l border-cm-border shadow-2xl overflow-y-auto"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 260 }}
           >
             <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 bg-midnight/95 border-b border-white/10">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-copper-400 font-semibold">
+              <div id="news-drawer-title" className="flex items-center gap-2 text-sm uppercase tracking-widest text-copper-400 font-semibold">
                 <Radio size={14} />
                 News detail
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                className="min-h-11 min-w-11 grid place-items-center rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
                 aria-label="Close"
               >
                 <X size={16} />
@@ -97,7 +122,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
             </div>
 
             <div className="p-5 space-y-5">
-              <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono text-gray-400">
+              <div className="flex items-center gap-2 flex-wrap text-xs font-mono text-gray-400">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5">
                   <Globe size={10} className="text-copper-400/80" />
                   {displayed.publisher ?? 'Unknown publisher'}
@@ -138,7 +163,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                     </span>
                     <span
                       className={clsx(
-                        'text-[10px] font-mono tracking-wider uppercase px-2 py-0.5 rounded-full border',
+                        'text-xs font-mono tracking-wider uppercase px-2 py-0.5 rounded-full border',
                         LABEL_STYLES[normaliseLabel(displayed.sentiment.label)],
                       )}
                     >
@@ -160,7 +185,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
 
                   {displayed.sentiment.finbert && (
                     <div className="space-y-1.5 pt-2 border-t border-white/5">
-                      <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-1">
+                      <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">
                         FinBERT probabilities
                       </div>
                       <ProbBar label="Pos" value={displayed.sentiment.finbert.pos} color="bg-emerald-400/80" />
@@ -171,7 +196,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
 
                   {displayed.sentiment.reasoning && (
                     <div className="pt-3 border-t border-white/5">
-                      <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-1">
+                      <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">
                         LLM rationale
                       </div>
                       <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
@@ -226,7 +251,7 @@ function Stat({
   }
   return (
     <div className="rounded-lg bg-white/[0.02] px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-widest text-gray-500">{label}</div>
+      <div className="text-xs uppercase tracking-widest text-slate-400">{label}</div>
       <div className={clsx('text-sm', tone)}>{display}</div>
     </div>
   );

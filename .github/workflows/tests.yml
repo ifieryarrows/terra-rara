@@ -119,3 +119,7 @@ jobs:
             - name: Type-check and build frontend
               working-directory: frontend
               run: npm run build
+
+            - name: Check frontend delivery budgets
+              working-directory: frontend
+              run: npm run check:budgets

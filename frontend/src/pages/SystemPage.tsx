@@ -108,7 +108,7 @@ export const SystemPage = () => {
       </div>
 
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Core Services</h3>
+        <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">Core Services</h3>
         <Row label="Database" value={d.db_type ?? '—'} tone="good" />
         <Row
           label="Redis queue"
@@ -128,7 +128,7 @@ export const SystemPage = () => {
       </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">Snapshot & Data</h3>
+        <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">Snapshot & Data</h3>
         <Row
           label="Latest snapshot age"
           value={fmtSeconds(snapshotAge)}
@@ -143,10 +143,10 @@ export const SystemPage = () => {
       </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+        <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
           Pipeline & Data Freshness
         </h3>
-        <p className="text-xs text-slate-500 mb-3">
+        <p className="text-xs text-slate-400 mb-3">
           Each timestamp answers a different question. They are NOT interchangeable
           — e.g. a stale baseline close can still be produced by a fresh worker run
           if Yahoo is delayed.
@@ -239,10 +239,10 @@ export const SystemPage = () => {
       </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs uppercase tracking-widest text-slate-500 mb-3">
+        <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
           HuggingFace Hub
         </h3>
-        <p className="text-xs text-slate-500 leading-relaxed">
+        <p className="text-xs text-slate-400 leading-relaxed">
           HF Hub is used <span className="text-slate-300">only as a model artifact
           store</span> — the weekly training workflow uploads the TFT checkpoint
           there, and the worker downloads it back on cold start. The daily pipeline

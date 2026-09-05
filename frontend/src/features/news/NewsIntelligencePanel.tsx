@@ -134,7 +134,7 @@ export const NewsIntelligencePanel: React.FC = () => {
 
       {/* Stats summary */}
       <div className="px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
-        <div className="flex items-center gap-1.5 text-[10px] font-mono mb-2">
+        <div className="flex items-center gap-1.5 text-xs font-mono mb-2">
           <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title={`Bullish (${activeWindowLabel})`}>
             ↑ {bullishCount}
           </span>
@@ -144,7 +144,7 @@ export const NewsIntelligencePanel: React.FC = () => {
           <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200" title={`Neutral (${activeWindowLabel})`}>
             · {neutralCount}
           </span>
-          <span className="ml-auto text-gray-500">
+          <span className="ml-auto text-slate-400">
             {totalMatching} hit{totalMatching === 1 ? '' : 's'}
           </span>
         </div>
@@ -156,7 +156,7 @@ export const NewsIntelligencePanel: React.FC = () => {
                 key={p.publisher}
                 type="button"
                 onClick={() => updateFilter('publisher', p.publisher)}
-                className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/5 text-gray-300 hover:bg-copper-500/20 hover:text-copper-200 transition-colors truncate max-w-[110px]"
+                className="text-xs font-mono px-2 py-0.5 rounded-full bg-white/5 text-gray-300 hover:bg-copper-500/20 hover:text-copper-200 transition-colors truncate max-w-[110px]"
                 title={`${p.publisher} (${p.count} articles)`}
               >
                 {p.publisher}
@@ -168,7 +168,7 @@ export const NewsIntelligencePanel: React.FC = () => {
         {/* Search + filter toggle */}
         <div className="flex items-center gap-2 mt-3">
           <div className="flex-1 relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchDraft}
@@ -208,7 +208,7 @@ export const NewsIntelligencePanel: React.FC = () => {
                   type="button"
                   onClick={() => updateFilter('label', opt.id)}
                   className={clsx(
-                    'text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors',
+                    'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
                     filters.label === opt.id
                       ? 'border-copper-400/60 ' + opt.tone
                       : 'border-white/5 bg-white/[0.02] text-gray-400 hover:border-copper-400/30',
@@ -221,7 +221,7 @@ export const NewsIntelligencePanel: React.FC = () => {
 
             {/* Time window */}
             <div>
-              <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-1">Window</div>
+              <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">Window</div>
               <div className="flex items-center gap-1.5">
                 {SINCE_OPTIONS.map((opt) => (
                   <button
@@ -229,7 +229,7 @@ export const NewsIntelligencePanel: React.FC = () => {
                     type="button"
                     onClick={() => updateFilter('since_hours', opt.id)}
                     className={clsx(
-                      'text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors',
+                      'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
                       filters.since_hours === opt.id
                         ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
                         : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
@@ -243,8 +243,8 @@ export const NewsIntelligencePanel: React.FC = () => {
 
             {/* Min relevance */}
             <div>
-              <div className="flex items-center justify-between text-[10px] font-mono text-gray-400 mb-1">
-                <span className="uppercase tracking-widest text-gray-500">Min relevance</span>
+              <div className="flex items-center justify-between text-xs font-mono text-gray-400 mb-1">
+                <span className="uppercase tracking-widest text-slate-400">Min relevance</span>
                 <span>{Math.round((filters.min_relevance ?? 0) * 100)}%</span>
               </div>
               <input
@@ -261,13 +261,13 @@ export const NewsIntelligencePanel: React.FC = () => {
             {/* Channel toggle — only render when both channels have data */}
             {availableChannels.length > 1 && (
               <div>
-                <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-1">Channel</div>
+                <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">Channel</div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() => updateFilter('channel', 'all')}
                     className={clsx(
-                      'text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors',
+                      'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
                       filters.channel === 'all' || !filters.channel
                         ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
                         : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
@@ -281,7 +281,7 @@ export const NewsIntelligencePanel: React.FC = () => {
                       type="button"
                       onClick={() => updateFilter('channel', ch)}
                       className={clsx(
-                        'text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors',
+                        'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
                         filters.channel === ch
                           ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
                           : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
@@ -296,8 +296,8 @@ export const NewsIntelligencePanel: React.FC = () => {
 
             {/* Publisher filter (shown when one is picked) */}
             {filters.publisher && (
-              <div className="flex items-center justify-between text-[10px] font-mono">
-                <span className="text-gray-500 uppercase tracking-widest">Publisher</span>
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400 uppercase tracking-widest">Publisher</span>
                 <button
                   type="button"
                   onClick={() => updateFilter('publisher', undefined)}
@@ -339,8 +339,8 @@ export const NewsIntelligencePanel: React.FC = () => {
 
         {!isLoading && !feed.isError && items.length === 0 && (
           <div className="flex flex-col items-center gap-2 p-6 text-center">
-            <Newspaper size={20} className="text-gray-600" />
-            <p className="text-xs text-gray-500">
+            <Newspaper size={20} className="text-slate-400" />
+            <p className="text-xs text-slate-400">
               No articles match the current filters.
             </p>
           </div>
@@ -365,7 +365,7 @@ export const NewsIntelligencePanel: React.FC = () => {
         )}
 
         {!feed.hasNextPage && items.length > 0 && (
-          <div className="text-center py-2 text-[10px] font-mono text-gray-600 tracking-wider uppercase">
+          <div className="text-center py-2 text-xs font-mono text-slate-400 tracking-wider uppercase">
             — end of feed —
           </div>
         )}
