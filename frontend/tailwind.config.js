@@ -27,8 +27,7 @@ export default {
             },
             fontFamily: {
                 sans: [
-                    'IBM Plex Sans',
-                    'IBM Plex Sans Fallback',
+                    'Geist Sans',
                     'ui-sans-serif',
                     'system-ui',
                     '-apple-system',

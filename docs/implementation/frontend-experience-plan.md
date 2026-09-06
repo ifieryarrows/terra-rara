@@ -2,6 +2,8 @@
 
 Date: 2026-09-05. Starting commit: `a5a0233cb12074effe529a97e48a9485b8ca6349`.
 
+Current sequence and status: [frontend roadmap](./frontend-experience-roadmap.md). The numbered delivery items below describe the original first implementation, not later phase numbers. Local acceptance was completed in the phase-three report; production acceptance remains open. The user's later Geist Sans preference supersedes the original IBM Plex choice.
+
 ## Product decision
 
 One product, two modes: a short, cinematic introduction followed by a quiet financial workspace. Visual thesis: **copper signal on an ink-black research surface**. Large editorial typography and a layered market chart establish the brand; precise grids, tabular numbers and restrained status colors carry into the dashboard.
@@ -61,7 +63,7 @@ Inputs to a story visual are `{ progress, reducedMotion }`, plus local fixture d
 - [x] 2. Shared semantic tokens, brand, motion policy and accessible workspace navigation.
 - [x] 3. Landing with native scroll, controlled previews and lazy route boundaries.
 - [x] 4. Dashboard visual migration: shared panels/metric components, responsive header, financial text and cheap transitions; keep heatmap behavior.
-- [ ] 5. Test/build/lint, bundle comparison, route/accessibility regression checks and available browser QA.
+- [x] 5. Test/build/lint, bundle comparison, route/accessibility regression checks and available browser QA. Follow-up completion evidence: [phase-three report](../reports/frontend-phase-three-completion-20260906.md).
 - [ ] 6. After deployment: same-device production performance sampling, field Web Vitals and product comprehension validation. This cannot be claimed from local unit tests.
 
 ## Acceptance and performance budgets

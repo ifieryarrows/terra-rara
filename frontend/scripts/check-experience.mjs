@@ -15,7 +15,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BRO
 const results = [];
 const workspaceResults = [];
 try {
-  for (const [width, height, reducedMotion] of [[1536, 900, 'no-preference'], [1280, 600, 'no-preference'], [1024, 650, 'no-preference'], [768, 800, 'no-preference'], [390, 844, 'no-preference'], [1280, 720, 'reduce']]) {
+  for (const [width, height, reducedMotion] of [[1536, 900, 'no-preference'], [1280, 600, 'no-preference'], [1024, 650, 'no-preference'], [768, 800, 'no-preference'], [320, 650, 'no-preference'], [390, 844, 'no-preference'], [1280, 720, 'reduce']]) {
     const page = await browser.newPage({ viewport: { width, height }, reducedMotion });
     const apiRequests = [];
     const errors = [];
@@ -23,7 +23,12 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base);
     await page.locator('.cm-story').waitFor();
+    await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(400);
+    assert.equal(await page.locator('.cm-evidence-preview').count(), 1);
+    for (const href of ['#market', '#news', '#forecast', '#evidence']) {
+      assert.equal(await page.locator(href).count(), 1);
+    }
     assert.equal(await page.locator('h1').count(), 1);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 1, `Landing overflow ${width}: ${overflow}`);

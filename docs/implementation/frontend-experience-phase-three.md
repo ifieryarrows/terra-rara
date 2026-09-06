@@ -4,6 +4,8 @@ Tarih: 2026-09-06. Başlangıç: commit edilmemiş 2. faz çalışma ağacı; `5
 
 Durum: geliştirme ve yerel kabul tamamlandı. Sonuçlar ve yayın sınırları [kapanış raporunda](../reports/frontend-phase-three-completion-20260906.md).
 
+Sonraki geliştirme: [4. faz — landing ürün anlatımı](./frontend-experience-phase-four.md). Fazlar ve yayın kabulü için [güncel yol haritası](./frontend-experience-roadmap.md).
+
 ## Kapsamın kaynağı
 
 “Teknik UI UX Analizi” konuşmasının son önerisi, landing görsel anlatımının ardından dashboard tabloları, filtreler, formlar, grafikler ve durum ekranlarının iyileştirilmesidir. Konuşmada ayrı, ayrıntılı bir 3. faz sprinti tanımlanmamıştı. Bu belge önce ilk çalışma dilimini tanımladı; kullanıcının dashboard ve grafik iyileştirmelerini tamamlayarak 3. fazı bitirme isteğiyle aşağıdaki kapanış kapsamına genişletildi.

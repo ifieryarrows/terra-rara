@@ -4,7 +4,7 @@ The research source is [the Turkish technical case study](./immersive-web-case-s
 
 ## Product and content
 
-The brand has two densities: editorial introduction and financial workspace. Both use the same copper accent, ink surface, IBM Plex Sans typography, system monospace numbers, borders and focus treatments. Landing promises only code-backed capabilities. A model being present in the repository does not prove that production has a trained checkpoint or a current snapshot.
+The brand has two densities: editorial introduction and financial workspace. Both use the same copper accent, ink surface, Geist Sans typography, system monospace numbers, borders and focus treatments. Geist replaces IBM Plex Sans at the user's request on 2026-09-06. League Gothic remains a short-heading comparison candidate for phase four, not the body or dashboard font. Landing promises only code-backed capabilities. A model being present in the repository does not prove that production has a trained checkpoint or a current snapshot.
 
 Landing sequence: hero → connected workflow → market/news/forecast story → model evidence → dashboard entry. All CTAs are real links. Returning visitors can enter from the first viewport. There is no unlock timer, compulsory scroll, intro replay state or automatic returning-user redirect.
 
@@ -58,7 +58,7 @@ The build prerenders the complete static landing into `dist/index.html` via Reac
 
 The prerender Vite instance uses `node_modules/.vite-prerender` for its optimizer cache. Its configuration differs from the development server, so sharing the default `.vite` cache can invalidate a running dev server's dependency URLs during a build.
 
-No new font/image/video/model fetches are introduced. Existing IBM Plex Sans remains; mono uses system fonts. Hashed `/assets/*` are immutable. HTML remains revalidatable. Never apply immutable caching to API responses or the HTML shell. Vercel Speed Insights mounts for both landing and dashboard; actual field data depends on the deployment's service configuration and traffic.
+Geist Sans v1.7.2 is self-hosted as a single 69,760-byte variable WOFF2, preloaded in the HTML and declared with `font-display: swap`. The old Google Fonts stylesheet/preconnects are removed; mono uses system fonts. Preserve the included OFL license and version the font URL on update. Font transfers are reported separately from JS/CSS budgets. Hashed `/assets/*` are immutable. HTML remains revalidatable. Never apply immutable caching to API responses or the HTML shell. Vercel Speed Insights mounts for both landing and dashboard; actual field data depends on the deployment's service configuration and traffic.
 
 ## Accessibility and resilience
 

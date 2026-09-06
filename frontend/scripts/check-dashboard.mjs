@@ -85,7 +85,12 @@ try {
     await page.keyboard.press('Tab');
     assert.equal(await fullscreen.evaluate(el => el.contains(document.activeElement)), true, 'Fullscreen focus containment');
     assert.ok(await fullscreen.evaluate(el => el.getBoundingClientRect().height <= innerHeight + 1));
+    // The first Escape dismisses an active category panel before the map.
+    // Keep the pointer off the map: typography can move a tile beneath it.
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(250);
     await page.keyboard.press('Escape');
+    if (await fullscreen.isVisible()) await page.keyboard.press('Escape');
     await fullscreen.waitFor({ state: 'hidden' });
     assert.equal(await page.getByRole('button', { name: 'Fullscreen', exact: true }).evaluate(el => document.activeElement === el), true);
     assert.notEqual(await page.evaluate(() => document.body.style.overflow), 'hidden');

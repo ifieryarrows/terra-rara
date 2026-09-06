@@ -1,0 +1,601 @@
+{
+  "checkedAt": "2026-09-06T16:41:01Z",
+  "environment": "Local production build, Headless Edge, 1280/390 x 800, reduced motion; requests forwarded unchanged to live Vercel API, no fixtures",
+  "api": [
+    {
+      "path": "/",
+      "status": 200,
+      "type": "text/html; charset=utf-8",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 54842
+    },
+    {
+      "path": "/dashboard",
+      "status": 200,
+      "type": "text/html; charset=utf-8",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 1300
+    },
+    {
+      "path": "/validation",
+      "status": 200,
+      "type": "text/html; charset=utf-8",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 1300
+    },
+    {
+      "path": "/fonts/geist-sans-v1.7.2.woff2",
+      "status": 200,
+      "type": "text/html; charset=utf-8",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 1300
+    },
+    {
+      "path": "/api/health",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 598
+    },
+    {
+      "path": "/api/analysis",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 2973
+    },
+    {
+      "path": "/api/analysis/tft/HG=F",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 11928
+    },
+    {
+      "path": "/api/history",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 13306
+    },
+    {
+      "path": "/api/commentary",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 3121
+    },
+    {
+      "path": "/api/models/tft/summary",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 6511
+    },
+    {
+      "path": "/api/models/tft/backtest/latest",
+      "status": 200,
+      "type": "application/json",
+      "cache": "public, max-age=0, must-revalidate",
+      "bytes": 207
+    }
+  ],
+  "health": {
+    "status": "healthy",
+    "db_type": "postgresql",
+    "models_found": 1,
+    "pipeline_locked": false,
+    "timestamp": "2026-09-06T16:38:44.716773+00:00",
+    "news_count": 3964,
+    "price_bars_count": 15273,
+    "redis_ok": true,
+    "last_snapshot_age_seconds": 58460,
+    "last_pipeline_run_at": "2026-09-06T00:25:04.248931+00:00",
+    "last_pipeline_status": "ok",
+    "last_snapshot_generated_at": "2026-09-06T00:24:22.706280+00:00",
+    "last_tft_prediction_at": "2026-09-06T00:24:35.494275+00:00",
+    "tft_model_trained_at": "2026-08-28T17:10:10.467480+00:00",
+    "tft_reference_price_date": "2026-09-04",
+    "price_bar_latest_date": "2026-09-04",
+    "price_bar_staleness_days": 2
+  },
+  "ui": [
+    {
+      "width": 1280,
+      "path": "/",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Read the market.See the structure.",
+        "A price is a point.Intelligence is the connection.",
+        "A connected research workflow",
+        "A signal shouldstand up to scrutiny.",
+        "From perspectiveto your next question."
+      ],
+      "emptyReport": false,
+      "apis": []
+    },
+    {
+      "width": 1280,
+      "path": "/dashboard",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Market overview",
+        "Deep Learning Weekly Forecast",
+        "Price Forecast (HG=F)",
+        "Market Drivers",
+        "Model Reliability",
+        "Neural Analysis",
+        "News Intelligence",
+        "Market Heatmap"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 1280,
+      "path": "/models",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "TFT-ASRO Model",
+        "Weekly strategy"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 1280,
+      "path": "/validation",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Walk-Forward Validation",
+        "No backtest report available yet"
+      ],
+      "emptyReport": true,
+      "apis": [
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/backtest/latest",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 1280,
+      "path": "/system",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "System Status",
+        "Core services",
+        "Snapshot & data",
+        "Data freshness",
+        "Model artifact storage"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/backtest/latest",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Read the market.See the structure.",
+        "A price is a point.Intelligence is the connection.",
+        "A connected research workflow",
+        "A signal shouldstand up to scrutiny.",
+        "From perspectiveto your next question."
+      ],
+      "emptyReport": false,
+      "apis": []
+    },
+    {
+      "width": 390,
+      "path": "/dashboard",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Market overview",
+        "Deep Learning Weekly Forecast",
+        "Price Forecast (HG=F)",
+        "Market Drivers",
+        "Model Reliability",
+        "Neural Analysis",
+        "News Intelligence",
+        "Market Heatmap"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/models",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "TFT-ASRO Model",
+        "Weekly strategy"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/validation",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "Walk-Forward Validation",
+        "No backtest report available yet"
+      ],
+      "emptyReport": true,
+      "apis": [
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/backtest/latest",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/system",
+      "overflow": 0,
+      "errors": [],
+      "headings": [
+        "System Status",
+        "Core services",
+        "Snapshot & data",
+        "Data freshness",
+        "Model artifact storage"
+      ],
+      "emptyReport": false,
+      "apis": [
+        {
+          "path": "/api/analysis/tft/HG=F",
+          "status": 200
+        },
+        {
+          "path": "/api/analysis",
+          "status": 200
+        },
+        {
+          "path": "/api/live-price",
+          "status": 200
+        },
+        {
+          "path": "/api/sentiment/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/history",
+          "status": 200
+        },
+        {
+          "path": "/api/commentary",
+          "status": 200
+        },
+        {
+          "path": "/api/news/stats",
+          "status": 200
+        },
+        {
+          "path": "/api/news",
+          "status": 200
+        },
+        {
+          "path": "/api/market-heatmap",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/summary",
+          "status": 200
+        },
+        {
+          "path": "/api/models/tft/backtest/latest",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "status": 200
+        }
+      ]
+    }
+  ],
+  "productionAssets": [
+    "index-ZUfC_bxI.js",
+    "index-D7uPPXwM.css"
+  ],
+  "candidateAssets": [
+    "index-B9xySxsm.js",
+    "index-YM1GoN5_.css"
+  ],
+  "fieldMetrics": null
+}
