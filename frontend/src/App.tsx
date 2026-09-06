@@ -24,11 +24,14 @@ function RouteLifecycle() {
   const navigationType = useNavigationType();
   useEffect(() => {
     document.title = titles[pathname] || 'Page not found | CopperMind';
+    let focused = false;
     const focusMain = () => {
       const main = document.getElementById('main-content');
       if (!main) return false;
-      main.focus({ preventScroll: true });
+      if (!focused) { main.focus({ preventScroll: true }); focused = true; }
       const anchor = hash ? document.getElementById(hash.slice(1)) : null;
+      // A workspace section may arrive after its route shell and initial data.
+      if (hash && !anchor) return false;
       if (anchor) anchor.scrollIntoView({ behavior: 'instant' });
       else window.scrollTo({ top: navigationType === 'POP' ? (scrollPositions.get(key) ?? 0) : 0, behavior: 'instant' });
       return true;
@@ -38,10 +41,17 @@ function RouteLifecycle() {
       observer = new MutationObserver(() => { if (focusMain()) observer?.disconnect(); });
       observer.observe(document.getElementById('root') ?? document.body, { childList: true, subtree: true });
     }
+    const stopWaiting = () => observer?.disconnect();
+    const deadline = window.setTimeout(stopWaiting, 10000);
+    window.addEventListener('wheel', stopWaiting, { passive: true, once: true });
+    window.addEventListener('touchstart', stopWaiting, { passive: true, once: true });
     return () => {
       scrollPositions.set(key, window.scrollY);
       if (scrollPositions.size > 50) scrollPositions.delete(scrollPositions.keys().next().value!);
       observer?.disconnect();
+      window.clearTimeout(deadline);
+      window.removeEventListener('wheel', stopWaiting);
+      window.removeEventListener('touchstart', stopWaiting);
     };
   }, [pathname, key, hash, navigationType]);
   return null;
@@ -54,6 +64,11 @@ function LandingEntry() {
 }
 function RouteLoading() { return <div className="cm-route-loading" role="status">Opening your workspace…</div>; }
 
+function OverviewAlias() {
+  const { search, hash } = useLocation();
+  return <Navigate to={'/dashboard' + search + hash} replace/>;
+}
+
 export function AppRoutes() {
   const { pathname } = useLocation();
   return <MotionConfig reducedMotion="user" transition={{ duration: motionTokens.ui, ease: motionTokens.ease }}><RouteLifecycle/><RouteBoundary key={pathname}><Suspense fallback={<RouteLoading/>}><Routes>
@@ -64,7 +79,7 @@ export function AppRoutes() {
       <Route path="validation" element={<ValidationPage/>}/>
       <Route path="system" element={<SystemPage/>}/>
     </Route>
-    <Route path="overview" element={<Navigate to="/dashboard" replace/>}/>
+    <Route path="overview" element={<OverviewAlias/>}/>
     <Route path="*" element={<main id="main-content" tabIndex={-1} className="cm-route-loading"><h1>That page is not here.</h1><Link to="/dashboard">Open dashboard</Link><Link to="/">Explore CopperMind</Link></main>}/>
   </Routes></Suspense></RouteBoundary></MotionConfig>;
 }

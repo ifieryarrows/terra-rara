@@ -1,18 +1,19 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { useId, useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import {
   Newspaper,
   Filter,
   RefreshCw,
-  AlertCircle,
   Search,
-  ChevronDown,
 } from 'lucide-react';
 import { useNewsFeed, useNewsStats, flattenNewsPages } from '../../hooks/useNews';
 import type { NewsFeedFilters, NewsItem, NewsLabel } from '../../types';
 import NewsCard from './NewsCard';
 import NewsDetailDrawer from './NewsDetailDrawer';
+import { FilterChip } from '../../components/ui/FilterChip';
+import { ViewState } from '../../components/ui/ViewState';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 
 const LABEL_OPTIONS: Array<{ id: 'all' | NewsLabel; label: string; tone: string }> = [
   { id: 'all', label: 'All', tone: 'bg-white/5 text-gray-300' },
@@ -46,11 +47,15 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export const NewsIntelligencePanel: React.FC = () => {
+  const filterId = useId();
   const [filters, setFilters] = useState<NewsFeedFilters>(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState('');
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
+  const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
+  const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
   const effectiveFilters = useMemo<NewsFeedFilters>(
@@ -91,7 +96,7 @@ export const NewsIntelligencePanel: React.FC = () => {
           }
         }
       },
-      { root: null, rootMargin: '200px', threshold: 0 },
+      { root: scrollRef.current, rootMargin: '200px', threshold: 0 },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -107,24 +112,21 @@ export const NewsIntelligencePanel: React.FC = () => {
 
   return (
     <motion.aside
-      className="glass-panel flex flex-col h-full max-h-[calc(100vh-120px)] overflow-hidden"
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.5, ease: 'easeOut' }}
+      className="cm-news-panel glass-panel"
+      aria-label="News intelligence"
+      initial={false}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 sm:px-4 pt-4 pb-2.5 border-b border-white/5">
+      <div className="cm-news-header flex items-center justify-between px-3 sm:px-4 pt-4 pb-2.5 border-b border-white/5">
         <div className="flex items-center gap-2 text-gray-400">
           <Newspaper size={16} className="text-copper-400" />
-          <span className="text-xs font-bold tracking-widest uppercase">News Intelligence</span>
+          <h2>News Intelligence</h2>
         </div>
         <button
           type="button"
           onClick={() => feed.refetch()}
-          className={clsx(
-            'p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors',
-            isRefreshing && 'text-copper-300',
-          )}
+          className="cm-icon-button"
+          disabled={isRefreshing}
           title="Refresh"
           aria-label="Refresh news feed"
         >
@@ -132,218 +134,65 @@ export const NewsIntelligencePanel: React.FC = () => {
         </button>
       </div>
 
+      <div ref={scrollRef} className="cm-news-scroll" tabIndex={0} role="region" aria-label="News filters and headlines">
       {/* Stats summary */}
       <div className="px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
         <div className="flex items-center gap-1.5 text-xs font-mono mb-2">
           <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title={`Bullish (${activeWindowLabel})`}>
-            ↑ {bullishCount}
+            ↑ {stats.data ? bullishCount : '—'}
           </span>
           <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300" title={`Bearish (${activeWindowLabel})`}>
-            ↓ {bearishCount}
+            ↓ {stats.data ? bearishCount : '—'}
           </span>
           <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200" title={`Neutral (${activeWindowLabel})`}>
-            · {neutralCount}
+            · {stats.data ? neutralCount : '—'}
           </span>
           <span className="ml-auto text-slate-400">
-            {totalMatching} hit{totalMatching === 1 ? '' : 's'}
+            {feed.data ? `${totalMatching} hit${totalMatching === 1 ? '' : 's'}` : 'Awaiting headlines'}
           </span>
         </div>
 
         {topPublishers.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             {topPublishers.map((p) => (
-              <button
+              <FilterChip
                 key={p.publisher}
-                type="button"
-                onClick={() => updateFilter('publisher', p.publisher)}
-                className="text-xs font-mono px-2 py-0.5 rounded-full bg-white/5 text-gray-300 hover:bg-copper-500/20 hover:text-copper-200 transition-colors truncate max-w-[110px]"
+                active={filters.publisher === p.publisher}
+                onClick={() => updateFilter('publisher', filters.publisher === p.publisher ? undefined : p.publisher)}
                 title={`${p.publisher} (${p.count} articles)`}
               >
                 {p.publisher}
-              </button>
+              </FilterChip>
             ))}
           </div>
         )}
 
-        {/* Search + filter toggle */}
-        <div className="flex items-center gap-2 mt-3">
-          <div className="flex-1 relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchDraft}
-              onChange={(e) => setSearchDraft(e.target.value)}
-              placeholder="Search headlines..."
-              className="w-full bg-white/5 border border-white/5 rounded-lg pl-8 pr-2 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-copper-400/40"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((v) => !v)}
-            className={clsx(
-              'flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors',
-              filtersOpen
-                ? 'bg-copper-500/20 text-copper-200 border border-copper-400/40'
-                : 'bg-white/5 text-gray-400 border border-white/5 hover:border-copper-400/30',
-            )}
-            title="Toggle filters"
-          >
-            <Filter size={12} />
-            <ChevronDown size={12} className={clsx('transition-transform', filtersOpen && 'rotate-180')} />
-          </button>
+        <div className="cm-news-controls">
+          <label className="cm-field">
+            <span>Search headlines</span>
+            <span><Search size={15} aria-hidden="true"/><input type="search" value={searchDraft} onChange={event => setSearchDraft(event.target.value)} placeholder="Company, topic or keyword" className="cm-input cm-input--search"/></span>
+          </label>
+          <button type="button" onClick={() => setFiltersOpen(value => !value)} className="cm-icon-button" aria-label="News filters" aria-expanded={filtersOpen} aria-controls={filterId}><Filter size={16} aria-hidden="true"/></button>
         </div>
-
-        {filtersOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mt-3 space-y-3 overflow-hidden"
-          >
-            {/* Label chips */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {LABEL_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => updateFilter('label', opt.id)}
-                  className={clsx(
-                    'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
-                    filters.label === opt.id
-                      ? 'border-copper-400/60 ' + opt.tone
-                      : 'border-white/5 bg-white/[0.02] text-gray-400 hover:border-copper-400/30',
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Time window */}
-            <div>
-              <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">Window</div>
-              <div className="flex items-center gap-1.5">
-                {SINCE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => updateFilter('since_hours', opt.id)}
-                    className={clsx(
-                      'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
-                      filters.since_hours === opt.id
-                        ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
-                        : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Min relevance */}
-            <div>
-              <div className="flex items-center justify-between text-xs font-mono text-gray-400 mb-1">
-                <span className="uppercase tracking-widest text-slate-400">Min relevance</span>
-                <span>{Math.round((filters.min_relevance ?? 0) * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={0.9}
-                step={0.05}
-                value={filters.min_relevance ?? 0}
-                onChange={(e) => updateFilter('min_relevance', Number(e.target.value))}
-                className="w-full accent-copper-400"
-              />
-            </div>
-
-            {/* Channel toggle — only render when both channels have data */}
-            {availableChannels.length > 1 && (
-              <div>
-                <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">Channel</div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => updateFilter('channel', 'all')}
-                    className={clsx(
-                      'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
-                      filters.channel === 'all' || !filters.channel
-                        ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
-                        : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
-                    )}
-                  >
-                    All
-                  </button>
-                  {availableChannels.map((ch) => (
-                    <button
-                      key={ch}
-                      type="button"
-                      onClick={() => updateFilter('channel', ch)}
-                      className={clsx(
-                        'text-xs font-mono px-2 py-0.5 rounded-full border transition-colors',
-                        filters.channel === ch
-                          ? 'bg-copper-500/20 text-copper-200 border-copper-400/50'
-                          : 'bg-white/[0.02] text-gray-400 border-white/5 hover:border-copper-400/30',
-                      )}
-                    >
-                      {ch}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Publisher filter (shown when one is picked) */}
-            {filters.publisher && (
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-400 uppercase tracking-widest">Publisher</span>
-                <button
-                  type="button"
-                  onClick={() => updateFilter('publisher', undefined)}
-                  className="text-copper-300 hover:text-copper-200"
-                >
-                  Clear "{filters.publisher}"
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
+        {hasActiveFilters && <button type="button" className="cm-filter-chip mt-2" onClick={resetFilters}>Reset filters{filters.publisher ? ` · ${filters.publisher}` : ''}</button>}
+        <div id={filterId} hidden={!filtersOpen} className="mt-3 space-y-4">
+          <fieldset className="cm-news-filter-group"><legend>Sentiment</legend>{LABEL_OPTIONS.map(option => <FilterChip key={option.id} active={filters.label === option.id} onClick={() => updateFilter('label', option.id)}>{option.label}</FilterChip>)}</fieldset>
+          <fieldset className="cm-news-filter-group"><legend>Time window</legend>{SINCE_OPTIONS.map(option => <FilterChip key={option.id} active={filters.since_hours === option.id} onClick={() => updateFilter('since_hours', option.id)}>{option.label}</FilterChip>)}</fieldset>
+          <label className="cm-field"><span>Minimum relevance · {Math.round((filters.min_relevance ?? 0) * 100)}%</span><input type="range" min={0} max={0.9} step={0.05} value={filters.min_relevance ?? 0} onChange={event => updateFilter('min_relevance', Number(event.target.value))} className="w-full"/></label>
+          {(availableChannels.length > 1 || (filters.channel && filters.channel !== 'all')) && <fieldset className="cm-news-filter-group"><legend>Channel</legend><FilterChip active={!filters.channel || filters.channel === 'all'} onClick={() => updateFilter('channel', 'all')}>All channels</FilterChip>{Array.from(new Set([...availableChannels, ...(filters.channel && filters.channel !== 'all' ? [filters.channel] : [])])).map(channel => <FilterChip key={channel} active={filters.channel === channel} onClick={() => updateFilter('channel', channel)}>{channel === 'google_news' ? 'Google News' : channel === 'newsapi' ? 'NewsAPI' : channel}</FilterChip>)}</fieldset>}
+        </div>
       </div>
-
       {/* Feed list */}
-      <div className="flex-1 overflow-y-auto px-2 sm:px-2.5 py-2.5 space-y-1.5">
-        {isLoading && (
-          <div className="space-y-2">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-[96px] rounded-xl bg-white/[0.03] animate-pulse" />
-            ))}
-          </div>
-        )}
+      {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
+      <div className="px-2 sm:px-2.5 py-2.5 space-y-1.5">
+        {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 
         {!isLoading && feed.isError && (
-          <div className="flex flex-col items-center gap-2 p-6 text-center">
-            <AlertCircle size={20} className="text-rose-400" />
-            <p className="text-xs text-gray-400">
-              {feed.error?.message || 'Unable to load news feed.'}
-            </p>
-            <button
-              type="button"
-              onClick={() => feed.refetch()}
-              className="text-xs text-copper-300 hover:text-copper-200"
-            >
-              Retry
-            </button>
-          </div>
+          <ViewState kind="error" title="News could not be loaded" description="Check again to retrieve the latest available headlines." action={<RefreshButton onClick={() => feed.refetch()} busy={isRefreshing} label="Retry"/>} compact/>
         )}
 
         {!isLoading && !feed.isError && items.length === 0 && (
-          <div className="flex flex-col items-center gap-2 p-6 text-center">
-            <Newspaper size={20} className="text-slate-400" />
-            <p className="text-xs text-slate-400">
-              No articles match the current filters.
-            </p>
-          </div>
+          <ViewState kind="empty" title="No matching headlines" description="Try a broader search or reset your filters." action={hasActiveFilters && <button type="button" className="cm-button cm-button--secondary" onClick={resetFilters}>Show all headlines</button>} compact/>
         )}
 
         {items.map((item) => (
@@ -369,6 +218,7 @@ export const NewsIntelligencePanel: React.FC = () => {
             — end of feed —
           </div>
         )}
+      </div>
       </div>
 
       <NewsDetailDrawer item={selectedItem} onClose={() => setSelectedItem(null)} />

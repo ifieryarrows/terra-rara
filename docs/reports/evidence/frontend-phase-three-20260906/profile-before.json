@@ -1,0 +1,515 @@
+{
+  "environment": "Headless Edge, 1440x900, 4x CPU, cold cache, local fixtures, reduced motion; 3 runs",
+  "results": [
+    {
+      "run": 0,
+      "start": 6996.5,
+      "longTasks": [
+        {
+          "start": 2340.900000035763,
+          "duration": 73
+        },
+        {
+          "start": 3278.900000035763,
+          "duration": 152
+        },
+        {
+          "start": 3451.699999988079,
+          "duration": 98
+        },
+        {
+          "start": 3916.800000011921,
+          "duration": 191
+        },
+        {
+          "start": 4165.699999988079,
+          "duration": 145
+        },
+        {
+          "start": 4321.900000035763,
+          "duration": 56
+        },
+        {
+          "start": 4420.600000023842,
+          "duration": 171
+        },
+        {
+          "start": 4593.699999988079,
+          "duration": 253
+        },
+        {
+          "start": 4893.400000035763,
+          "duration": 422
+        },
+        {
+          "start": 5343.600000023842,
+          "duration": 113
+        },
+        {
+          "start": 5615.300000011921,
+          "duration": 97
+        },
+        {
+          "start": 5829.900000035763,
+          "duration": 206
+        },
+        {
+          "start": 7112.600000023842,
+          "duration": 112
+        },
+        {
+          "start": 8253.5,
+          "duration": 130
+        },
+        {
+          "start": 8445.900000035763,
+          "duration": 70
+        },
+        {
+          "start": 8894.5,
+          "duration": 126
+        },
+        {
+          "start": 10470.100000023842,
+          "duration": 103
+        },
+        {
+          "start": 11978.900000035763,
+          "duration": 84
+        }
+      ],
+      "lcp": 4332,
+      "cls": 0.06333269300840191,
+      "events": [
+        {
+          "name": "pointerdown",
+          "duration": 48
+        },
+        {
+          "name": "pointerup",
+          "duration": 48
+        },
+        {
+          "name": "click",
+          "duration": 48
+        },
+        {
+          "name": "pointerdown",
+          "duration": 56
+        },
+        {
+          "name": "pointerup",
+          "duration": 56
+        },
+        {
+          "name": "click",
+          "duration": 56
+        },
+        {
+          "name": "pointerdown",
+          "duration": 48
+        },
+        {
+          "name": "pointerup",
+          "duration": 48
+        },
+        {
+          "name": "click",
+          "duration": 48
+        },
+        {
+          "name": "pointerdown",
+          "duration": 48
+        },
+        {
+          "name": "pointerup",
+          "duration": 48
+        },
+        {
+          "name": "click",
+          "duration": 48
+        }
+      ],
+      "elapsed": 13324.600000023842,
+      "heapUsed": 10896108,
+      "interactionLongTasks": [
+        {
+          "start": 7112.600000023842,
+          "duration": 112
+        },
+        {
+          "start": 8253.5,
+          "duration": 130
+        },
+        {
+          "start": 8445.900000035763,
+          "duration": 70
+        },
+        {
+          "start": 8894.5,
+          "duration": 126
+        },
+        {
+          "start": 10470.100000023842,
+          "duration": 103
+        },
+        {
+          "start": 11978.900000035763,
+          "duration": 84
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "start": 6751.400000035763,
+      "longTasks": [
+        {
+          "start": 2268.400000035763,
+          "duration": 77
+        },
+        {
+          "start": 3175.100000023842,
+          "duration": 146
+        },
+        {
+          "start": 3343.100000023842,
+          "duration": 95
+        },
+        {
+          "start": 3730.900000035763,
+          "duration": 174
+        },
+        {
+          "start": 3944.300000011921,
+          "duration": 179
+        },
+        {
+          "start": 4209.5,
+          "duration": 172
+        },
+        {
+          "start": 4384.100000023842,
+          "duration": 237
+        },
+        {
+          "start": 4629.100000023842,
+          "duration": 371
+        },
+        {
+          "start": 5045.800000011921,
+          "duration": 108
+        },
+        {
+          "start": 5293.699999988079,
+          "duration": 117
+        },
+        {
+          "start": 5552.900000035763,
+          "duration": 207
+        },
+        {
+          "start": 7008.800000011921,
+          "duration": 68
+        },
+        {
+          "start": 7078.600000023842,
+          "duration": 100
+        },
+        {
+          "start": 7207,
+          "duration": 260
+        },
+        {
+          "start": 8084.400000035763,
+          "duration": 64
+        },
+        {
+          "start": 9069.300000011921,
+          "duration": 126
+        },
+        {
+          "start": 9238.800000011921,
+          "duration": 69
+        },
+        {
+          "start": 9730.5,
+          "duration": 143
+        },
+        {
+          "start": 10863.900000035763,
+          "duration": 58
+        },
+        {
+          "start": 11453.699999988079,
+          "duration": 117
+        },
+        {
+          "start": 13194.699999988079,
+          "duration": 119
+        }
+      ],
+      "lcp": 2676,
+      "cls": 0.09261227914315683,
+      "events": [
+        {
+          "name": "pointerdown",
+          "duration": 184
+        },
+        {
+          "name": "pointerup",
+          "duration": 184
+        },
+        {
+          "name": "click",
+          "duration": 184
+        },
+        {
+          "name": "pointerdown",
+          "duration": 80
+        },
+        {
+          "name": "pointerup",
+          "duration": 80
+        },
+        {
+          "name": "click",
+          "duration": 80
+        },
+        {
+          "name": "pointerdown",
+          "duration": 40
+        },
+        {
+          "name": "pointerup",
+          "duration": 40
+        },
+        {
+          "name": "click",
+          "duration": 40
+        },
+        {
+          "name": "pointerdown",
+          "duration": 64
+        },
+        {
+          "name": "pointerup",
+          "duration": 64
+        },
+        {
+          "name": "click",
+          "duration": 64
+        }
+      ],
+      "elapsed": 14727.300000011921,
+      "heapUsed": 10921280,
+      "interactionLongTasks": [
+        {
+          "start": 7008.800000011921,
+          "duration": 68
+        },
+        {
+          "start": 7078.600000023842,
+          "duration": 100
+        },
+        {
+          "start": 7207,
+          "duration": 260
+        },
+        {
+          "start": 8084.400000035763,
+          "duration": 64
+        },
+        {
+          "start": 9069.300000011921,
+          "duration": 126
+        },
+        {
+          "start": 9238.800000011921,
+          "duration": 69
+        },
+        {
+          "start": 9730.5,
+          "duration": 143
+        },
+        {
+          "start": 10863.900000035763,
+          "duration": 58
+        },
+        {
+          "start": 11453.699999988079,
+          "duration": 117
+        },
+        {
+          "start": 13194.699999988079,
+          "duration": 119
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "start": 7479.600000023842,
+      "longTasks": [
+        {
+          "start": 2217,
+          "duration": 102
+        },
+        {
+          "start": 3481.899999976158,
+          "duration": 185
+        },
+        {
+          "start": 3688,
+          "duration": 121
+        },
+        {
+          "start": 4157.800000011921,
+          "duration": 237
+        },
+        {
+          "start": 4475.899999976158,
+          "duration": 166
+        },
+        {
+          "start": 4655.600000023842,
+          "duration": 62
+        },
+        {
+          "start": 4761,
+          "duration": 199
+        },
+        {
+          "start": 4960.199999988079,
+          "duration": 288
+        },
+        {
+          "start": 5293.800000011921,
+          "duration": 435
+        },
+        {
+          "start": 5757.800000011921,
+          "duration": 121
+        },
+        {
+          "start": 6065.300000011921,
+          "duration": 124
+        },
+        {
+          "start": 6314.300000011921,
+          "duration": 221
+        },
+        {
+          "start": 7585.199999988079,
+          "duration": 106
+        },
+        {
+          "start": 7691.5,
+          "duration": 89
+        },
+        {
+          "start": 8704.600000023842,
+          "duration": 101
+        },
+        {
+          "start": 8852.399999976158,
+          "duration": 64
+        },
+        {
+          "start": 9351.600000023842,
+          "duration": 91
+        },
+        {
+          "start": 10766.800000011921,
+          "duration": 97
+        },
+        {
+          "start": 12202.699999988079,
+          "duration": 79
+        }
+      ],
+      "lcp": 4656,
+      "cls": 0.06333269300840191,
+      "events": [
+        {
+          "name": "pointerdown",
+          "duration": 48
+        },
+        {
+          "name": "pointerup",
+          "duration": 48
+        },
+        {
+          "name": "click",
+          "duration": 48
+        },
+        {
+          "name": "pointerdown",
+          "duration": 64
+        },
+        {
+          "name": "pointerup",
+          "duration": 64
+        },
+        {
+          "name": "click",
+          "duration": 64
+        },
+        {
+          "name": "pointerdown",
+          "duration": 48
+        },
+        {
+          "name": "pointerup",
+          "duration": 48
+        },
+        {
+          "name": "click",
+          "duration": 48
+        },
+        {
+          "name": "pointerdown",
+          "duration": 56
+        },
+        {
+          "name": "pointerup",
+          "duration": 56
+        },
+        {
+          "name": "click",
+          "duration": 56
+        }
+      ],
+      "elapsed": 13498.399999976158,
+      "heapUsed": 10726928,
+      "interactionLongTasks": [
+        {
+          "start": 7585.199999988079,
+          "duration": 106
+        },
+        {
+          "start": 7691.5,
+          "duration": 89
+        },
+        {
+          "start": 8704.600000023842,
+          "duration": 101
+        },
+        {
+          "start": 8852.399999976158,
+          "duration": 64
+        },
+        {
+          "start": 9351.600000023842,
+          "duration": 91
+        },
+        {
+          "start": 10766.800000011921,
+          "duration": 97
+        },
+        {
+          "start": 12202.699999988079,
+          "duration": 79
+        }
+      ]
+    }
+  ]
+}

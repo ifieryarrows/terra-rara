@@ -1,4 +1,8 @@
 import { MetricCard as Metric } from '../components/ui/MetricCard';
+import { PageHeader } from '../components/ui/PageHeader';
+import { ViewState } from '../components/ui/ViewState';
+import { RefreshButton } from '../components/ui/RefreshButton';
+import { SectionHeader } from '../components/ui/SectionHeader';
 import { useTftModelSummary } from '../hooks/useQueries';
 import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 
@@ -6,24 +10,15 @@ const fmtPct = (v?: number) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
 const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits));
 
 export const ModelsPage = () => {
-  const { data, isLoading, isError, error } = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
+  const { data, isLoading, isError, refetch, isFetching } = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
+  const header = <PageHeader eyebrow="02 / MODEL INTELLIGENCE" title="TFT-ASRO Model" description={<>Weekly strategy, daily diagnostics and the evidence behind each forecast.{data?.trained_at && <span className="block">{data.symbol} · Checkpoint trained {new Date(data.trained_at).toLocaleString()}</span>}</>} actions={data?.quality_gate && <span className={`cm-filter-chip cm-tone-${data.quality_gate.passed ? 'good' : 'bad'}`}>Quality gate: {data.quality_gate.passed ? 'Passed' : 'Failed'}</span>}/>;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-6 h-6 border-2 border-slate-600 border-t-amber-400 rounded-full animate-spin" />
-      </div>
-    );
+    return <div className="space-y-6">{header}<ViewState kind="loading" title="Loading model intelligence" description="Retrieving the available checkpoint and validation metrics."/></div>;
   }
 
   if (isError || !data) {
-    return (
-      <div className="p-10 border border-rose-800/40 bg-rose-950/30 rounded-lg text-rose-200 text-sm">
-        No TFT model metadata available. {error instanceof Error ? `(${error.message})` : ''}
-        <br />
-        Run the training workflow to populate this page.
-      </div>
-    );
+    return <div className="space-y-6">{header}<ViewState kind={isError ? 'error' : 'empty'} title={isError ? 'Model intelligence could not be loaded' : 'No model metadata available'} description="Checkpoint details and validation metrics will appear when they are available. You can check again or inspect the System page for availability." action={<RefreshButton onClick={() => refetch()} busy={isFetching} label="Try again"/>}/></div>;
   }
 
   const m = data.metrics ?? {};
@@ -42,36 +37,7 @@ export const ModelsPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">TFT-ASRO Model</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Symbol <span className="font-mono text-slate-200">{data.symbol}</span>
-            {data.trained_at && (
-              <>
-                {' '}· Checkpoint trained at{' '}
-                <span
-                  className="font-mono text-slate-200"
-                  title="TFT checkpoint training completion time. This is NOT the last prediction timestamp — see the System page for prediction freshness."
-                >
-                  {new Date(data.trained_at).toLocaleString()}
-                </span>
-              </>
-            )}
-          </p>
-        </div>
-        {gate && (
-          <span
-            className={`px-3 py-1 rounded text-xs font-bold tracking-wider uppercase ${
-              gate.passed
-                ? 'bg-emerald-400/10 text-emerald-400 border border-emerald-400/30'
-                : 'bg-rose-400/10 text-rose-400 border border-rose-400/30'
-            }`}
-          >
-            Quality Gate: {gate.passed ? 'Passed' : 'Failed'}
-          </span>
-        )}
-      </div>
+      {header}
 
       {/* Quality gate reasons */}
       {gate && gate.reasons?.length > 0 && (
@@ -104,15 +70,8 @@ export const ModelsPage = () => {
 
       {/* Primary Horizon: Weekly Forecast (5D) */}
       <section>
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
-          <h3 className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
-            Primary Horizon: Weekly Strategy (5-Day Cumulative)
-          </h3>
-          <span className="text-xs text-slate-400 font-mono">
-            Target Horizon: 5 Trading Days · Annualized factor: √52
-          </span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <SectionHeader eyebrow="PRIMARY / 5 TRADING DAYS" title="Weekly strategy" description="Read the five-day cumulative forecast first. Weekly risk ratios use √52 annualization."/>
+        <div className="cm-metric-grid">
           <Metric
             label="Weekly Directional Accuracy"
             value={fmtPct(weeklyDa)}
@@ -199,16 +158,10 @@ export const ModelsPage = () => {
       </section>
 
       {/* Single-Step Diagnostics: Daily Path (T+1) */}
-      <section>
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-3">
-          <h3 className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
-            Diagnostic Path: Daily Step (T+1)
-          </h3>
-          <span className="text-xs text-slate-400 font-mono">
-            Single-step path diagnostics · Annualized factor: √252
-          </span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <details className="cm-data-disclosure cm-diagnostics">
+        <summary><span>Daily diagnostics <small>T+1 · single-step evidence</small></span><span aria-hidden="true">+</span></summary>
+        <p className="cm-section-description">These metrics describe the daily path. Daily risk ratios use √252 annualization; evaluate them separately from the weekly strategy above.</p>
+        <div className="cm-metric-grid">
           <Metric
             label="Daily Directional Accuracy"
             value={fmtPct(m.directional_accuracy)}
@@ -233,8 +186,8 @@ export const ModelsPage = () => {
             tone={vr != null ? (vr >= 0.5 && vr <= 1.5 ? 'good' : 'bad') : 'neutral'}
             hint="pred σ / actual σ (target ≈ 1.0)"
           />
-          <Metric label="MAE" value={fmtNum(mae)} hint="Daily mean absolute error" />
-          <Metric label="RMSE" value={fmtNum(rmse)} hint="Daily root mean squared error" />
+          <Metric label="MAE" value={fmtNum(mae)} hint="Average absolute daily prediction error; lower is better" />
+          <Metric label="RMSE" value={fmtNum(rmse)} hint="Daily error measure that weighs larger misses more heavily" />
           <Metric
             label="Daily Tail Capture"
             value={fmtPct(tail)}
@@ -247,39 +200,34 @@ export const ModelsPage = () => {
             hint="Daily standard deviation ratio"
           />
         </div>
-      </section>
+      </details>
 
       {/* Variable importance */}
       {data.variable_importance && data.variable_importance.length > 0 && (
         <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">
-            Variable Importance (Top 20)
-          </h3>
-          <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
+          <SectionHeader title="Model inputs" description="Relative feature importance from the published model. Importance describes model use, not a causal effect on price."/>
+          <div className="cm-panel space-y-4">
             {data.variable_importance.map((vi: any, i: number) => {
               const max = data.variable_importance[0]?.importance || 1;
               const pct = (vi.importance / max) * 100;
               const label = vi.label || vi.description || vi.feature;
               return (
                 <div key={i} title={vi.feature}>
-                  <div className="flex justify-between items-center text-xs mb-1 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex justify-between items-start text-sm mb-2 gap-3">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
                       {vi.category && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase tracking-wider shrink-0">
                           {vi.category}
                         </span>
                       )}
-                      <span className="text-slate-200 truncate">{label}</span>
-                      {vi.time_horizon && (
-                        <span className="text-xs font-mono text-slate-400 shrink-0">{vi.time_horizon}</span>
-                      )}
+                      <span className="text-slate-200 whitespace-normal break-words">{label}</span>
                     </div>
                     <span className="text-slate-400 font-mono shrink-0">{vi.importance.toFixed(4)}</span>
                   </div>
                   <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-amber-500 to-rose-500"
-                      style={{ width: `${pct}%` }}
+                      className="h-full bg-copper-400 origin-left"
+                      style={{ transform: `scaleX(${Math.max(0, Math.min(1, pct / 100))})` }}
                     />
                   </div>
                 </div>
@@ -291,12 +239,12 @@ export const ModelsPage = () => {
 
       {/* Config */}
       {data.config && Object.keys(data.config).length > 0 && (
-        <section>
-          <h3 className="text-xs uppercase tracking-widest text-slate-400 mb-3">Training Config</h3>
-          <pre className="bg-slate-900 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 font-mono overflow-x-auto">
+        <details className="cm-data-disclosure">
+          <summary>Training configuration</summary>
+          <pre>
             {JSON.stringify(data.config, null, 2)}
           </pre>
-        </section>
+        </details>
       )}
     </div>
   );

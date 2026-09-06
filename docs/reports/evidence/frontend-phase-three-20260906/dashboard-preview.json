@@ -1,0 +1,62 @@
+{
+  "base": "http://127.0.0.1:5185",
+  "checkedAt": "2026-09-06T11:12:59.344Z",
+  "fixtures": true,
+  "results": [
+    {
+      "width": 1536,
+      "height": 900,
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "passed": true
+    },
+    {
+      "width": 1280,
+      "height": 600,
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "passed": true
+    },
+    {
+      "width": 768,
+      "height": 900,
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "reducedMotion": "reduce",
+      "overflow": 0,
+      "passed": true
+    },
+    {
+      "width": 320,
+      "height": 650,
+      "reducedMotion": "reduce",
+      "overflow": 0,
+      "passed": true
+    },
+    {
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "state": "degraded",
+      "passed": true
+    },
+    {
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "state": "failure",
+      "passed": true
+    },
+    {
+      "state": "refresh-failure",
+      "passed": true
+    }
+  ]
+}

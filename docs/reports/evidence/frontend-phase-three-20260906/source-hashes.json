@@ -1,0 +1,26 @@
+[
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\src\\pages\\OverviewPage.tsx",
+    "Hash": "27DEAE52CF0621131CCDA8BC32DA91F758D0F23C4592D89C45DE522DA957972C"
+  },
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\src\\features\\forecast\\PriceForecastChart.tsx",
+    "Hash": "C3BF1E0CBB0D6C9D2C85435C88C87A55D363DBEE4ACB2BFF7DE4E489B61CB8AA"
+  },
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\src\\features\\forecast\\chart-data.ts",
+    "Hash": "0F27227A8701FE3068296D0754ACF48BB638F3CFECFFD9D5FD0A157CCD08E2CF"
+  },
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\src\\features\\heatmap\\HeatmapPanel.tsx",
+    "Hash": "717D83A3D6898E5CF30E0E418727BE77583B1F649581FADD9C079B19DFCD7A4D"
+  },
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\src\\design\\workspace.css",
+    "Hash": "78BE744D8BCE1E2BA8048100BC9C2463E95C30D7EA472C0ED9E45CF27D58F7A1"
+  },
+  {
+    "Path": "D:\\dev\\projects\\copper-mind\\frontend\\scripts\\prerender.mjs",
+    "Hash": "3BBB8EB9364AA4FA85F88629711B174F51F256A7338EDCA348825B87C5B36D10"
+  }
+]

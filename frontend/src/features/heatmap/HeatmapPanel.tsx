@@ -1,4 +1,5 @@
 import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import HeatmapFilters from './HeatmapFilters';
 import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
@@ -12,6 +13,8 @@ import {
 } from './heatmap-layout';
 import { recordCommit, recordLongTask } from './performance';
 import { useMarketHeatmap } from '../../hooks/useQueries';
+import { ViewState } from '../../components/ui/ViewState';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 
 const OPEN_DELAY_MS = 90;
 const CLOSE_DELAY_MS = 180;
@@ -41,7 +44,7 @@ function transformTree(
 
 export const HeatmapPanel: React.FC = () => {
   const [view, setView] = useState<'market' | 'themes'>('market');
-  const { data: rawData, isError, error, isLoading } = useMarketHeatmap(view);
+  const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
   const [zoom, setZoom] = useState(1);
@@ -52,11 +55,37 @@ export const HeatmapPanel: React.FC = () => {
   const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const resizeFrame = useRef<number | null>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const categoryPanelRef = useRef<HeatmapCategoryPanelHandle>(null);
   const latestPointer = useRef<{ x: number; y: number } | null>(null);
+  // Portal exit mounts a new inline button; resolve the current node at cleanup.
+  const restoreFullscreenFocus = useCallback(() => fullscreenButtonRef.current?.focus({ preventScroll: true }), []);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    fullscreenButtonRef.current?.focus();
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const controls = [...(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), select, a[href], [tabindex="0"]') ?? [])].filter(node => node.getClientRects().length);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', containFocus);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', containFocus);
+      restoreFullscreenFocus();
+    };
+  }, [isFullscreen, restoreFullscreenFocus]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -195,18 +224,23 @@ export const HeatmapPanel: React.FC = () => {
     if (!pinnedAnchor) setHoveredLeaf(leaf);
   }, [pinnedAnchor]);
 
-  return (
-    <section className={`flex min-w-0 max-w-full flex-col overflow-hidden bg-slate-950 font-sans ${isFullscreen ? 'fixed inset-0 z-50' : 'relative w-full rounded-xl border border-slate-700 shadow-xl'}`}>
-      <header className="flex items-center justify-between gap-3 border-b border-slate-700 bg-slate-900 px-4 py-3">
+  const content = (
+    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`flex min-w-0 max-w-full flex-col bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`}>
+      <header className="cm-heatmap-header">
         <div>
           <h2 className="text-base font-semibold tracking-wide text-white">Market Heatmap</h2>
-          <p className="mt-0.5 text-[10px] text-slate-500">
+          <p className="cm-chart-note">
             {groups.length} top-level groups · {meta.payload_count ?? 0} instruments · sector → industry → instrument
           </p>
         </div>
-        <button type="button" onClick={() => setIsFullscreen((current) => !current)} className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:text-white">
+        <div className="cm-heatmap-actions" role="group" aria-label="Map controls">
+        <button type="button" className="cm-icon-button" aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-.5)}>−</button>
+        <button type="button" className="cm-filter-chip" aria-label="Reset map zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+        <button type="button" className="cm-icon-button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(.5)}>+</button>
+        <button ref={fullscreenButtonRef} type="button" onClick={() => setIsFullscreen((current) => !current)} className="cm-filter-chip" aria-pressed={isFullscreen}>
           {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         </button>
+        </div>
       </header>
 
       <HeatmapFilters
@@ -220,14 +254,15 @@ export const HeatmapPanel: React.FC = () => {
         meta={meta}
       />
       {meta.refresh_error && <div className="border-b border-rose-800 bg-rose-950/60 px-4 py-2 text-xs text-rose-200">Last refresh failed; showing the last healthy snapshot. {meta.refresh_error}</div>}
+      {isError && hasContent && <p className="cm-news-updating" role="status">Map refresh failed. The previous snapshot remains visible.</p>}
 
       <div
         ref={containerRef}
         className="relative min-w-0 flex-1"
-        style={{ height: isFullscreen ? 'calc(100vh - 112px)' : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 400 : 560 }}
+        style={{ height: isFullscreen ? undefined : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 280 : 560 }}
       >
-        {isError ? (
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-rose-300">Heatmap data is temporarily unavailable: {(error as Error)?.message}</div>
+        {isError && !hasContent ? (
+          <ViewState kind="error" title="Market map could not be loaded" description="Check again to retrieve an available snapshot." action={<RefreshButton onClick={() => refetch()} busy={isFetching} label="Retry market map"/>} compact/>
         ) : !hasContent ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
             {(isLoading || meta.refresh_in_progress) && <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-copper-400" />}
@@ -274,12 +309,13 @@ export const HeatmapPanel: React.FC = () => {
           />
         )}
       </div>
-      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-950 px-3 py-1.5 text-[9px] text-slate-600">
+      <footer className="cm-heatmap-footer">
         <span>Mouse wheel zooms · Drag zoomed map to pan · Double-click a ticker for details · Enter pins · Esc closes</span>
         <a href="https://www.logo.dev" target="_blank" rel="noopener" className="text-slate-500 hover:text-copper-300">Logos provided by Logo.dev</a>
       </footer>
     </section>
   );
+  return isFullscreen ? createPortal(content, document.body) : content;
 };
 
 export default HeatmapPanel;

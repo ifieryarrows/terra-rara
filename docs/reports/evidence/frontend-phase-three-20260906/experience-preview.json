@@ -1,0 +1,209 @@
+{
+  "base": "http://127.0.0.1:5185",
+  "checkedAt": "2026-09-06T11:12:49.081Z",
+  "results": [
+    {
+      "viewport": {
+        "width": 1536,
+        "height": 900
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "top": 0.15625,
+          "height": 900,
+          "innerHeight": 652.21875,
+          "layers": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 900,
+          "innerHeight": 652.21875,
+          "layers": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 900,
+          "innerHeight": 652.21875,
+          "layers": [
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "top": 0.109375,
+          "height": 600,
+          "innerHeight": 593.859375,
+          "layers": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 600,
+          "innerHeight": 593.859375,
+          "layers": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 600,
+          "innerHeight": 593.859375,
+          "layers": [
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1024,
+        "height": 650
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "top": 0,
+          "height": 650,
+          "innerHeight": 586.1875,
+          "layers": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 650,
+          "innerHeight": 586.1875,
+          "layers": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "top": 0,
+          "height": 650,
+          "innerHeight": 586.1875,
+          "layers": [
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 768,
+        "height": 800
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": false,
+      "samples": [],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": false,
+      "samples": [],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "reducedMotion": "reduce",
+      "overflow": 0,
+      "enhanced": false,
+      "samples": [],
+      "apiRequests": [],
+      "errors": []
+    }
+  ],
+  "workspaceResults": [
+    {
+      "path": "/models",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/validation",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/system",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/models",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/validation",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/system",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    }
+  ]
+}

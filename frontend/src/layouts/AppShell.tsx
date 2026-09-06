@@ -1,6 +1,7 @@
 import { Outlet, NavLink, Link } from 'react-router-dom';
 import { LayoutDashboard, Brain, CheckCircle, Server } from 'lucide-react';
 import { Brand } from '../components/ui/Brand';
+import '../design/workspace.css';
 const navigation = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
   { to: '/models', icon: Brain, label: 'Models' },

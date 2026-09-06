@@ -30,6 +30,12 @@ Body text is normally 16 px; controls and regularly read labels 14 px; secondary
 
 The first migration covers shared surfaces, shell/navigation, Overview panels/header/chart alternatives, Models/Validation metrics and news readability/drawer behavior. It does not claim every legacy table, input and utility class has been replaced by primitives. Consolidate additional components when a screen requires work, keeping functionality tests intact.
 
+Workspace pages share `PageHeader`, `SectionHeader`, `ViewState`, `RefreshButton`, `DataTable` and `FilterChip`. Weekly model metrics are primary; native `details` keeps T+1 diagnostics available on demand. Validation accepts both API metric names and the rolling report's `mean_*`, `da` and `sharpe` aliases without recomputing metrics. The Theta table uses reported comparison values; unrecognized report shapes retain their raw details. Missing service values remain unknown rather than implying success.
+
+`features/forecast/PriceForecastChart` owns display window, series visibility and table disclosure state, independent of Overview updates. Window labels count observed closes, not calendar days. Reuse the exact forecast-reference-date guard; period selection never triggers an API request or recalculates the model path. Date-only chart labels use UTC to avoid shifting a market date in another timezone. A crossed/incomplete Q10–Q90 pair is not repaired into a filled interval. Keep the published values available in the table.
+
+News filters and headlines share one bounded, keyboard-scrollable viewport so expanded controls cannot squeeze the feed out of short screens. Fullscreen heatmaps use a portal, contain keyboard focus, restore the trigger and body scroll, and reserve flexible map height beneath the controls. Shared controls do not change treemap geometry, category hover positioning, peers or query cadence.
+
 ## Motion architecture
 
 Native scroll is the input source. Framer Motion is already installed; this slice adds no GSAP, Lenis, Three.js, Rive, shader, model or decoder dependency. CSS handles static layout and sticky positioning. The research sequence uses one `scrollYProgress` MotionValue; preview crossfades, translation and the progress line derive from that value. High-frequency progress never enters React state. Hero has its own local chart-reveal scope because it is not synchronized with the later story.
@@ -40,6 +46,8 @@ Hooks own subscription disposal. Leaving landing unmounts its scroll consumers. 
 
 SVG path reveal has paint cost even when its wrapper transform is composited. Keep it bounded to one small chart; do not apply path morph/blur across hundreds of visible cells. Crossfade layers are noninteractive and decorative; all substantive explanations remain in HTML. The reduced/static flow includes the complete preview captions.
 
+The enhanced story stage must keep `align-self:start` and a viewport-bounded height. Grid stretch combined with `height:auto` breaks sticky behavior on short desktop screens. Compact preview spacing below 650 px height instead; the 1280×600 and 1024×650 browser cases verify that the stage and its inner content fit.
+
 ## Routing, loading and SEO
 
 `/` introduces the platform. `/dashboard` opens Overview. `/models`, `/validation`, `/system` retain their URLs. `/overview` is a compatibility alias. Root links with a symbol query enter `/dashboard` while retaining the query/hash; ordinary campaign parameters keep the landing. Unknown routes show a useful fallback. No localStorage flag controls navigation.
@@ -47,6 +55,8 @@ SVG path reveal has paint cost even when its wrapper transform is composited. Ke
 React Router remains in place. Dashboard pages and feature panels are lazy imports. The light introduction is part of the entry; no heavy marketing runtime or assets are shared into the dashboard. QueryClient remains outside route boundaries. Route navigation focuses the main landmark and keeps a bounded in-memory history of scroll positions. Browser QA of scroll restoration remains required because DOM unit tests cannot validate viewport geometry.
 
 The build prerenders the complete static landing into `dist/index.html` via React's server renderer. The client mounts React after its code arrives; this is build-time prerendering, not runtime SSR or RSC. `workspace.html` preserves an independent SPA shell for direct application links. Vercel/Nginx route configuration distinguishes root from other pages. Critical copy, navigation and preview explanations exist without JavaScript; the financial app still requires JavaScript.
+
+The prerender Vite instance uses `node_modules/.vite-prerender` for its optimizer cache. Its configuration differs from the development server, so sharing the default `.vite` cache can invalidate a running dev server's dependency URLs during a build.
 
 No new font/image/video/model fetches are introduced. Existing IBM Plex Sans remains; mono uses system fonts. Hashed `/assets/*` are immutable. HTML remains revalidatable. Never apply immutable caching to API responses or the HTML shell. Vercel Speed Insights mounts for both landing and dashboard; actual field data depends on the deployment's service configuration and traffic.
 
@@ -71,4 +81,6 @@ Run `npm run test`, `npm run lint`, `npm run build`, `npm run check:budgets`. Bu
 
 Production targets remain p75 LCP ≤2.5 s, INP ≤200 ms, CLS ≤0.1; agreed-device scroll p95 frame ≤16.7 ms at 60 Hz. Use identical production builds, viewport, network/CPU throttling, cache mode, API fixtures and interaction scripts before/after. Capture DevTools network/long tasks/heap and a 10–15 s interaction trace. Lighthouse lab results are not field INP or measured GPU time. Keep tests of reference and 1,000-instrument D3 layouts independent of browser measurements.
 
-Cloud-browser policy blocked the local preview in this session. Build/DOM/unit evidence does not establish visual correctness, mobile geometry, browser FPS, real LCP/INP/CLS or memory behavior. Keep the initial change reviewable as a draft until a normal browser review and production-equivalent profiling are complete.
+The initial session could not run a cloud-browser preview. On 2026-09-06, `scripts/check-experience.mjs` passed six landing and six fixture-backed workspace cases in headless Edge against both a fresh Vite dev server and the production build preview. These establish the tested geometry, chapter transitions and keyboard disclosure behavior. Real-device FPS, field LCP/INP/CLS, memory behavior and deployed provider availability remain unmeasured; see the phase-two audit and phase-three first-slice delivery report.
+
+Phase-three closure adds `scripts/check-dashboard.mjs`: five viewport interaction flows and five data/error states passed on dev and production preview, including chart/table keyboard access, news drawer focus restoration and fullscreen map lifecycle. `scripts/profile-dashboard.mjs` records a short, repeatable three-run local lab comparison. Its event durations are not field INP and its end heap is not a leak test. See [the completion report](../reports/frontend-phase-three-completion-20260906.md) for raw evidence, mixed performance results and remaining release validation.

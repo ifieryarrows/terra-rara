@@ -1,14 +1,14 @@
-import { useEffect, useState, useCallback, useMemo, Suspense, lazy, memo } from 'react';
-import {
-  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine
-} from 'recharts';
-import { motion, useReducedMotion } from 'framer-motion';
+import { useEffect, useState, useCallback, useRef, Suspense, lazy, memo } from 'react';
+import { motion } from 'framer-motion';
 import { FinancialPanel as GlassCard } from '../components/ui/FinancialPanel';
-import { chartTokens } from '../design/chart-tokens';
+import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
+import { RefreshButton } from '../components/ui/RefreshButton';
+import { ModelReliability } from '../features/forecast/ModelReliability';
+import { ViewState } from '../components/ui/ViewState';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
-  Brain, Crosshair, AlertTriangle, CheckCircle2, Clock, Minus
+  Brain, Crosshair, AlertTriangle, CheckCircle2, Minus
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -25,7 +25,6 @@ import type {
   CommentaryResponse, TFTAnalysisResponse
 } from '../types';
 import { useSentimentSummary } from '../hooks/useQueries';
-import { isForecastAligned, mapTftForecastRows } from '../utils/forecast';
 import '../App.css';
 
 // Lazy load heavy components
@@ -35,15 +34,6 @@ const NewsIntelligencePanel = lazy(() =>
 );
 
 // --- Skeleton Components for perceived performance ---
-const ChartSkeleton = () => (
-  <div className="h-[350px] w-full flex items-center justify-center">
-    <div className="flex flex-col items-center gap-3">
-      <div className="w-8 h-8 border-2 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
-      <span className="text-slate-400 text-xs font-mono">Loading chart...</span>
-    </div>
-  </div>
-);
-
 const MapSkeleton = () => (
   <div className="h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl">
     <div className="flex flex-col items-center gap-3">
@@ -82,49 +72,12 @@ const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), classN
 ));
 NumberTicker.displayName = 'NumberTicker';
 
-// Simple progress bar [0-100]
-const ProgressBar = memo(({ value, max = 100, color = 'bg-emerald-500' }: { value: number; max?: number; color?: string }) => (
-  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-    <motion.div
-      className={clsx("h-full rounded-full", color)}
-      initial={false}
-      style={{ transformOrigin: "left", transform: "scaleX(" + Math.max(0, Math.min(1, value / max)) + ")" }}
-      transition={{ duration: 0.8, ease: 'easeOut' }}
-    />
-  </div>
-));
-ProgressBar.displayName = 'ProgressBar';
-
-const ForecastTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  const d = payload[0]?.payload;
-  return (
-    <div className="bg-midnight/90 backdrop-blur-md border border-white/10 rounded-xl px-3 py-2 text-xs font-mono">
-      <p className="text-gray-400 mb-1 font-sans">
-        {new Date(label).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-      </p>
-      {d?.price != null && (
-        <p className="text-copper-400">Price: ${d.price.toFixed(2)}</p>
-      )}
-      {d?.isForecast && d?.priceMedian != null && (
-        <>
-          <p className="text-violet-400">Forecast: ${d.priceMedian.toFixed(2)}</p>
-          {d?.priceQ10 != null && (
-            <p className="text-violet-400/60">
-              80% Range: ${d.priceQ10.toFixed(2)} — ${d.priceQ90.toFixed(2)}
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
 // --- Main App ---
 
 export const OverviewPage = () => {
-  const reducedMotion = useReducedMotion();
-  const [showChartTable, setShowChartTable] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshInFlight = useRef(false);
+  const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
@@ -137,6 +90,9 @@ export const OverviewPage = () => {
 
   // Silent refresh - no loading state flash after initial load
   const loadData = useCallback(async (silent = false) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setIsRefreshing(true);
     const [analysisResult, historyResult, tftResult] = await Promise.allSettled([
         fetchAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
@@ -145,27 +101,30 @@ export const OverviewPage = () => {
     const nextErrors: Record<string, string> = {};
     if (analysisResult.status === 'fulfilled') setAnalysis(analysisResult.value);
     else {
-      setAnalysis(null);
+      if (!silent) setAnalysis(null);
       nextErrors['Price forecast'] = String(analysisResult.reason);
     }
     if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
     else {
-      setHistory(null);
+      if (!silent) setHistory(null);
       nextErrors['Price history'] = String(historyResult.reason);
     }
     if (tftResult.status === 'fulfilled') setTftAnalysis(tftResult.value);
     else {
-      setTftAnalysis(null);
+      if (!silent) setTftAnalysis(null);
       nextErrors['Deep-learning forecast'] = String(tftResult.reason);
     }
     setLoadErrors((previous) => ({
       ...(previous['AI commentary'] ? { 'AI commentary': previous['AI commentary'] } : {}),
       ...nextErrors,
     }));
-    if (!silent) setIsInitialLoad(false);
+    setIsInitialLoad(false);
+    setIsRefreshing(false);
+    refreshInFlight.current = false;
   }, []);
 
   const loadCommentary = useCallback(async () => {
+    setCommentaryLoading(true);
     try {
       const data = await fetchCommentary(DEFAULT_COPPER_SYMBOL);
       setCommentary(data);
@@ -177,7 +136,8 @@ export const OverviewPage = () => {
     } catch (err) {
       setCommentary(null);
       setLoadErrors((previous) => ({ ...previous, 'AI commentary': String(err) }));
-      console.error(err);
+    } finally {
+      setCommentaryLoading(false);
     }
   }, []);
 
@@ -218,74 +178,9 @@ export const OverviewPage = () => {
     if (analysis) loadCommentary();
   }, [analysis, loadCommentary]);
 
-  const { forecastChartData, yDomain, lastHistDate } = useMemo(() => {
-    const all = history?.data || [];
-    if (all.length === 0) return { forecastChartData: [] as any[], yDomain: [0, 10] as [number, number], lastHistDate: '' };
-
-    // Filter out unclosed/invalid bars (e.g. today's incomplete bar with null price)
-    // to prevent gaps in the chart and ensure the bridge point has a valid number.
-    const validHistory = all.filter((p: any) => p.price != null && !isNaN(p.price));
-    if (validHistory.length === 0) return { forecastChartData: [] as any[], yDomain: [0, 10] as [number, number], lastHistDate: '' };
-
-    const recent = validHistory.slice(-30);
-    const last = recent[recent.length - 1];
-
-    const hist = recent.slice(0, -1).map((p: any) => ({ date: p.date, price: p.price }));
-
-    const forecastReferenceDate = tftAnalysis?.prediction?.reference_price_date;
-    const hasForecast = !!tftAnalysis?.prediction?.daily_forecasts?.length
-      && isForecastAligned(forecastReferenceDate, last.date);
-
-    const bridge: any = {
-      date: last.date,
-      price: last.price,
-      ...(hasForecast && {
-        priceMedian: last.price,
-        priceQ10: last.price,
-        priceQ90: last.price,
-      }),
-    };
-
-    const forecasts = hasForecast
-      ? mapTftForecastRows(
-          tftAnalysis!.prediction!.daily_forecasts,
-          forecastReferenceDate,
-        )
-      : [];
-
-    const data = [...hist, bridge, ...forecasts];
-
-    let min = Infinity, max = -Infinity;
-    for (const p of data) {
-      if (p.price != null) { min = Math.min(min, p.price); max = Math.max(max, p.price); }
-      if ('priceQ10' in p && p.priceQ10 != null) { min = Math.min(min, p.priceQ10); }
-      if ('priceQ90' in p && p.priceQ90 != null) { max = Math.max(max, p.priceQ90); }
-      if ('priceMedian' in p && p.priceMedian != null) {
-        min = Math.min(min, p.priceMedian);
-        max = Math.max(max, p.priceMedian);
-      }
-    }
-    const pad = (max - min) * 0.05;
-
-    return {
-      forecastChartData: data,
-      yDomain: [min - pad, max + pad] as [number, number],
-      lastHistDate: last.date,
-    };
-  }, [history, tftAnalysis]);
-
-  const theme = chartTokens;
-
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
-    return (
-      <div className="min-h-screen bg-midnight flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-copper-500/30 border-t-copper-500 rounded-full animate-spin" />
-          <span className="text-copper-500 font-mono text-sm tracking-widest">INITIALIZING...</span>
-        </div>
-      </div>
-    );
+    return <div className="space-y-6"><PageHeader eyebrow="01 / MARKET INTELLIGENCE" title="Market overview" description="Copper prices, context and quantitative forecasts."/><ViewState kind="loading" title="Opening your market view" description="Retrieving prices, market context and available forecasts."/></div>;
   }
 
   const tftReturn = tftAnalysis?.primary_forecast_return
@@ -309,7 +204,7 @@ export const OverviewPage = () => {
   const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
   // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
   const tftBaselineIsStale = tftStalenessDays >= 3;
-  const newsSentimentIndex = sentimentSummary.data?.index ?? 0;
+  const newsSentimentIndex = sentimentSummary.data?.index;
   const newsSentimentLabel = sentimentSummary.data?.label ?? 'Neutral';
   const newsSentimentMeta =
     newsSentimentLabel === 'Bullish'
@@ -338,26 +233,20 @@ export const OverviewPage = () => {
         {/* Header */}
         <header className="cm-overview-header">
           <div className="space-y-1">
-            <motion.h1
-              initial={{ x: -20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
+            <p className="cm-eyebrow">01 / MARKET INTELLIGENCE</p>
+            <h1
               className="text-3xl sm:text-4xl font-medium text-white tracking-tight"
             >
               Market overview
-            </motion.h1>
-            <p className="text-slate-400 text-sm tracking-widest font-mono uppercase">Copper Intelligence Platform</p>
+            </h1>
+            <p className="text-slate-400 text-sm">Copper prices, context and quantitative forecasts.</p>
           </div>
 
           <div className="cm-quote-strip">
             <div className="cm-quote">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-md flex items-center justify-center shrink-0">
-                  <img
-                    src="https://s3-symbol-logo.tradingview.com/metal/copper--big.svg"
-                    alt="Copper logo"
-                    className="w-full h-full object-contain"
-                    loading="lazy"
-                  />
+                  <span className="cm-brand-mark" aria-hidden="true">Cu</span>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">
@@ -367,9 +256,9 @@ export const OverviewPage = () => {
                     <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900 text-xs text-white font-semibold tracking-wide">
                       {COPPER_INSTRUMENT.canonicalSymbol}
                     </span>
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" title="Live price feed active" />
+                    <span className="text-xs text-slate-400">{livePrice != null ? 'Delayed quote' : latestHistoryPrice != null ? 'Last available close' : 'Awaiting quote'}</span>
                   </div>
-                  <div className="mt-1 flex items-baseline gap-2 font-mono">
+                  <div className="mt-1 flex flex-wrap items-baseline gap-2 font-mono">
                     <span className="text-3xl text-white leading-none">
                       {quotePrice != null ? quotePrice.toFixed(4) : '--'}
                     </span>
@@ -383,7 +272,7 @@ export const OverviewPage = () => {
                   <p className="mt-0.5 text-xs text-slate-400">
                     {lastLiveUpdateAt
                       ? `As of ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
-                      : 'Waiting for latest quote'}
+                      : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}
                   </p>
                 </div>
               </div>
@@ -392,20 +281,24 @@ export const OverviewPage = () => {
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">7D News Sentiment</span>
               <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-semibold", newsSentimentMeta.chip)}>
                 <SentimentIcon size={12} />
-                <span>{newsSentimentMeta.label}</span>
+                <span>{newsSentimentIndex == null ? (sentimentSummary.isLoading ? 'Loading' : 'Unavailable') : newsSentimentMeta.label}</span>
               </div>
               <div className={clsx("mt-1 font-mono text-xs", newsSentimentMeta.tone)}>
-                <NumberTicker value={newsSentimentIndex} format={(v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(3)}`} />
+                <NumberTicker value={newsSentimentIndex ?? NaN} format={(v: number) => Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(3)}` : '—'} />
               </div>
             </div>
           </div>
         </header>
 
+        <div className="cm-overview-tools">
+          <nav aria-label="Overview sections"><a href="#price-forecast">Price chart</a><a href="#news-intelligence">News</a><a href="#market-map">Market map</a></nav>
+          <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
+        </div>
         {Object.keys(loadErrors).length > 0 && (
           <div className="flex flex-wrap gap-2" role="status">
             {Object.keys(loadErrors).map((endpoint) => (
               <span key={endpoint} className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200">
-                <AlertTriangle size={12} /> {endpoint} is temporarily unavailable
+                <AlertTriangle size={12} /> {endpoint} could not be refreshed; any visible values are from the previous response
               </span>
             ))}
           </div>
@@ -418,7 +311,7 @@ export const OverviewPage = () => {
         {/* Main dashboard column */}
         <div className="grid grid-cols-12 gap-6">
 
-          {/* Deep Learning Forecast — primary T+1 forecast */}
+          {/* Primary weekly forecast; single-step diagnostics are grouped below. */}
           <GlassCard title="Deep Learning Weekly Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
             {tftDegraded ? (
               <div className="flex flex-col justify-center h-full py-10 gap-4">
@@ -430,8 +323,7 @@ export const OverviewPage = () => {
                   {tftDegradedMessage}
                 </p>
                 <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                  <span className="block text-xs text-amber-300 uppercase tracking-wider">Required action</span>
-                  <span className="text-xs text-gray-300">Run the weekly TFT training workflow and refresh HF artifacts.</span>
+                  <span className="text-xs text-gray-300">Historical prices remain available while the forecast is unavailable.</span>
                 </div>
               </div>
             ) : tftAnalysis?.prediction ? (() => {
@@ -446,7 +338,7 @@ export const OverviewPage = () => {
                   </div>
                   <div className="relative z-10 space-y-4">
 
-                    {/* T+1 Direction badge */}
+                    {/* Weekly direction badge */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className={clsx(
                         "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-bold tracking-wide",
@@ -455,12 +347,11 @@ export const OverviewPage = () => {
                                                      "bg-amber-400/10 text-amber-400 border border-amber-400/20"
                       )}>
                         {tftDirection === 'BULLISH' ? <TrendingUp size={14} /> : tftDirection === 'BEARISH' ? <TrendingDown size={14} /> : <Activity size={14} />}
-                        {tftDirection}
+                        {tftDirection ?? 'Unavailable'}
                       </div>
                     </div>
 
-                    {/* Next session headline — percent and price derive from
-                        the same forecast entry (single source of truth). */}
+                    {/* Primary 5-day headline from the published weekly forecast. */}
                     <div>
                       <div className="mb-1 flex items-center justify-between gap-3">
                         <span className="text-xs text-slate-400 uppercase tracking-widest">
@@ -468,19 +359,19 @@ export const OverviewPage = () => {
                         </span>
                         {tftBaselineIsStale && (
                           <span
-                            title={`Last PriceBar is ${tftStalenessDays}d old; lazy ingest attempted on next forecast request.`}
+                            title={`The forecast baseline close is ${tftStalenessDays} calendar days old.`}
                             className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs tracking-wider"
                           >
                             Stale {tftStalenessDays}d
                           </span>
                         )}
                       </div>
-                      <div className="flex items-baseline gap-2">
-                        <span className={clsx("text-3xl font-light font-mono", tftBullish ? "text-emerald-400" : "text-rose-400")}>
-                          {tftBullish ? '+' : ''}{((tftReturn ?? 0) * 100).toFixed(2)}%
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className={clsx("text-3xl font-light font-mono", tftBullish == null ? "text-slate-400" : tftBullish ? "text-emerald-400" : "text-rose-400")}>
+                          {tftReturn == null ? '—' : `${tftReturn >= 0 ? '+' : ''}${(tftReturn * 100).toFixed(2)}%`}
                         </span>
                         <span className="text-sm text-gray-400 font-mono">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
-                        {tftReferencePrice && (
+                        {tftReferencePrice != null && (
                           <span className="text-xs text-slate-400 font-mono">
                             (from ${tftReferencePrice.toFixed(2)})
                           </span>
@@ -498,12 +389,12 @@ export const OverviewPage = () => {
                       </div>
                       {tftAnomaly && (
                         <p className="mt-1 text-xs text-amber-400">
-                          Anomalous raw model output; value bounded to +/-12%. Check training logs.
+                          The model flagged an unusual output. Review model validation before interpreting this forecast.
                         </p>
                       )}
                     </div>
 
-                    {/* T+1 expected range */}
+                    {/* Primary weekly interval */}
                     <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
                       <p className="text-xs text-slate-400 uppercase tracking-widest mb-1.5">
                         5D Range {calibrated ? '(calibrated)' : '(raw)'}
@@ -527,7 +418,7 @@ export const OverviewPage = () => {
                       </div>
                     </div>
 
-                    {/* Weekly trend — direction only, no price targets */}
+                    <details className="cm-data-disclosure"><summary>T+1 diagnostics</summary>
                     <div className="flex items-center justify-between py-2 border-t border-white/5">
                       <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
                       <div className="flex items-center gap-1.5">
@@ -559,6 +450,8 @@ export const OverviewPage = () => {
                       </div>
                     </div>
 
+                    </details>
+
                     {/* Risk */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
@@ -566,12 +459,12 @@ export const OverviewPage = () => {
                           ? <CheckCircle2 size={13} className="text-emerald-400" />
                           : tftAnalysis.risk_level === 'MEDIUM'
                           ? <AlertTriangle size={13} className="text-amber-400" />
-                          : <AlertTriangle size={13} className="text-rose-400" />}
+                          : <AlertTriangle size={13} className={tftAnalysis.risk_level ? "text-rose-400" : "text-slate-400"} />}
                         <span className={clsx("text-xs font-medium",
                           tftAnalysis.risk_level === 'LOW' ? "text-emerald-400" :
-                          tftAnalysis.risk_level === 'MEDIUM' ? "text-amber-400" : "text-rose-400"
+                          tftAnalysis.risk_level === 'MEDIUM' ? "text-amber-400" : tftAnalysis.risk_level ? "text-rose-400" : "text-slate-400"
                         )}>
-                          {tftAnalysis.risk_level} RISK
+                          {tftAnalysis.risk_level ? `${tftAnalysis.risk_level} RISK` : 'Risk unavailable'}
                         </span>
                       </div>
                     </div>
@@ -579,98 +472,12 @@ export const OverviewPage = () => {
                 </>
               );
             })() : (
-              <div className="flex flex-col items-center justify-center h-full py-10 text-center gap-3">
-                <Brain size={32} className="text-slate-400" />
-                <div>
-                  <p className="text-xs text-slate-400">Model not trained yet</p>
-                  <p className="text-xs text-slate-400 mt-1">Run the TFT training workflow</p>
-                </div>
-              </div>
+              <ViewState kind={loadErrors['Deep-learning forecast'] ? 'error' : 'empty'} title={loadErrors['Deep-learning forecast'] ? 'Weekly forecast could not be loaded' : 'No weekly forecast available'} description="Use Refresh overview to check for the latest available forecast." compact/>
             )}
           </GlassCard>
 
-          {/* Price Forecast Chart */}
-          <GlassCard title={`Price Forecast (${COPPER_INSTRUMENT.canonicalSymbol})`} icon={Activity} colSpan={8} className="min-h-[400px]">
-            {forecastChartData.length > 0 ? (
-              <div className="h-[350px] w-full" role="group" aria-label="Copper historical prices and daily forecast path. Expand View chart data below for the values.">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart accessibilityLayer data={forecastChartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.copper} stopOpacity={0.2} />
-                        <stop offset="95%" stopColor={theme.copper} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-
-                    <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4" />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-                      tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
-                      axisLine={false}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      orientation="right"
-                      domain={yDomain}
-                      tick={{ fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(val) => `$${val.toFixed(2)}`}
-                      width={60}
-                    />
-                    <Tooltip content={<ForecastTooltip />} />
-
-                    {/* Historical price area */}
-                    <Area isAnimationActive={!reducedMotion}
-                      type="monotone"
-                      dataKey="price"
-                      stroke={theme.copper}
-                      fill="url(#priceGradient)"
-                      strokeWidth={2}
-                      connectNulls={false}
-                    />
-
-                    {/* Q10-Q90 confidence band (80%) — lower edge */}
-                    <Line isAnimationActive={!reducedMotion} type="linear" dataKey="priceQ10" stroke={theme.forecast} strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
-                    {/* Q10-Q90 confidence band (80%) — upper edge */}
-                    <Line isAnimationActive={!reducedMotion} type="linear" dataKey="priceQ90" stroke={theme.forecast} strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.4} dot={false} connectNulls={false} />
-
-                    {/* Forecast median line */}
-                    <Line isAnimationActive={!reducedMotion}
-                      type="linear"
-                      dataKey="priceMedian"
-                      stroke={theme.forecast}
-                      strokeWidth={2}
-                      strokeDasharray="6 3"
-                      dot={false}
-                      connectNulls={false}
-                    />
-
-                    {/* "Today" divider */}
-                    {lastHistDate && (
-                      <ReferenceLine
-                        x={lastHistDate}
-                        stroke="rgba(255,255,255,0.15)"
-                        strokeDasharray="3 3"
-                        label={{ value: 'Today', position: 'top', fill: theme.text, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-                      />
-                    )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <ChartSkeleton />
-            )}
-            {forecastChartData.length > 0 && <details className="mt-4 border-t border-cm-border pt-3" onToggle={event => setShowChartTable(event.currentTarget.open)}>
-              <summary className="cursor-pointer min-h-11 text-sm text-cm-muted">View chart data</summary>
-              {showChartTable && <div className="overflow-x-auto"><table className="w-full min-w-[36rem] text-xs text-left font-mono tabular-nums">
-                <caption className="text-left font-sans text-cm-muted pb-3">Historical prices and daily forecast path in USD. The primary weekly forecast is shown separately above.</caption>
-                <thead><tr>{['Date', 'Observed', 'Forecast median', 'Q10', 'Q90'].map(label => <th key={label} scope="col" className="py-2 px-2 border-b border-cm-border">{label}</th>)}</tr></thead>
-                <tbody>{forecastChartData.map((row, index) => <tr key={row.date + '-' + index}><th scope="row" className="py-2 px-2 font-normal">{row.date}</th>{[row.price, row.priceMedian, row.priceQ10, row.priceQ90].map((value, column) => <td key={column} className="py-2 px-2">{typeof value === 'number' ? value.toFixed(4) : '—'}</td>)}</tr>)}</tbody>
-              </table></div>}
-            </details>}
+          <GlassCard id="price-forecast" title={`Price Forecast (${COPPER_INSTRUMENT.canonicalSymbol})`} icon={Activity} colSpan={8} className="min-h-[400px]">
+            <PriceForecastChart history={history?.data ?? []} forecast={tftAnalysis} historyError={!!loadErrors['Price history']} forecastError={!!loadErrors['Deep-learning forecast']}/>
           </GlassCard>
 
           {/* Influencers Card — shows human-readable labels, category chips and
@@ -720,78 +527,7 @@ export const OverviewPage = () => {
 
           {/* Model Health Card */}
           <GlassCard title="Model Reliability" icon={Crosshair} colSpan={4}>
-            {tftMetrics ? (() => {
-              const weeklyDa = tftMetrics.weekly_directional_accuracy;
-              const weeklySampleCount = tftMetrics.weekly_sample_count;
-              const weeklyDaThreshold = weeklySampleCount != null && weeklySampleCount < 80 ? 51 : 53;
-              const da = (weeklyDa ?? 0) * 100;
-              const sharpe = tftMetrics.sharpe_ratio ?? 0;
-
-              const daGood = weeklyDa != null && da >= weeklyDaThreshold;
-              const sharpeGood = sharpe >= 0;
-
-              const overallGood = (daGood ? 1 : 0) + (sharpeGood ? 1 : 0);
-              const overallLabel = overallGood === 2 ? 'HEALTHY' : overallGood === 1 ? 'FAIR' : 'CALIBRATING';
-              const overallColor = overallGood === 2 ? 'text-emerald-400' : overallGood === 1 ? 'text-amber-400' : 'text-rose-400';
-
-              return (
-                <div className="space-y-4">
-                  {/* Overall status */}
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-xs text-slate-400">Overall Status</span>
-                    <span className={clsx("text-xs font-bold tracking-wider", overallColor)}>{overallLabel}</span>
-                  </div>
-
-                  {/* Direction accuracy */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {daGood ? <CheckCircle2 size={13} className="text-emerald-400" /> : <AlertTriangle size={13} className="text-rose-400" />}
-                        <span className="text-xs text-gray-400">Weekly Direction Accuracy</span>
-                      </div>
-                      <span className={clsx("text-xs font-mono font-medium", daGood ? "text-emerald-400" : "text-rose-400")}>
-                        {weeklyDa != null ? `${da.toFixed(1)}%` : '--'}
-                      </span>
-                    </div>
-                    <ProgressBar value={da} max={100} color={daGood ? "bg-emerald-500" : "bg-rose-500"} />
-                    <p className="text-xs text-slate-400">
-                      {weeklyDa == null
-                        ? "Weekly metric unavailable"
-                        : da >= 55
-                        ? "Strong weekly directional signal"
-                        : da >= 50
-                        ? "Beats coin flip on a weekly horizon"
-                        : "Below random — still learning"}
-                    </p>
-                  </div>
-
-                  {/* Strategy performance */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {sharpeGood ? <CheckCircle2 size={13} className="text-emerald-400" /> : <AlertTriangle size={13} className="text-rose-400" />}
-                        <span className="text-xs text-gray-400">Strategy Performance</span>
-                      </div>
-                      <span className={clsx("text-xs font-mono font-medium", sharpeGood ? "text-emerald-400" : "text-rose-400")}>
-                        Sharpe {sharpe >= 0 ? '+' : ''}{sharpe.toFixed(2)}
-                      </span>
-                    </div>
-                    <ProgressBar value={Math.min(Math.abs(sharpe) * 50, 100)} max={100} color={sharpeGood ? "bg-emerald-500" : "bg-rose-500"} />
-                    <p className="text-xs text-slate-400">
-                      {sharpe > 1 ? "Strong risk-adjusted returns" : sharpe > 0 ? "Positive expected return" : "Negative — do not trade"}
-                    </p>
-                  </div>
-                </div>
-              );
-            })() : (
-              <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <Clock size={28} className="text-slate-400" />
-                <div>
-                  <p className="text-xs text-slate-400">No training data yet</p>
-                  <p className="text-xs text-slate-400 mt-1">Run pipeline with train_model=true</p>
-                </div>
-              </div>
-            )}
+            <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']}/>
           </GlassCard>
 
           {/* AI Commentary Card */}
@@ -806,28 +542,28 @@ export const OverviewPage = () => {
                 <span
                   className={clsx(
                     "text-xs font-mono px-1.5 py-0.5 rounded-full border",
-                    commentary.generation_mode === 'deterministic_fallback'
+                    commentary.generation_mode !== 'llm' && commentary.generation_mode !== 'llm_repaired'
                       ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
                       : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10",
                   )}
                   title={commentary.fallback_reason || commentary.model_name || undefined}
                 >
-                  {commentary.generation_mode === 'deterministic_fallback' ? 'Local fallback' : 'AI generated'}
+                  {commentary.generation_mode === 'deterministic_fallback' ? 'Local fallback' : commentary.generation_mode === 'llm' || commentary.generation_mode === 'llm_repaired' ? 'AI generated' : 'Unavailable'}
                 </span>
               )}
             </div>
-            <div className="h-[140px] overflow-y-auto text-sm text-gray-300 leading-relaxed custom-scrollbar">
-              {commentary ? (
+            <div className="cm-commentary text-sm text-gray-300 leading-relaxed">
+              {commentary?.commentary ? (
                 <p className="font-light whitespace-pre-wrap">{commentary.commentary || ''}</p>
               ) : (
-                <span className="text-slate-400 animate-pulse">Processing market signals...</span>
+                <span className="text-slate-400" role="status">{commentaryLoading ? 'Loading available commentary…' : loadErrors['AI commentary'] || commentary?.error ? 'AI commentary is temporarily unavailable.' : 'No commentary is available for this snapshot.'}</span>
               )}
             </div>
           </GlassCard>
 
         </div>
         {/* Right sticky News Intelligence sidebar (desktop) / stacks under on mobile */}
-        <aside className="lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-120px)] min-h-[480px]">
+        <aside id="news-intelligence" className="cm-news-sidebar min-w-0">
           <Suspense
             fallback={
               <div className="glass-panel h-full min-h-[480px] flex items-center justify-center">
@@ -844,7 +580,7 @@ export const OverviewPage = () => {
 
         {/* The market map owns the full content width. News remains available
             above without consuming horizontal heatmap space. */}
-        <div className="min-w-0 w-full">
+        <div id="market-map" className="min-w-0 w-full">
           <Suspense fallback={<MapSkeleton />}>
             <HeatmapPanel />
           </Suspense>

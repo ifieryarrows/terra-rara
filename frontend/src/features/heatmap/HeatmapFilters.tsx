@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import type { HeatmapMeta } from './heatmap-layout';
+import { FilterChip } from '../../components/ui/FilterChip';
 
 interface Props {
   groupFilter: string;
@@ -34,33 +35,34 @@ const HeatmapFilters = memo(function HeatmapFilters({
   const format = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded border border-slate-700 bg-slate-900 p-0.5" aria-label="Heatmap hierarchy">
+    <div className="cm-heatmap-toolbar">
+      <div className="cm-heatmap-fields">
+        <div className="cm-news-filter-group" role="group" aria-label="Heatmap hierarchy">
           {(['market', 'themes'] as const).map((option) => (
-            <button
+            <FilterChip
               key={option}
-              type="button"
               onClick={() => setView(option)}
-              className={`rounded px-2 py-1 capitalize ${view === option ? 'bg-copper-500/20 text-copper-300' : 'text-slate-500 hover:text-slate-200'}`}
-              aria-pressed={view === option}
+              active={view === option}
             >
               {option === 'market' ? 'Market' : 'Themes'}
-            </button>
+            </FilterChip>
           ))}
         </div>
-        <select className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="Filter top-level category">
+        <label className="cm-field"><span>Category</span><select className="cm-input" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="Filter top-level category">
           <option value="ALL">All categories</option>
           {availableGroups.map((group) => <option key={group} value={group}>{group}</option>)}
-        </select>
-        <select className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5" value={sortFilter} onChange={(event) => setSortFilter(event.target.value as 'Weight' | 'Performance')} aria-label="Cell sizing">
+        </select></label>
+        <label className="cm-field"><span>Cell size</span><select className="cm-input" value={sortFilter} onChange={(event) => setSortFilter(event.target.value as 'Weight' | 'Performance')} aria-label="Cell sizing">
           <option value="Weight">Size by weight</option>
           <option value="Performance">Size by performance</option>
-        </select>
+        </select></label>
+        {(groupFilter !== 'ALL' || sortFilter !== 'Weight') && <button type="button" className="cm-filter-chip" onClick={() => { setGroupFilter('ALL'); setSortFilter('Weight'); }}>Reset map filters</button>}
       </div>
       <div className="flex items-center gap-2 font-mono">
-        <span className={meta.refresh_in_progress ? 'text-amber-400' : meta.is_stale ? 'text-amber-500' : 'text-emerald-400'}>
-          {meta.refresh_in_progress ? 'Refreshing' : `${format(countdown)} · ${meta.cache_state || 'cache'}`}
+        <span className="cm-chart-note">
+          {meta.refresh_in_progress ? 'Refreshing snapshot' : meta.is_stale ? 'Older snapshot' : 'Available snapshot'}
+          {meta.next_refresh_at && ` · Next check ${format(countdown)}`}
+          {meta.source_delay_minutes > 0 && ` · Quotes delayed ${meta.source_delay_minutes} min`}
         </span>
       </div>
     </div>

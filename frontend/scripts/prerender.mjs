@@ -4,7 +4,9 @@ import { createServer } from 'vite';
 process.env.NODE_ENV = 'production';
 
 // Build-time HTML only. Keep Vite, React Router and the existing Vercel deployment.
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
+// This server has a different optimizer configuration from `npm run dev`.
+// Sharing its cache can invalidate the running dev server's dependency URLs.
+const server = await createServer({ cacheDir: 'node_modules/.vite-prerender', server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
 try {
   const template = await readFile('dist/index.html', 'utf8');
   const { renderLanding } = await server.ssrLoadModule('/src/prerender.tsx');
