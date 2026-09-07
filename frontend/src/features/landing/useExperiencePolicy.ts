@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
 
-/** Enhanced animation is opt-in after hydration; base HTML is fully visible. */
+/** Only pin when the complete reading fits. Small/touch/reduced views retain all content. */
 export function useExperiencePolicy() {
   const reduce = useReducedMotion();
   const [desktop, setDesktop] = useState(false);
   useEffect(() => {
-    const media = window.matchMedia('(min-width: 1024px) and (pointer: fine)');
-    const hints = navigator as Navigator & { deviceMemory?: number; connection?: EventTarget & { saveData?: boolean } };
-    const update = () => setDesktop(media.matches && !hints.connection?.saveData && (hints.deviceMemory === undefined || hints.deviceMemory > 4));
+    const media = window.matchMedia('(min-width: 68.75em) and (min-height: 42em)');
+    const hints = navigator as Navigator & { connection?: EventTarget & { saveData?: boolean } };
+    const update = () => setDesktop(media.matches && !hints.connection?.saveData);
     update();
     media.addEventListener('change', update);
     hints.connection?.addEventListener('change', update);

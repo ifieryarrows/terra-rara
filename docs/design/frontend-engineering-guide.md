@@ -84,3 +84,16 @@ Production targets remain p75 LCP ≤2.5 s, INP ≤200 ms, CLS ≤0.1; agreed-de
 The initial session could not run a cloud-browser preview. On 2026-09-06, `scripts/check-experience.mjs` passed six landing and six fixture-backed workspace cases in headless Edge against both a fresh Vite dev server and the production build preview. These establish the tested geometry, chapter transitions and keyboard disclosure behavior. Real-device FPS, field LCP/INP/CLS, memory behavior and deployed provider availability remain unmeasured; see the phase-two audit and phase-three first-slice delivery report.
 
 Phase-three closure adds `scripts/check-dashboard.mjs`: five viewport interaction flows and five data/error states passed on dev and production preview, including chart/table keyboard access, news drawer focus restoration and fullscreen map lifecycle. `scripts/profile-dashboard.mjs` records a short, repeatable three-run local lab comparison. Its event durations are not field INP and its end heap is not a leak test. See [the completion report](../reports/frontend-phase-three-completion-20260906.md) for raw evidence, mixed performance results and remaining release validation.
+# Follow the copper signal — 2026-09-07 implementation update
+
+This section supersedes the earlier landing-specific description of three full-card crossfades and the fine-pointer/memory gate. The rest of the shared workspace guide continues to apply.
+
+- Keep one Cu reference marker mounted throughout the enhanced research stage. SVG groups explain market categories, source interpretation and forecast uncertainty. Connections are conceptual research context, not statistical correlations.
+- `story-timeline.ts` owns chapter boundaries and non-overlapping reading windows. Completed graphics have a reading hold before the next transfer; never crossfade whole text panels on top of one another.
+- The page uses native scroll. Only semantic chapter changes enter React state; progress goes through MotionValue. A focused reading disclosure stays mounted and holds the scene until focus leaves, avoiding lost keyboard focus.
+- Static, short-screen and reduced-motion routes show all three scenes and disclosures. Simple enhancement depends on sufficient viewport area (68.75em × 42em) and motion/Save-Data preferences, not an assumed GPU tier. No WebGL, new fonts or new animation dependency is required for this implementation.
+- `ForecastPassport` is a compact reading guide, not a live report. It cannot assert a current validation result or invent a source timestamp.
+- Quotes distinguish the time the browser last checked from a source quote timestamp. A historical fallback must not produce a fabricated zero change. Zero display values have neutral styling; signed zero is suppressed.
+- The former “LOW RISK” badge is a model volatility classification based on forecast dispersion. Present this separately from anomaly/model-quality warnings and investment safety.
+
+Implementation scope and remaining acceptance: [plan](../implementation/follow-the-copper-signal.md), [delivery report](../reports/follow-the-copper-signal-delivery-20260907.md).
