@@ -37,19 +37,26 @@ try {
     const samples = [];
     if (enhanced) {
       const story = await page.locator('.cm-story').boundingBox();
-      for (const progress of [0, .5, .94]) {
+      assert.equal(await page.locator('.cm-particle-world').count(), 1, 'One canvas particle field owns the symbol morph');
+      assert.equal(await page.locator('.cm-background-word').count(), 5, 'The global typography follows the complete story');
+      assert.equal(await page.locator('.cm-cinematic-beat').count(), 5, 'Hero and four research beats share one scroll scene');
+      assert.equal(await page.locator('.cm-cinematic-surface').count(), 4, 'Dashboard fragments stay inside the shared world');
+      for (const [sampleIndex, progress] of [0, .25, .5, .75, .94].entries()) {
         await page.evaluate(y => scrollTo(0, y), story.y + (story.height - height) * progress);
         await page.waitForTimeout(100);
         const sample = await page.evaluate(() => {
-          const stage = document.querySelector('.cm-story-stage').getBoundingClientRect();
-          const inner = document.querySelector('.cm-story-stage-inner').getBoundingClientRect();
-          return { top: stage.top, height: stage.height, innerHeight: inner.height,
-            layers: [...document.querySelectorAll('.cm-story-layer')].map(e => Number(getComputedStyle(e).opacity)) };
+          const stage = document.querySelector('.cm-cinematic-sticky').getBoundingClientRect();
+          const canvas = document.querySelector('.cm-particle-world').getBoundingClientRect();
+          return { top: stage.top, height: stage.height, canvas: { width: canvas.width, height: canvas.height },
+            symbol: Number(getComputedStyle(document.querySelector('.cm-cinematic-symbol')).opacity),
+            surfaces: [...document.querySelectorAll('.cm-cinematic-surface')].map(e => Number(getComputedStyle(e).opacity)),
+            words: [...document.querySelectorAll('.cm-background-word')].map(e => Number(getComputedStyle(e).opacity)) };
         });
         assert.ok(Math.abs(sample.top) < 2, `Sticky stage ${width}x${height}: ${sample.top}`);
         assert.ok(sample.height <= height + 1, `Stretched grid stage ${sample.height}`);
-        assert.ok(sample.innerHeight <= height, `Preview cropped ${width}x${height}: ${sample.innerHeight}`);
-        assert.ok(sample.layers[samples.length] > .95, `Wrong chapter: ${sample.layers}`);
+        assert.ok(sample.canvas.width > 0 && sample.canvas.height > 0, 'Particle canvas fills the pinned world');
+        if (sampleIndex === 0) assert.ok(sample.symbol > .95, `Hero symbol missing: ${sample.symbol}`);
+        else assert.ok(sample.surfaces[sampleIndex - 1] > .9, `Wrong continuous composition: ${sample.surfaces}`);
         samples.push(sample);
       }
     } else {
