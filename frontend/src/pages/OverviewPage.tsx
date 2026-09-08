@@ -8,9 +8,10 @@ import { ViewState } from '../components/ui/ViewState';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
-  Brain, Crosshair, AlertTriangle, CheckCircle2, Minus
+  Brain, Crosshair, AlertTriangle, Minus
 } from 'lucide-react';
 import clsx from 'clsx';
+import { formatQuoteDelta, quoteComparison } from '../utils/quote';
 
 import {
   fetchAnalysis,
@@ -157,7 +158,7 @@ export const OverviewPage = () => {
     const fetchSnapshot = async () => {
       try {
         const payload = await fetchLivePrice();
-        if (typeof payload.price === 'number') {
+        if (typeof payload.price === 'number' && Number.isFinite(payload.price)) {
           setLivePrice(payload.price);
           setLastLiveUpdateAt(new Date());
         }
@@ -217,12 +218,8 @@ export const OverviewPage = () => {
     .reverse()
     .find((p) => p.price != null)?.price ?? null;
   const quotePrice = livePrice ?? latestHistoryPrice;
-  const quoteDelta = quotePrice != null && latestHistoryPrice != null
-    ? quotePrice - latestHistoryPrice
-    : null;
-  const quoteDeltaPct = quoteDelta != null && latestHistoryPrice
-    ? (quoteDelta / latestHistoryPrice) * 100
-    : null;
+  const quoteChange = quoteComparison(livePrice, latestHistoryPrice);
+
 
   return (
     <div className="font-sans selection:bg-copper-500/30">
@@ -263,17 +260,18 @@ export const OverviewPage = () => {
                       {quotePrice != null ? quotePrice.toFixed(4) : '--'}
                     </span>
                     <span className="text-sm text-slate-400">USD</span>
-                    {quoteDelta != null && quoteDeltaPct != null && (
-                      <span className={clsx("text-xl leading-none", quoteDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                        {quoteDelta >= 0 ? '+' : ''}{quoteDelta.toFixed(2)} {quoteDelta >= 0 ? '+' : ''}{quoteDeltaPct.toFixed(2)}%
+                    {quoteChange && (
+                      <span className={clsx("text-xl leading-none", quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400")}>
+                        {formatQuoteDelta(quoteChange.delta)} {formatQuoteDelta(quoteChange.percent)}%
                       </span>
                     )}
                   </div>
                   <p className="mt-0.5 text-xs text-slate-400">
                     {lastLiveUpdateAt
-                      ? `As of ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
+                      ? `Last checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
                       : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}
                   </p>
+                  {quoteChange && <p className="text-xs text-slate-400 mt-1">Change vs last stored close</p>}
                 </div>
               </div>
             </div>
@@ -452,21 +450,10 @@ export const OverviewPage = () => {
 
                     </details>
 
-                    {/* Risk */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        {tftAnalysis.risk_level === 'LOW'
-                          ? <CheckCircle2 size={13} className="text-emerald-400" />
-                          : tftAnalysis.risk_level === 'MEDIUM'
-                          ? <AlertTriangle size={13} className="text-amber-400" />
-                          : <AlertTriangle size={13} className={tftAnalysis.risk_level ? "text-rose-400" : "text-slate-400"} />}
-                        <span className={clsx("text-xs font-medium",
-                          tftAnalysis.risk_level === 'LOW' ? "text-emerald-400" :
-                          tftAnalysis.risk_level === 'MEDIUM' ? "text-amber-400" : tftAnalysis.risk_level ? "text-rose-400" : "text-slate-400"
-                        )}>
-                          {tftAnalysis.risk_level ? `${tftAnalysis.risk_level} RISK` : 'Risk unavailable'}
-                        </span>
-                      </div>
+                    <div className="border-t border-white/5 pt-3">
+                      <p className="text-xs text-slate-400">Model volatility classification</p>
+                      <p className="text-sm text-slate-200 mt-1">{tftAnalysis.risk_level ?? 'Unavailable'}</p>
+                      <p className="text-xs text-slate-400 mt-1">Based on forecast dispersion. This is separate from model quality and is not an investment safety rating.</p>
                     </div>
                   </div>
                 </>

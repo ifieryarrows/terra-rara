@@ -1,5 +1,13 @@
 # CopperMind — Güncel frontend yol haritası
 
+## 7 Eylül 2026 — Canlı art direction değerlendirmesi
+
+Uygulama güncellemesi: Kullanıcının onayıyla bu önerinin Cu anlatısı, ayrık metin geçişleri, disclosure'ları, compact passport ve quote/risk etiketleri geliştirildi. [Teslim raporu](../reports/follow-the-copper-signal-delivery-20260907.md) ve [uygulama planı](./follow-the-copper-signal.md). 57 test, lint/build/prerender ve paket bütçeleri geçti; yeni görsel ve gerçek cihaz kabulü açık. Aşağıdaki inceleme notu önerinin yazıldığı andaki durumu kaydeder.
+
+[Canlı inceleme ve yeni tasarım önerisi](../reports/frontend-art-direction-audit-20260907.md), güncel Cu hero ve faz 4 içeriğini canlı sitede inceledi. Sticky çalışıyor; geçiş ortasında kart metinleri üst üste biniyor. Önerilen yeni çalışma, Cu motifini market → context → forecast boyunca devam ettiren sahne kurgusu; aktif chapter, daha dengeli evidence bölümü ve quote/risk anlamlarının netleştirilmesi. Ayrıntılı storyboard, component sorumlulukları, mobil karşılık ve kabul ölçütleri raporda.
+
+Bu ek bir tasarım önerisidir; yeni art direction uygulanmış veya yayın kabulü tamamlanmış değildir. Aşağıdaki 6 Eylül faz kayıtları tarihli kapsamlarıyla korunur. Önceki rapordaki “canlı sürüm eski” gözlemi, bugünkü yayının faz 4 içeriğini göstermediği şeklinde yorumlanmamalıdır; güncel asset yolları yeni incelemede kayıtlıdır.
+
 Güncelleme: 2026-09-06. İncelenen kaynak: `52030fe` ve faz planları/teslim raporları. Bu belge fazlar arası güncel sıradır; geçmiş raporların yerine tamamlanmamış işi tamamlanmış göstermez.
 
 ## Mevcut durum

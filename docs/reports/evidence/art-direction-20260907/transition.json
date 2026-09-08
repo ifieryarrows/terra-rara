@@ -1,0 +1,39 @@
+{
+  "chapterNavigation": [
+    {
+      "ariaCurrent": null,
+      "label": "01MARKET"
+    },
+    {
+      "ariaCurrent": null,
+      "label": "02CONTEXT"
+    },
+    {
+      "ariaCurrent": null,
+      "label": "03POSSIBILITIES"
+    }
+  ],
+  "layers": [
+    {
+      "opacity": "0.419872",
+      "transform": "none"
+    },
+    {
+      "opacity": "0.580128",
+      "transform": "matrix(1, 0, 0, 1, 0, 15.3503)"
+    },
+    {
+      "opacity": "0",
+      "transform": "matrix(1, 0, 0, 1, 0, 18)"
+    }
+  ],
+  "scrollY": 1985,
+  "stageTop": 0,
+  "storyHeight": 2808,
+  "storyTop": 1495.828125,
+  "url": "https://terra-rara.vercel.app/#market",
+  "viewport": {
+    "height": 936,
+    "width": 1363
+  }
+}
