@@ -65,12 +65,12 @@ function SceneSurface({ progress, range, persist = false, children }: { progress
 
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
   const marketProgress = useTransform(progress, [.17, .39], [0, 1]);
-  const newsProgress = useTransform(progress, [.39, .57], [0, 1]);
-  const forecastProgress = useTransform(progress, [.58, .8], [0, 1]);
+  const newsProgress = useTransform(progress, [.36, .59], [0, 1]);
+  const forecastProgress = useTransform(progress, [.60, .84], [0, 1]);
   return <div className="cm-dashboard-composition">
     <SceneSurface progress={progress} range={[.16, .22, .36, .43]}><MarketPreview progress={marketProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.36, .43, .56, .63]}><NewsPreview progress={newsProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.56, .63, .77, .84]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
+    <SceneSurface progress={progress} range={[.36, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
+    <SceneSurface progress={progress} range={[.60, .625, .77, .84]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.77, .84, .985, 1]} persist><EvidencePreview/></SceneSurface>
   </div>;
 }
@@ -93,10 +93,12 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
 }
 
 function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: typeof beats[number] }) {
-  const start = Math.max(0, beat.center - .18);
-  const reveal = Math.max(.02, beat.center - .1);
-  const hold = beat.center === 1 ? 1 : beat.center + .07;
-  const end = beat.center === 1 ? 1 : beat.center + .18;
+  const shortNewsWindow = beat.id === 'news';
+  const shortForecastWindow = beat.id === 'forecast';
+  const start = beat.center === 1 ? .82 : shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
+  const reveal = beat.center === 1 ? .9 : shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
+  const hold = beat.center === 1 ? 1 : shortNewsWindow ? .47 : shortForecastWindow ? .78 : beat.center + .07;
+  const end = beat.center === 1 ? 1 : shortNewsWindow ? .535 : shortForecastWindow ? .84 : beat.center + .18;
   const opacity = useTransform(progress, beat.center === 1 ? [start, reveal, 1] : [start, reveal, hold, end], beat.center === 1 ? [0, 1, 1] : [0, 1, 1, 0]);
   const y = useTransform(progress, beat.center === 1 ? [start, reveal, 1] : [start, reveal, hold, end], beat.center === 1 ? [64, 0, 0] : [64, 0, 0, -48]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
@@ -128,8 +130,8 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
     <div className="cm-background-typography" aria-hidden="true">
       <BackgroundWord progress={progress} word="SIGNAL" range={[0, .025, .13, .21]}/>
       <BackgroundWord progress={progress} word="MARKET" range={[.14, .22, .34, .43]} reverse/>
-      <BackgroundWord progress={progress} word="CONTEXT" range={[.36, .44, .55, .64]}/>
-      <BackgroundWord progress={progress} word="FORECAST" range={[.57, .65, .76, .85]} reverse/>
+      <BackgroundWord progress={progress} word="CONTEXT" range={[.36, .42, .56, .59]}/>
+      <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .77, .84]} reverse/>
       <BackgroundWord progress={progress} word="EVIDENCE" range={[.78, .86, .99, 1]}/>
     </div>
     <ParticleWorld progress={progress} quality={quality}/>

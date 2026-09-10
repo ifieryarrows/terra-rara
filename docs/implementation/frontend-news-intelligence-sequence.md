@@ -26,19 +26,18 @@ Kod incelemesi `backend/pipelines/ingestion/news.py`, `backend/pipelines/process
 
 | Local progress | Görsel katman | Kullanıcıya kalan tek fikir |
 | --- | --- | --- |
-| 0.00–0.30 | `SOURCE HEADLINE` | Haber önce okunabilir, sade bir editorial yüzeydir. |
-| 0.13–0.46 | `SEMANTIC EMPHASIS` | Şirket, ticker ve olay ifadesi ayrışır; marketteki `FCX` bağlamı korunur. |
-| 0.27–0.67 | `TONE SIGNAL` | FinBERT olasılıkları bar değil, negative–neutral–positive spectrum üzerinde yön kazanan Copper Signal olarak görünür. |
-| 0.44–0.82 | `IMPACT SCORE` | `label`, `impact_score_llm`, `final_score`, calibrated confidence/relevance ve gerçek event type sırayla görünür. |
-| 0.68–1.00 | `INTERPRETATION` | Başlığı tekrar etmeyen kısa production-shaped `reasoning` cümlesi compose olur; bu makale-level rationale'dır. |
-| 0.90–1.00 | Exit | Haber katmanı sonraki forecast sahnesine çözülür; news'in forecast girdisi olduğu söylenmez. |
+| 0.00–0.28 | `SOURCE HEADLINE` | Haber önce tek ve okunabilir editorial yüzey olarak kalır; entity chip'leri yalnızca kısa bir vurgu yapar. |
+| 0.24–0.62 | `SIGNAL READ` | Scroll bir saat/signal kadranını döndürür; tone ve impact ayrıştırma anı görsel olarak hissedilir. |
+| 0.53–1.00 | `TWO READS` | Dönen işaretten iki animasyonlu ok ayrılır: biri LLM rationale, diğeri tone + impact scoring. |
+| 0.59–0.60 | Handoff | News yüzeyi çözülür; forecast yüzeyi yalnızca çok kısa bir breathing gap sonrasında başlar. |
+| 0.60–0.84 | Exit | Forecast kendi sahnesi olarak girer; news'in forecast girdisi olduğu söylenmez. |
 
-Katmanlar overlap eder, fakat aynı anda tüm skorlar öne çıkarılmaz. Back-scroll aynı MotionValue aralıklarını tersine çalıştırır; hızlı scroll'da discrete slide/index state yoktur. `MarketPreview` ile NewsPreview aralığındaki mevcut crossfade, origin strip'teki `FCX → source → intelligence` işaretiyle neden-sonuç hissini taşır.
+Katmanlar yalnızca fazlar arasında gerekli kısa anticipation kadar overlap eder; News → Forecast surface/copy handoff'ı özellikle minimuma indirilmiştir. Back-scroll aynı MotionValue aralıklarını tersine çalıştırır; hızlı scroll'da discrete slide/index state yoktur. `MarketPreview` ile NewsPreview aralığındaki mevcut crossfade, origin strip'teki `FCX → source → intelligence` işaretiyle neden-sonuç hissini taşır.
 
 ## Uygulama yüzeyi
 
 - `frontend/src/features/landing/preview-data.ts`: production-shaped, deterministic news fixture.
-- `frontend/src/features/landing/Previews.tsx`: headline, entity, tone SVG spectrum, score orbit ve rationale katmanları; static/reduced-motion görünümü.
+- `frontend/src/features/landing/Previews.tsx`: headline/entity pass, scroll-rotated signal dial, animated two-arrow branch (LLM rationale vs tone/impact score) ve static/reduced-motion görünümü.
 - `frontend/src/features/landing/CinematicLanding.tsx` ve `ResearchStory.tsx`: news copy'si “tone scoring + LLM rationale” olarak güncellendi; global scene/timeline korunuyor.
 - `frontend/src/features/landing/landing.css`: compositor-friendly opacity/transform/clip-path katmanları, mobil stage sıkıştırması ve static flow. Runtime LLM, network polling veya yeni WebGL yok.
 - `frontend/scripts/check-experience.mjs` ve `frontend/src/experience.test.tsx`: yeni preview'nin render edilmesi, forbidden internal labels, no-API landing kuralı ve route regresyonları korunacak; local run sonrası evidence raporuna eklenecek.
