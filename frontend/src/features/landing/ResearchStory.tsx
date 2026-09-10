@@ -6,7 +6,7 @@ import { MarketPreview, NewsPreview, ForecastPreview } from './Previews';
 
 const chapters = [
   { id: 'market', number: '01', label: 'THE MARKET', title: 'Start with the bigger picture.', text: 'Explore the market heatmap, related instruments and sector context. Find the relationships around copper before focusing on a single forecast.', tags: ['Market heatmap', 'Related instruments'], link: 'Explore market context', to: '/dashboard#market-map', Preview: MarketPreview },
-  { id: 'news', number: '02', label: 'THE CONTEXT', title: 'Understand the forces behind the price.', text: 'Bring source news, sentiment and AI commentary into the same research flow. Inspect the reasoning, then return to the market with more context.', tags: ['News intelligence', 'Sentiment & commentary'], link: 'Read the intelligence', to: '/dashboard#news-intelligence', Preview: NewsPreview },
+  { id: 'news', number: '02', label: 'THE CONTEXT', title: 'See the signal behind the story.', text: 'Follow one source headline from readable context to entity emphasis, tone scoring and a concise LLM rationale. The market selection carries through; no live request is needed here.', tags: ['Tone scoring', 'LLM rationale'], link: 'Read the intelligence', to: '/dashboard#news-intelligence', Preview: NewsPreview },
   { id: 'forecast', number: '03', label: 'THE POSSIBILITIES', title: 'See the range. Keep the uncertainty.', text: 'Study quantitative forecasts alongside historical prices. Keep the primary weekly view distinct from T+1 diagnostics, and examine the available uncertainty intervals.', tags: ['Deep-learning forecasts', 'Price & risk context'], link: 'Examine the forecasts', to: '/dashboard#price-forecast', Preview: ForecastPreview },
 ];
 

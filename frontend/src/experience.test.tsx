@@ -25,6 +25,9 @@ describe('product introduction and workspace routes', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Read the market.');
     expect(document.querySelector('.cm-story--static')).not.toBeNull();
     expect(screen.getAllByText('Illustrative preview').length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-news-sequence="market-to-intelligence"]')).not.toBeNull();
+    expect(screen.getAllByText('LLM rationale').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Tone scoring').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Enter CopperMind' })).toHaveLength(2);
     expect(screen.queryByRole('heading', { name: 'Market overview' })).not.toBeInTheDocument();
   });

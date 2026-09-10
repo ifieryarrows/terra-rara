@@ -10,7 +10,7 @@ Landing sequence: hero → connected workflow → market/news/forecast story →
 
 Use explicit dates, units and horizon labels in financial views. Positive/negative colors mean data direction or a clearly labeled status; copper is brand/selection, blue is forecast, gray is neutral. Never replace missing values with zero, add optimistic model claims, or blend weekly accuracy and daily Sharpe under an unlabeled aggregate. Existing financial transformations and quality gates are outside visual redesign scope.
 
-Preview fixtures in `features/landing/preview-data.ts` are deterministic and illustrative. Each numeric preview names this fact visibly and in chart alternatives. They are not claimed to be live, sampled from production or actual model forecasts. The news preview describes the real workflow without inventing articles. The landing does not call financial services, poll quotes, run training or trigger commentary generation.
+Preview fixtures in `features/landing/preview-data.ts` are deterministic and illustrative. Each numeric preview names this fact visibly and in chart alternatives. They are not claimed to be live, sampled from production or actual model forecasts. The news preview follows the real `/api/news` field contract (headline → entity → FinBERT tone → V2 impact fields → short reasoning) without inventing a published article. `/api/commentary` is a cached symbol-level forecast/sentiment synthesis, not an article commentary, so the landing does not conflate the two. The landing does not call financial services, poll quotes, run training or trigger commentary generation.
 
 ## Design tokens and components
 

@@ -11,6 +11,7 @@ Güncelleme: 2026-09-06. İncelenen kaynak: `52030fe` ve faz planları/teslim ra
 | 3 — Dashboard grafik ve çalışma akışları | Geliştirme ve yerel kabul tamamlandı | [Kapanış](../reports/frontend-phase-three-completion-20260906.md) |
 | Tipografi — Geist Sans | Bu güncellemede uygulandı | Ortak sans ailesi; yerel değişken WOFF2; monospace sayılar korunur |
 | 4 — Landing'de ürün özelliklerini dengeli gösterme | Geliştirildi; yerel kabul tamamlandı | [4. faz planı](./frontend-experience-phase-four.md) |
+| 5 — Market → News Intelligence product demonstration | Pipeline doğrulandı; sequence uygulanıyor | [News sequence planı](./frontend-news-intelligence-sequence.md) |
 | Yayın kabulü | Açık; son sürüm üzerinde yapılmalı | Canlı servisler, gerçek cihaz ve kullanıcı ölçümleri |
 
 Önceki belgelerde ayrıntılı bir 4. faz yoktu. 3. faz sonrası kalan iş yayın/üretim doğrulamasıydı. Kullanıcının yeni isteğiyle landing ürün anlatımı geliştirme sırasının sonuna eklendi; nihai yayın kabulü bu değişiklikler üzerinde tekrar yapılacak.

@@ -41,6 +41,12 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 4. **Evidence before conviction.** Link to the real Models and Validation routes; explain weekly vs T+1 horizons, model availability and freshness. Do not claim model accuracy or returns.
 5. **Enter CopperMind.** Direct dashboard CTA plus secondary documentation/navigation links already present in the product.
 
+### News Intelligence sequence update (2026-09-10)
+
+The former three-line news scenario is replaced by a continuous `News → Intelligence` product demonstration. The market preview's `FCX` context carries into one deterministic source headline, then the shared scroll timeline reveals semantic entities, a Copper Signal tone spectrum, production-shaped impact fields, and the article-level V2 `reasoning` string. This is documented in the [News Intelligence sequence plan](./frontend-news-intelligence-sequence.md).
+
+The production boundary is explicit: `/api/news` exposes article sentiment and short reasoning, while `/api/commentary` returns a cached symbol-level synthesis generated after forecast/sentiment aggregation. The landing does not call either endpoint and does not present the global forecast commentary as if it were a per-article explanation.
+
 Preview data is deterministic and explicitly marked as illustrative. No randomized prices, fake live indicator, invented backtest results or frontend calls that trigger training/LLM refresh. Real data remains in the application. A future cached preview adapter may replace fixtures only after freshness/availability contracts and backend cost are verified.
 
 ## Component architecture
@@ -49,7 +55,7 @@ Preview data is deterministic and explicitly marked as illustrative. No randomiz
 | --- | --- |
 | App | Router, query client, route loading/error, motion preference, route focus/title |
 | Shared UI | Brand, action link, financial panel, metric card, tokens |
-| Landing | LandingPage, Hero, ResearchStory, MarketPreview, NewsPreview, ForecastPreview, Evidence, final CTA |
+| Landing | LandingPage, Hero, ResearchStory, MarketPreview, production-shaped NewsPreview sequence, ForecastPreview, Evidence, final CTA |
 | Motion | MotionPolicy and one story `scrollYProgress`; no per-frame React state |
 | Workspace | AppShell and existing Overview/Models/Validation/System |
 | Data | Existing API/types/query hooks; landing fixture isolated under landing feature |

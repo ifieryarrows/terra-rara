@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react';
-import { motion, useTransform, type MotionValue } from 'framer-motion';
-import { linePath, previewMarkets, previewSeries } from './preview-data';
+import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
+import { linePath, newsIntelligencePreview, previewMarkets, previewSeries } from './preview-data';
 
 function ForecastRange({ progress }: { progress: MotionValue<number> }) {
   const opacity = useTransform(progress, [.35, .85], [0, 1]);
@@ -55,29 +55,110 @@ export function MarketPreview({ progress }: { progress?: MotionValue<number> }) 
   </figure>;
 }
 
-const newsSteps = [
-  { title: 'What if mine supply tightens?', text: 'A hypothetical disruption raises a question: could inventories and demand offset the pressure?', label: 'RESEARCH SCENARIO' },
-  { title: 'Potential upward pressure', text: 'Less supply could support prices. This illustrative sentiment depends on demand and available stocks.', label: 'SENTIMENT' },
-  { title: 'Supply conditions / inventories / demand', text: 'Read these drivers alongside the commentary. A plausible explanation is not proof of causation.', label: 'DRIVERS' },
-];
+function NewsSequenceLayer({
+  className,
+  progress,
+  range,
+  children,
+}: {
+  className: string;
+  progress: MotionValue<number>;
+  range: [number, number, number, number];
+  children: ReactNode;
+}) {
+  const opacity = useTransform(progress, range, [0, 1, 1, 0]);
+  const y = useTransform(progress, range, [24, 0, 0, -18]);
+  const scale = useTransform(progress, range, [.985, 1, 1, .99]);
+  return <motion.div className={`cm-news-sequence-layer ${className}`} style={{ opacity, y, scale }}>{children}</motion.div>;
+}
 
-function NewsStep({ index, progress, children }: { index: number; progress: MotionValue<number>; children: ReactNode }) {
-  const opacity = useTransform(progress, [index * .2, index * .2 + .5], [.65, 1]);
-  const x = useTransform(progress, [index * .2, index * .2 + .5], [20, 0]);
-  return <motion.li style={{ opacity, x }}>{children}</motion.li>;
+function NewsSignal({ progress }: { progress: MotionValue<number> }) {
+  const pathLength = useTransform(progress, [.28, .54], [0, 1]);
+  const signalOpacity = useTransform(progress, [.26, .34, .68, .76], [0, 1, 1, 0]);
+  const markerX = useTransform(progress, [.34, .54], ['38%', '72%']);
+  return <motion.div className="cm-news-tone-signal" style={{ opacity: signalOpacity }}>
+    <svg viewBox="0 0 520 150" role="img" aria-label="Illustrative tone spectrum from negative to positive">
+      <defs>
+        <linearGradient id="cm-news-tone-spectrum" x1="0" x2="1">
+          <stop offset="0" stopColor="var(--cm-bearish, #cb7683)" stopOpacity=".72"/>
+          <stop offset=".5" stopColor="var(--cm-neutral, #d6a868)" stopOpacity=".55"/>
+          <stop offset="1" stopColor="var(--cm-copper)" stopOpacity=".9"/>
+        </linearGradient>
+      </defs>
+      <line x1="28" x2="492" y1="104" y2="104" stroke="url(#cm-news-tone-spectrum)" strokeWidth="3" strokeLinecap="round"/>
+      <motion.path d="M28 104 C96 103 118 82 168 90 S245 119 294 82 S383 31 492 44" fill="none" stroke="var(--cm-copper)" strokeWidth="2.5" strokeLinecap="round" style={{ pathLength }}/>
+      <motion.circle cx="0" cy="104" r="7" fill="var(--cm-copper)" style={{ cx: markerX }} />
+      <line x1="28" x2="28" y1="98" y2="111" stroke="var(--cm-muted)"/><line x1="260" x2="260" y1="98" y2="111" stroke="var(--cm-muted)"/><line x1="492" x2="492" y1="98" y2="111" stroke="var(--cm-muted)"/>
+      <text x="28" y="132" fill="var(--cm-muted)" fontSize="11">NEGATIVE</text><text x="260" y="132" fill="var(--cm-muted)" fontSize="11" textAnchor="middle">NEUTRAL</text><text x="492" y="132" fill="var(--cm-copper)" fontSize="11" textAnchor="end">POSITIVE</text>
+    </svg>
+    <div className="cm-news-tone-readout"><span>FINBERT TONE</span><strong>direction gains shape</strong></div>
+  </motion.div>;
+}
+
+function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
+  const clipPath = useTransform(progress, [0, .16], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .08, .2, .3]}>
+    <span className="cm-news-step-label">01 / SOURCE HEADLINE</span>
+    <div className="cm-news-headline-copy">
+      <span className="cm-news-route">{newsIntelligencePreview.symbol} / {newsIntelligencePreview.company}</span>
+      <motion.h3 style={{ clipPath }}>{newsIntelligencePreview.headline}</motion.h3>
+      <p>{newsIntelligencePreview.description}</p>
+    </div>
+  </NewsSequenceLayer>;
+}
+
+function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
+  const firstClip = useTransform(progress, [.15, .28], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const secondClip = useTransform(progress, [.2, .34], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.13, .22, .36, .46]}>
+    <span className="cm-news-step-label">02 / SEMANTIC EMPHASIS</span>
+    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: firstClip }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
+    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: secondClip }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
+    <p className="cm-news-entity-line cm-news-entity-line--event"><motion.mark style={{ clipPath: secondClip }}>copper supply</motion.mark><span> / {newsIntelligencePreview.eventType.replace('_', ' ')}</span></p>
+  </NewsSequenceLayer>;
+}
+
+function NewsScoreLayer({ progress }: { progress: MotionValue<number> }) {
+  const scoreScale = useTransform(progress, [.48, .62], [.72, 1]);
+  return <NewsSequenceLayer className="cm-news-score-layer" progress={progress} range={[.44, .53, .7, .82]}>
+    <span className="cm-news-step-label">04 / IMPACT SCORE</span>
+    <div className="cm-news-score-layout">
+      <div className="cm-news-score-orbit" aria-hidden="true"><motion.span style={{ scale: scoreScale }}><b>+{newsIntelligencePreview.impactScoreLlm.toFixed(2)}</b><small>LLM impact</small></motion.span></div>
+      <dl className="cm-news-score-list">
+        <div><dt>Label</dt><dd>{newsIntelligencePreview.label}</dd></div>
+        <div><dt>Final score</dt><dd>+{newsIntelligencePreview.finalScore.toFixed(2)}</dd></div>
+        <div><dt>Calibrated confidence</dt><dd>{Math.round(newsIntelligencePreview.confidence * 100)}%</dd></div>
+        <div><dt>Relevance</dt><dd>{Math.round(newsIntelligencePreview.relevance * 100)}%</dd></div>
+      </dl>
+    </div>
+    <p className="cm-news-score-event">{newsIntelligencePreview.eventType.replace('_', ' ')} · {newsIntelligencePreview.horizon}</p>
+  </NewsSequenceLayer>;
+}
+
+function NewsInterpretationLayer({ progress }: { progress: MotionValue<number> }) {
+  const lineClip = useTransform(progress, [.7, .83], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-interpretation-layer" progress={progress} range={[.68, .77, .93, 1]}>
+    <span className="cm-news-step-label">05 / INTERPRETATION</span>
+    <motion.blockquote style={{ clipPath: lineClip }}>“{newsIntelligencePreview.reasoning}”</motion.blockquote>
+    <div className="cm-news-interpretation-meta"><span>LLM rationale · one-line article read</span><span>not a live score</span></div>
+  </NewsSequenceLayer>;
 }
 
 export function NewsPreview({ progress }: { progress?: MotionValue<number> }) {
-  return <figure className="cm-preview cm-news-preview">
+  const fallbackProgress = useMotionValue(1);
+  const timeline = progress ?? fallbackProgress;
+  const animated = Boolean(progress);
+  return <figure className={`cm-preview cm-news-preview cm-news-intelligence-preview${animated ? '' : ' cm-news-preview--static'}`} data-news-sequence="market-to-intelligence">
     <div className="cm-preview-top"><span>NEWS INTELLIGENCE</span><span className="cm-preview-tag">Illustrative preview</span></div>
-    <div className="cm-reader-source"><span>EXAMPLE SOURCE / RESEARCH SCENARIO</span><span>06 SEP 2026 · EXAMPLE DATE</span></div>
-    <ol className="cm-news-flow">
-      {newsSteps.map((step, index) => {
-        const content = <><span className="cm-flow-number">0{index + 1}</span><div><h4>{step.title}</h4><p>{step.text}</p></div><span className="cm-flow-label">{step.label}</span></>;
-        return progress ? <NewsStep key={step.label} index={index} progress={progress}>{content}</NewsStep> : <li key={step.label}>{content}</li>;
-      })}
-    </ol>
-    <figcaption className="cm-preview-caption">Hypothetical scenario · not a published article or live sentiment. Inspect actual coverage in the dashboard.</figcaption>
+    <div className="cm-news-origin"><span className="cm-news-origin-symbol">{newsIntelligencePreview.symbol}</span><span>selected in market context</span><i aria-hidden="true"/><span>source → intelligence</span></div>
+    <div className={`cm-news-demo-stage${animated ? '' : ' cm-news-demo-stage--static'}`}>
+      <NewsHeadlineLayer progress={timeline}/>
+      <NewsEntitiesLayer progress={timeline}/>
+      <NewsSequenceLayer className="cm-news-tone-layer" progress={timeline} range={[.27, .36, .56, .67]}><span className="cm-news-step-label">03 / TONE SIGNAL</span><NewsSignal progress={timeline}/><div className="cm-news-finbert-snapshot"><span>POS {Math.round(newsIntelligencePreview.finbert.pos * 100)}%</span><span>NEU {Math.round(newsIntelligencePreview.finbert.neu * 100)}%</span><span>NEG {Math.round(newsIntelligencePreview.finbert.neg * 100)}%</span></div></NewsSequenceLayer>
+      <NewsScoreLayer progress={timeline}/>
+      <NewsInterpretationLayer progress={timeline}/>
+    </div>
+    <figcaption className="cm-preview-caption"><span><i className="cm-key cm-key--copper"/>tone → score → rationale</span><span>Production-shaped fields · deterministic input</span></figcaption>
   </figure>;
 }
 

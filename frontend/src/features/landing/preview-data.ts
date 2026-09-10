@@ -10,6 +10,31 @@ export const previewMarkets = [
   { symbol: 'GLD', name: 'Gold ETF', change: '−0.28%', tone: 'down', size: '' },
 ];
 
+/**
+ * Deterministic landing fixture shaped like the production /api/news payload.
+ *
+ * This is deliberately not a live article, a stored model result, or a claim
+ * about FCX. The field names mirror the real V2 contract so the product story
+ * can explain what the dashboard actually exposes without calling the API or
+ * inventing a new scoring system for marketing.
+ */
+export const newsIntelligencePreview = {
+  symbol: 'FCX',
+  company: 'Freeport-McMoRan',
+  headline: 'Copper supply pressure comes into focus',
+  description: 'An illustrative source line enters the workspace as readable editorial context.',
+  publisher: 'DETERMINISTIC DEMO INPUT',
+  horizon: '1–5D HG=F IMPACT',
+  label: 'BULLISH',
+  impactScoreLlm: 0.46,
+  finalScore: 0.41,
+  confidence: 0.68,
+  relevance: 0.91,
+  eventType: 'supply_disruption',
+  finbert: { pos: 0.68, neu: 0.22, neg: 0.10 },
+  reasoning: 'Supply tightening can support copper over the short horizon; demand and inventories remain the context to watch.',
+} as const;
+
 export function linePath(values: number[], width = 640, height = 250) {
   const min = Math.min(...values) - 2;
   const max = Math.max(...values) + 2;

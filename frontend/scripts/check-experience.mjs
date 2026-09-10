@@ -27,6 +27,9 @@ try {
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(400);
     assert.equal(await page.locator('.cm-evidence-preview').count(), 1);
+    assert.equal(await page.locator('.cm-news-intelligence-preview').count(), 1, 'News preview keeps the production-shaped sequence');
+    assert.equal(await page.locator('.cm-news-sequence-layer').count(), 5, 'News sequence has headline, entity, tone, score and rationale layers');
+    assert.ok((await page.locator('body').innerText()).includes('LLM rationale'), 'News preview exposes article-level rationale');
     for (const href of ['#market', '#news', '#forecast', '#evidence']) {
       assert.equal(await page.locator(href).count(), 1);
     }
