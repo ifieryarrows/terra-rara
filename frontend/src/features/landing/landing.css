@@ -112,7 +112,7 @@
 .cm-enter-note { display: block; max-width: 35rem; margin: 1.5rem auto 0; color: var(--cm-muted); font-size: .75rem; line-height: 1.6; }
 .cm-enter-reveal-line { position: relative; display: block; width: fit-content; max-width: 100%; margin-inline: auto; overflow: hidden; }
 .cm-enter-reveal-text { position: relative; z-index: 0; display: block; }
-.cm-enter-reveal-mask { position: absolute; z-index: 1; inset: 0; display: block; background: linear-gradient(100deg, #b96d48 0%, #e8b18b 68%, #9a5438 100%); pointer-events: none; will-change: transform; }
+.cm-enter-reveal-mask { position: absolute; z-index: 1; inset: 0; display: block; background: linear-gradient(100deg, #0b1119 0%, #111b29 86%, #d28b68 100%); box-shadow: 0 0 1rem #e6a47a24; pointer-events: none; will-change: transform; }
 .cm-enter-bridge { position: absolute; z-index: 1; top: -1px; right: clamp(1.25rem, 12vw, 12rem); left: clamp(1.25rem, 12vw, 12rem); height: 1px; overflow: hidden; background: #71809632; }
 .cm-enter-bridge > span { display: block; width: 100%; height: 100%; transform-origin: left; background: linear-gradient(90deg, var(--cm-copper), var(--cm-forecast)); }
 .cm-landing-footer { border-top: 1px solid var(--cm-border); max-width: var(--cm-content-width); padding: 2rem clamp(1.25rem, 4vw, 4rem); margin: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; }

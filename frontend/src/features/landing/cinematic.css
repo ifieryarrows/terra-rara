@@ -44,6 +44,8 @@
 .cm-cinematic-copy .cm-story-link:focus-visible { color: #ffd0ae; }
 .cm-cinematic-progress { position: absolute; z-index: 6; right: clamp(1.5rem, 4vw, 4rem); bottom: clamp(1.5rem, 4vh, 3rem); left: 52%; height: 1px; background: #71809642; }
 .cm-cinematic-progress span { display: block; width: 100%; height: 100%; transform-origin: left; background: linear-gradient(90deg, var(--cm-copper), var(--cm-forecast)); }
+.cm-cinematic-entry-layer { position: sticky; z-index: 7; grid-area: 1 / 1; top: 0; align-self: start; width: 100%; height: 100svh; pointer-events: none; }
+.cm-cinematic-entry { position: absolute !important; inset: 0; width: 100%; height: 100%; min-height: 100% !important; border-top: 0; pointer-events: auto; }
 .cm-landing--cinematic .cm-enter { position: relative; z-index: 2; min-height: 82svh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 110%, #a05b3036, transparent 62%), linear-gradient(180deg, #0b1119, var(--cm-bg)); }
 .cm-landing--cinematic .cm-enter::before { content: 'QUESTION'; position: absolute; z-index: -1; color: transparent; -webkit-text-stroke: 1px #d9e0e810; font-size: clamp(6rem, 19vw, 18rem); font-weight: 560; letter-spacing: -.08em; white-space: nowrap; }
 

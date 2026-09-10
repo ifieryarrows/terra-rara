@@ -30,6 +30,8 @@ const beats = [
   },
 ] as const;
 
+type CinematicEntryRenderer = (progress: MotionValue<number>) => ReactNode;
+
 function BackgroundWord({ progress, word, range, reverse = false }: { progress: MotionValue<number>; word: string; range: [number, number, number, number]; reverse?: boolean }) {
   const opacity = useTransform(progress, range, [0, .12, .12, 0]);
   const visibility = useTransform(progress, value => value >= range[0] && value <= range[3] ? 'visible' : 'hidden');
@@ -141,7 +143,7 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
   </div>;
 }
 
-export function CinematicLanding({ quality = 'high' }: { quality?: ParticleQuality }) {
+export function CinematicLanding({ quality = 'high', entry }: { quality?: ParticleQuality; entry?: CinematicEntryRenderer }) {
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
   useEffect(() => {
@@ -176,5 +178,6 @@ export function CinematicLanding({ quality = 'high' }: { quality?: ParticleQuali
       <HeroCopy progress={scrollYProgress}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }
     </div>
+    {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress)}</div> : null}
   </section>;
 }
