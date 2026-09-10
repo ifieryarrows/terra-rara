@@ -103,11 +103,18 @@
 .cm-evidence-links p { font-size: .875rem; line-height: 1.65; color: var(--cm-muted); }
 .cm-evidence-links svg { margin-top: .4rem; color: var(--cm-muted); flex-shrink: 0; }
 .cm-evidence-links a:hover strong, .cm-evidence-links a:hover svg { color: var(--cm-copper); }
-.cm-enter { text-align: center; border-top: 1px solid var(--cm-border); padding: clamp(5rem, 9vw, 8rem) 1.25rem; background: radial-gradient(ellipse at 50% 115%, #a05b3022, transparent 65%); }
+.cm-enter { position: relative; isolation: isolate; text-align: center; border-top: 1px solid var(--cm-border); padding: clamp(5rem, 9vw, 8rem) 1.25rem; background: radial-gradient(ellipse at 50% 115%, #a05b3022, transparent 65%); overflow: clip; }
 .cm-enter h2 { margin-top: 1.5rem; }
 .cm-enter > p:not(.cm-eyebrow) { margin: 1.6rem 0 2rem; color: var(--cm-muted); font-size: 1.05rem; }
+.cm-enter-lede { min-height: 1.7em; }
 .cm-enter .cm-button { min-width: 13rem; }
+.cm-enter-action { min-height: 2.75rem; }
 .cm-enter-note { display: block; max-width: 35rem; margin: 1.5rem auto 0; color: var(--cm-muted); font-size: .75rem; line-height: 1.6; }
+.cm-enter-reveal-line { position: relative; display: block; width: fit-content; max-width: 100%; margin-inline: auto; overflow: hidden; }
+.cm-enter-reveal-text { position: relative; z-index: 0; display: block; }
+.cm-enter-reveal-mask { position: absolute; z-index: 1; inset: 0; display: block; background: linear-gradient(100deg, #b96d48 0%, #e8b18b 68%, #9a5438 100%); pointer-events: none; will-change: transform; }
+.cm-enter-bridge { position: absolute; z-index: 1; top: -1px; right: clamp(1.25rem, 12vw, 12rem); left: clamp(1.25rem, 12vw, 12rem); height: 1px; overflow: hidden; background: #71809632; }
+.cm-enter-bridge > span { display: block; width: 100%; height: 100%; transform-origin: left; background: linear-gradient(90deg, var(--cm-copper), var(--cm-forecast)); }
 .cm-landing-footer { border-top: 1px solid var(--cm-border); max-width: var(--cm-content-width); padding: 2rem clamp(1.25rem, 4vw, 4rem); margin: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; }
 .cm-landing-footer p, .cm-landing-footer > a:last-child { font-size: .75rem; color: var(--cm-muted); }
 .cm-landing-footer > a:last-child { display: flex; align-items: center; gap: .5rem; min-height: 2.75rem; }

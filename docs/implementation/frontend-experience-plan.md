@@ -41,6 +41,10 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 4. **Evidence before conviction.** Link to the real Models and Validation routes; explain weekly vs T+1 horizons, model availability and freshness. Do not claim model accuracy or returns.
 5. **Enter CopperMind.** Direct dashboard CTA plus secondary documentation/navigation links already present in the product.
 
+### Cinematic CTA continuation (2026-09-10)
+
+The final CTA remains part of the same cinematic world rather than a detached card: the preceding scene's atmosphere hands off through a restrained copper-to-forecast bridge, while the eyebrow, heading and lede use staggered line-level blind masks that travel right-to-left. The action and uncertainty note follow on the same local scroll timeline. Enhanced mode keeps the scroll-linked reveal; static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
+
 ### News Intelligence sequence update (2026-09-10)
 
 The former three-line news scenario is replaced by a continuous `News → Intelligence` product demonstration. The market preview's `FCX` context carries into one deterministic source headline, then the shared scroll timeline reveals semantic entities, a Copper Signal tone spectrum, production-shaped impact fields, and the article-level V2 `reasoning` string. This is documented in the [News Intelligence sequence plan](./frontend-news-intelligence-sequence.md).

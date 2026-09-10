@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
+import { motion, useMotionValue, useScroll, useTransform, type MotionValue } from 'framer-motion';
 import { Brand } from '../../components/ui/Brand';
 import { Hero } from './Hero';
 import { EvidencePreview } from './Previews';
@@ -9,6 +10,50 @@ import { useExperiencePolicy } from './useExperiencePolicy';
 import './landing.css';
 
 const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
+
+function EntryRevealLine({ progress, index, className = '', children }: { progress: MotionValue<number> | null; index: number; className?: string; children: ReactNode }) {
+  const staticProgress = useMotionValue(1);
+  const timeline = progress ?? staticProgress;
+  const start = .06 + index * .11;
+  const maskX = useTransform(timeline, [start, start + .16], ['0%', '-105%']);
+  const textOpacity = useTransform(timeline, [Math.max(0, start - .03), start + .055], [0, 1]);
+  const textY = useTransform(timeline, [start, start + .16], [12, 0]);
+  return <span className={`cm-enter-reveal-line ${className}`}>
+    <motion.span className="cm-enter-reveal-text" style={progress ? { opacity: textOpacity, y: textY } : undefined}>{children}</motion.span>
+    {progress ? <motion.span className="cm-enter-reveal-mask" style={{ x: maskX }} aria-hidden="true"/> : null}
+  </span>;
+}
+
+function EntryCTAContent({ progress, animated }: { progress: MotionValue<number> | null; animated: boolean }) {
+  const staticProgress = useMotionValue(1);
+  const timeline = progress ?? staticProgress;
+  const bridgeScale = useTransform(timeline, [0, .22], [0, 1]);
+  const actionOpacity = useTransform(timeline, [.53, .73], [0, 1]);
+  const actionY = useTransform(timeline, [.53, .73], [18, 0]);
+  const noteOpacity = useTransform(timeline, [.68, .84], [0, 1]);
+  return <>
+    {animated ? <div className="cm-enter-bridge" aria-hidden="true"><motion.span style={{ scaleX: bridgeScale }}/></div> : null}
+    <p className="cm-eyebrow"><EntryRevealLine progress={progress} index={0}>YOUR RESEARCH STARTS HERE</EntryRevealLine></p>
+    <h2 id="enter-title"><EntryRevealLine progress={progress} index={1}>From perspective</EntryRevealLine><EntryRevealLine progress={progress} index={2}>to your next question.</EntryRevealLine></h2>
+    <p className="cm-enter-lede"><EntryRevealLine progress={progress} index={3}>Open the workspace and explore the market.</EntryRevealLine></p>
+    <motion.div className="cm-enter-action" style={animated ? { opacity: actionOpacity, y: actionY } : undefined}><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowRight size={19} aria-hidden="true"/></Link></motion.div>
+    <motion.span className="cm-enter-note" style={animated ? { opacity: noteOpacity } : undefined}>Forecasts are uncertain. Availability and freshness are shown in the workspace.</motion.span>
+  </>;
+}
+
+function AnimatedEntryCTA() {
+  const ref = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start 90%', 'start 28%'] });
+  return <section ref={ref} className="cm-enter cm-enter--cinematic" aria-labelledby="enter-title"><EntryCTAContent progress={scrollYProgress} animated/></section>;
+}
+
+function StaticEntryCTA() {
+  return <section className="cm-enter" aria-labelledby="enter-title"><EntryCTAContent progress={null} animated={false}/></section>;
+}
+
+function EntryCTA({ animated }: { animated: boolean }) {
+  return animated ? <AnimatedEntryCTA/> : <StaticEntryCTA/>;
+}
 
 export function LandingPage() {
   const { enhanced, quality } = useExperiencePolicy();
@@ -21,7 +66,7 @@ export function LandingPage() {
         <ResearchStory enhanced={false}/>
         <section id="evidence" className="cm-evidence" aria-labelledby="evidence-title"><div><p className="cm-eyebrow">04 / THE EVIDENCE</p><h2 id="evidence-title">A signal should<br/>stand up to scrutiny.</h2><p>Check the model, horizon and data date behind the signal.</p></div><div><EvidencePreview/><div className="cm-evidence-links"><Link to="/models"><span><small>MODEL INTELLIGENCE</small><strong>Understand the model.</strong><p>Metrics and quality-gate status.</p></span><ArrowUpRight size={24} aria-hidden="true"/></Link><Link to="/validation"><span><small>WALK-FORWARD VALIDATION</small><strong>Examine the evidence.</strong><p>Out-of-sample results and comparisons.</p></span><ArrowUpRight size={24} aria-hidden="true"/></Link><Link to="/system"><span><small>SYSTEM STATUS</small><strong>Know how fresh it is.</strong><p>Freshness and availability.</p></span><ArrowUpRight size={24} aria-hidden="true"/></Link></div></div></section>
       </>}
-      <section className="cm-enter" aria-labelledby="enter-title"><p className="cm-eyebrow">YOUR RESEARCH STARTS HERE</p><h2 id="enter-title">From perspective<br/>to your next question.</h2><p>Open the workspace and explore the market.</p><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowRight size={19} aria-hidden="true"/></Link><span className="cm-enter-note">Forecasts are uncertain. Availability and freshness are shown in the workspace.</span></section>
+      <EntryCTA animated={enhanced}/>
     </main>
     <footer className="cm-landing-footer"><Brand/><p>Market context. Quantitative perspective.</p><Link to="/dashboard">Go straight to the dashboard <ArrowUpRight size={14} aria-hidden="true"/></Link></footer>
   </div>;
