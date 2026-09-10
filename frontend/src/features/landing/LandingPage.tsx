@@ -24,7 +24,7 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
   </span>;
 }
 
-function useAutoReveal(progress: MotionValue<number>, trigger = .72, reset = .68) {
+function useAutoReveal(progress: MotionValue<number>, trigger = .9, reset = .84) {
   const reveal = useMotionValue(0);
   const animation = useRef<ReturnType<typeof animate> | null>(null);
   const triggered = useRef(false);
@@ -33,7 +33,7 @@ function useAutoReveal(progress: MotionValue<number>, trigger = .72, reset = .68
       if (value >= trigger && !triggered.current) {
         triggered.current = true;
         animation.current?.stop();
-        animation.current = animate(reveal, 1, { duration: .72, ease: [0.22, 0.61, 0.36, 1] });
+        animation.current = animate(reveal, 1, { duration: 2, ease: [0.22, 0.61, 0.36, 1] });
       } else if (value < reset && triggered.current) {
         triggered.current = false;
         animation.current?.stop();

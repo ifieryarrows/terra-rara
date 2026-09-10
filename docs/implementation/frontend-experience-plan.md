@@ -43,7 +43,7 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 
 ### Cinematic CTA continuation (2026-09-10)
 
-The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the evidence scene can hand off through a restrained copper-to-forecast bridge without a second local scroll clock. Crossing the CTA visibility threshold triggers a self-running staggered line-level blind reveal; the masks then complete without being scrubbed by every scroll delta, and reset only when the user reverses back before the trigger. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
+The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the evidence scene can hand off through a restrained copper-to-forecast bridge without a second local scroll clock. When the preceding evidence copy has exited at the end of the scene, the `0.90` progress threshold triggers a self-running staggered line-level blind reveal; the masks then complete over two seconds without being scrubbed by every scroll delta, and reset only when the user reverses back before the trigger. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
 
 ### News Intelligence sequence update (2026-09-10)
 
