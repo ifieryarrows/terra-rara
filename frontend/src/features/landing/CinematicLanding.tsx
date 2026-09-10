@@ -1,10 +1,11 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUpRight } from 'lucide-react';
 import { motion, useScroll, useTransform, type MotionValue } from 'framer-motion';
 import { CopperSignal } from './CopperSignal';
 import { EvidencePreview, ForecastPreview, MarketPreview, NewsPreview } from './Previews';
-import { ParticleWorld } from './ParticleWorld';
+import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
+import './cinematic.css';
 
 const beats = [
   {
@@ -31,10 +32,11 @@ const beats = [
 
 function BackgroundWord({ progress, word, range, reverse = false }: { progress: MotionValue<number>; word: string; range: [number, number, number, number]; reverse?: boolean }) {
   const opacity = useTransform(progress, range, [0, .12, .12, 0]);
+  const visibility = useTransform(progress, value => value >= range[0] && value <= range[3] ? 'visible' : 'hidden');
   const x = useTransform(progress, range, reverse ? ['-10%', '0%', '6%', '14%'] : ['12%', '3%', '-4%', '-12%']);
   const scale = useTransform(progress, range, [.88, 1, 1.04, 1.12]);
   const clipPath = useTransform(progress, [range[0], range[1]], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  return <motion.span className="cm-background-word" style={{ opacity, x, scale, clipPath }}>{word}</motion.span>;
+  return <motion.span className="cm-background-word" style={{ opacity, visibility, x, scale, clipPath }}>{word}</motion.span>;
 }
 
 function Atmosphere({ progress }: { progress: MotionValue<number> }) {
@@ -53,11 +55,12 @@ function Atmosphere({ progress }: { progress: MotionValue<number> }) {
 
 function SceneSurface({ progress, range, persist = false, children }: { progress: MotionValue<number>; range: [number, number, number, number]; persist?: boolean; children: ReactNode }) {
   const opacity = useTransform(progress, range, persist ? [0, 1, 1, 1] : [0, 1, 1, 0]);
+  const visibility = useTransform(progress, value => value >= range[0] && (persist || value <= range[3]) ? 'visible' : 'hidden');
   const x = useTransform(progress, range, persist ? [110, 0, -24, -24] : [110, 0, -24, -150]);
   const y = useTransform(progress, range, [34, 0, 0, -18]);
   const scale = useTransform(progress, range, [.94, 1, 1, .96]);
   const clipPath = useTransform(progress, range, persist ? ['inset(0 0 0 100%)', 'inset(0 0 0 0%)', 'inset(0 0 0 0%)', 'inset(0 0 0 0%)'] : ['inset(0 0 0 100%)', 'inset(0 0 0 0%)', 'inset(0 0 0 0%)', 'inset(0 100% 0 0)']);
-  return <motion.div className="cm-cinematic-surface" style={{ opacity, x, y, scale, clipPath }} aria-hidden="true">{children}</motion.div>;
+  return <motion.div className="cm-cinematic-surface" style={{ opacity, visibility, x, y, scale, clipPath }} aria-hidden="true">{children}</motion.div>;
 }
 
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
@@ -113,12 +116,13 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   </article>;
 }
 
-function StickyWorld({ progress }: { progress: MotionValue<number> }) {
+function StickyWorld({ progress, quality }: { progress: MotionValue<number>; quality: ParticleQuality }) {
   const signalOpacity = useTransform(progress, [0, .11, .22], [1, .75, 0]);
   const signalScale = useTransform(progress, [0, .16, .23], [1, 1.03, 1.16]);
   const signalRotate = useTransform(progress, [0, .23], [0, -5]);
   const signalBlur = useTransform(progress, [.12, .23], ['blur(0px)', 'blur(12px)']);
   const signalPath = useTransform(progress, [0, .14], [.66, 1]);
+  const signalVisibility = useTransform(progress, value => value <= .23 ? 'visible' : 'hidden');
   return <div className="cm-cinematic-sticky">
     <Atmosphere progress={progress}/>
     <div className="cm-background-typography" aria-hidden="true">
@@ -128,26 +132,44 @@ function StickyWorld({ progress }: { progress: MotionValue<number> }) {
       <BackgroundWord progress={progress} word="FORECAST" range={[.57, .65, .76, .85]} reverse/>
       <BackgroundWord progress={progress} word="EVIDENCE" range={[.78, .86, .99, 1]}/>
     </div>
-    <ParticleWorld progress={progress}/>
-    <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>
+    <ParticleWorld progress={progress} quality={quality}/>
+    <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>
     <DashboardComposition progress={progress}/>
-    <div className="cm-cinematic-hud" aria-hidden="true"><span>CU / 29</span><span>NATIVE SCROLL / CONTINUOUS SIGNAL</span></div>
     <div className="cm-cinematic-progress" aria-hidden="true"><motion.span style={{ scaleX: progress }}/></div>
   </div>;
 }
 
-export function CinematicLanding() {
+export function CinematicLanding({ quality = 'high' }: { quality?: ParticleQuality }) {
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
-  return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey" onPointerMove={event => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    event.currentTarget.style.setProperty('--pointer-x', `${((event.clientX - bounds.left) / bounds.width) * 100}%`);
-    event.currentTarget.style.setProperty('--pointer-y', `${(event.clientY / window.innerHeight) * 100}%`);
-  }} onPointerLeave={event => {
-    event.currentTarget.style.setProperty('--pointer-x', '72%');
-    event.currentTarget.style.setProperty('--pointer-y', '46%');
-  }}>
-    <StickyWorld progress={scrollYProgress}/>
+  useEffect(() => {
+    const scene = ref.current;
+    if (!scene) return;
+    let frame = 0;
+    let x = 72;
+    let y = 46;
+    const flush = () => {
+      frame = 0;
+      scene.style.setProperty('--pointer-x', `${x}%`);
+      scene.style.setProperty('--pointer-y', `${y}%`);
+    };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(flush); };
+    const onPointerMove = (event: PointerEvent) => {
+      x = event.clientX / window.innerWidth * 100;
+      y = event.clientY / window.innerHeight * 100;
+      schedule();
+    };
+    const onPointerLeave = () => { x = 72; y = 46; schedule(); };
+    scene.addEventListener('pointermove', onPointerMove, { passive: true });
+    scene.addEventListener('pointerleave', onPointerLeave, { passive: true });
+    return () => {
+      scene.removeEventListener('pointermove', onPointerMove);
+      scene.removeEventListener('pointerleave', onPointerLeave);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
+    <StickyWorld progress={scrollYProgress} quality={quality}/>
     <div className="cm-cinematic-copy">
       <HeroCopy progress={scrollYProgress}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }

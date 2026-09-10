@@ -14,6 +14,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || 'msedge' });
 const results = [];
 const workspaceResults = [];
+const adaptiveResults = [];
 try {
   for (const [width, height, reducedMotion] of [[1536, 900, 'no-preference'], [1280, 600, 'no-preference'], [1024, 650, 'no-preference'], [768, 800, 'no-preference'], [320, 650, 'no-preference'], [390, 844, 'no-preference'], [1280, 720, 'reduce']]) {
     const page = await browser.newPage({ viewport: { width, height }, reducedMotion });
@@ -32,40 +33,85 @@ try {
     assert.equal(await page.locator('h1').count(), 1);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 1, `Landing overflow ${width}: ${overflow}`);
-    const enhanced = width >= 1024 && reducedMotion !== 'reduce';
+    const enhanced = reducedMotion !== 'reduce';
     assert.equal(await page.locator('.cm-story--enhanced').count(), Number(enhanced));
     const samples = [];
     if (enhanced) {
       const story = await page.locator('.cm-story').boundingBox();
       assert.equal(await page.locator('.cm-particle-world').count(), 1, 'One canvas particle field owns the symbol morph');
+      const particle = await page.locator('.cm-particle-world').evaluate(canvas => ({ renderer: canvas.dataset.renderer, quality: canvas.dataset.quality, count: Number(canvas.dataset.particleCount) }));
+      assert.equal(particle.renderer, 'webgl2');
+      assert.equal(particle.quality, width >= 1024 ? 'high' : 'balanced');
+      assert.equal(particle.count, width >= 1024 ? 420 : 280);
+      if ((width === 1536 || width === 390) && reducedMotion === 'no-preference') await page.screenshot({ path: join(output, `landing-${width}-${height}-hero.png`) });
       assert.equal(await page.locator('.cm-background-word').count(), 5, 'The global typography follows the complete story');
       assert.equal(await page.locator('.cm-cinematic-beat').count(), 5, 'Hero and four research beats share one scroll scene');
       assert.equal(await page.locator('.cm-cinematic-surface').count(), 4, 'Dashboard fragments stay inside the shared world');
       for (const [sampleIndex, progress] of [0, .25, .5, .75, .94].entries()) {
-        await page.evaluate(y => scrollTo(0, y), story.y + (story.height - height) * progress);
-        await page.waitForTimeout(100);
+        const targetY = story.y + (story.height - height) * progress;
+        await page.evaluate(y => { document.documentElement.scrollTop = y; }, targetY);
+        await page.waitForFunction(y => Math.abs(scrollY - y) < 2, targetY);
+        await page.waitForTimeout(180);
         const sample = await page.evaluate(() => {
           const stage = document.querySelector('.cm-cinematic-sticky').getBoundingClientRect();
           const canvas = document.querySelector('.cm-particle-world').getBoundingClientRect();
-          return { top: stage.top, height: stage.height, canvas: { width: canvas.width, height: canvas.height },
+          return { scrollY, top: stage.top, height: stage.height, canvas: { width: canvas.width, height: canvas.height },
             symbol: Number(getComputedStyle(document.querySelector('.cm-cinematic-symbol')).opacity),
             surfaces: [...document.querySelectorAll('.cm-cinematic-surface')].map(e => Number(getComputedStyle(e).opacity)),
+            surfaceX: [...document.querySelectorAll('.cm-cinematic-surface')].map(e => new DOMMatrix(getComputedStyle(e).transform).m41),
             words: [...document.querySelectorAll('.cm-background-word')].map(e => Number(getComputedStyle(e).opacity)) };
         });
         assert.ok(Math.abs(sample.top) < 2, `Sticky stage ${width}x${height}: ${sample.top}`);
         assert.ok(sample.height <= height + 1, `Stretched grid stage ${sample.height}`);
         assert.ok(sample.canvas.width > 0 && sample.canvas.height > 0, 'Particle canvas fills the pinned world');
         if (sampleIndex === 0) assert.ok(sample.symbol > .95, `Hero symbol missing: ${sample.symbol}`);
-        else assert.ok(sample.surfaces[sampleIndex - 1] > .9, `Wrong continuous composition: ${sample.surfaces}`);
+        else {
+          assert.ok(sample.surfaces[sampleIndex - 1] > .9, `Wrong continuous composition: ${sample.surfaces}`);
+          assert.ok(Math.abs(sample.surfaceX[sampleIndex - 1]) > .5, `Pinned surface lost horizontal scroll translation: ${sample.surfaceX}`);
+        }
         samples.push(sample);
       }
     } else {
       assert.equal(await page.locator('.cm-story--static article').count(), 3);
     }
+    const forbidden = await page.locator('body').innerText();
+    assert.equal(/Cu\s*\/\s*29|naive scroll continous signal|native scroll\s*\/\s*continuous signal/i.test(forbidden), false);
     await page.screenshot({ path: join(output, `landing-${width}-${height}-${reducedMotion}.png`) });
     assert.deepEqual(apiRequests, [], 'Landing must not fetch financial APIs');
     assert.deepEqual(errors, []);
     results.push({ viewport: { width, height }, reducedMotion, overflow, enhanced, samples, apiRequests, errors });
+    await page.close();
+  }
+  for (const mode of ['save-data', 'low-cpu']) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, reducedMotion: 'no-preference' });
+    await page.addInitScript(fallbackMode => {
+      if (fallbackMode === 'save-data') Object.defineProperty(navigator, 'connection', { configurable: true, value: { saveData: true, addEventListener() {}, removeEventListener() {} } });
+      if (fallbackMode === 'low-cpu') Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 2 });
+    }, mode);
+    await page.goto(base);
+    await page.locator('.cm-story').waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.cm-story--static').count(), 1, `${mode} must use the complete static fallback`);
+    assert.equal(await page.locator('.cm-particle-world').count(), 0, `${mode} must not start the particle renderer`);
+    adaptiveResults.push({ mode, static: true, canvases: 0 });
+    await page.close();
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, reducedMotion: 'no-preference' });
+    await page.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+        if (type === 'webgl2') return null;
+        return original.call(this, type, ...args);
+      };
+    });
+    await page.goto(base);
+    const canvas = page.locator('.cm-particle-world');
+    await canvas.waitFor();
+    await page.waitForFunction(() => document.querySelector('.cm-particle-world')?.dataset.renderer === 'canvas2d');
+    const fallback = await canvas.evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
+    assert.deepEqual(fallback, { renderer: 'canvas2d', quality: 'balanced', count: 280 });
+    adaptiveResults.push({ mode: 'webgl-unavailable', ...fallback });
     await page.close();
   }
   // Deliberately synthetic API responses: these checks establish UI behavior,
@@ -78,13 +124,15 @@ try {
   for (const width of [1536, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const errors = [];
+    const cinematicAssets = [];
     page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => { if (request.url().includes('/assets/CinematicLanding-')) cinematicAssets.push(request.url()); });
     await page.route('**/api/**', route => {
       const payload = fixtures[new URL(route.request().url()).pathname];
       return route.fulfill({ status: payload ? 200 : 503, contentType: 'application/json', body: JSON.stringify(payload || { detail: 'Controlled QA: service unavailable' }) });
     });
     for (const path of ['/models', '/validation', '/system']) {
-      await page.goto(base + path);
+      await page.goto(new URL(path, base).href);
       try { await page.locator('.cm-page-header').waitFor(); }
       catch (error) {
         console.error(JSON.stringify({ path, errors, body: await page.locator('body').innerText() }));
@@ -110,9 +158,10 @@ try {
       await page.screenshot({ path: join(output, `fixture-${path.slice(1)}-${width}.png`), fullPage: true });
       workspaceResults.push({ path, width, overflow, fixture: true });
     }
+    assert.deepEqual(cinematicAssets, [], 'Direct workspace routes must not load landing cinematic assets');
     assert.deepEqual(errors, []);
     await page.close();
   }
-  await writeFile(join(output, 'results.json'), JSON.stringify({ base, checkedAt: new Date().toISOString(), results, workspaceResults }, null, 2));
-  console.log(JSON.stringify({ landingPassed: results.length, workspacePassed: workspaceResults.length, output, results, workspaceResults }, null, 2));
+  await writeFile(join(output, 'results.json'), JSON.stringify({ base, checkedAt: new Date().toISOString(), results, adaptiveResults, workspaceResults }, null, 2));
+  console.log(JSON.stringify({ landingPassed: results.length, adaptivePassed: adaptiveResults.length, workspacePassed: workspaceResults.length, output, results, adaptiveResults, workspaceResults }, null, 2));
 } finally { await browser.close(); }

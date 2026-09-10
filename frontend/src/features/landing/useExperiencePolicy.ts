@@ -1,21 +1,37 @@
 import { useEffect, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
 
-/** Enhanced animation is opt-in after hydration; base HTML is fully visible. */
+export type ExperienceQuality = 'high' | 'balanced' | 'static';
+
+type DeviceHints = Navigator & {
+  deviceMemory?: number;
+  connection?: EventTarget & { saveData?: boolean };
+};
+
+/** Cinematic animation is opt-in after hydration; base HTML stays fully visible. */
 export function useExperiencePolicy() {
   const reduce = useReducedMotion();
-  const [desktop, setDesktop] = useState(false);
+  const [hardwareQuality, setHardwareQuality] = useState<ExperienceQuality>('static');
   useEffect(() => {
-    const media = window.matchMedia('(min-width: 1024px) and (pointer: fine)');
-    const hints = navigator as Navigator & { deviceMemory?: number; connection?: EventTarget & { saveData?: boolean } };
-    const update = () => setDesktop(media.matches && !hints.connection?.saveData && (hints.deviceMemory === undefined || hints.deviceMemory > 4));
+    const highQualityViewport = window.matchMedia('(min-width: 1024px) and (pointer: fine)');
+    const hints = navigator as DeviceHints;
+    const update = () => {
+      const constrainedMemory = hints.deviceMemory !== undefined && hints.deviceMemory <= 2;
+      const constrainedCpu = navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 2;
+      if (hints.connection?.saveData || constrainedMemory || constrainedCpu) {
+        setHardwareQuality('static');
+      } else {
+        setHardwareQuality(highQualityViewport.matches ? 'high' : 'balanced');
+      }
+    };
     update();
-    media.addEventListener('change', update);
+    highQualityViewport.addEventListener('change', update);
     hints.connection?.addEventListener('change', update);
     return () => {
-      media.removeEventListener('change', update);
+      highQualityViewport.removeEventListener('change', update);
       hints.connection?.removeEventListener('change', update);
     };
   }, []);
-  return { enhanced: desktop && reduce === false, reducedMotion: reduce !== false };
+  const quality = reduce === false ? hardwareQuality : 'static';
+  return { enhanced: quality !== 'static', quality, reducedMotion: reduce !== false };
 }

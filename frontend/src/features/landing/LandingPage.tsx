@@ -1,20 +1,22 @@
+import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
 import { Brand } from '../../components/ui/Brand';
 import { Hero } from './Hero';
-import { CinematicLanding } from './CinematicLanding';
 import { EvidencePreview } from './Previews';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
 import './landing.css';
 
+const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
+
 export function LandingPage() {
-  const { enhanced } = useExperiencePolicy();
-  return <div className={`cm-landing${enhanced ? ' cm-landing--cinematic' : ''}`}>
+  const { enhanced, quality } = useExperiencePolicy();
+  return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
     <a className="cm-skip" href="#main-content">Skip to content</a>
     <header className="cm-landing-nav"><div className="cm-landing-nav-inner"><Brand/><nav aria-label="Introduction"><a href="#research" className="cm-nav-text">The platform</a><Link to="/validation" className="cm-nav-text">Validation</Link><Link to="/dashboard" className="cm-button cm-button--secondary">Open dashboard <ArrowUpRight size={16} aria-hidden="true"/></Link></nav></div></header>
     <main id="main-content" tabIndex={-1}>
-      {enhanced ? <CinematicLanding/> : <>
+      {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'}/></Suspense> : <>
         <Hero enhanced={false}/>
         <section id="research" className="cm-research-intro" aria-labelledby="research-title"><p className="cm-eyebrow">THE CONNECTED VIEW</p><h2 id="research-title">A price is a point.<br/><span>Intelligence is the connection.</span></h2><p>Move from what the market is doing to what may be driving it. Explore the evidence, compare the signals and keep the uncertainty visible.</p><div className="cm-capabilities">{[{label:'Market context',icon:ChartNoAxesCombined},{label:'News intelligence',icon:Newspaper},{label:'Forecast ranges',icon:ScanLine},{label:'Model validation',icon:ShieldCheck}].map(({label,icon:Icon},i)=><div key={label}><span className="cm-capability-index">0{i+1}</span><Icon size={22} strokeWidth={1.4} aria-hidden="true"/><span>{label}</span></div>)}</div></section>
         <ResearchStory enhanced={false}/>

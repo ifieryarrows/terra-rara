@@ -1,0 +1,20 @@
+{
+  "environment": "Headless Microsoft Edge, 1536x900, no CDP tracing",
+  "duration": 3000,
+  "results": [
+    {
+      "name": "normal",
+      "frames": 144,
+      "fps": 47.7,
+      "averageMs": 21,
+      "p95Ms": 49.9
+    },
+    {
+      "name": "legacy-runtime-turbulence",
+      "frames": 29,
+      "fps": 9.4,
+      "averageMs": 106.3,
+      "p95Ms": 166.6
+    }
+  ]
+}

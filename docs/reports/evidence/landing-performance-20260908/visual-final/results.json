@@ -1,0 +1,1022 @@
+{
+  "base": "http://127.0.0.1:4173/",
+  "checkedAt": "2026-09-08T19:17:44.438Z",
+  "results": [
+    {
+      "viewport": {
+        "width": 1536,
+        "height": 900
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 900,
+          "canvas": {
+            "width": 1536,
+            "height": 900
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 900,
+          "top": 0,
+          "height": 900,
+          "canvas": {
+            "width": 1536,
+            "height": 900
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1800,
+          "top": 0,
+          "height": 900,
+          "canvas": {
+            "width": 1536,
+            "height": 900
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 2700,
+          "top": 0,
+          "height": 900,
+          "canvas": {
+            "width": 1536,
+            "height": 900
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 3384,
+          "top": 0,
+          "height": 900,
+          "canvas": {
+            "width": 1536,
+            "height": 900
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5517
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 600
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 600,
+          "canvas": {
+            "width": 1280,
+            "height": 600
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 600,
+          "top": 0,
+          "height": 600,
+          "canvas": {
+            "width": 1280,
+            "height": 600
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1200,
+          "top": 0,
+          "height": 600,
+          "canvas": {
+            "width": 1280,
+            "height": 600
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1800,
+          "top": 0,
+          "height": 600,
+          "canvas": {
+            "width": 1280,
+            "height": 600
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 2256,
+          "top": 0,
+          "height": 600,
+          "canvas": {
+            "width": 1280,
+            "height": 600
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5517
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1024,
+        "height": 650
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 1024,
+            "height": 650
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 650,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 1024,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1300,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 1024,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1950,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 1024,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 2444,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 1024,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5517
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 768,
+        "height": 800
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 800,
+          "canvas": {
+            "width": 768,
+            "height": 800
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 800,
+          "top": 0,
+          "height": 800,
+          "canvas": {
+            "width": 768,
+            "height": 800
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1600,
+          "top": 0,
+          "height": 800,
+          "canvas": {
+            "width": 768,
+            "height": 800
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 2400,
+          "top": 0,
+          "height": 800,
+          "canvas": {
+            "width": 768,
+            "height": 800
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 3008,
+          "top": 0,
+          "height": 800,
+          "canvas": {
+            "width": 768,
+            "height": 800
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5517
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 320,
+        "height": 650
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 320,
+            "height": 650
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 650,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 320,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1300,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 320,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1950,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 320,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 2444,
+          "top": 0,
+          "height": 650,
+          "canvas": {
+            "width": 320,
+            "height": 650
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5517
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "reducedMotion": "no-preference",
+      "overflow": 0,
+      "enhanced": true,
+      "samples": [
+        {
+          "scrollY": 0,
+          "top": 0,
+          "height": 844,
+          "canvas": {
+            "width": 390,
+            "height": 844
+          },
+          "symbol": 1,
+          "surfaces": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            110,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 844,
+          "top": 0,
+          "height": 844,
+          "canvas": {
+            "width": 390,
+            "height": 844
+          },
+          "symbol": 0,
+          "surfaces": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -5.14286,
+            110,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0.12,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 1688,
+          "top": 0,
+          "height": 844,
+          "canvas": {
+            "width": 390,
+            "height": 844
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            1,
+            0,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -12.9231,
+            110,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0.12,
+            0,
+            0
+          ]
+        },
+        {
+          "scrollY": 2532,
+          "top": 0,
+          "height": 844,
+          "canvas": {
+            "width": 390,
+            "height": 844
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            1,
+            0
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -20.5714,
+            110
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0.12,
+            0
+          ]
+        },
+        {
+          "scrollY": 3173,
+          "top": 0,
+          "height": 844,
+          "canvas": {
+            "width": 390,
+            "height": 844
+          },
+          "symbol": 0,
+          "surfaces": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "surfaceX": [
+            -150,
+            -150,
+            -150,
+            -16.5302
+          ],
+          "words": [
+            0,
+            0,
+            0,
+            0,
+            0.12
+          ]
+        }
+      ],
+      "apiRequests": [],
+      "errors": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "reducedMotion": "reduce",
+      "overflow": 0,
+      "enhanced": false,
+      "samples": [],
+      "apiRequests": [],
+      "errors": []
+    }
+  ],
+  "adaptiveResults": [
+    {
+      "mode": "save-data",
+      "static": true,
+      "canvases": 0
+    },
+    {
+      "mode": "low-cpu",
+      "static": true,
+      "canvases": 0
+    },
+    {
+      "mode": "webgl-unavailable",
+      "renderer": "canvas2d",
+      "quality": "balanced",
+      "count": 280
+    }
+  ],
+  "workspaceResults": [
+    {
+      "path": "/models",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/validation",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/system",
+      "width": 1536,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/models",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/validation",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    },
+    {
+      "path": "/system",
+      "width": 390,
+      "overflow": 0,
+      "fixture": true
+    }
+  ]
+}
