@@ -9,7 +9,7 @@ Güncelleme: 2026-09-06. İncelenen kaynak: `52030fe` ve faz planları/teslim ra
 | 1 — Tasarım temeli, routing ve ilk landing | Geliştirme tamamlandı | [İlk plan](./frontend-experience-plan.md) |
 | 2 — Cu hero, scroll anlatısı, ortak workspace bileşenleri | Geliştirme ve yerel denetim tamamlandı | [Denetim](../reports/frontend-phase-two-audit-20260906.md) |
 | 3 — Dashboard grafik ve çalışma akışları | Geliştirme ve yerel kabul tamamlandı | [Kapanış](../reports/frontend-phase-three-completion-20260906.md) |
-| Tipografi — Geist Sans | Bu güncellemede uygulandı | Ortak sans ailesi; yerel değişken WOFF2; monospace sayılar korunur |
+| Tipografi — Geist Sans | Bu güncellemede uygulandı | Tüm metin ve sayılar için ortak aile; yerel değişken WOFF2; `tabular-nums` korunur |
 | 4 — Landing'de ürün özelliklerini dengeli gösterme | Geliştirildi; yerel kabul tamamlandı | [4. faz planı](./frontend-experience-phase-four.md) |
 | 5 — Market → News Intelligence product demonstration | Pipeline doğrulandı; sequence uygulanıyor | [News sequence planı](./frontend-news-intelligence-sequence.md) |
 | Yayın kabulü | Açık; son sürüm üzerinde yapılmalı | Canlı servisler, gerçek cihaz ve kullanıcı ölçümleri |
@@ -29,7 +29,7 @@ Kullanıcının gözlemi kodla örtüşüyor: `MarketPreview` görsel hücreler,
 
 ## Tipografi kararı
 
-Ana arayüz ve landing metinleri Geist Sans. Fiyatlar ve yoğun sayısal alanlar mevcut system monospace kullanır. League Gothic, yalnızca kısa landing başlıkları için 4. fazda görsel karşılaştırma adayıdır; gövde metnine, tabloya ve dashboard'a uygulanmadı. İkinci font ancak somut kompozisyonda fayda sağlarsa eklenir.
+Ana arayüz, landing metinleri ve tüm sayısal alanlar Geist Sans kullanır; hizalama gereken değerlerde `tabular-nums` korunur. League Gothic, yalnızca kısa landing başlıkları için 4. fazda görsel karşılaştırma adayıdır; gövde metnine, tabloya ve dashboard'a uygulanmadı. İkinci font ancak somut kompozisyonda fayda sağlarsa eklenir.
 
 Geist'in resmi [Vercel dağıtımı](https://vercel.com/font) kullanıldı: v1.7.2, 69.760 byte WOFF2, yerel barındırma, `font-display: swap`, lisans dosyasıyla birlikte. Yeni npm/Next.js bağımlılığı yok. Font boyutu JS/CSS bütçesi dışında ayrı transfer maliyetidir.
 

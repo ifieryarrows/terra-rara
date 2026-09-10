@@ -16,7 +16,7 @@ The research reference is `docs/design/immersive-web-case-study-tr.docx`. It is 
 - 27 tests and lint pass before editing. D3 layout p95: 0.47 ms for the reference fixture; 3.69 ms for 1,000 instruments in this local run. These are CPU test timings, not browser FPS.
 - Root currently opens Overview; `/models`, `/validation`, `/system` are existing deep links. Vercel rewrites API before SPA fallback.
 - Main navigation disappears below 640 px. Overview's quote card has a 360 px minimum width and a non-wrapping header; the previous heatmap report already records mobile overflow from this component.
-- Styling is dark-only, spread between Tailwind, literal colors and local components. Existing IBM Plex Sans + system monospace are intentional. Many metadata labels are 9–10 px.
+- Styling is dark-only, spread between Tailwind, literal colors and local components. Geist Sans is the single product font family; numeric alignment uses `tabular-nums`. Many metadata labels are 9–10 px.
 - Overview uses local polling state alongside Query hooks. Preserve API contracts and polling semantics in this slice; do not combine a data-state rewrite with visual migration.
 - Preserve heatmap hierarchy memoization, stable IDs, resquarify, projected-area LOD, 10% weight compression, pointer rAF, category cache, full-width layout, zoom/pan, keyboard and Escape behavior. Leave its geometry and color scale intact.
 - Preserve forecast horizon/alignment logic and quality gates in `GEMINI.md`. Do not change predictions, risk logic or model metrics to make marketing claims.

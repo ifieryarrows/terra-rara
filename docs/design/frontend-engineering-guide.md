@@ -4,7 +4,7 @@ The research source is [the Turkish technical case study](./immersive-web-case-s
 
 ## Product and content
 
-The brand has two densities: editorial introduction and financial workspace. Both use the same copper accent, ink surface, Geist Sans typography, system monospace numbers, borders and focus treatments. Geist replaces IBM Plex Sans at the user's request on 2026-09-06. League Gothic remains a short-heading comparison candidate for phase four, not the body or dashboard font. Landing promises only code-backed capabilities. A model being present in the repository does not prove that production has a trained checkpoint or a current snapshot.
+The brand has two densities: editorial introduction and financial workspace. Both use the same copper accent, ink surface, Geist Sans typography for every text and number, borders and focus treatments. Geist replaces IBM Plex Sans at the user's request on 2026-09-06. League Gothic remains a short-heading comparison candidate for phase four, not the body or dashboard font. Landing promises only code-backed capabilities. A model being present in the repository does not prove that production has a trained checkpoint or a current snapshot.
 
 Landing sequence: hero → connected workflow → market/news/forecast story → model evidence → dashboard entry. All CTAs are real links. Returning visitors can enter from the first viewport. There is no unlock timer, compulsory scroll, intro replay state or automatic returning-user redirect.
 
@@ -24,7 +24,7 @@ Preview fixtures in `features/landing/preview-data.ts` are deterministic and ill
 | Motion | `design/motion.ts`, CSS duration/ease tokens | 160–240 ms UI; 650 ms optional reveal; no random easing |
 | Charts | `design/chart-tokens.ts` | Charts consume semantic colors rather than duplicating hex values |
 
-Body text is normally 16 px; controls and regularly read labels 14 px; secondary metadata 12 px. Hero uses fluid `clamp` with a readable mobile minimum. Financial values use `tabular-nums` and system monospace. Existing treemap area-driven LOD typography is an explicit exception: tiny tiles preserve their labels through accessible names and category details, not through forced 12 px content overflowing the cell.
+Body text is normally 16 px; controls and regularly read labels 14 px; secondary metadata 12 px. Hero uses fluid `clamp` with a readable mobile minimum. Financial values use the shared Geist Sans family with `tabular-nums` for alignment. Existing treemap area-driven LOD typography is an explicit exception: tiny tiles preserve their labels through accessible names and category details, not through forced 12 px content overflowing the cell.
 
 `Brand`, `FinancialPanel`, `MetricCard` and `RouteBoundary` establish reusable primitives. Existing glass-panel classes map to the same surface tokens. New screens should use these or extend their contract rather than copy Overview's prior local card implementations. Models and Validation now share one metric card. Business queries stay in existing hooks/API modules.
 
@@ -58,7 +58,7 @@ The build prerenders the complete static landing into `dist/index.html` via Reac
 
 The prerender Vite instance uses `node_modules/.vite-prerender` for its optimizer cache. Its configuration differs from the development server, so sharing the default `.vite` cache can invalidate a running dev server's dependency URLs during a build.
 
-Geist Sans v1.7.2 is self-hosted as a single 69,760-byte variable WOFF2, preloaded in the HTML and declared with `font-display: swap`. The old Google Fonts stylesheet/preconnects are removed; mono uses system fonts. Preserve the included OFL license and version the font URL on update. Font transfers are reported separately from JS/CSS budgets. Hashed `/assets/*` are immutable. HTML remains revalidatable. Never apply immutable caching to API responses or the HTML shell. Vercel Speed Insights mounts for both landing and dashboard; actual field data depends on the deployment's service configuration and traffic.
+Geist Sans v1.7.2 is self-hosted as a single 69,760-byte variable WOFF2, preloaded in the HTML and declared with `font-display: swap`. The old Google Fonts stylesheet/preconnects are removed; numeric utility classes resolve to the same Geist Sans family. Preserve the included OFL license and version the font URL on update. Font transfers are reported separately from JS/CSS budgets. Hashed `/assets/*` are immutable. HTML remains revalidatable. Never apply immutable caching to API responses or the HTML shell. Vercel Speed Insights mounts for both landing and dashboard; actual field data depends on the deployment's service configuration and traffic.
 
 ## Accessibility and resilience
 
