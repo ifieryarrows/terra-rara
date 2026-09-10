@@ -24,7 +24,7 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
   </span>;
 }
 
-function useAutoReveal(progress: MotionValue<number>, trigger = .9, reset = .84) {
+function useAutoReveal(progress: MotionValue<number>, trigger = .84, reset = .78) {
   const reveal = useMotionValue(0);
   const animation = useRef<ReturnType<typeof animate> | null>(null);
   const triggered = useRef(false);
@@ -57,7 +57,7 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
   const lineStart = cinematic ? .04 : .06;
   const lineStep = cinematic ? .15 : .11;
   const lineDuration = cinematic ? .24 : .16;
-  const bridgeScale = useTransform(timeline, cinematic ? [.72, .79] : [0, .22], [0, 1]);
+  const bridgeScale = useTransform(timeline, cinematic ? [.84, .9] : [0, .22], [0, 1]);
   const actionOpacity = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [0, 1]);
   const actionY = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [18, 0]);
   const noteOpacity = useTransform(contentTimeline, cinematic ? [.84, 1] : [.68, .84], [0, 1]);
@@ -74,10 +74,10 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
 
 function CinematicEntryCTA({ progress }: { progress: MotionValue<number> }) {
   const revealProgress = useAutoReveal(progress);
-  const opacity = useTransform(progress, [.72, .8], [0, 1]);
-  const y = useTransform(progress, [.72, .86], [28, 0]);
-  const visibility = useTransform(progress, value => value >= .72 ? 'visible' : 'hidden');
-  const pointerEvents = useTransform(progress, value => value >= .72 ? 'auto' : 'none');
+  const opacity = useTransform(revealProgress, [0, .1], [0, 1]);
+  const y = useTransform(revealProgress, [0, .1], [28, 0]);
+  const visibility = useTransform(progress, value => value >= .84 ? 'visible' : 'hidden');
+  const pointerEvents = useTransform(progress, value => value >= .84 ? 'auto' : 'none');
   return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
 
