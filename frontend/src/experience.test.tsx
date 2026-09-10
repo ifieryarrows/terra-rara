@@ -29,12 +29,13 @@ describe('product introduction and workspace routes', () => {
     expect(screen.getAllByText('LLM rationale').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Tone scoring').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Enter CopperMind' })).toHaveLength(2);
+    expect(document.querySelector('.cm-landing-nav')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Market overview' })).not.toBeInTheDocument();
   });
   it('enters the actual dashboard route without completing the story and restores a focus target', async () => {
     const user = userEvent.setup();
     render(<App/>);
-    await user.click(screen.getByRole('link', { name: 'Open dashboard' }));
+    await user.click(screen.getAllByRole('link', { name: 'Enter CopperMind' })[0]);
     expect(await screen.findByRole('heading', { name: 'Market overview' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus());

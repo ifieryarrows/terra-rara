@@ -14,7 +14,6 @@ export function LandingPage() {
   const { enhanced, quality } = useExperiencePolicy();
   return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
     <a className="cm-skip" href="#main-content">Skip to content</a>
-    <header className="cm-landing-nav"><div className="cm-landing-nav-inner"><Brand/><nav aria-label="Introduction"><a href="#research" className="cm-nav-text">The platform</a><Link to="/validation" className="cm-nav-text">Validation</Link><Link to="/dashboard" className="cm-button cm-button--secondary">Open dashboard <ArrowUpRight size={16} aria-hidden="true"/></Link></nav></div></header>
     <main id="main-content" tabIndex={-1}>
       {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'}/></Suspense> : <>
         <Hero enhanced={false}/>

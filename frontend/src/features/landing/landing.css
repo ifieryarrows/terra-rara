@@ -1,9 +1,4 @@
 .cm-landing { color: var(--cm-text); background: var(--cm-bg); overflow: clip; }
-.cm-landing-nav { border-bottom: 1px solid var(--cm-border); }
-.cm-landing-nav-inner { max-width: var(--cm-content-width); padding: 1.2rem clamp(1.25rem, 4vw, 4rem); margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 2rem; }
-.cm-landing-nav nav { display: flex; align-items: center; gap: 2rem; }
-.cm-nav-text { color: var(--cm-muted); font-size: .875rem; text-decoration: none; }
-.cm-nav-text:hover { color: var(--cm-copper); }
 .cm-hero { max-width: var(--cm-content-width); padding: clamp(2rem, 4vw, 4rem) clamp(1.25rem, 4vw, 4rem) 0; margin: auto; }
 .cm-hero-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center; gap: 2rem; min-height: 36rem; }
 .cm-hero-heading { position: relative; z-index: 2; }
@@ -140,11 +135,6 @@
   .cm-story-track { margin-top: .75rem; }
 }
 @media (max-width: 639px) {
-  .cm-landing-nav-inner { gap: 1rem; padding: 1rem 1.25rem; }
-  .cm-landing-nav nav { gap: 0; }
-  .cm-nav-text { display: none; }
-  .cm-landing-nav .cm-button { font-size: .75rem; padding: .6rem .7rem; }
-  .cm-landing-nav .cm-button svg { display: none; }
   .cm-brand { gap: .5rem; }
   .cm-brand-mark { width: 2rem; height: 2rem; }
   .cm-brand-name { font-size: .95rem; }
