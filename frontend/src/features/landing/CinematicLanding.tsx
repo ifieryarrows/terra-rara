@@ -73,7 +73,7 @@ function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
     <SceneSurface progress={progress} range={[.16, .22, .36, .39]}><MarketPreview progress={marketProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.39, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.60, .625, .77, .84]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.77, .84, .985, 1]} persist><EvidencePreview/></SceneSurface>
+    <SceneSurface progress={progress} range={[.77, .82, .84, .9]}><EvidencePreview/></SceneSurface>
   </div>;
 }
 
@@ -97,12 +97,13 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
 function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: typeof beats[number] }) {
   const shortNewsWindow = beat.id === 'news';
   const shortForecastWindow = beat.id === 'forecast';
-  const start = beat.center === 1 ? .82 : shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
-  const reveal = beat.center === 1 ? .9 : shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
-  const hold = beat.center === 1 ? 1 : shortNewsWindow ? .47 : shortForecastWindow ? .78 : beat.center + .07;
-  const end = beat.center === 1 ? 1 : shortNewsWindow ? .535 : shortForecastWindow ? .84 : beat.center + .18;
-  const opacity = useTransform(progress, beat.center === 1 ? [start, reveal, 1] : [start, reveal, hold, end], beat.center === 1 ? [0, 1, 1] : [0, 1, 1, 0]);
-  const y = useTransform(progress, beat.center === 1 ? [start, reveal, 1] : [start, reveal, hold, end], beat.center === 1 ? [64, 0, 0] : [64, 0, 0, -48]);
+  const finalBeat = beat.center === 1;
+  const start = finalBeat ? .78 : shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
+  const reveal = finalBeat ? .83 : shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
+  const hold = finalBeat ? .84 : shortNewsWindow ? .47 : shortForecastWindow ? .78 : beat.center + .07;
+  const end = finalBeat ? .9 : shortNewsWindow ? .535 : shortForecastWindow ? .84 : beat.center + .18;
+  const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
+  const y = useTransform(progress, [start, reveal, hold, end], [64, 0, 0, -48]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
   const detailOpacity = useTransform(progress, [start + .025, reveal + .045], [0, 1]);
   const detailY = useTransform(progress, [start + .025, reveal + .045], [26, 0]);

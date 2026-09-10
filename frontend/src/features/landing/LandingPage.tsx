@@ -27,10 +27,10 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
 function EntryCTAContent({ progress, animated, cinematic = false }: { progress: MotionValue<number> | null; animated: boolean; cinematic?: boolean }) {
   const staticProgress = useMotionValue(1);
   const timeline = progress ?? staticProgress;
-  const lineStart = cinematic ? .84 : .06;
+  const lineStart = cinematic ? .76 : .06;
   const lineStep = cinematic ? .025 : .11;
   const lineDuration = cinematic ? .08 : .16;
-  const bridgeScale = useTransform(timeline, cinematic ? [.80, .87] : [0, .22], [0, 1]);
+  const bridgeScale = useTransform(timeline, cinematic ? [.72, .79] : [0, .22], [0, 1]);
   const actionOpacity = useTransform(timeline, cinematic ? [.93, .98] : [.53, .73], [0, 1]);
   const actionY = useTransform(timeline, cinematic ? [.93, .98] : [.53, .73], [18, 0]);
   const noteOpacity = useTransform(timeline, cinematic ? [.97, 1] : [.68, .84], [0, 1]);
@@ -45,10 +45,10 @@ function EntryCTAContent({ progress, animated, cinematic = false }: { progress: 
 }
 
 function CinematicEntryCTA({ progress }: { progress: MotionValue<number> }) {
-  const opacity = useTransform(progress, [.80, .88], [0, 1]);
-  const y = useTransform(progress, [.80, .91], [28, 0]);
-  const visibility = useTransform(progress, value => value >= .80 ? 'visible' : 'hidden');
-  const pointerEvents = useTransform(progress, value => value >= .80 ? 'auto' : 'none');
+  const opacity = useTransform(progress, [.72, .8], [0, 1]);
+  const y = useTransform(progress, [.72, .86], [28, 0]);
+  const visibility = useTransform(progress, value => value >= .72 ? 'visible' : 'hidden');
+  const pointerEvents = useTransform(progress, value => value >= .72 ? 'auto' : 'none');
   return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} animated cinematic/></motion.section>;
 }
 
