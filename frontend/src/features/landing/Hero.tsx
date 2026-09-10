@@ -20,7 +20,7 @@ export function Hero({ enhanced }: { enhanced: boolean }) {
         <p className="cm-eyebrow"><span className="cm-eyebrow-line"/>COPPER INTELLIGENCE / TERRA RARA</p>
         <h1 id="hero-title">Read the market.<br/><span>See the structure.</span></h1>
         <p className="cm-hero-description">Behind every copper price, a bigger picture.</p>
-        <p className="cm-hero-detail">Connect market moves, news intelligence, forecast ranges and model validation in one research workspace.</p>
+        <p className="cm-hero-detail">Market, news, forecasts and evidence in one workspace.</p>
         <div className="cm-hero-actions"><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></Link><a href="#research" className="cm-discover">Explore the connections <ArrowDown size={16} aria-hidden="true"/></a></div>
         <nav className="cm-hero-capabilities" aria-label="Explore the platform"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><a href="#evidence">Validation</a></nav>
         <p className="cm-hero-caption">Built around copper. Designed for perspective.</p>

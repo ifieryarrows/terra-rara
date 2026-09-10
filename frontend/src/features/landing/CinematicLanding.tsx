@@ -10,22 +10,22 @@ import './cinematic.css';
 const beats = [
   {
     id: 'market', number: '01', label: 'THE MARKET', title: <>Start with the<br/>bigger picture.</>,
-    text: 'Explore the market heatmap, related instruments and sector context. Find the relationships around copper before focusing on a single forecast.',
+    text: 'See copper in context before focusing on a single forecast.',
     tags: ['Market heatmap', 'Related instruments'], link: 'Explore market context', to: '/dashboard#market-map', center: .25,
   },
   {
     id: 'news', number: '02', label: 'THE CONTEXT', title: <>See the signal<br/>behind the story.</>,
-    text: 'Follow one source headline from readable context to entity emphasis, tone scoring and a concise LLM rationale. The market selection carries through; no live request is needed here.',
+    text: 'Watch a headline become tone, impact and rationale.',
     tags: ['Tone scoring', 'LLM rationale'], link: 'Read the intelligence', to: '/dashboard#news-intelligence', center: .5,
   },
   {
     id: 'forecast', number: '03', label: 'THE POSSIBILITIES', title: <>See the range.<br/>Keep the uncertainty.</>,
-    text: 'Study quantitative forecasts alongside historical prices. Keep the primary weekly view distinct from T+1 diagnostics and examine the available uncertainty intervals.',
+    text: 'See the forecast range alongside the last close.',
     tags: ['Deep-learning forecasts', 'Price & risk context'], link: 'Examine the forecasts', to: '/dashboard#price-forecast', center: .75,
   },
   {
     id: 'evidence', number: '04', label: 'THE EVIDENCE', title: <>Make the signal<br/>answer questions.</>,
-    text: 'Keep model validation, forecast horizons and data freshness close to every decision. CopperMind exposes the context needed to question a forecast.',
+    text: 'Check the model, horizon and data date behind the signal.',
     tags: ['Walk-forward validation', 'Freshness & model status'], link: 'Examine the evidence', to: '/validation', center: 1,
   },
 ] as const;
@@ -84,7 +84,7 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
       <p className="cm-eyebrow"><span className="cm-eyebrow-line"/>COPPER INTELLIGENCE / TERRA RARA</p>
       <h1 id="hero-title">Read the market.<br/><span>See the structure.</span></h1>
       <p className="cm-hero-description">Behind every copper price, a bigger picture.</p>
-      <p className="cm-hero-detail">Connect market moves, news intelligence, forecast ranges and model validation in one research workspace.</p>
+      <p className="cm-hero-detail">Market, news, forecasts and evidence in one workspace.</p>
       <div className="cm-hero-actions"><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></Link><a href="#market" className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
       <nav className="cm-hero-capabilities" aria-label="Explore the platform"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><a href="#evidence">Validation</a></nav>
       <p className="cm-hero-caption">Built around copper. Designed for perspective.</p>
