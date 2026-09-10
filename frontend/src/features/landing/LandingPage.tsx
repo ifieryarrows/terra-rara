@@ -1,7 +1,7 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
-import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
+import { animate, motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import { Brand } from '../../components/ui/Brand';
 import { Hero } from './Hero';
 import { EvidencePreview } from './Previews';
@@ -24,32 +24,61 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
   </span>;
 }
 
-function EntryCTAContent({ progress, animated, cinematic = false }: { progress: MotionValue<number> | null; animated: boolean; cinematic?: boolean }) {
+function useAutoReveal(progress: MotionValue<number>, trigger = .72, reset = .68) {
+  const reveal = useMotionValue(0);
+  const animation = useRef<ReturnType<typeof animate> | null>(null);
+  const triggered = useRef(false);
+  useEffect(() => {
+    const update = (value: number) => {
+      if (value >= trigger && !triggered.current) {
+        triggered.current = true;
+        animation.current?.stop();
+        animation.current = animate(reveal, 1, { duration: .72, ease: [0.22, 0.61, 0.36, 1] });
+      } else if (value < reset && triggered.current) {
+        triggered.current = false;
+        animation.current?.stop();
+        animation.current = animate(reveal, 0, { duration: .18, ease: 'easeOut' });
+      }
+    };
+    update(progress.get());
+    const unsubscribe = progress.on('change', update);
+    return () => {
+      unsubscribe();
+      animation.current?.stop();
+    };
+  }, [progress, reset, reveal, trigger]);
+  return reveal;
+}
+
+function EntryCTAContent({ progress, revealProgress, animated, cinematic = false }: { progress: MotionValue<number> | null; revealProgress?: MotionValue<number>; animated: boolean; cinematic?: boolean }) {
   const staticProgress = useMotionValue(1);
   const timeline = progress ?? staticProgress;
-  const lineStart = cinematic ? .76 : .06;
-  const lineStep = cinematic ? .025 : .11;
-  const lineDuration = cinematic ? .08 : .16;
+  const contentTimeline = revealProgress ?? timeline;
+  const lineStart = cinematic ? .04 : .06;
+  const lineStep = cinematic ? .15 : .11;
+  const lineDuration = cinematic ? .24 : .16;
   const bridgeScale = useTransform(timeline, cinematic ? [.72, .79] : [0, .22], [0, 1]);
-  const actionOpacity = useTransform(timeline, cinematic ? [.93, .98] : [.53, .73], [0, 1]);
-  const actionY = useTransform(timeline, cinematic ? [.93, .98] : [.53, .73], [18, 0]);
-  const noteOpacity = useTransform(timeline, cinematic ? [.97, 1] : [.68, .84], [0, 1]);
+  const actionOpacity = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [0, 1]);
+  const actionY = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [18, 0]);
+  const noteOpacity = useTransform(contentTimeline, cinematic ? [.84, 1] : [.68, .84], [0, 1]);
+  const lineProgress = animated ? contentTimeline : progress;
   return <>
     {animated ? <div className="cm-enter-bridge" aria-hidden="true"><motion.span style={{ scaleX: bridgeScale }}/></div> : null}
-    <p className="cm-eyebrow"><EntryRevealLine progress={progress} index={0} startAt={lineStart} step={lineStep} duration={lineDuration}>YOUR RESEARCH STARTS HERE</EntryRevealLine></p>
-    <h2 id="enter-title"><EntryRevealLine progress={progress} index={1} startAt={lineStart} step={lineStep} duration={lineDuration}>From perspective</EntryRevealLine><EntryRevealLine progress={progress} index={2} startAt={lineStart} step={lineStep} duration={lineDuration}>to your next question.</EntryRevealLine></h2>
-    <p className="cm-enter-lede"><EntryRevealLine progress={progress} index={3} startAt={lineStart} step={lineStep} duration={lineDuration}>Open the workspace and explore the market.</EntryRevealLine></p>
+    <p className="cm-eyebrow"><EntryRevealLine progress={lineProgress} index={0} startAt={lineStart} step={lineStep} duration={lineDuration}>YOUR RESEARCH STARTS HERE</EntryRevealLine></p>
+    <h2 id="enter-title"><EntryRevealLine progress={lineProgress} index={1} startAt={lineStart} step={lineStep} duration={lineDuration}>From perspective</EntryRevealLine><EntryRevealLine progress={lineProgress} index={2} startAt={lineStart} step={lineStep} duration={lineDuration}>to your next question.</EntryRevealLine></h2>
+    <p className="cm-enter-lede"><EntryRevealLine progress={lineProgress} index={3} startAt={lineStart} step={lineStep} duration={lineDuration}>Open the workspace and explore the market.</EntryRevealLine></p>
     <motion.div className="cm-enter-action" style={animated ? { opacity: actionOpacity, y: actionY } : undefined}><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowRight size={19} aria-hidden="true"/></Link></motion.div>
     <motion.span className="cm-enter-note" style={animated ? { opacity: noteOpacity } : undefined}>Forecasts are uncertain. Availability and freshness are shown in the workspace.</motion.span>
   </>;
 }
 
 function CinematicEntryCTA({ progress }: { progress: MotionValue<number> }) {
+  const revealProgress = useAutoReveal(progress);
   const opacity = useTransform(progress, [.72, .8], [0, 1]);
   const y = useTransform(progress, [.72, .86], [28, 0]);
   const visibility = useTransform(progress, value => value >= .72 ? 'visible' : 'hidden');
   const pointerEvents = useTransform(progress, value => value >= .72 ? 'auto' : 'none');
-  return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} animated cinematic/></motion.section>;
+  return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
 
 function StaticEntryCTA() {
