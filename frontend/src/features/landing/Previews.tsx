@@ -73,8 +73,8 @@ function NewsSequenceLayer({
 }
 
 function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
-  const clipPath = useTransform(progress, [0, .1], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .06, .16, .19]}>
+  const clipPath = useTransform(progress, [0, .12], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .08, .24, .28]}>
     <span className="cm-news-step-label">01 / SOURCE HEADLINE</span>
     <div className="cm-news-headline-copy">
       <span className="cm-news-route">{newsIntelligencePreview.symbol} / {newsIntelligencePreview.company}</span>
@@ -85,9 +85,9 @@ function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
 }
 
 function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
-  const firstClip = useTransform(progress, [.23, .28], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  const secondClip = useTransform(progress, [.27, .33], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.22, .26, .32, .36]}>
+  const firstClip = useTransform(progress, [.28, .36], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const secondClip = useTransform(progress, [.34, .43], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.28, .34, .48, .53]}>
     <span className="cm-news-step-label">02 / SEMANTIC EMPHASIS</span>
     <p className="cm-news-entity-line"><motion.mark style={{ clipPath: firstClip }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
     <p className="cm-news-entity-line"><motion.mark style={{ clipPath: secondClip }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
@@ -96,9 +96,9 @@ function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
 }
 
 function NewsAnalysisDial({ progress }: { progress: MotionValue<number> }) {
-  const rotation = useTransform(progress, [.4, .57], [0, 300]);
-  const dialGlow = useTransform(progress, [.37, .43, .57, .63], [0, 1, 1, 0]);
-  return <NewsSequenceLayer className="cm-news-dial-layer" progress={progress} range={[.36, .42, .57, .63]}>
+  const rotation = useTransform(progress, [.57, .7], [0, 300]);
+  const dialGlow = useTransform(progress, [.54, .6, .7, .76], [0, 1, 1, 0]);
+  return <NewsSequenceLayer className="cm-news-dial-layer" progress={progress} range={[.53, .59, .7, .76]}>
     <span className="cm-news-step-label">03 / SIGNAL READ</span>
     <div className="cm-news-dial-layout">
       <motion.div className="cm-news-dial-face" style={{ rotate: rotation, opacity: dialGlow }} aria-hidden="true">
@@ -111,12 +111,12 @@ function NewsAnalysisDial({ progress }: { progress: MotionValue<number> }) {
 }
 
 function NewsBranchLayer({ progress }: { progress: MotionValue<number> }) {
-  const rationalePath = useTransform(progress, [.52, .67], [0, 1]);
-  const scorePath = useTransform(progress, [.56, .71], [0, 1]);
-  const rationaleOpacity = useTransform(progress, [.61, .72], [0, 1]);
-  const scoreOpacity = useTransform(progress, [.65, .76], [0, 1]);
-  const scoreScale = useTransform(progress, [.62, .76], [.82, 1]);
-  return <NewsSequenceLayer className="cm-news-branch-layer" progress={progress} range={[.62, .68, .96, 1]}>
+  const rationalePath = useTransform(progress, [.68, .81], [0, 1]);
+  const scorePath = useTransform(progress, [.72, .85], [0, 1]);
+  const rationaleOpacity = useTransform(progress, [.73, .84], [0, 1]);
+  const scoreOpacity = useTransform(progress, [.78, .89], [0, 1]);
+  const scoreScale = useTransform(progress, [.74, .87], [.82, 1]);
+  return <NewsSequenceLayer className="cm-news-branch-layer" progress={progress} range={[.74, .81, .96, 1]}>
     <span className="cm-news-step-label">04 / TWO READS</span>
     <div className="cm-news-branch-grid">
       <div className="cm-news-branch cm-news-branch--rationale">
