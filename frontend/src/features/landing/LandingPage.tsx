@@ -37,7 +37,7 @@ function useAutoReveal(progress: MotionValue<number>, trigger = .84, reset = .78
       } else if (value < reset && triggered.current) {
         triggered.current = false;
         animation.current?.stop();
-        animation.current = animate(reveal, 0, { duration: .18, ease: 'easeOut' });
+        animation.current = animate(reveal, 0, { duration: .62, ease: [0.4, 0, 0.2, 1] });
       }
     };
     update(progress.get());
@@ -76,7 +76,7 @@ function CinematicEntryCTA({ progress }: { progress: MotionValue<number> }) {
   const revealProgress = useAutoReveal(progress);
   const opacity = useTransform(revealProgress, [0, .1], [0, 1]);
   const y = useTransform(revealProgress, [0, .1], [28, 0]);
-  const visibility = useTransform(progress, value => value >= .84 ? 'visible' : 'hidden');
+  const visibility = useTransform(revealProgress, value => value > .001 ? 'visible' : 'hidden');
   const pointerEvents = useTransform(progress, value => value >= .84 ? 'auto' : 'none');
   return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
