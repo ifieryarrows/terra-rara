@@ -26,9 +26,10 @@ Kod incelemesi `backend/pipelines/ingestion/news.py`, `backend/pipelines/process
 
 | Local progress | Görsel katman | Kullanıcıya kalan tek fikir |
 | --- | --- | --- |
-| 0.00–0.28 | `SOURCE HEADLINE` | Haber önce tek ve okunabilir editorial yüzey olarak kalır; entity chip'leri yalnızca kısa bir vurgu yapar. |
-| 0.24–0.62 | `SIGNAL READ` | Scroll bir saat/signal kadranını döndürür; tone ve impact ayrıştırma anı görsel olarak hissedilir. |
-| 0.53–1.00 | `TWO READS` | Dönen işaretten iki animasyonlu ok ayrılır: biri LLM rationale, diğeri tone + impact scoring. |
+| 0.00–0.19 | `SOURCE HEADLINE` | Haber önce tek ve okunabilir editorial yüzey olarak kalır; reveal erken tamamlanır ve entity katmanı başlamadan önce headline için ayrı bir okuma alanı vardır. |
+| 0.22–0.36 | `SEMANTIC EMPHASIS` | Şirket ve ticker vurguları kontrollü biçimde açılır; source headline ile üst üste binmez. |
+| 0.36–0.63 | `SIGNAL READ` | Scroll bir saat/signal kadranını döndürür; tone ve impact ayrıştırma anı görsel olarak hissedilir. |
+| 0.62–1.00 | `TWO READS` | Signal read tamamlanırken iki animasyonlu ok ayrılır: biri LLM rationale, diğeri tone + impact scoring. |
 | 0.59–0.60 | Handoff | News yüzeyi çözülür; forecast yüzeyi yalnızca çok kısa bir breathing gap sonrasında başlar. |
 | 0.60–0.84 | Exit | Forecast kendi sahnesi olarak girer; news'in forecast girdisi olduğu söylenmez. |
 
@@ -37,7 +38,7 @@ Katmanlar yalnızca fazlar arasında gerekli kısa anticipation kadar overlap ed
 ## Uygulama yüzeyi
 
 - `frontend/src/features/landing/preview-data.ts`: production-shaped, deterministic news fixture.
-- `frontend/src/features/landing/Previews.tsx`: headline/entity pass, scroll-rotated signal dial, animated two-arrow branch (LLM rationale vs tone/impact score) ve static/reduced-motion görünümü.
+- `frontend/src/features/landing/Previews.tsx`: headline/entity pass, scroll-rotated signal dial, animated two-arrow branch (LLM rationale vs tone/impact score) ve static/reduced-motion görünümü. News local timeline'ı surface handoff'ıyla aynı `.39–.59` aralığında başlar; böylece source headline, kart viewport'a girerken okunabilir kalır.
 - `frontend/src/features/landing/CinematicLanding.tsx` ve `ResearchStory.tsx`: news copy'si “tone scoring + LLM rationale” olarak güncellendi; global scene/timeline korunuyor.
 - `frontend/src/features/landing/landing.css`: compositor-friendly opacity/transform/clip-path katmanları, mobil stage sıkıştırması ve static flow. Runtime LLM, network polling veya yeni WebGL yok.
 - `frontend/scripts/check-experience.mjs` ve `frontend/src/experience.test.tsx`: yeni preview'nin render edilmesi, forbidden internal labels, no-API landing kuralı ve route regresyonları korunacak; local run sonrası evidence raporuna eklenecek.

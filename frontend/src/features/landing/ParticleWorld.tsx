@@ -4,6 +4,7 @@ import type { MotionValue } from 'framer-motion';
 export type ParticleQuality = 'high' | 'balanced';
 
 const MAX_PARTICLES = 420;
+const PARTICLE_RESPONSE_MS = 120;
 const QUALITY = {
   high: { count: MAX_PARTICLES, dpr: 1.5, pointSize: 11 },
   balanced: { count: 280, dpr: 1, pointSize: 10 },
@@ -335,19 +336,25 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
     let pointerY = -2;
     let elapsed = 0;
     let previousTimestamp = performance.now();
-    let previousProgress = progress.get();
+    let targetProgress = progress.get();
+    let particleProgress = targetProgress;
+    let previousParticleProgress = particleProgress;
     let scrollImpulse = 0;
 
     const draw = (timestamp: number) => {
       frame = 0;
       if (!visible || document.hidden) return;
-      elapsed += Math.min(32, Math.max(0, timestamp - previousTimestamp));
+      const deltaTime = Math.min(50, Math.max(0, timestamp - previousTimestamp));
+      elapsed += Math.min(32, deltaTime);
       previousTimestamp = timestamp;
-      const value = Math.max(0, Math.min(1, progress.get()));
-      const delta = Math.max(-.08, Math.min(.08, value - previousProgress));
-      scrollImpulse = scrollImpulse * .9 + delta * .72;
-      previousProgress = value;
-      renderer.draw(value, pointerX, pointerY, elapsed, scrollImpulse);
+      targetProgress = Math.max(0, Math.min(1, progress.get()));
+      const response = 1 - Math.exp(-deltaTime / PARTICLE_RESPONSE_MS);
+      particleProgress += (targetProgress - particleProgress) * response;
+      if (Math.abs(targetProgress - particleProgress) < .0001) particleProgress = targetProgress;
+      const delta = Math.max(-.08, Math.min(.08, particleProgress - previousParticleProgress));
+      scrollImpulse = scrollImpulse * Math.pow(.9, deltaTime / 16.667) + delta * .72;
+      previousParticleProgress = particleProgress;
+      renderer.draw(particleProgress, pointerX, pointerY, elapsed, scrollImpulse);
       schedule();
     };
     const schedule = () => { if (!frame && visible && !document.hidden) frame = window.requestAnimationFrame(draw); };

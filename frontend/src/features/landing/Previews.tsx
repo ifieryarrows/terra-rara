@@ -73,22 +73,21 @@ function NewsSequenceLayer({
 }
 
 function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
-  const clipPath = useTransform(progress, [0, .16], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .07, .22, .28]}>
+  const clipPath = useTransform(progress, [0, .1], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .06, .16, .19]}>
     <span className="cm-news-step-label">01 / SOURCE HEADLINE</span>
     <div className="cm-news-headline-copy">
       <span className="cm-news-route">{newsIntelligencePreview.symbol} / {newsIntelligencePreview.company}</span>
       <motion.h3 style={{ clipPath }}>{newsIntelligencePreview.headline}</motion.h3>
       <p>{newsIntelligencePreview.description}</p>
-      <div className="cm-news-inline-entities"><span>{newsIntelligencePreview.company}</span><span>{newsIntelligencePreview.symbol}</span><span>{newsIntelligencePreview.eventType.replace('_', ' ')}</span></div>
     </div>
   </NewsSequenceLayer>;
 }
 
 function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
-  const firstClip = useTransform(progress, [.15, .28], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  const secondClip = useTransform(progress, [.2, .34], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.14, .18, .23, .27]}>
+  const firstClip = useTransform(progress, [.23, .28], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const secondClip = useTransform(progress, [.27, .33], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.22, .26, .32, .36]}>
     <span className="cm-news-step-label">02 / SEMANTIC EMPHASIS</span>
     <p className="cm-news-entity-line"><motion.mark style={{ clipPath: firstClip }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
     <p className="cm-news-entity-line"><motion.mark style={{ clipPath: secondClip }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
@@ -97,9 +96,9 @@ function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
 }
 
 function NewsAnalysisDial({ progress }: { progress: MotionValue<number> }) {
-  const rotation = useTransform(progress, [.27, .56], [0, 300]);
-  const dialGlow = useTransform(progress, [.25, .32, .56, .62], [0, 1, 1, 0]);
-  return <NewsSequenceLayer className="cm-news-dial-layer" progress={progress} range={[.24, .31, .56, .62]}>
+  const rotation = useTransform(progress, [.4, .57], [0, 300]);
+  const dialGlow = useTransform(progress, [.37, .43, .57, .63], [0, 1, 1, 0]);
+  return <NewsSequenceLayer className="cm-news-dial-layer" progress={progress} range={[.36, .42, .57, .63]}>
     <span className="cm-news-step-label">03 / SIGNAL READ</span>
     <div className="cm-news-dial-layout">
       <motion.div className="cm-news-dial-face" style={{ rotate: rotation, opacity: dialGlow }} aria-hidden="true">
@@ -117,7 +116,7 @@ function NewsBranchLayer({ progress }: { progress: MotionValue<number> }) {
   const rationaleOpacity = useTransform(progress, [.61, .72], [0, 1]);
   const scoreOpacity = useTransform(progress, [.65, .76], [0, 1]);
   const scoreScale = useTransform(progress, [.62, .76], [.82, 1]);
-  return <NewsSequenceLayer className="cm-news-branch-layer" progress={progress} range={[.53, .62, .96, 1]}>
+  return <NewsSequenceLayer className="cm-news-branch-layer" progress={progress} range={[.62, .68, .96, 1]}>
     <span className="cm-news-step-label">04 / TWO READS</span>
     <div className="cm-news-branch-grid">
       <div className="cm-news-branch cm-news-branch--rationale">

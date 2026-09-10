@@ -65,11 +65,11 @@ function SceneSurface({ progress, range, persist = false, children }: { progress
 
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
   const marketProgress = useTransform(progress, [.17, .39], [0, 1]);
-  const newsProgress = useTransform(progress, [.36, .59], [0, 1]);
+  const newsProgress = useTransform(progress, [.39, .59], [0, 1]);
   const forecastProgress = useTransform(progress, [.60, .84], [0, 1]);
   return <div className="cm-dashboard-composition">
-    <SceneSurface progress={progress} range={[.16, .22, .36, .43]}><MarketPreview progress={marketProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.36, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
+    <SceneSurface progress={progress} range={[.16, .22, .36, .39]}><MarketPreview progress={marketProgress}/></SceneSurface>
+    <SceneSurface progress={progress} range={[.39, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.60, .625, .77, .84]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.77, .84, .985, 1]} persist><EvidencePreview/></SceneSurface>
   </div>;
