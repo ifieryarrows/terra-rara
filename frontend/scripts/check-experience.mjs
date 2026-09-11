@@ -47,7 +47,7 @@ try {
       assert.ok(['webgl2', 'canvas2d'].includes(particle.renderer), `Unsupported particle renderer: ${particle.renderer}`);
       const expectedQuality = particle.renderer === 'webgl2' && width >= 1024 ? 'high' : 'balanced';
       assert.equal(particle.quality, expectedQuality);
-      assert.equal(particle.count, expectedQuality === 'high' ? 420 : 280);
+      assert.equal(particle.count, expectedQuality === 'high' ? 640 : 420);
       if ((width === 1536 || width === 390) && reducedMotion === 'no-preference') await page.screenshot({ path: join(output, `landing-${width}-${height}-hero.png`) });
       assert.equal(await page.locator('.cm-background-word').count(), 4, 'The global typography follows the three-stage story');
       assert.equal(await page.locator('.cm-cinematic-beat').count(), 4, 'Hero and three research beats share one scroll scene');
@@ -118,7 +118,7 @@ try {
     await canvases.first().waitFor();
     await page.waitForFunction(() => document.querySelector('.cm-particle-world[data-renderer="canvas2d"]'));
     const fallback = await page.locator('.cm-particle-world[data-renderer="canvas2d"]').evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
-    assert.deepEqual(fallback, { renderer: 'canvas2d', quality: 'balanced', count: 280 });
+    assert.deepEqual(fallback, { renderer: 'canvas2d', quality: 'balanced', count: 420 });
     adaptiveResults.push({ mode: 'webgl-unavailable', ...fallback });
     await page.close();
   }

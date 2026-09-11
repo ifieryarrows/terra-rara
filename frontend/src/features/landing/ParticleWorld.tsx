@@ -3,16 +3,26 @@ import type { MotionValue } from 'framer-motion';
 
 export type ParticleQuality = 'high' | 'balanced';
 
-const MAX_PARTICLES = 420;
-const PARTICLE_RESPONSE_MS = 120;
+const MAX_PARTICLES = 640;
+const PARTICLE_RESPONSE_MS = 150;
+const SCROLL_IMPULSE_DAMPING = 0.965;
+const SCROLL_IMPULSE_GAIN = 0.48;
 const QUALITY = {
-  high: { count: MAX_PARTICLES, dpr: 1.5, pointSize: 11 },
-  balanced: { count: 280, dpr: 1, pointSize: 10 },
+  high: { count: MAX_PARTICLES, dpr: 1.5, pointSize: 13, canvasAlpha: .92, largeRadius: 2.35, radius: 1.3 },
+  balanced: { count: 420, dpr: 1, pointSize: 12, canvasAlpha: .88, largeRadius: 2.15, radius: 1.18 },
 } as const;
+
+const EVIDENCE_RING_PARTICLES = Math.round(MAX_PARTICLES * .62);
+const EVIDENCE_TRACE_PARTICLES = MAX_PARTICLES - EVIDENCE_RING_PARTICLES;
 
 function noise(index: number, salt: number) {
   const value = Math.sin((index + 1) * (12.9898 + salt * 17.17)) * 43758.5453;
   return value - Math.floor(value);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 function makeDrift(count: number) {
@@ -22,8 +32,8 @@ function makeDrift(count: number) {
     drift[offset] = noise(index, 13) * Math.PI * 2;
     drift[offset + 1] = noise(index, 14) * Math.PI * 2;
     const direction = noise(index, 17) > .5 ? 1 : -1;
-    drift[offset + 2] = (0.00056 + noise(index, 15) * 0.00068) * direction;
-    drift[offset + 3] = 0.0008 + noise(index, 16) * 0.0018;
+    drift[offset + 2] = (0.00072 + noise(index, 15) * 0.00086) * direction;
+    drift[offset + 3] = 0.0011 + noise(index, 16) * 0.0024;
   }
   return drift;
 }
@@ -82,12 +92,12 @@ const forecastPath = makeShape(index => {
 });
 
 const evidenceMark = makeShape(index => {
-  if (index < 260) {
-    const angle = index / 260 * Math.PI * 2;
+  if (index < EVIDENCE_RING_PARTICLES) {
+    const angle = index / EVIDENCE_RING_PARTICLES * Math.PI * 2;
     const radius = .205 + (noise(index, 12) - .5) * .025;
     return [.75 + Math.cos(angle) * radius, .49 + Math.sin(angle) * radius];
   }
-  const amount = (index - 260) / 159;
+  const amount = (index - EVIDENCE_RING_PARTICLES) / Math.max(1, EVIDENCE_TRACE_PARTICLES - 1);
   if (amount < .43) {
     const local = amount / .43;
     return [.65 + local * .075, .5 + local * .075];
@@ -173,6 +183,9 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       vec2 metric = delta * vec2(u_aspect, 1.0);
       float push = (1.0 - smoothstep(0.0, 0.095, length(metric))) * 0.018;
       position += normalize(delta + vec2(0.00001)) * push;
+      float earlyTide = smoothstep(0.04, 0.16, u_progress) * (1.0 - smoothstep(0.18, 0.3, u_progress));
+      position.x += sin(a_drift.x * 1.8 + a_drift.y * 0.65 + u_time * 0.0009 + u_progress * 10.0) * earlyTide * 0.012;
+      position.y += cos(a_drift.y * 1.2 + a_drift.x * 0.45 + u_time * 0.0007 + u_progress * 7.0) * earlyTide * 0.0035;
       float driftPhaseX = a_drift.x + u_time * a_drift.z;
       float driftPhaseY = a_drift.y + u_time * a_drift.z * 0.73;
       position.x += sin(driftPhaseX) * a_drift.w;
@@ -192,7 +205,7 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       float distanceFromCenter = length(gl_PointCoord - vec2(0.5)) * 2.0;
       float halo = 1.0 - smoothstep(0.18, 1.0, distanceFromCenter);
       float core = 1.0 - smoothstep(0.0, 0.42, distanceFromCenter);
-      float alpha = halo * 0.34 + core * 0.58;
+      float alpha = halo * 0.38 + core * 0.66;
       vec3 copper = vec3(0.902, 0.643, 0.478);
       vec3 blue = vec3(0.608, 0.737, 0.984);
       vec3 particle = mix(copper, blue, v_blue);
@@ -284,7 +297,8 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
       const next = frames[segment];
       const raw = (value - previous.at) / Math.max(.001, next.at - previous.at);
       const amount = raw * raw * (3 - 2 * raw);
-      context.clearRect(0, 0, width, height); context.fillStyle = 'rgba(230, 164, 122, .78)'; context.beginPath();
+      const earlyTide = smoothstep(.04, .16, value) * (1 - smoothstep(.18, .3, value));
+      context.clearRect(0, 0, width, height); context.fillStyle = `rgba(230, 164, 122, ${config.canvasAlpha})`; context.beginPath();
       for (let index = 0; index < config.count; index += 1) {
         const offset = index * 2;
         let x = (previous.points[offset] + (next.points[offset] - previous.points[offset]) * amount) * width;
@@ -295,8 +309,10 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
           const distance = Math.sqrt(squared); const force = (1 - distance / reach) * 18;
           x += dx / distance * force; y += dy / distance * force;
         }
-        const radius = index % 11 === 0 ? 1.9 : 1.05;
+        const radius = index % 11 === 0 ? config.largeRadius : config.radius;
         const driftOffset = index * 4;
+        const earlyTideX = Math.sin(drift[driftOffset] * 1.8 + drift[driftOffset + 1] * .65 + time * .0009 + value * 10) * earlyTide * .012 * width;
+        const earlyTideY = Math.cos(drift[driftOffset + 1] * 1.2 + drift[driftOffset] * .45 + time * .0007 + value * 7) * earlyTide * .0035 * height;
         const driftPhaseX = drift[driftOffset] + time * drift[driftOffset + 2];
         const driftPhaseY = drift[driftOffset + 1] + time * drift[driftOffset + 2] * .73;
         const driftX = Math.sin(driftPhaseX) * drift[driftOffset + 3] * width;
@@ -307,7 +323,7 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
         const individualImpulse = .35 + (impulseSeed - Math.floor(impulseSeed)) * .65;
         const impulseX = Math.cos(directionPhase) * scrollImpulse * scatterBlend * individualImpulse * width;
         const impulseY = Math.sin(drift[driftOffset + 1] * 1.3 + drift[driftOffset]) * scrollImpulse * scatterBlend * individualImpulse * height;
-        context.moveTo(x + radius + driftX + impulseX, y + driftY + impulseY); context.arc(x + driftX + impulseX, y + driftY + impulseY, radius, 0, Math.PI * 2);
+        context.moveTo(x + radius + earlyTideX + driftX + impulseX, y + earlyTideY + driftY + impulseY); context.arc(x + earlyTideX + driftX + impulseX, y + earlyTideY + driftY + impulseY, radius, 0, Math.PI * 2);
       }
       context.fill();
     },
@@ -369,7 +385,7 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
       particleProgress += (targetProgress - particleProgress) * response;
       if (Math.abs(targetProgress - particleProgress) < .0001) particleProgress = targetProgress;
       const delta = Math.max(-.08, Math.min(.08, particleProgress - previousParticleProgress));
-      scrollImpulse = scrollImpulse * Math.pow(.9, deltaTime / 16.667) + delta * .72;
+      scrollImpulse = scrollImpulse * Math.pow(SCROLL_IMPULSE_DAMPING, deltaTime / 16.667) + delta * SCROLL_IMPULSE_GAIN;
       previousParticleProgress = particleProgress;
       renderer.draw(particleProgress, pointerX, pointerY, elapsed, scrollImpulse);
       schedule();
