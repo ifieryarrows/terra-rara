@@ -109,20 +109,21 @@ const evidenceMark = makeShape(index => {
 // A compact, slightly faceted bar gives the final CTA a tangible destination
 // before the field releases back into the open research space.
 const copperIngot = makeShape(index => {
+  const centerX = .5;
   const horizontal = noise(index, 18);
   const vertical = noise(index, 19);
   const lane = index % 8;
   if (lane < 5) {
     // Front face: a shallow trapezoid rather than a flat rectangle.
     const halfWidth = .135 + vertical * .035;
-    return [.735 + (horizontal - .5) * halfWidth * 2, .445 + vertical * .17];
+    return [centerX + (horizontal - .5) * halfWidth * 2, .445 + vertical * .17];
   }
   if (lane < 7) {
     // Top face: the offset makes the silhouette read as a small 3D ingot.
-    return [.595 + horizontal * .28 + vertical * .025, .378 + vertical * .07];
+    return [centerX - .14 + horizontal * .28 + vertical * .025, .378 + vertical * .07];
   }
   // Lower lip catches a soft line of copper as the form settles.
-  return [.57 + horizontal * .33, .605 + vertical * .018];
+  return [centerX - .165 + horizontal * .33, .605 + vertical * .018];
 });
 
 const researchSpreadField = makeShape(index => {
