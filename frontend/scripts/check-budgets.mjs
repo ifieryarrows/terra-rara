@@ -23,6 +23,6 @@ const dashboard = await sizes(new Set([...closure(entryKey), ...closure(overview
 console.log(JSON.stringify({ initial, dashboardBeforeNewsAndHeatmap: dashboard, limits: { initialJS: 190000, css: 14000, dashboardJS: 280000 } }, null, 2));
 if (initial.jsGzipBytes > 190000 || initial.cssGzipBytes > 14000 || dashboard.jsGzipBytes > 280000) process.exitCode = 1;
 const html = await readFile('dist/index.html', 'utf8');
-if (!html.includes('One metal. A world of signals.') || !html.includes('href="/dashboard"')) throw new Error('Critical landing HTML/CTA missing');
+if (!html.includes('Read the market.') || !html.includes('href="/dashboard"')) throw new Error('Critical landing HTML/CTA missing');
 const workspace = await readFile('dist/workspace.html', 'utf8');
-if (workspace.includes('One metal. A world of signals.')) throw new Error('Workspace shell includes the marketing story');
+if (workspace.includes('Read the market.')) throw new Error('Workspace shell includes the marketing story');

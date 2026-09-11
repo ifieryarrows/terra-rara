@@ -16,7 +16,7 @@ The research reference is `docs/design/immersive-web-case-study-tr.docx`. It is 
 - 27 tests and lint pass before editing. D3 layout p95: 0.47 ms for the reference fixture; 3.69 ms for 1,000 instruments in this local run. These are CPU test timings, not browser FPS.
 - Root currently opens Overview; `/models`, `/validation`, `/system` are existing deep links. Vercel rewrites API before SPA fallback.
 - Main navigation disappears below 640 px. Overview's quote card has a 360 px minimum width and a non-wrapping header; the previous heatmap report already records mobile overflow from this component.
-- Styling is dark-only, spread between Tailwind, literal colors and local components. Existing IBM Plex Sans + system monospace are intentional. Many metadata labels are 9–10 px.
+- Styling is dark-only, spread between Tailwind, literal colors and local components. Geist Sans is the single product font family; numeric alignment uses `tabular-nums`. Many metadata labels are 9–10 px.
 - Overview uses local polling state alongside Query hooks. Preserve API contracts and polling semantics in this slice; do not combine a data-state rewrite with visual migration.
 - Preserve heatmap hierarchy memoization, stable IDs, resquarify, projected-area LOD, 10% weight compression, pointer rAF, category cache, full-width layout, zoom/pan, keyboard and Escape behavior. Leave its geometry and color scale intact.
 - Preserve forecast horizon/alignment logic and quality gates in `GEMINI.md`. Do not change predictions, risk logic or model metrics to make marketing claims.
@@ -38,8 +38,25 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 1. **Hero / Read the market. See the structure.** Copper futures, news and quantitative forecasts in one research workspace. A large bounded SVG preview shows observed-path context and a clearly distinguished forecast range. This is labeled illustrative, never live.
 2. **Signal strip.** Market context → news intelligence → forecast range → validation. These are product capabilities verified in code, not performance claims.
 3. **Sticky research sequence.** Three short narrative chapters beside a shared preview: market heatmap, news/sentiment, forecast uncertainty. Native vertical scroll drives one MotionValue; transforms, opacity and path reveal derive from it. Mobile/reduced-motion use ordinary stacked sections with all meaning in HTML.
-4. **Evidence before conviction.** Link to the real Models and Validation routes; explain weekly vs T+1 horizons, model availability and freshness. Do not claim model accuracy or returns.
-5. **Enter CopperMind.** Direct dashboard CTA plus secondary documentation/navigation links already present in the product.
+4. **Enter CopperMind.** Direct dashboard CTA after the possibilities scene; validation remains available as a direct workspace route rather than a separate landing beat.
+
+### Cinematic CTA continuation (2026-09-10)
+
+The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the Possibilities scene can hand off through a restrained copper-to-research bridge without a second local scroll clock. As the `03 / THE POSSIBILITIES` scene exits at `.93`, the CTA layer and its self-running staggered line-level blind reveal start together; the masks then complete over two seconds without being scrubbed by every scroll delta. On reverse scroll the layer stays mounted while its reveal value eases back to zero over `.62s`, so the CTA crossfades into the returning story instead of disappearing on a visibility boundary. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
+
+### Particle renderer fallback (2026-09-11)
+
+The landing particle layer now treats WebGL2 shader compilation as an optional acceleration path rather than a route prerequisite. If the browser or GPU rejects the particle shader, the failed context is released and the same scene switches to a balanced Canvas2D renderer on a separate canvas; the animation timeline, pointer response and visibility gating remain shared. This prevents a driver-specific shader failure from reaching the route boundary and showing the generic “Reload this page” screen, while preserving a lower-cost particle field for constrained devices.
+
+### Direct research CTA handoff (2026-09-11)
+
+The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene uses `400svh`, matching the hero plus three story beats. Forecast holds its final composition through `.93`, where the CTA reveal starts, leaving roughly 1.5 scrolls after the completed handoff instead of an inert 3.5-scroll tail. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
+
+### News Intelligence sequence update (2026-09-10)
+
+The former three-line news scenario is replaced by a continuous `News → Intelligence` product demonstration. The market preview's `FCX` context carries into one deterministic source headline, then the shared scroll timeline reveals semantic entities, a Copper Signal tone spectrum, production-shaped impact fields, and the article-level V2 `reasoning` string. This is documented in the [News Intelligence sequence plan](./frontend-news-intelligence-sequence.md).
+
+The production boundary is explicit: `/api/news` exposes article sentiment and short reasoning, while `/api/commentary` returns a cached symbol-level synthesis generated after forecast/sentiment aggregation. The landing does not call either endpoint and does not present the global forecast commentary as if it were a per-article explanation.
 
 Preview data is deterministic and explicitly marked as illustrative. No randomized prices, fake live indicator, invented backtest results or frontend calls that trigger training/LLM refresh. Real data remains in the application. A future cached preview adapter may replace fixtures only after freshness/availability contracts and backend cost are verified.
 
@@ -49,7 +66,7 @@ Preview data is deterministic and explicitly marked as illustrative. No randomiz
 | --- | --- |
 | App | Router, query client, route loading/error, motion preference, route focus/title |
 | Shared UI | Brand, action link, financial panel, metric card, tokens |
-| Landing | LandingPage, Hero, ResearchStory, MarketPreview, NewsPreview, ForecastPreview, Evidence, final CTA |
+| Landing | LandingPage, Hero, ResearchStory, MarketPreview, production-shaped NewsPreview sequence, ForecastPreview, final CTA |
 | Motion | MotionPolicy and one story `scrollYProgress`; no per-frame React state |
 | Workspace | AppShell and existing Overview/Models/Validation/System |
 | Data | Existing API/types/query hooks; landing fixture isolated under landing feature |

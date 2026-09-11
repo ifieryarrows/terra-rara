@@ -22,6 +22,7 @@
   --cm-neutral: #a3afbf;
   --cm-forecast: #9bbcfb;
   --cm-focus: #f6c8a7;
+  --cm-font-family: 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
   --cm-radius: .875rem;
   --cm-space-panel: clamp(1rem, 2vw, 1.5rem);
   --cm-content-width: 90rem;
@@ -40,7 +41,7 @@
 }
 
 html { background: var(--cm-bg); scroll-padding-top: 7rem; }
-body { margin: 0; min-width: 20rem; }
+body { margin: 0; min-width: 20rem; font-family: var(--cm-font-family); }
 button, input, select, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 :focus-visible { outline: 2px solid var(--cm-focus); outline-offset: 4px; }
@@ -56,14 +57,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .cm-button:hover { background: #f3bb96; }
 .cm-button--secondary { background: transparent; color: var(--cm-text); border-color: var(--cm-border); }
 .cm-button--secondary:hover { background: var(--cm-surface-raised); border-color: #67758a; }
-.cm-eyebrow { color: var(--cm-copper); font: 500 .75rem/1.5 ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.cm-eyebrow { color: var(--cm-copper); font: 500 .75rem/1.5 var(--cm-font-family); letter-spacing: .14em; text-transform: uppercase; }
 .cm-panel { min-width: 0; padding: var(--cm-space-panel); background: var(--cm-surface); border: 1px solid var(--cm-border); border-radius: var(--cm-radius); }
 .cm-panel-title { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.25rem; color: var(--cm-muted); font-size: .875rem; font-weight: 500; }
 .cm-panel-title svg { color: var(--cm-copper); flex-shrink: 0; }
 .cm-panel-body { position: relative; }
 .cm-financial-panel { grid-column: span 12; }
 .cm-metric-label { color: var(--cm-muted); font-size: .875rem; line-height: 1.4; }
-.cm-metric-value { margin: .5rem 0; font: 500 1.5rem/1.2 ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.cm-metric-value { margin: .5rem 0; font: 500 1.5rem/1.2 var(--cm-font-family); font-variant-numeric: tabular-nums; }
 .cm-metric-hint { color: var(--cm-muted); font-size: .75rem; line-height: 1.5; }
 .cm-tone-good { color: var(--cm-positive); }
 .cm-tone-bad { color: var(--cm-negative); }

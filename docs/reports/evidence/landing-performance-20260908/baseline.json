@@ -1,0 +1,3346 @@
+{
+  "label": "baseline-b09248e",
+  "measuredAt": "2026-09-08T18:06:38.510Z",
+  "environment": "Headless Microsoft Edge; cold local production preview; native scroll; CDP Performance and Tracing; exact GPU throttling unavailable",
+  "scrollDurationMs": 4200,
+  "runCount": 3,
+  "results": [
+    {
+      "scenario": {
+        "name": "desktop",
+        "viewport": {
+          "width": 1536,
+          "height": 900
+        },
+        "cpuRate": 1,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 0
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1832.5,
+          "domContentLoadedMs": 2213.300000011921,
+          "loadMs": 2215.100000023842,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1841.9000000357628,
+            "durationMs": 32.5,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1842.4000000357628,
+            "durationMs": 34.30000001192093,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1842.6000000238419,
+            "durationMs": 65.30000001192093,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1842.800000011921,
+            "durationMs": 39.90000003576279,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BcjnbD0-ITXmoAES5H-g4M9nEq7NCiseLgx8_Dw8h0_GOAxr_PuMN-ML6JSSnRSMD7LYL2sqLeMiP8vurxZfvvw/init",
+            "type": "xmlhttprequest",
+            "startMs": 1908.5,
+            "durationMs": 7.400000035762787,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/E43B0C11-2759-434A-98F5-09EE47B9CDA5/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2101.600000023842,
+            "durationMs": 8.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2288.5,
+            "durationMs": 164.4000000357628,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2320.5,
+            "durationMs": 13.600000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/E43B0C11-2759-434A-98F5-09EE47B9CDA5/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2678.400000035763,
+            "durationMs": 17,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1536,
+            "height": 900
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 2357.900000035763,
+              "duration": 94
+            }
+          ],
+          "layoutShifts": 0.056732258943863856,
+          "lcp": 3064,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 164.4000000357628,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1841.9000000357628,
+            "durationMs": 32.5,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1842.4000000357628,
+            "durationMs": 34.30000001192093,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1842.6000000238419,
+            "durationMs": 65.30000001192093,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1842.800000011921,
+            "durationMs": 39.90000003576279,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BcjnbD0-ITXmoAES5H-g4M9nEq7NCiseLgx8_Dw8h0_GOAxr_PuMN-ML6JSSnRSMD7LYL2sqLeMiP8vurxZfvvw/init",
+            "type": "xmlhttprequest",
+            "startMs": 1908.5,
+            "durationMs": 7.400000035762787,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/E43B0C11-2759-434A-98F5-09EE47B9CDA5/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2101.600000023842,
+            "durationMs": 8.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2288.5,
+            "durationMs": 164.4000000357628,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2320.5,
+            "durationMs": 13.600000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/E43B0C11-2759-434A-98F5-09EE47B9CDA5/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2678.400000035763,
+            "durationMs": 17,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ]
+      },
+      "frames": {
+        "count": 27,
+        "averageMs": 160.185,
+        "p95Ms": 233.4,
+        "p99Ms": 241.4,
+        "estimatedFps": 6.2,
+        "overBudget16_7": 23,
+        "overBudget50": 22
+      },
+      "scroll": {
+        "elapsedMs": 4325,
+        "canvasDelta": {
+          "clear": 26,
+          "fill": 35,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 11145,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 3600
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 374,
+          "totalMs": 176.012,
+          "maxMs": 9.706
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 26,
+          "totalMs": 12.388,
+          "maxMs": 1.89
+        },
+        "layout": {
+          "count": 23,
+          "totalMs": 8.05,
+          "maxMs": 1.109
+        },
+        "prePaint": {
+          "count": 30,
+          "totalMs": 8.321,
+          "maxMs": 0.842
+        },
+        "paint": {
+          "count": 87,
+          "totalMs": 21.912,
+          "maxMs": 1.299
+        },
+        "composite": {
+          "count": 31,
+          "totalMs": 14.748,
+          "maxMs": 1.647
+        },
+        "raster": {
+          "count": 280,
+          "totalMs": 206.275,
+          "maxMs": 18.115
+        },
+        "animationFrames": {
+          "count": 84,
+          "totalMs": 55.698,
+          "maxMs": 2.644
+        },
+        "script": {
+          "count": 220,
+          "totalMs": 63.213,
+          "maxMs": 2.468
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 176.743,
+        "scriptMs": 58.969,
+        "layoutMs": 8.623,
+        "recalcStyleMs": 12.464,
+        "layoutCount": 23,
+        "recalcStyleCount": 26,
+        "jsHeapDeltaBytes": 358472,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 4,
+        "drawsContent": 2,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 748
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 5.020857,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "desktop",
+        "viewport": {
+          "width": 1536,
+          "height": 900
+        },
+        "cpuRate": 1,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 1
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1854.8999999761581,
+          "domContentLoadedMs": 2171.2999999523163,
+          "loadMs": 2174.099999964237,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1866.0999999642372,
+            "durationMs": 30.69999998807907,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1866.8999999761581,
+            "durationMs": 32.19999998807907,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1867.0999999642372,
+            "durationMs": 55.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1867.199999988079,
+            "durationMs": 34.30000001192093,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BV8qO1hAS9ilqpIXcdx979323hSGQohnlTSZVge6cRZqp27fVCYRbpQv7Mx_M2on-scxTOSkPXdL8lNB4-hcqEQ/init",
+            "type": "xmlhttprequest",
+            "startMs": 1926.5,
+            "durationMs": 6.799999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/D0B16AE7-DA8A-42A3-B23D-DEFFF8F607EA/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2085,
+            "durationMs": 6.799999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2226.699999988079,
+            "durationMs": 77.69999998807907,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2260,
+            "durationMs": 16.19999998807907,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/D0B16AE7-DA8A-42A3-B23D-DEFFF8F607EA/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2652.699999988079,
+            "durationMs": 15.599999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1536,
+            "height": 900
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [],
+          "layoutShifts": 0.056732258943863856,
+          "lcp": 2384,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 77.69999998807907,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1866.0999999642372,
+            "durationMs": 30.69999998807907,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1866.8999999761581,
+            "durationMs": 32.19999998807907,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1867.0999999642372,
+            "durationMs": 55.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1867.199999988079,
+            "durationMs": 34.30000001192093,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BV8qO1hAS9ilqpIXcdx979323hSGQohnlTSZVge6cRZqp27fVCYRbpQv7Mx_M2on-scxTOSkPXdL8lNB4-hcqEQ/init",
+            "type": "xmlhttprequest",
+            "startMs": 1926.5,
+            "durationMs": 6.799999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/D0B16AE7-DA8A-42A3-B23D-DEFFF8F607EA/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2085,
+            "durationMs": 6.799999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2226.699999988079,
+            "durationMs": 77.69999998807907,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2260,
+            "durationMs": 16.19999998807907,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/D0B16AE7-DA8A-42A3-B23D-DEFFF8F607EA/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2652.699999988079,
+            "durationMs": 15.599999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ]
+      },
+      "frames": {
+        "count": 28,
+        "averageMs": 153.279,
+        "p95Ms": 250.1,
+        "p99Ms": 258.4,
+        "estimatedFps": 6.5,
+        "overBudget16_7": 23,
+        "overBudget50": 20
+      },
+      "scroll": {
+        "elapsedMs": 4291.799999999999,
+        "canvasDelta": {
+          "clear": 27,
+          "fill": 37,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 11590,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 3600
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 366,
+          "totalMs": 179.43,
+          "maxMs": 9.873
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 27,
+          "totalMs": 11.153,
+          "maxMs": 0.96
+        },
+        "layout": {
+          "count": 24,
+          "totalMs": 8.182,
+          "maxMs": 0.752
+        },
+        "prePaint": {
+          "count": 31,
+          "totalMs": 8.542,
+          "maxMs": 1.223
+        },
+        "paint": {
+          "count": 89,
+          "totalMs": 21.385,
+          "maxMs": 1.274
+        },
+        "composite": {
+          "count": 32,
+          "totalMs": 12.805,
+          "maxMs": 1.035
+        },
+        "raster": {
+          "count": 282,
+          "totalMs": 183.029,
+          "maxMs": 9.505
+        },
+        "animationFrames": {
+          "count": 87,
+          "totalMs": 58.685,
+          "maxMs": 2.083
+        },
+        "script": {
+          "count": 227,
+          "totalMs": 68.135,
+          "maxMs": 1.95
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 178.827,
+        "scriptMs": 62.697,
+        "layoutMs": 8.691,
+        "recalcStyleMs": 11.144,
+        "layoutCount": 24,
+        "recalcStyleCount": 27,
+        "jsHeapDeltaBytes": 414740,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 748
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 6.757462,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "desktop",
+        "viewport": {
+          "width": 1536,
+          "height": 900
+        },
+        "cpuRate": 1,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 2
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1858.1000000238419,
+          "domContentLoadedMs": 2191.300000011921,
+          "loadMs": 2193.300000011921,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1867.6000000238419,
+            "durationMs": 28.599999964237213,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1868.1000000238419,
+            "durationMs": 29.899999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1868.300000011921,
+            "durationMs": 64.30000001192093,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1868.4000000357628,
+            "durationMs": 36,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Bu6oPHELgqNe85XuzdFcyHlW7LtxoYfY7ct4xm7g993NvqsgEFEqbwROtFNKWkK0FRhNFowAcu5zY9J7MWiyvhg/init",
+            "type": "xmlhttprequest",
+            "startMs": 1928.1000000238419,
+            "durationMs": 9.199999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/B479758A-0AA3-4827-826E-6FE798386B43/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2091.400000035763,
+            "durationMs": 7.099999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2251.600000023842,
+            "durationMs": 39,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2252.699999988079,
+            "durationMs": 18.900000035762787,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/B479758A-0AA3-4827-826E-6FE798386B43/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2666.199999988079,
+            "durationMs": 14,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1536,
+            "height": 900
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [],
+          "layoutShifts": 0.056732258943863856,
+          "lcp": 2412,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 64.30000001192093,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1867.6000000238419,
+            "durationMs": 28.599999964237213,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1868.1000000238419,
+            "durationMs": 29.899999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1868.300000011921,
+            "durationMs": 64.30000001192093,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1868.4000000357628,
+            "durationMs": 36,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Bu6oPHELgqNe85XuzdFcyHlW7LtxoYfY7ct4xm7g993NvqsgEFEqbwROtFNKWkK0FRhNFowAcu5zY9J7MWiyvhg/init",
+            "type": "xmlhttprequest",
+            "startMs": 1928.1000000238419,
+            "durationMs": 9.199999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/B479758A-0AA3-4827-826E-6FE798386B43/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2091.400000035763,
+            "durationMs": 7.099999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 2251.600000023842,
+            "durationMs": 39,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 2252.699999988079,
+            "durationMs": 18.900000035762787,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/B479758A-0AA3-4827-826E-6FE798386B43/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 2666.199999988079,
+            "durationMs": 14,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ]
+      },
+      "frames": {
+        "count": 30,
+        "averageMs": 141.39,
+        "p95Ms": 208.3,
+        "p99Ms": 216.7,
+        "estimatedFps": 7.1,
+        "overBudget16_7": 25,
+        "overBudget50": 22
+      },
+      "scroll": {
+        "elapsedMs": 4241.7,
+        "canvasDelta": {
+          "clear": 29,
+          "fill": 38,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 12405,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 3600
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 385,
+          "totalMs": 187.853,
+          "maxMs": 8.545
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 29,
+          "totalMs": 12.842,
+          "maxMs": 1.073
+        },
+        "layout": {
+          "count": 26,
+          "totalMs": 8.602,
+          "maxMs": 0.841
+        },
+        "prePaint": {
+          "count": 33,
+          "totalMs": 8.916,
+          "maxMs": 1.05
+        },
+        "paint": {
+          "count": 95,
+          "totalMs": 19.542,
+          "maxMs": 0.857
+        },
+        "composite": {
+          "count": 34,
+          "totalMs": 13.958,
+          "maxMs": 1.345
+        },
+        "raster": {
+          "count": 306,
+          "totalMs": 193.409,
+          "maxMs": 9.529
+        },
+        "animationFrames": {
+          "count": 93,
+          "totalMs": 64.036,
+          "maxMs": 3.498
+        },
+        "script": {
+          "count": 241,
+          "totalMs": 73.658,
+          "maxMs": 3.369
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 188.935,
+        "scriptMs": 68.65,
+        "layoutMs": 9.144,
+        "recalcStyleMs": 12.889,
+        "layoutCount": 26,
+        "recalcStyleCount": 29,
+        "jsHeapDeltaBytes": 567352,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 748
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 8.47241,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "desktop-4x-cpu",
+        "viewport": {
+          "width": 1280,
+          "height": 720
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 0
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1812,
+          "domContentLoadedMs": 2786.600000023842,
+          "loadMs": 2800.800000011921,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1853,
+            "durationMs": 48,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1861.699999988079,
+            "durationMs": 40.60000002384186,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1863.6000000238419,
+            "durationMs": 62.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1865.1000000238419,
+            "durationMs": 42.19999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BW_N4OnrjmGLb2v9pqZdLpf3DjZHFEhptb9nVh33sXxnYLOMXvdlo1RGI5iWHpZ7YQaEaAHSErxH8Sfp_3HLO_g/init",
+            "type": "xmlhttprequest",
+            "startMs": 1989.300000011921,
+            "durationMs": 8.399999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/2B8AE2FA-C889-40BE-82AF-C4E36C082ACC/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2137.400000035763,
+            "durationMs": 14.299999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3097.5,
+            "durationMs": 406.19999998807907,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3103.5,
+            "durationMs": 9.600000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1280,
+            "height": 720
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 1915.5,
+              "duration": 74
+            },
+            {
+              "start": 2522.600000023842,
+              "duration": 79
+            },
+            {
+              "start": 2621.100000023842,
+              "duration": 181
+            },
+            {
+              "start": 2837.600000023842,
+              "duration": 163
+            },
+            {
+              "start": 3001.600000023842,
+              "duration": 55
+            },
+            {
+              "start": 3113.400000035763,
+              "duration": 127
+            },
+            {
+              "start": 3241.100000023842,
+              "duration": 260
+            }
+          ],
+          "layoutShifts": 0.0948604901631673,
+          "lcp": 2132,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 406.19999998807907,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1853,
+            "durationMs": 48,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1861.699999988079,
+            "durationMs": 40.60000002384186,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1863.6000000238419,
+            "durationMs": 62.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1865.1000000238419,
+            "durationMs": 42.19999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BW_N4OnrjmGLb2v9pqZdLpf3DjZHFEhptb9nVh33sXxnYLOMXvdlo1RGI5iWHpZ7YQaEaAHSErxH8Sfp_3HLO_g/init",
+            "type": "xmlhttprequest",
+            "startMs": 1989.300000011921,
+            "durationMs": 8.399999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/2B8AE2FA-C889-40BE-82AF-C4E36C082ACC/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2137.400000035763,
+            "durationMs": 14.299999952316284,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3097.5,
+            "durationMs": 406.19999998807907,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3103.5,
+            "durationMs": 9.600000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ]
+      },
+      "frames": {
+        "count": 44,
+        "averageMs": 96.025,
+        "p95Ms": 125,
+        "p99Ms": 125,
+        "estimatedFps": 10.4,
+        "overBudget16_7": 41,
+        "overBudget50": 38
+      },
+      "scroll": {
+        "elapsedMs": 4225.1,
+        "canvasDelta": {
+          "clear": 43,
+          "fill": 59,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 18460,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 2880
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 496,
+          "totalMs": 1067.665,
+          "maxMs": 29.429
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 43,
+          "totalMs": 67.461,
+          "maxMs": 5.454
+        },
+        "layout": {
+          "count": 33,
+          "totalMs": 35.583,
+          "maxMs": 3.109
+        },
+        "prePaint": {
+          "count": 47,
+          "totalMs": 51.25,
+          "maxMs": 4.021
+        },
+        "paint": {
+          "count": 139,
+          "totalMs": 108.581,
+          "maxMs": 3.801
+        },
+        "composite": {
+          "count": 49,
+          "totalMs": 72.73,
+          "maxMs": 3.602
+        },
+        "raster": {
+          "count": 367,
+          "totalMs": 215.468,
+          "maxMs": 12.199
+        },
+        "animationFrames": {
+          "count": 135,
+          "totalMs": 404.724,
+          "maxMs": 13.623
+        },
+        "script": {
+          "count": 332,
+          "totalMs": 430.111,
+          "maxMs": 13.161
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1075.383,
+        "scriptMs": 392.909,
+        "layoutMs": 40.11,
+        "recalcStyleMs": 67.693,
+        "layoutCount": 33,
+        "recalcStyleCount": 43,
+        "jsHeapDeltaBytes": 1039216,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 351
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 10.297265,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "desktop-4x-cpu",
+        "viewport": {
+          "width": 1280,
+          "height": 720
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 1
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1882.0999999642372,
+          "domContentLoadedMs": 2781.099999964237,
+          "loadMs": 2793.800000011921,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1922.3999999761581,
+            "durationMs": 40.30000001192093,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1923.0999999642372,
+            "durationMs": 41.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1923.199999988079,
+            "durationMs": 65.5,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1923.3999999761581,
+            "durationMs": 45.19999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Boi4P9SCjyJ2uYaonkTfqXrVxEtC19xNR8A3cvZhfid03iFgOYbgfDMjUH9V2OGbMnVQ9T5Po3uBiCdANjr-Y6Q/init",
+            "type": "xmlhttprequest",
+            "startMs": 2063.099999964237,
+            "durationMs": 5.600000023841858,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2208.199999988079,
+            "durationMs": 14.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3100.099999964237,
+            "durationMs": 344.4000000357628,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3108.899999976158,
+            "durationMs": 9.699999988079071,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 3615.800000011921,
+            "durationMs": 20.599999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/from",
+            "type": "xmlhttprequest",
+            "startMs": 4306.399999976158,
+            "durationMs": 3.300000011920929,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1280,
+            "height": 720
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 1977.8999999761581,
+              "duration": 86
+            },
+            {
+              "start": 2602.699999988079,
+              "duration": 193
+            },
+            {
+              "start": 2827.5,
+              "duration": 190
+            },
+            {
+              "start": 3018.199999988079,
+              "duration": 51
+            },
+            {
+              "start": 3118.599999964237,
+              "duration": 120
+            },
+            {
+              "start": 3239.399999976158,
+              "duration": 202
+            },
+            {
+              "start": 3445.899999976158,
+              "duration": 58
+            }
+          ],
+          "layoutShifts": 0.07265865802764893,
+          "lcp": 3524,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 344.4000000357628,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1922.3999999761581,
+            "durationMs": 40.30000001192093,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1923.0999999642372,
+            "durationMs": 41.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1923.199999988079,
+            "durationMs": 65.5,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1923.3999999761581,
+            "durationMs": 45.19999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Boi4P9SCjyJ2uYaonkTfqXrVxEtC19xNR8A3cvZhfid03iFgOYbgfDMjUH9V2OGbMnVQ9T5Po3uBiCdANjr-Y6Q/init",
+            "type": "xmlhttprequest",
+            "startMs": 2063.099999964237,
+            "durationMs": 5.600000023841858,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2208.199999988079,
+            "durationMs": 14.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3100.099999964237,
+            "durationMs": 344.4000000357628,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3108.899999976158,
+            "durationMs": 9.699999988079071,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 3615.800000011921,
+            "durationMs": 20.599999964237213,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/833C4184-6946-4EEE-A5B9-068AE04E6028/from",
+            "type": "xmlhttprequest",
+            "startMs": 4306.399999976158,
+            "durationMs": 3.300000011920929,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ]
+      },
+      "frames": {
+        "count": 44,
+        "averageMs": 97.727,
+        "p95Ms": 133.2,
+        "p99Ms": 150,
+        "estimatedFps": 10.2,
+        "overBudget16_7": 39,
+        "overBudget50": 37
+      },
+      "scroll": {
+        "elapsedMs": 4299.999999999999,
+        "canvasDelta": {
+          "clear": 42,
+          "fill": 58,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 18040,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 2880
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 513,
+          "totalMs": 1108.431,
+          "maxMs": 36.986
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 42,
+          "totalMs": 67.958,
+          "maxMs": 3.707
+        },
+        "layout": {
+          "count": 31,
+          "totalMs": 35.56,
+          "maxMs": 2.512
+        },
+        "prePaint": {
+          "count": 47,
+          "totalMs": 41.181,
+          "maxMs": 2.713
+        },
+        "paint": {
+          "count": 137,
+          "totalMs": 146.842,
+          "maxMs": 16.161
+        },
+        "composite": {
+          "count": 48,
+          "totalMs": 69.83,
+          "maxMs": 3.745
+        },
+        "raster": {
+          "count": 353,
+          "totalMs": 214.468,
+          "maxMs": 11.398
+        },
+        "animationFrames": {
+          "count": 133,
+          "totalMs": 422.354,
+          "maxMs": 10.957
+        },
+        "script": {
+          "count": 332,
+          "totalMs": 466.959,
+          "maxMs": 15.548
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1090.462,
+        "scriptMs": 413.908,
+        "layoutMs": 38.26,
+        "recalcStyleMs": 66.855,
+        "layoutCount": 31,
+        "recalcStyleCount": 42,
+        "jsHeapDeltaBytes": 944132,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 349
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 11.893059,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "desktop-4x-cpu",
+        "viewport": {
+          "width": 1280,
+          "height": 720
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false,
+        "run": 2
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1862.4000000357628,
+          "domContentLoadedMs": 2704.100000023842,
+          "loadMs": 2715.100000023842,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1906.6000000238419,
+            "durationMs": 37.09999996423721,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1910.199999988079,
+            "durationMs": 35.90000003576279,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1911.199999988079,
+            "durationMs": 58,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1911.9000000357628,
+            "durationMs": 38.69999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06B_KnFJ1nu5d8S3TEJ3rG4xbyPnkUzni9LFvwHpK5QNxE4_2E_vbBo37s80t9ok1pl7x2TpYt6IcCeNtv9HyRY1Q/init",
+            "type": "xmlhttprequest",
+            "startMs": 2040.199999988079,
+            "durationMs": 5.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/383979DC-A53A-45BE-A810-1150A80B79AA/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2137.900000035763,
+            "durationMs": 12.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3042.300000011921,
+            "durationMs": 362.89999997615814,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3049.300000011921,
+            "durationMs": 9.199999988079071,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ],
+        "domNodes": 376,
+        "canvases": [
+          {
+            "className": "cm-particle-world",
+            "width": 1280,
+            "height": 720
+          }
+        ],
+        "enhanced": true,
+        "visibleForbiddenLabels": [
+          "Cu / 29",
+          "CU / 29",
+          "NATIVE SCROLL / CONTINUOUS SIGNAL"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 1,
+            "fill": 1,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 420,
+            "contexts2d": 1,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 1962.300000011921,
+              "duration": 78
+            },
+            {
+              "start": 2533,
+              "duration": 186
+            },
+            {
+              "start": 2762.199999988079,
+              "duration": 187
+            },
+            {
+              "start": 2949.699999988079,
+              "duration": 56
+            },
+            {
+              "start": 3058,
+              "duration": 137
+            },
+            {
+              "start": 3196,
+              "duration": 205
+            }
+          ],
+          "layoutShifts": 0.06748046875,
+          "lcp": 3480,
+          "reactCommits": 2
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 362.89999997615814,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1906.6000000238419,
+            "durationMs": 37.09999996423721,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1910.199999988079,
+            "durationMs": 35.90000003576279,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1911.199999988079,
+            "durationMs": 58,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1911.9000000357628,
+            "durationMs": 38.69999998807907,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06B_KnFJ1nu5d8S3TEJ3rG4xbyPnkUzni9LFvwHpK5QNxE4_2E_vbBo37s80t9ok1pl7x2TpYt6IcCeNtv9HyRY1Q/init",
+            "type": "xmlhttprequest",
+            "startMs": 2040.199999988079,
+            "durationMs": 5.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/383979DC-A53A-45BE-A810-1150A80B79AA/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2137.900000035763,
+            "durationMs": 12.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3042.300000011921,
+            "durationMs": 362.89999997615814,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3049.300000011921,
+            "durationMs": 9.199999988079071,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ]
+      },
+      "frames": {
+        "count": 45,
+        "averageMs": 94.26,
+        "p95Ms": 125,
+        "p99Ms": 133.5,
+        "estimatedFps": 10.6,
+        "overBudget16_7": 41,
+        "overBudget50": 38
+      },
+      "scroll": {
+        "elapsedMs": 4241.700000000001,
+        "canvasDelta": {
+          "clear": 44,
+          "fill": 60,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 18880,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 2880
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 526,
+          "totalMs": 1127.43,
+          "maxMs": 34.141
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 44,
+          "totalMs": 70.019,
+          "maxMs": 6.416
+        },
+        "layout": {
+          "count": 32,
+          "totalMs": 38.742,
+          "maxMs": 3.155
+        },
+        "prePaint": {
+          "count": 47,
+          "totalMs": 46.698,
+          "maxMs": 3.832
+        },
+        "paint": {
+          "count": 139,
+          "totalMs": 142.781,
+          "maxMs": 5.99
+        },
+        "composite": {
+          "count": 49,
+          "totalMs": 77.197,
+          "maxMs": 5.918
+        },
+        "raster": {
+          "count": 370,
+          "totalMs": 207.937,
+          "maxMs": 10.633
+        },
+        "animationFrames": {
+          "count": 137,
+          "totalMs": 439.699,
+          "maxMs": 11.52
+        },
+        "script": {
+          "count": 342,
+          "totalMs": 475.474,
+          "maxMs": 10.461
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1135.022,
+        "scriptMs": 428.391,
+        "layoutMs": 41.053,
+        "recalcStyleMs": 70.101,
+        "layoutCount": 32,
+        "recalcStyleCount": 44,
+        "jsHeapDeltaBytes": 1100532,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 76
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 13.459622,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "mobile-4x-cpu",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 2,
+        "isMobile": true,
+        "hasTouch": true,
+        "run": 0
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1863.9000000357628,
+          "domContentLoadedMs": 2751.400000035763,
+          "loadMs": 2761.2000000476837,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1931.800000011921,
+            "durationMs": 31.400000035762787,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1935.7000000476837,
+            "durationMs": 29.399999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1937.4000000357628,
+            "durationMs": 49.89999997615814,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1940,
+            "durationMs": 27.200000047683716,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06B4XplLVpPxYmezpAOPl9zpWxXphT-sxI_eoS75X0KE5UtVDCqrwA43PPmnDDg-MEDt3GJm1evzDTSQm_uFHBUFQ/init",
+            "type": "xmlhttprequest",
+            "startMs": 2075.900000035763,
+            "durationMs": 7.199999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/CE0649EE-2B68-42D3-98CA-73FA051C4905/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2154.100000023842,
+            "durationMs": 11.300000011920929,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3171.400000035763,
+            "durationMs": 31.30000001192093,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3188.100000023842,
+            "durationMs": 14.300000011920929,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ],
+        "domNodes": 409,
+        "canvases": [],
+        "enhanced": false,
+        "visibleForbiddenLabels": [
+          "Cu / 29"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 0,
+            "fill": 0,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 0,
+            "contexts2d": 0,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 1977.1000000238419,
+              "duration": 99
+            },
+            {
+              "start": 2583.800000011921,
+              "duration": 182
+            },
+            {
+              "start": 2822.600000023842,
+              "duration": 239
+            },
+            {
+              "start": 3063,
+              "duration": 76
+            }
+          ],
+          "layoutShifts": 0,
+          "lcp": 3144,
+          "reactCommits": 1
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 49.89999997615814,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1931.800000011921,
+            "durationMs": 31.400000035762787,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1935.7000000476837,
+            "durationMs": 29.399999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1937.4000000357628,
+            "durationMs": 49.89999997615814,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1940,
+            "durationMs": 27.200000047683716,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06B4XplLVpPxYmezpAOPl9zpWxXphT-sxI_eoS75X0KE5UtVDCqrwA43PPmnDDg-MEDt3GJm1evzDTSQm_uFHBUFQ/init",
+            "type": "xmlhttprequest",
+            "startMs": 2075.900000035763,
+            "durationMs": 7.199999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/CE0649EE-2B68-42D3-98CA-73FA051C4905/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2154.100000023842,
+            "durationMs": 11.300000011920929,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3171.400000035763,
+            "durationMs": 31.30000001192093,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3188.100000023842,
+            "durationMs": 14.300000011920929,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ]
+      },
+      "frames": {
+        "count": 504,
+        "averageMs": 8.333,
+        "p95Ms": 8.4,
+        "p99Ms": 8.5,
+        "estimatedFps": 120,
+        "overBudget16_7": 0,
+        "overBudget50": 0
+      },
+      "scroll": {
+        "elapsedMs": 4200,
+        "canvasDelta": {
+          "clear": 0,
+          "fill": 0,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 0,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 7041
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 3168,
+          "totalMs": 1511.584,
+          "maxMs": 6.307
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "layout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "prePaint": {
+          "count": 507,
+          "totalMs": 90.235,
+          "maxMs": 1.249
+        },
+        "paint": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "composite": {
+          "count": 508,
+          "totalMs": 225.54,
+          "maxMs": 2.927
+        },
+        "raster": {
+          "count": 27,
+          "totalMs": 16.52,
+          "maxMs": 1.154
+        },
+        "animationFrames": {
+          "count": 507,
+          "totalMs": 482.394,
+          "maxMs": 4.513
+        },
+        "script": {
+          "count": 1541,
+          "totalMs": 452.752,
+          "maxMs": 5.316
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1519.647,
+        "scriptMs": 404.353,
+        "layoutMs": 0,
+        "recalcStyleMs": 0,
+        "layoutCount": 0,
+        "recalcStyleCount": 0,
+        "jsHeapDeltaBytes": 266736,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 340
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 14.516083,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "mobile-4x-cpu",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 2,
+        "isMobile": true,
+        "hasTouch": true,
+        "run": 1
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1877.3999999761581,
+          "domContentLoadedMs": 3274.7999999523163,
+          "loadMs": 3288,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1935.5999999642372,
+            "durationMs": 25.400000035762787,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1940.199999988079,
+            "durationMs": 19.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1941.699999988079,
+            "durationMs": 82.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1942.5999999642372,
+            "durationMs": 24.400000035762787,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Bs0sXaBZHrP0TwUW66I1UbR2xJ3y42yuWiKY4rt8xRfxuLhlfRPCUv-iZgabxWFiN15V-3_upzEK14D9zxGnhqA/init",
+            "type": "xmlhttprequest",
+            "startMs": 1993.8999999761581,
+            "durationMs": 84.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/906A674E-D673-417F-AEB1-D72829EA9376/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2826.399999976158,
+            "durationMs": 17.899999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3631.2999999523163,
+            "durationMs": 21.80000001192093,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3635.599999964237,
+            "durationMs": 11.100000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/906A674E-D673-417F-AEB1-D72829EA9376/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 3650.7999999523163,
+            "durationMs": 18.400000035762787,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ],
+        "domNodes": 409,
+        "canvases": [],
+        "enhanced": false,
+        "visibleForbiddenLabels": [
+          "Cu / 29"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 0,
+            "fill": 0,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 0,
+            "contexts2d": 0,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 3125,
+              "duration": 168
+            },
+            {
+              "start": 3333.099999964237,
+              "duration": 212
+            },
+            {
+              "start": 3546.399999976158,
+              "duration": 60
+            }
+          ],
+          "layoutShifts": 0,
+          "lcp": 3612,
+          "reactCommits": 1
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 84.5,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1935.5999999642372,
+            "durationMs": 25.400000035762787,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1940.199999988079,
+            "durationMs": 19.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1941.699999988079,
+            "durationMs": 82.19999998807907,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1942.5999999642372,
+            "durationMs": 24.400000035762787,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06Bs0sXaBZHrP0TwUW66I1UbR2xJ3y42yuWiKY4rt8xRfxuLhlfRPCUv-iZgabxWFiN15V-3_upzEK14D9zxGnhqA/init",
+            "type": "xmlhttprequest",
+            "startMs": 1993.8999999761581,
+            "durationMs": 84.5,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/906A674E-D673-417F-AEB1-D72829EA9376/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2826.399999976158,
+            "durationMs": 17.899999976158142,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3631.2999999523163,
+            "durationMs": 21.80000001192093,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3635.599999964237,
+            "durationMs": 11.100000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/906A674E-D673-417F-AEB1-D72829EA9376/to/abn.statInfo",
+            "type": "xmlhttprequest",
+            "startMs": 3650.7999999523163,
+            "durationMs": 18.400000035762787,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          }
+        ]
+      },
+      "frames": {
+        "count": 505,
+        "averageMs": 8.333,
+        "p95Ms": 8.5,
+        "p99Ms": 8.5,
+        "estimatedFps": 120,
+        "overBudget16_7": 0,
+        "overBudget50": 0
+      },
+      "scroll": {
+        "elapsedMs": 4208.200000000001,
+        "canvasDelta": {
+          "clear": 0,
+          "fill": 0,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 0,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 7041
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 3170,
+          "totalMs": 1608.524,
+          "maxMs": 7.972
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "layout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "prePaint": {
+          "count": 508,
+          "totalMs": 99.879,
+          "maxMs": 1.89
+        },
+        "paint": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "composite": {
+          "count": 509,
+          "totalMs": 247.24,
+          "maxMs": 3.124
+        },
+        "raster": {
+          "count": 27,
+          "totalMs": 16.253,
+          "maxMs": 1.341
+        },
+        "animationFrames": {
+          "count": 508,
+          "totalMs": 539.614,
+          "maxMs": 5.587
+        },
+        "script": {
+          "count": 1540,
+          "totalMs": 498.482,
+          "maxMs": 6.506
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1602.211,
+        "scriptMs": 448.46,
+        "layoutMs": 0,
+        "recalcStyleMs": 0,
+        "layoutCount": 0,
+        "recalcStyleCount": 0,
+        "jsHeapDeltaBytes": 269664,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 342
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 15.63507,
+            "privateMemory": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "name": "mobile-4x-cpu",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "cpuRate": 4,
+        "deviceScaleFactor": 2,
+        "isMobile": true,
+        "hasTouch": true,
+        "run": 2
+      },
+      "initial": {
+        "navigation": {
+          "responseEndMs": 1851.2000000476837,
+          "domContentLoadedMs": 2775.400000035763,
+          "loadMs": 2786.100000023842,
+          "transferBytes": 57229
+        },
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1909.7000000476837,
+            "durationMs": 20.299999952316284,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1913,
+            "durationMs": 20.100000023841858,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1914.2000000476837,
+            "durationMs": 44,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1915.300000011921,
+            "durationMs": 24.30000001192093,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BRlTyUfQQbbRwRBEF6y0mlV98VWmnAN3i7zbgS1mX5ITQshLjXh_ZiIkisSXbr_GfM1ET42s_1Ys5_6TbyCdwtA/init",
+            "type": "xmlhttprequest",
+            "startMs": 2032.7000000476837,
+            "durationMs": 6.699999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/21DA2A47-A0CE-4BE6-9705-53151FCF0191/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2131.7000000476837,
+            "durationMs": 15,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3100.2000000476837,
+            "durationMs": 31.599999964237213,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3112.5,
+            "durationMs": 12.100000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ],
+        "domNodes": 409,
+        "canvases": [],
+        "enhanced": false,
+        "visibleForbiddenLabels": [
+          "Cu / 29"
+        ],
+        "profile": {
+          "canvas": {
+            "clear": 0,
+            "fill": 0,
+            "stroke": 0,
+            "drawImage": 0,
+            "arc": 0,
+            "contexts2d": 0,
+            "contextsWebgl": 0
+          },
+          "longTasks": [
+            {
+              "start": 1948.300000011921,
+              "duration": 85
+            },
+            {
+              "start": 2483.100000023842,
+              "duration": 104
+            },
+            {
+              "start": 2605.600000023842,
+              "duration": 182
+            },
+            {
+              "start": 2819.400000035763,
+              "duration": 198
+            },
+            {
+              "start": 3018.400000035763,
+              "duration": 59
+            }
+          ],
+          "layoutShifts": 0,
+          "lcp": 3088,
+          "reactCommits": 1
+        }
+      },
+      "network": {
+        "transferBytes": 206494,
+        "decodedBytes": 511883,
+        "jsTransferBytes": 121337,
+        "cssTransferBytes": 14255,
+        "maxResourceDurationMs": 44,
+        "resources": [
+          {
+            "name": "/fonts/geist-sans-v1.7.2.woff2",
+            "type": "link",
+            "startMs": 1909.7000000476837,
+            "durationMs": 20.299999952316284,
+            "transferBytes": 70060,
+            "encodedBytes": 69760,
+            "decodedBytes": 69760
+          },
+          {
+            "name": "/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js",
+            "type": "script",
+            "startMs": 1913,
+            "durationMs": 20.100000023841858,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/assets/index-BgCTyzbg.js",
+            "type": "script",
+            "startMs": 1914.2000000476837,
+            "durationMs": 44,
+            "transferBytes": 121037,
+            "encodedBytes": 120737,
+            "decodedBytes": 372190
+          },
+          {
+            "name": "/assets/index-CU92Jf7b.css",
+            "type": "link",
+            "startMs": 1915.300000011921,
+            "durationMs": 24.30000001192093,
+            "transferBytes": 14255,
+            "encodedBytes": 13955,
+            "decodedBytes": 69391
+          },
+          {
+            "name": "/7D8B79A2-8974-4D7B-A76A-F4F29624C06BRlTyUfQQbbRwRBEF6y0mlV98VWmnAN3i7zbgS1mX5ITQshLjXh_ZiIkisSXbr_GfM1ET42s_1Ys5_6TbyCdwtA/init",
+            "type": "xmlhttprequest",
+            "startMs": 2032.7000000476837,
+            "durationMs": 6.699999988079071,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/021DBC55-8478-4B5B-A01F-148B250A8A18/21DA2A47-A0CE-4BE6-9705-53151FCF0191/to/wsm.sessionActivated",
+            "type": "xmlhttprequest",
+            "startMs": 2131.7000000476837,
+            "durationMs": 15,
+            "transferBytes": 0,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/_vercel/speed-insights/script.js",
+            "type": "script",
+            "startMs": 3100.2000000476837,
+            "durationMs": 31.599999964237213,
+            "transferBytes": 300,
+            "encodedBytes": 0,
+            "decodedBytes": 0
+          },
+          {
+            "name": "/favicon.svg",
+            "type": "other",
+            "startMs": 3112.5,
+            "durationMs": 12.100000023841858,
+            "transferBytes": 842,
+            "encodedBytes": 542,
+            "decodedBytes": 542
+          }
+        ]
+      },
+      "frames": {
+        "count": 504,
+        "averageMs": 8.333,
+        "p95Ms": 8.4,
+        "p99Ms": 8.5,
+        "estimatedFps": 120,
+        "overBudget16_7": 0,
+        "overBudget50": 0
+      },
+      "scroll": {
+        "elapsedMs": 4200,
+        "canvasDelta": {
+          "clear": 0,
+          "fill": 0,
+          "stroke": 0,
+          "drawImage": 0,
+          "arc": 0,
+          "contexts2d": 0,
+          "contextsWebgl": 0
+        },
+        "reactCommitDelta": 0,
+        "observedLongTasks": [],
+        "endScrollY": 7041
+      },
+      "trace": {
+        "rendererMainThreadFound": true,
+        "mainThreadTasks": {
+          "count": 3167,
+          "totalMs": 1589.015,
+          "maxMs": 11.216
+        },
+        "longTasks": {
+          "count": 0,
+          "durationsMs": []
+        },
+        "style": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "layout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "prePaint": {
+          "count": 507,
+          "totalMs": 94.535,
+          "maxMs": 1.048
+        },
+        "paint": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "composite": {
+          "count": 508,
+          "totalMs": 246.756,
+          "maxMs": 2.008
+        },
+        "raster": {
+          "count": 27,
+          "totalMs": 17.984,
+          "maxMs": 1.841
+        },
+        "animationFrames": {
+          "count": 507,
+          "totalMs": 504.427,
+          "maxMs": 8.984
+        },
+        "script": {
+          "count": 1541,
+          "totalMs": 465.318,
+          "maxMs": 4.369
+        }
+      },
+      "performanceMetricsDelta": {
+        "taskMs": 1593.354,
+        "scriptMs": 416.539,
+        "layoutMs": 0,
+        "recalcStyleMs": 0,
+        "layoutCount": 0,
+        "recalcStyleCount": 0,
+        "jsHeapDeltaBytes": 266344,
+        "nodesDelta": 0
+      },
+      "layers": {
+        "count": 0,
+        "drawsContent": 0,
+        "paintCount": 0,
+        "memoryEstimateBytes": null
+      },
+      "routeCleanup": {
+        "path": "/dashboard",
+        "landingCanvasCount": 0,
+        "canvasFramesAfterPointer": 0,
+        "domNodes": 342
+      },
+      "gpu": {
+        "gpu": [
+          {
+            "vendor": "",
+            "device": "Intel(R) UHD Graphics",
+            "driver": "27.20.100.9664"
+          },
+          {
+            "vendor": "",
+            "device": "NVIDIA GeForce GTX 1650",
+            "driver": "32.0.15.9597"
+          },
+          {
+            "vendor": "",
+            "device": "Microsoft Basic Render Driver",
+            "driver": "10.0.19041.7548"
+          }
+        ],
+        "gpuFeatureStatus": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuProcesses": [
+          {
+            "id": 25612,
+            "cpuTime": 16.650494,
+            "privateMemory": null
+          }
+        ]
+      }
+    }
+  ]
+}

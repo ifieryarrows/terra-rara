@@ -43,19 +43,13 @@ export default {
                     'Segoe UI Symbol',
                     'Noto Color Emoji',
                 ],
-                // Mono stack intentionally mirrors Finviz's `--font-mono` —
-                // ui-monospace first so the OS's preferred monospaced face
-                // is used (no extra web font weight). IBM Plex Mono is
-                // NOT loaded to keep the network and render cost minimal.
+                // Keep the utility available for existing metric markup, but
+                // resolve it to the same family as the rest of the product.
                 mono: [
-                    'ui-monospace',
-                    'SFMono-Regular',
-                    'Menlo',
-                    'Monaco',
-                    'Consolas',
-                    'Liberation Mono',
-                    'Courier New',
-                    'monospace',
+                    'Geist Sans',
+                    'ui-sans-serif',
+                    'system-ui',
+                    'sans-serif',
                 ],
             },
             backgroundImage: {

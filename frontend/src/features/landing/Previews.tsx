@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react';
-import { motion, useTransform, type MotionValue } from 'framer-motion';
-import { linePath, previewMarkets, previewSeries } from './preview-data';
+import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
+import { linePath, newsIntelligencePreview, previewMarkets, previewSeries } from './preview-data';
 
 function ForecastRange({ progress }: { progress: MotionValue<number> }) {
   const opacity = useTransform(progress, [.35, .85], [0, 1]);
@@ -55,40 +55,95 @@ export function MarketPreview({ progress }: { progress?: MotionValue<number> }) 
   </figure>;
 }
 
-const newsSteps = [
-  { title: 'What if mine supply tightens?', text: 'A hypothetical disruption raises a question: could inventories and demand offset the pressure?', label: 'RESEARCH SCENARIO' },
-  { title: 'Potential upward pressure', text: 'Less supply could support prices. This illustrative sentiment depends on demand and available stocks.', label: 'SENTIMENT' },
-  { title: 'Supply conditions / inventories / demand', text: 'Read these drivers alongside the commentary. A plausible explanation is not proof of causation.', label: 'DRIVERS' },
-];
+function NewsSequenceLayer({
+  className,
+  progress,
+  range,
+  children,
+}: {
+  className: string;
+  progress: MotionValue<number>;
+  range: [number, number, number, number];
+  children: ReactNode;
+}) {
+  const opacity = useTransform(progress, range, [0, 1, 1, 0]);
+  const y = useTransform(progress, range, [24, 0, 0, -18]);
+  const scale = useTransform(progress, range, [.985, 1, 1, .99]);
+  return <motion.div className={`cm-news-sequence-layer ${className}`} style={{ opacity, y, scale }}>{children}</motion.div>;
+}
 
-function NewsStep({ index, progress, children }: { index: number; progress: MotionValue<number>; children: ReactNode }) {
-  const opacity = useTransform(progress, [index * .2, index * .2 + .5], [.65, 1]);
-  const x = useTransform(progress, [index * .2, index * .2 + .5], [20, 0]);
-  return <motion.li style={{ opacity, x }}>{children}</motion.li>;
+function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
+  const clipPath = useTransform(progress, [0, .12], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .08, .24, .28]}>
+    <span className="cm-news-step-label">01 / SOURCE HEADLINE</span>
+    <div className="cm-news-headline-copy">
+      <span className="cm-news-route">{newsIntelligencePreview.symbol} / {newsIntelligencePreview.company}</span>
+      <motion.h3 style={{ clipPath }}>{newsIntelligencePreview.headline}</motion.h3>
+      <p>{newsIntelligencePreview.description}</p>
+    </div>
+  </NewsSequenceLayer>;
+}
+
+function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
+  const firstClip = useTransform(progress, [.28, .36], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const secondClip = useTransform(progress, [.34, .43], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.28, .34, .48, .53]}>
+    <span className="cm-news-step-label">02 / SEMANTIC EMPHASIS</span>
+    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: firstClip }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
+    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: secondClip }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
+    <p className="cm-news-entity-line cm-news-entity-line--event"><motion.mark style={{ clipPath: secondClip }}>copper supply</motion.mark><span> / {newsIntelligencePreview.eventType.replace('_', ' ')}</span></p>
+  </NewsSequenceLayer>;
+}
+
+function NewsAnalysisDial({ progress }: { progress: MotionValue<number> }) {
+  const rotation = useTransform(progress, [.57, .7], [0, 300]);
+  const dialGlow = useTransform(progress, [.54, .6, .7, .76], [0, 1, 1, 0]);
+  return <NewsSequenceLayer className="cm-news-dial-layer" progress={progress} range={[.53, .59, .7, .76]}>
+    <span className="cm-news-step-label">03 / SIGNAL READ</span>
+    <div className="cm-news-dial-layout">
+      <motion.div className="cm-news-dial-face" style={{ rotate: rotation, opacity: dialGlow }} aria-hidden="true">
+        <span className="cm-news-dial-tick cm-news-dial-tick--12"/><span className="cm-news-dial-tick cm-news-dial-tick--3"/><span className="cm-news-dial-tick cm-news-dial-tick--6"/><span className="cm-news-dial-tick cm-news-dial-tick--9"/>
+        <span className="cm-news-dial-needle"/><span className="cm-news-dial-core"/>
+      </motion.div>
+      <div className="cm-news-dial-copy"><strong>Reading the story.</strong><p>A short signal pass separates tone from market impact before the two intelligence reads branch.</p><span>{newsIntelligencePreview.horizon} · scroll-linked</span></div>
+    </div>
+  </NewsSequenceLayer>;
+}
+
+function NewsBranchLayer({ progress }: { progress: MotionValue<number> }) {
+  const rationalePath = useTransform(progress, [.68, .81], [0, 1]);
+  const scorePath = useTransform(progress, [.72, .85], [0, 1]);
+  const rationaleOpacity = useTransform(progress, [.73, .84], [0, 1]);
+  const scoreOpacity = useTransform(progress, [.78, .89], [0, 1]);
+  const scoreScale = useTransform(progress, [.74, .87], [.82, 1]);
+  return <NewsSequenceLayer className="cm-news-branch-layer" progress={progress} range={[.74, .81, .96, 1]}>
+    <span className="cm-news-step-label">04 / TWO READS</span>
+    <div className="cm-news-branch-grid">
+      <div className="cm-news-branch cm-news-branch--rationale">
+        <svg className="cm-news-branch-arrow" viewBox="0 0 120 100" aria-hidden="true"><motion.g style={{ opacity: rationaleOpacity }}><motion.path d="M8 80 C42 76 62 40 104 24" fill="none" stroke="var(--cm-copper)" strokeWidth="2" strokeLinecap="round" style={{ pathLength: rationalePath }}/><path d="M98 17 L111 21 L103 31" fill="none" stroke="var(--cm-copper)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></motion.g></svg>
+        <motion.div className="cm-news-branch-card" style={{ opacity: rationaleOpacity }}><span>INTERPRETATION / LLM RATIONALE</span><blockquote>“{newsIntelligencePreview.reasoning}”</blockquote><small>one-line article read · not a live score</small></motion.div>
+      </div>
+      <div className="cm-news-branch cm-news-branch--score">
+        <svg className="cm-news-branch-arrow" viewBox="0 0 120 100" aria-hidden="true"><motion.g style={{ opacity: scoreOpacity }}><motion.path d="M8 20 C44 24 61 59 104 77" fill="none" stroke="var(--cm-forecast)" strokeWidth="2" strokeLinecap="round" style={{ pathLength: scorePath }}/><path d="M98 70 L111 79 L101 85" fill="none" stroke="var(--cm-forecast)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></motion.g></svg>
+        <motion.div className="cm-news-branch-card cm-news-branch-card--score" style={{ opacity: scoreOpacity }}><span>SCORING / TONE + IMPACT</span><div className="cm-news-score-orbit"><motion.span style={{ scale: scoreScale }}><b>+{newsIntelligencePreview.impactScoreLlm.toFixed(2)}</b><small>LLM impact</small></motion.span></div><div className="cm-news-branch-metrics"><strong>{newsIntelligencePreview.label}</strong><span>Final +{newsIntelligencePreview.finalScore.toFixed(2)}</span><span>Confidence {Math.round(newsIntelligencePreview.confidence * 100)}%</span><span>Relevance {Math.round(newsIntelligencePreview.relevance * 100)}%</span></div><div className="cm-news-tone-snapshot"><span>POS {Math.round(newsIntelligencePreview.finbert.pos * 100)}%</span><span>NEU {Math.round(newsIntelligencePreview.finbert.neu * 100)}%</span><span>NEG {Math.round(newsIntelligencePreview.finbert.neg * 100)}%</span></div></motion.div>
+      </div>
+    </div>
+  </NewsSequenceLayer>;
 }
 
 export function NewsPreview({ progress }: { progress?: MotionValue<number> }) {
-  return <figure className="cm-preview cm-news-preview">
+  const fallbackProgress = useMotionValue(1);
+  const timeline = progress ?? fallbackProgress;
+  const animated = Boolean(progress);
+  return <figure className={`cm-preview cm-news-preview cm-news-intelligence-preview${animated ? '' : ' cm-news-preview--static'}`} data-news-sequence="market-to-intelligence">
     <div className="cm-preview-top"><span>NEWS INTELLIGENCE</span><span className="cm-preview-tag">Illustrative preview</span></div>
-    <div className="cm-reader-source"><span>EXAMPLE SOURCE / RESEARCH SCENARIO</span><span>06 SEP 2026 · EXAMPLE DATE</span></div>
-    <ol className="cm-news-flow">
-      {newsSteps.map((step, index) => {
-        const content = <><span className="cm-flow-number">0{index + 1}</span><div><h4>{step.title}</h4><p>{step.text}</p></div><span className="cm-flow-label">{step.label}</span></>;
-        return progress ? <NewsStep key={step.label} index={index} progress={progress}>{content}</NewsStep> : <li key={step.label}>{content}</li>;
-      })}
-    </ol>
-    <figcaption className="cm-preview-caption">Hypothetical scenario · not a published article or live sentiment. Inspect actual coverage in the dashboard.</figcaption>
-  </figure>;
-}
-
-export function EvidencePreview() {
-  return <figure className="cm-preview cm-evidence-preview">
-    <div className="cm-preview-top"><span>VALIDATION / REPORT READER</span><span className="cm-preview-tag">Illustrative preview</span></div>
-    <div className="cm-report-body"><span className="cm-data-caption">WALK-FORWARD / OUT OF SAMPLE</span><h3>Question the result.</h3><p>Compare the same horizon and evaluation period.</p>
-      <div className="cm-report-period"><span>Primary horizon<strong>5 trading sessions</strong></span><span>Evaluation period<strong>Read from the report</strong></span></div>
-      <dl className="cm-report-metrics"><div><dt>Weekly direction accuracy<small>How often the 5D direction was correct.</small></dt><dd>—</dd></div><div><dt>MAE / RMSE<small>Smaller errors are better. RMSE emphasizes larger misses.</small></dt><dd>—</dd></div><div><dt>Baseline comparison<small>Compare model and reference forecast on the same sample.</small></dt><dd>—</dd></div></dl>
-      <p className="cm-report-empty">Values omitted in this preview. Missing results are not a zero score or a passed check.</p>
-      <div className="cm-report-freshness"><span className="cm-data-caption">CHECK THE DATA DATE</span><p>Match the forecast’s reference close to the latest market close. Check snapshot age before interpreting the result.</p></div>
-    </div><figcaption className="cm-preview-caption">Reading guide · no performance claims or live status.</figcaption>
+    <div className="cm-news-origin"><span className="cm-news-origin-symbol">{newsIntelligencePreview.symbol}</span><span>selected in market context</span><i aria-hidden="true"/><span>source → intelligence</span></div>
+    <div className={`cm-news-demo-stage${animated ? '' : ' cm-news-demo-stage--static'}`}>
+      <NewsHeadlineLayer progress={timeline}/>
+      <NewsEntitiesLayer progress={timeline}/>
+      <NewsAnalysisDial progress={timeline}/>
+      <NewsBranchLayer progress={timeline}/>
+    </div>
+    <figcaption className="cm-preview-caption"><span><i className="cm-key cm-key--copper"/>tone → score → rationale</span><span>Production-shaped fields · deterministic input</span></figcaption>
   </figure>;
 }

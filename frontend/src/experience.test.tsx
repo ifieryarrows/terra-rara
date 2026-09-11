@@ -22,16 +22,23 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('product introduction and workspace routes', () => {
   it('keeps the introduction useful in reduced motion and identifies sample data', () => {
     render(<App/>);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('One metal. A world of signals.');
-    expect(document.querySelector('.cw-static')).not.toBeNull();
-    expect(document.querySelector('#forecast')).toHaveTextContent('ILLUSTRATIVE PATH / NOT A FORECAST');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Read the market.');
+    expect(document.querySelector('.cm-story--static')).not.toBeNull();
+    expect(screen.getAllByText('Illustrative preview').length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-news-sequence="market-to-intelligence"]')).not.toBeNull();
+    expect(screen.getAllByText('LLM rationale').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Tone scoring').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Enter CopperMind' })).toHaveLength(2);
+    expect(document.querySelector('.cm-landing-nav')).toBeNull();
+    expect(document.querySelector('.cm-evidence-preview')).toBeNull();
+    expect(screen.queryByText('Question the result.')).not.toBeInTheDocument();
+    expect(document.querySelector('.cm-landing-footer')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Market overview' })).not.toBeInTheDocument();
   });
   it('enters the actual dashboard route without completing the story and restores a focus target', async () => {
     const user = userEvent.setup();
     render(<App/>);
-    await user.click(screen.getByRole('link', { name: 'Open dashboard' }));
+    await user.click(screen.getAllByRole('link', { name: 'Enter CopperMind' })[0]);
     expect(await screen.findByRole('heading', { name: 'Market overview' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus());
@@ -57,13 +64,4 @@ describe('product introduction and workspace routes', () => {
     expect(screen.getByRole('heading', { name: 'That page is not here.' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open dashboard' })).toHaveAttribute('href', '/dashboard');
   });
-});
-
-describe('narrative anchor navigation',()=>{
- it('preserves a real hash and moves focus to the requested scene with reduced motion',async()=>{
-  Element.prototype.scrollIntoView=vi.fn();const user=userEvent.setup();render(<App/>);
-  await user.click(screen.getByRole('link',{name:'Market'}));
-  expect(window.location.hash).toBe('#market');expect(document.getElementById('market')).toHaveFocus();
-  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({behavior:'instant',block:'start'});
- });
 });
