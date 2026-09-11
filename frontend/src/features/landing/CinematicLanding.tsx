@@ -67,11 +67,13 @@ function SceneSurface({ progress, range, persist = false, children }: { progress
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
   const marketProgress = useTransform(progress, [.17, .39], [0, 1]);
   const newsProgress = useTransform(progress, [.39, .59], [0, 1]);
-  const forecastProgress = useTransform(progress, [.60, .93], [0, 1]);
+  // Let the forecast clear before the final particle morph so the ingot has a
+  // quiet, readable negative-space stage of its own.
+  const forecastProgress = useTransform(progress, [.60, .74], [0, 1]);
   return <div className="cm-dashboard-composition">
     <SceneSurface progress={progress} range={[.16, .22, .36, .39]}><MarketPreview progress={marketProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.39, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.60, .625, .86, .93]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
+    <SceneSurface progress={progress} range={[.60, .625, .69, .74]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
   </div>;
 }
 
@@ -97,8 +99,8 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const shortForecastWindow = beat.id === 'forecast';
   const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
   const reveal = shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
-  const hold = shortNewsWindow ? .47 : shortForecastWindow ? .86 : beat.center + .07;
-  const end = shortNewsWindow ? .535 : shortForecastWindow ? .93 : beat.center + .18;
+  const hold = shortNewsWindow ? .47 : shortForecastWindow ? .69 : beat.center + .07;
+  const end = shortNewsWindow ? .535 : shortForecastWindow ? .75 : beat.center + .18;
   const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
   const y = useTransform(progress, [start, reveal, hold, end], [64, 0, 0, -48]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
@@ -131,8 +133,8 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
       <BackgroundWord progress={progress} word="SIGNAL" range={[0, .025, .13, .21]}/>
       <BackgroundWord progress={progress} word="MARKET" range={[.14, .22, .34, .43]} reverse/>
       <BackgroundWord progress={progress} word="CONTEXT" range={[.36, .42, .56, .59]}/>
-      <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .86, .93]} reverse/>
-      <BackgroundWord progress={progress} word="RESEARCH" range={[.78, .86, .99, 1]}/>
+      <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .69, .75]} reverse/>
+      <BackgroundWord progress={progress} word="RESEARCH" range={[.92, .95, .99, 1]}/>
     </div>
     <ParticleWorld progress={progress} quality={quality}/>
     <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>

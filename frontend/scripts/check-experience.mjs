@@ -57,7 +57,9 @@ try {
       if (height > 650) {
         assert.ok(story.height >= height * 3.9 && story.height <= height * 4.2, `Pinned story tail is too long or short: ${story.height}`);
       }
-      for (const [sampleIndex, progress] of [0, .25, .5, .75].entries()) {
+      // The forecast now exits before the particle ingot tail, so sample its
+      // settled state before the negative-space handoff begins.
+      for (const [sampleIndex, progress] of [0, .25, .5, .68].entries()) {
         const targetY = story.y + (story.height - height) * progress;
         await page.evaluate(y => { document.documentElement.scrollTop = y; }, targetY);
         await page.waitForFunction(y => Math.abs(scrollY - y) < 2, targetY);

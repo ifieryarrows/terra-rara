@@ -134,8 +134,10 @@ const researchSpreadField = makeShape(index => {
 const sourceKeyframes = [
   { at: 0, points: copperForm }, { at: .16, points: copperForm },
   { at: .27, points: dispersedField }, { at: .39, points: marketField },
-  { at: .56, points: intelligenceNetwork }, { at: .75, points: forecastPath },
-  { at: .80, points: evidenceMark }, { at: .87, points: copperIngot },
+  { at: .56, points: intelligenceNetwork }, { at: .70, points: forecastPath },
+  // The forecast surface has cleared by this point; the evidence mark and
+  // ingot therefore resolve in the intentional negative-space tail.
+  { at: .74, points: evidenceMark }, { at: .84, points: copperIngot },
   { at: .93, points: copperIngot }, { at: 1, points: researchSpreadField },
 ];
 

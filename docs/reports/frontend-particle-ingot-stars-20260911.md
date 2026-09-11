@@ -4,16 +4,17 @@
 | --- | --- |
 | Tarih | 11 Eylül 2026 |
 | Referans | `388a7e44` cinematic landing checkpoint |
-| Kapsam | Hero perspektif hareketi, CTA öncesi ingot morph'u ve global yıldız atmosferi |
+| Kapsam | Hero perspektif hareketi, CTA öncesi ingot morph'u ve global yıldız atmosferi (ilk uygulama) |
 | Durum | Kod ve browser smoke doğrulandı; runtime FPS/GPU profili bekliyor |
 
 ## Uygulanan akış
 
 - İlk C formuna `.02–.24` timeline aralığında WebGL ve Canvas2D için aynı pseudo-perspective tilt uygulandı. Y ekseni sıkışması, derinlik kaynaklı yatay skew ve küçük aşağı offset parçacıkların 3D yüzey gibi yatmasını sağlar.
-- Forecast/evidence akışının sonuna deterministic `copperIngot` keyframe'i eklendi (`.80–.93`). Form, sığ trapezoid front face, top face ve lower lip dağılımından oluşur; ayrı bir model veya yeni veri iddiası değildir.
+- Forecast/evidence akışının sonuna deterministic `copperIngot` keyframe'i eklendi (ilk akışta `.80–.93`; daha sonra negative-space handoff için `.74–.93` aralığına genişletildi). Form, sığ trapezoid front face, top face ve lower lip dağılımından oluşur; ayrı bir model veya yeni veri iddiası değildir.
 - CTA eşiğinde (`.93–1`) ingot parçacıkları `researchSpreadField` ile iki yana ve dikey alana açılır. Parçacık renderer'ı CTA görünürken çalışmaya devam eder.
 - Global atmosphere'a compositor-friendly, CSS radial-gradient yıldız katmanı eklendi. Katman aynı scroll timeline'ından düşük genlikli x/y drift ve opacity alır; pseudo-element nefes hareketi reduced-motion modunda kapanır.
 - Ingot aralığında mavi karışım azaltılarak formun copper olarak okunması güçlendirildi; spread aşamasında mevcut sinyal renkleri geri gelir.
+- Güncel cinematic CTA yerel gradient/pseudo-background kullanmaz; global atmosphere ve typography katmanının devamı olarak render edilir. Güncel aralıklar ayrı `frontend-cinematic-negative-space-20260911.md` raporunda kayıtlıdır.
 
 ## Doğrulama
 
