@@ -1,7 +1,7 @@
 /* Continuous, native-scroll cinematic world. The static story remains the
    complete reduced-motion, Save-Data and constrained-device fallback. */
 .cm-landing--cinematic { background: #080e17; }
-.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 500svh; margin: 0; padding: 0; overflow: clip; }
+.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 400svh; margin: 0; padding: 0; overflow: clip; }
 .cm-cinematic-sticky,
 .cm-cinematic-copy { grid-area: 1 / 1; }
 .cm-cinematic-sticky { position: sticky; top: 0; align-self: start; width: 100%; height: 100svh; overflow: hidden; background: var(--cm-bg); contain: layout paint style; }

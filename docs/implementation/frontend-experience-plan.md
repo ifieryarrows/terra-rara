@@ -38,8 +38,7 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 1. **Hero / Read the market. See the structure.** Copper futures, news and quantitative forecasts in one research workspace. A large bounded SVG preview shows observed-path context and a clearly distinguished forecast range. This is labeled illustrative, never live.
 2. **Signal strip.** Market context → news intelligence → forecast range → validation. These are product capabilities verified in code, not performance claims.
 3. **Sticky research sequence.** Three short narrative chapters beside a shared preview: market heatmap, news/sentiment, forecast uncertainty. Native vertical scroll drives one MotionValue; transforms, opacity and path reveal derive from it. Mobile/reduced-motion use ordinary stacked sections with all meaning in HTML.
-4. **Evidence before conviction.** Link to the real Models and Validation routes; explain weekly vs T+1 horizons, model availability and freshness. Do not claim model accuracy or returns.
-5. **Enter CopperMind.** Direct dashboard CTA plus secondary documentation/navigation links already present in the product.
+4. **Enter CopperMind.** Direct dashboard CTA after the possibilities scene; validation remains available as a direct workspace route rather than a separate landing beat.
 
 ### Cinematic CTA continuation (2026-09-10)
 
@@ -51,7 +50,7 @@ The landing particle layer now treats WebGL2 shader compilation as an optional a
 
 ### Direct research CTA handoff (2026-09-11)
 
-The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene keeps its existing `500svh` progression and the CTA trigger remains at `.84`, preserving the scroll duration and breathing space instead of compressing the cinematic handoff. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
+The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene now uses `400svh`, matching the hero plus three story beats and removing the inert tail after the CTA while keeping the existing `.84` trigger and its reveal breathing space. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
 
 ### News Intelligence sequence update (2026-09-10)
 
@@ -67,7 +66,7 @@ Preview data is deterministic and explicitly marked as illustrative. No randomiz
 | --- | --- |
 | App | Router, query client, route loading/error, motion preference, route focus/title |
 | Shared UI | Brand, action link, financial panel, metric card, tokens |
-| Landing | LandingPage, Hero, ResearchStory, MarketPreview, production-shaped NewsPreview sequence, ForecastPreview, Evidence, final CTA |
+| Landing | LandingPage, Hero, ResearchStory, MarketPreview, production-shaped NewsPreview sequence, ForecastPreview, final CTA |
 | Motion | MotionPolicy and one story `scrollYProgress`; no per-frame React state |
 | Workspace | AppShell and existing Overview/Models/Validation/System |
 | Data | Existing API/types/query hooks; landing fixture isolated under landing feature |
