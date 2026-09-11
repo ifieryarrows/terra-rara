@@ -5,7 +5,7 @@
 | Tarih | 11 Eylül 2026 |
 | Referans | `388a7e44` cinematic landing checkpoint |
 | Kapsam | Landing particle görünürlüğü, yoğunluğu ve scroll fiziği |
-| Durum | Kod ve otomatik kontroller doğrulandı; yeni runtime FPS profili bekliyor |
+| Durum | Kod, automated checks ve browser smoke doğrulandı; runtime FPS profili bekliyor |
 
 ## Uygulanan ayarlar
 
@@ -23,5 +23,6 @@
 - `npm run build`: başarılı.
 - `npm run lint`: başarılı.
 - `npm run check:budgets`: başarılı; initial JS `120.779` gzip byte, CSS `13.327` gzip byte, dashboard JS `267.100` gzip byte.
-- Heatmap benchmark izole tekrarında `3.61ms / 9.10ms`, tam suite tekrarında `3.79ms / 10.90ms` ölçüldü; particle tuning ile ilişkili bir regresyon gözlenmedi.
-- Yeni browser FPS/GPU profili için `check-experience.mjs` çalıştırılamadı; çalışma ortamında `playwright` paketi kurulu değil. Bu nedenle bu tuning için yeni FPS kazanımı iddiası yapılmıyor.
+- Heatmap benchmark ısınma ve batch ortalamasıyla izole edildi; son tam suite koşusunda `3.28ms / 9.52ms` ölçüldü ve eşikler korunarak geçti.
+- `EXPERIENCE_URL=http://127.0.0.1:5173 node scripts/check-experience.mjs` başarılı; 7 landing viewport, adaptive fallback ve workspace route kontrolleri geçti.
+- Browser smoke FPS/GPU profili değildir; yeni ölçülmemiş performans kazanımı iddia edilmiyor.

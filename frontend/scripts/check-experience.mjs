@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = process.env.EXPERIENCE_URL || 'http://127.0.0.1:5174';
+const base = process.env.EXPERIENCE_URL || 'http://127.0.0.1:5173';
 const output = process.env.EXPERIENCE_OUTPUT || join(tmpdir(), 'coppermind-experience-qa');
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || 'msedge' });
@@ -29,8 +29,9 @@ try {
     assert.equal(await page.locator('.cm-evidence-preview').count(), 0, 'Landing moves directly from possibilities to the research CTA');
     assert.equal(await page.locator('.cm-news-intelligence-preview').count(), 1, 'News preview keeps the production-shaped sequence');
     assert.equal(await page.locator('.cm-news-sequence-layer').count(), 4, 'News sequence has headline, entity, dial and two-read layers');
-    assert.ok((await page.locator('body').innerText()).includes('LLM rationale'), 'News preview exposes article-level rationale');
-    assert.ok((await page.locator('body').innerText()).includes('SIGNAL READ'), 'News preview exposes the rotating signal read');
+    const landingText = await page.locator('body').textContent();
+    assert.ok(landingText?.includes('LLM rationale'), 'News preview exposes article-level rationale');
+    assert.ok(landingText?.includes('SIGNAL READ'), 'News preview exposes the rotating signal read');
     for (const href of ['#market', '#news', '#forecast']) {
       assert.equal(await page.locator(href).count(), 1);
     }
@@ -49,7 +50,7 @@ try {
       assert.equal(particle.quality, expectedQuality);
       assert.equal(particle.count, expectedQuality === 'high' ? 640 : 420);
       if ((width === 1536 || width === 390) && reducedMotion === 'no-preference') await page.screenshot({ path: join(output, `landing-${width}-${height}-hero.png`) });
-      assert.equal(await page.locator('.cm-background-word').count(), 4, 'The global typography follows the three-stage story');
+      assert.equal(await page.locator('.cm-background-word').count(), 5, 'The global typography follows the continuous research story');
       assert.equal(await page.locator('.cm-cinematic-beat').count(), 4, 'Hero and three research beats share one scroll scene');
       assert.equal(await page.locator('.cm-cinematic-surface').count(), 3, 'Dashboard fragments stay inside the shared world');
       assert.equal(await page.locator('.cm-atmosphere-stars').count(), 1, 'Global atmosphere keeps one shared star field');
@@ -60,10 +61,15 @@ try {
         const targetY = story.y + (story.height - height) * progress;
         await page.evaluate(y => { document.documentElement.scrollTop = y; }, targetY);
         await page.waitForFunction(y => Math.abs(scrollY - y) < 2, targetY);
-        await page.waitForTimeout(180);
+        if (sampleIndex > 0) {
+          await page.waitForFunction(expectedIndex => {
+            const surface = document.querySelectorAll('.cm-cinematic-surface')[expectedIndex];
+            return Boolean(surface && Number(getComputedStyle(surface).opacity) > .9);
+          }, sampleIndex - 1);
+        }
         const sample = await page.evaluate(() => {
           const stage = document.querySelector('.cm-cinematic-sticky').getBoundingClientRect();
-          const canvas = document.querySelector('.cm-particle-world').getBoundingClientRect();
+          const canvas = document.querySelector('.cm-particle-world[data-renderer]').getBoundingClientRect();
           return { scrollY, top: stage.top, height: stage.height, canvas: { width: canvas.width, height: canvas.height },
             symbol: Number(getComputedStyle(document.querySelector('.cm-cinematic-symbol')).opacity),
             surfaces: [...document.querySelectorAll('.cm-cinematic-surface')].map(e => Number(getComputedStyle(e).opacity)),
@@ -75,8 +81,8 @@ try {
         assert.ok(sample.canvas.width > 0 && sample.canvas.height > 0, 'Particle canvas fills the pinned world');
         if (sampleIndex === 0) assert.ok(sample.symbol > .95, `Hero symbol missing: ${sample.symbol}`);
         else {
-          assert.ok(sample.surfaces[sampleIndex - 1] > .9, `Wrong continuous composition: ${sample.surfaces}`);
-          assert.ok(Math.abs(sample.surfaceX[sampleIndex - 1]) > .5, `Pinned surface lost horizontal scroll translation: ${sample.surfaceX}`);
+          assert.ok(sample.surfaces[sampleIndex - 1] > .9, `Wrong continuous composition at progress ${progress}: ${sample.surfaces}`);
+          assert.ok(Math.abs(sample.surfaceX[sampleIndex - 1]) > .5, `Pinned surface lost horizontal scroll translation at progress ${progress}: ${sample.surfaceX}`);
         }
         samples.push(sample);
       }
@@ -115,10 +121,9 @@ try {
       };
     });
     await page.goto(base);
-    const canvases = page.locator('.cm-particle-world');
-    await canvases.first().waitFor();
-    await page.waitForFunction(() => document.querySelector('.cm-particle-world[data-renderer="canvas2d"]'));
-    const fallback = await page.locator('.cm-particle-world[data-renderer="canvas2d"]').evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
+    const fallbackCanvas = page.locator('.cm-particle-world[data-renderer="canvas2d"]');
+    await fallbackCanvas.waitFor();
+    const fallback = await fallbackCanvas.evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
     assert.deepEqual(fallback, { renderer: 'canvas2d', quality: 'balanced', count: 420 });
     adaptiveResults.push({ mode: 'webgl-unavailable', ...fallback });
     await page.close();

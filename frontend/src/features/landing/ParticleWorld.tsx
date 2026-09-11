@@ -459,6 +459,13 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
       resizeObserver.disconnect(); intersectionObserver.disconnect();
       window.removeEventListener('pointermove', onPointerMove); document.removeEventListener('visibilitychange', onVisibility);
       renderer.dispose();
+      for (const element of [canvas, fallbackCanvas]) {
+        element.removeAttribute('data-renderer');
+        element.removeAttribute('data-particle-count');
+        element.removeAttribute('data-quality');
+        element.removeAttribute('data-shader-compile-ms');
+        element.style.display = '';
+      }
     };
   }, [progress, quality]);
 

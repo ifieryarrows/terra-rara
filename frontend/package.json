@@ -10,6 +10,7 @@
     "test": "vitest run",
     "preview": "vite preview",
     "check:budgets": "node scripts/check-budgets.mjs",
+    "check:experience": "node scripts/check-experience.mjs",
     "profile:landing": "node scripts/profile-landing.mjs"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.3.0",
     "jsdom": "^26.1.0",
+    "playwright": "^1.63.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.3.3",
