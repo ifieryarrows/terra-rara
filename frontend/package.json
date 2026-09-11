@@ -9,7 +9,8 @@
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview",
-    "check:budgets": "node scripts/check-budgets.mjs"
+    "check:budgets": "node scripts/check-budgets.mjs",
+    "profile:landing": "node scripts/profile-landing.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",

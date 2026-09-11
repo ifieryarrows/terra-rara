@@ -15,7 +15,7 @@ const contours = Array.from({ length: 26 }, (_, layer) => {
 export function CopperSignal({ progress }: { progress?: MotionValue<number> }) {
   const id = useId().replace(/:/g, '');
   return <figure className="cm-copper-signal" aria-label="Copper at the center of market context, news intelligence and quantitative forecasts">
-    <div className="cm-signal-coordinate"><span>Cu / 29</span><span>THE METAL. THE SIGNAL.</span></div>
+    <div className="cm-signal-coordinate"><span>MARKET SIGNAL</span><span>THE METAL. THE SIGNAL.</span></div>
     <svg className="cm-signal-contours" viewBox="0 0 540 470" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-copper`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#76422d"/><stop offset=".34" stopColor="#e6a47a"/><stop offset=".54" stopColor="#ffe1c0"/><stop offset=".74" stopColor="#a35e3c"/><stop offset="1" stopColor="#492f2a"/></linearGradient>
