@@ -49,6 +49,10 @@ The final CTA remains part of the same cinematic world rather than a detached ca
 
 The landing particle layer now treats WebGL2 shader compilation as an optional acceleration path rather than a route prerequisite. If the browser or GPU rejects the particle shader, the failed context is released and the same scene switches to a balanced Canvas2D renderer on a separate canvas; the animation timeline, pointer response and visibility gating remain shared. This prevents a driver-specific shader failure from reaching the route boundary and showing the generic “Reload this page” screen, while preserving a lower-cost particle field for constrained devices.
 
+### Direct research CTA handoff (2026-09-11)
+
+The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene keeps its existing `500svh` progression and the CTA trigger remains at `.84`, preserving the scroll duration and breathing space instead of compressing the cinematic handoff. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
+
 ### News Intelligence sequence update (2026-09-10)
 
 The former three-line news scenario is replaced by a continuous `News → Intelligence` product demonstration. The market preview's `FCX` context carries into one deterministic source headline, then the shared scroll timeline reveals semantic entities, a Copper Signal tone spectrum, production-shaped impact fields, and the article-level V2 `reasoning` string. This is documented in the [News Intelligence sequence plan](./frontend-news-intelligence-sequence.md).

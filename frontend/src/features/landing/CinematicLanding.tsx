@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUpRight } from 'lucide-react';
 import { motion, useScroll, useTransform, type MotionValue } from 'framer-motion';
 import { CopperSignal } from './CopperSignal';
-import { EvidencePreview, ForecastPreview, MarketPreview, NewsPreview } from './Previews';
+import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
 import './cinematic.css';
 
@@ -22,11 +22,6 @@ const beats = [
     id: 'forecast', number: '03', label: 'THE POSSIBILITIES', title: <>See the range.<br/>Keep the uncertainty.</>,
     text: 'See the forecast range alongside the last close.',
     tags: ['Deep-learning forecasts', 'Price & risk context'], link: 'Examine the forecasts', to: '/dashboard#price-forecast', center: .75,
-  },
-  {
-    id: 'evidence', number: '04', label: 'THE EVIDENCE', title: <>Make the signal<br/>answer questions.</>,
-    text: 'Check the model, horizon and data date behind the signal.',
-    tags: ['Walk-forward validation', 'Freshness & model status'], link: 'Examine the evidence', to: '/validation', center: 1,
   },
 ] as const;
 
@@ -73,7 +68,6 @@ function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
     <SceneSurface progress={progress} range={[.16, .22, .36, .39]}><MarketPreview progress={marketProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.39, .42, .575, .59]}><NewsPreview progress={newsProgress}/></SceneSurface>
     <SceneSurface progress={progress} range={[.60, .625, .77, .84]}><ForecastPreview progress={forecastProgress}/></SceneSurface>
-    <SceneSurface progress={progress} range={[.77, .82, .84, .9]}><EvidencePreview/></SceneSurface>
   </div>;
 }
 
@@ -88,7 +82,7 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
       <p className="cm-hero-description">Behind every copper price, a bigger picture.</p>
       <p className="cm-hero-detail">Market, news, forecasts and evidence in one workspace.</p>
       <div className="cm-hero-actions"><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></Link><a href="#market" className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
-      <nav className="cm-hero-capabilities" aria-label="Explore the platform"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><a href="#evidence">Validation</a></nav>
+      <nav className="cm-hero-capabilities" aria-label="Explore the platform"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><Link to="/validation">Validation</Link></nav>
       <p className="cm-hero-caption">Built around copper. Designed for perspective.</p>
     </motion.div>
   </article>;
@@ -97,11 +91,10 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
 function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: typeof beats[number] }) {
   const shortNewsWindow = beat.id === 'news';
   const shortForecastWindow = beat.id === 'forecast';
-  const finalBeat = beat.center === 1;
-  const start = finalBeat ? .78 : shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
-  const reveal = finalBeat ? .83 : shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
-  const hold = finalBeat ? .84 : shortNewsWindow ? .47 : shortForecastWindow ? .78 : beat.center + .07;
-  const end = finalBeat ? .9 : shortNewsWindow ? .535 : shortForecastWindow ? .84 : beat.center + .18;
+  const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
+  const reveal = shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
+  const hold = shortNewsWindow ? .47 : shortForecastWindow ? .78 : beat.center + .07;
+  const end = shortNewsWindow ? .535 : shortForecastWindow ? .84 : beat.center + .18;
   const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
   const y = useTransform(progress, [start, reveal, hold, end], [64, 0, 0, -48]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
@@ -135,7 +128,7 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
       <BackgroundWord progress={progress} word="MARKET" range={[.14, .22, .34, .43]} reverse/>
       <BackgroundWord progress={progress} word="CONTEXT" range={[.36, .42, .56, .59]}/>
       <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .77, .84]} reverse/>
-      <BackgroundWord progress={progress} word="EVIDENCE" range={[.78, .86, .99, 1]}/>
+      <BackgroundWord progress={progress} word="RESEARCH" range={[.78, .86, .99, 1]}/>
     </div>
     <ParticleWorld progress={progress} quality={quality}/>
     <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>

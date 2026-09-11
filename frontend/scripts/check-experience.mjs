@@ -26,12 +26,12 @@ try {
     await page.locator('.cm-story').waitFor();
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(400);
-    assert.equal(await page.locator('.cm-evidence-preview').count(), 1);
+    assert.equal(await page.locator('.cm-evidence-preview').count(), 0, 'Landing moves directly from possibilities to the research CTA');
     assert.equal(await page.locator('.cm-news-intelligence-preview').count(), 1, 'News preview keeps the production-shaped sequence');
     assert.equal(await page.locator('.cm-news-sequence-layer').count(), 4, 'News sequence has headline, entity, dial and two-read layers');
     assert.ok((await page.locator('body').innerText()).includes('LLM rationale'), 'News preview exposes article-level rationale');
     assert.ok((await page.locator('body').innerText()).includes('SIGNAL READ'), 'News preview exposes the rotating signal read');
-    for (const href of ['#market', '#news', '#forecast', '#evidence']) {
+    for (const href of ['#market', '#news', '#forecast']) {
       assert.equal(await page.locator(href).count(), 1);
     }
     assert.equal(await page.locator('h1').count(), 1);
@@ -42,16 +42,17 @@ try {
     const samples = [];
     if (enhanced) {
       const story = await page.locator('.cm-story').boundingBox();
-      assert.equal(await page.locator('.cm-particle-world').count(), 1, 'One canvas particle field owns the symbol morph');
-      const particle = await page.locator('.cm-particle-world').evaluate(canvas => ({ renderer: canvas.dataset.renderer, quality: canvas.dataset.quality, count: Number(canvas.dataset.particleCount) }));
+      assert.equal(await page.locator('.cm-particle-world').count(), 2, 'WebGL and fallback canvases share one particle field');
+      const particle = await page.locator('.cm-particle-world[data-renderer]').evaluate(canvas => ({ renderer: canvas.dataset.renderer, quality: canvas.dataset.quality, count: Number(canvas.dataset.particleCount) }));
       assert.equal(particle.renderer, 'webgl2');
       assert.equal(particle.quality, width >= 1024 ? 'high' : 'balanced');
       assert.equal(particle.count, width >= 1024 ? 420 : 280);
       if ((width === 1536 || width === 390) && reducedMotion === 'no-preference') await page.screenshot({ path: join(output, `landing-${width}-${height}-hero.png`) });
-      assert.equal(await page.locator('.cm-background-word').count(), 5, 'The global typography follows the complete story');
-      assert.equal(await page.locator('.cm-cinematic-beat').count(), 5, 'Hero and four research beats share one scroll scene');
-      assert.equal(await page.locator('.cm-cinematic-surface').count(), 4, 'Dashboard fragments stay inside the shared world');
-      for (const [sampleIndex, progress] of [0, .25, .5, .75, .94].entries()) {
+      assert.equal(await page.locator('.cm-background-word').count(), 4, 'The global typography follows the three-stage story');
+      assert.equal(await page.locator('.cm-cinematic-beat').count(), 4, 'Hero and three research beats share one scroll scene');
+      assert.equal(await page.locator('.cm-cinematic-surface').count(), 3, 'Dashboard fragments stay inside the shared world');
+      assert.ok(story.height >= height * 4.9, `Pinned story duration was shortened: ${story.height}`);
+      for (const [sampleIndex, progress] of [0, .25, .5, .75].entries()) {
         const targetY = story.y + (story.height - height) * progress;
         await page.evaluate(y => { document.documentElement.scrollTop = y; }, targetY);
         await page.waitForFunction(y => Math.abs(scrollY - y) < 2, targetY);
@@ -110,10 +111,10 @@ try {
       };
     });
     await page.goto(base);
-    const canvas = page.locator('.cm-particle-world');
-    await canvas.waitFor();
-    await page.waitForFunction(() => document.querySelector('.cm-particle-world')?.dataset.renderer === 'canvas2d');
-    const fallback = await canvas.evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
+    const canvases = page.locator('.cm-particle-world');
+    await canvases.first().waitFor();
+    await page.waitForFunction(() => document.querySelector('.cm-particle-world[data-renderer="canvas2d"]'));
+    const fallback = await page.locator('.cm-particle-world[data-renderer="canvas2d"]').evaluate(element => ({ renderer: element.dataset.renderer, quality: element.dataset.quality, count: Number(element.dataset.particleCount) }));
     assert.deepEqual(fallback, { renderer: 'canvas2d', quality: 'balanced', count: 280 });
     adaptiveResults.push({ mode: 'webgl-unavailable', ...fallback });
     await page.close();

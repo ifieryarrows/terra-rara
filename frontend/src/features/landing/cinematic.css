@@ -98,9 +98,6 @@
   .cm-cinematic-surface .cm-preview { max-height: 39svh; }
   .cm-cinematic-surface .cm-preview-caption { display: none; }
   .cm-cinematic-surface .cm-preview-map { min-height: 31svh; }
-  .cm-cinematic-surface .cm-report-body { padding: .7rem 1rem; }
-  .cm-cinematic-surface .cm-report-period { display: none; }
-  .cm-cinematic-surface .cm-report-metrics > div { padding-block: .5rem; }
 }
 
 @media (max-height: 720px) and (min-width: 1024px) {
@@ -113,7 +110,4 @@
   .cm-cinematic-surface .cm-preview-map { min-height: 15rem; }
   .cm-cinematic-surface .cm-news-flow li { padding-block: .6rem; }
   .cm-cinematic-surface .cm-news-flow p { font-size: .78rem; line-height: 1.45; }
-  .cm-cinematic-surface .cm-report-body { padding: 1rem 1.4rem; }
-  .cm-cinematic-surface .cm-report-period { margin-top: .7rem; padding: .65rem; }
-  .cm-cinematic-surface .cm-report-metrics > div { padding-block: .65rem; }
 }

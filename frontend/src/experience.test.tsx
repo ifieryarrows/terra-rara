@@ -30,6 +30,9 @@ describe('product introduction and workspace routes', () => {
     expect(screen.getAllByText('Tone scoring').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Enter CopperMind' })).toHaveLength(2);
     expect(document.querySelector('.cm-landing-nav')).toBeNull();
+    expect(document.querySelector('.cm-evidence-preview')).toBeNull();
+    expect(screen.queryByText('Question the result.')).not.toBeInTheDocument();
+    expect(document.querySelector('.cm-landing-footer')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Market overview' })).not.toBeInTheDocument();
   });
   it('enters the actual dashboard route without completing the story and restores a focus target', async () => {

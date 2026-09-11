@@ -147,15 +147,3 @@ export function NewsPreview({ progress }: { progress?: MotionValue<number> }) {
     <figcaption className="cm-preview-caption"><span><i className="cm-key cm-key--copper"/>tone → score → rationale</span><span>Production-shaped fields · deterministic input</span></figcaption>
   </figure>;
 }
-
-export function EvidencePreview() {
-  return <figure className="cm-preview cm-evidence-preview">
-    <div className="cm-preview-top"><span>VALIDATION / REPORT READER</span><span className="cm-preview-tag">Illustrative preview</span></div>
-    <div className="cm-report-body"><span className="cm-data-caption">WALK-FORWARD / OUT OF SAMPLE</span><h3>Question the result.</h3><p>Compare the same horizon and evaluation period.</p>
-      <div className="cm-report-period"><span>Primary horizon<strong>5 trading sessions</strong></span><span>Evaluation period<strong>Read from the report</strong></span></div>
-      <dl className="cm-report-metrics"><div><dt>Weekly direction accuracy<small>How often the 5D direction was correct.</small></dt><dd>—</dd></div><div><dt>MAE / RMSE<small>Smaller errors are better. RMSE emphasizes larger misses.</small></dt><dd>—</dd></div><div><dt>Baseline comparison<small>Compare model and reference forecast on the same sample.</small></dt><dd>—</dd></div></dl>
-      <p className="cm-report-empty">Values omitted in this preview. Missing results are not a zero score or a passed check.</p>
-      <div className="cm-report-freshness"><span className="cm-data-caption">CHECK THE DATA DATE</span><p>Match the forecast’s reference close to the latest market close. Check snapshot age before interpreting the result.</p></div>
-    </div><figcaption className="cm-preview-caption">Reading guide · no performance claims or live status.</figcaption>
-  </figure>;
-}
