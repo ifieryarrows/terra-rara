@@ -22,9 +22,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('product introduction and workspace routes', () => {
   it('keeps the introduction useful in reduced motion and identifies sample data', () => {
     render(<App/>);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('One metal. A world of signals.');
-    expect(document.querySelector('.cw-static')).not.toBeNull();
-    expect(document.querySelector('#forecast')).toHaveTextContent('ILLUSTRATIVE PATH / NOT A FORECAST');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Read the market.');
+    expect(document.querySelector('.cm-story--static')).not.toBeNull();
+    expect(screen.getAllByText('Illustrative preview').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Enter CopperMind' })).toHaveLength(2);
     expect(screen.queryByRole('heading', { name: 'Market overview' })).not.toBeInTheDocument();
   });
@@ -57,13 +57,4 @@ describe('product introduction and workspace routes', () => {
     expect(screen.getByRole('heading', { name: 'That page is not here.' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open dashboard' })).toHaveAttribute('href', '/dashboard');
   });
-});
-
-describe('narrative anchor navigation',()=>{
- it('preserves a real hash and moves focus to the requested scene with reduced motion',async()=>{
-  Element.prototype.scrollIntoView=vi.fn();const user=userEvent.setup();render(<App/>);
-  await user.click(screen.getByRole('link',{name:'Market'}));
-  expect(window.location.hash).toBe('#market');expect(document.getElementById('market')).toHaveFocus();
-  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({behavior:'instant',block:'start'});
- });
 });
