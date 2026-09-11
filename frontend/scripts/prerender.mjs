@@ -11,8 +11,8 @@ try {
   const template = await readFile('dist/index.html', 'utf8');
   const { renderLanding } = await server.ssrLoadModule('/src/prerender.tsx');
   const landing = renderLanding();
-  if (!landing.includes('Read the market.')) throw new Error('Landing prerender has no critical content');
-  await writeFile('dist/index.html', template.replace('<div id="root"></div>', '<div id="root">' + landing + '</div>'));
+  if (!landing.includes('One metal. A world of signals.')) throw new Error('Landing prerender has no critical content');
+  await writeFile('dist/index.html', template.replace('</head>', '<link rel="preload" href="/fonts/league-gothic.woff" as="font" type="font/woff" crossorigin></head>').replace('<div id="root"></div>', '<div id="root">' + landing + '</div>'));
   const workspace = template.replace('<title>Terra Rara | Copper Market Intelligence</title>', '<title>Research Workspace | CopperMind</title>');
   await writeFile('dist/workspace.html', workspace);
   console.log('Prerendered landing HTML; separate workspace shell preserves deep links.');
