@@ -171,7 +171,7 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       vec2 position = mix(a_from, a_to, t);
       vec2 delta = position - u_pointer;
       vec2 metric = delta * vec2(u_aspect, 1.0);
-      float push = smoothstep(0.095, 0.0, length(metric)) * 0.018;
+      float push = (1.0 - smoothstep(0.0, 0.095, length(metric))) * 0.018;
       position += normalize(delta + vec2(0.00001)) * push;
       float driftPhaseX = a_drift.x + u_time * a_drift.z;
       float driftPhaseY = a_drift.y + u_time * a_drift.z * 0.73;

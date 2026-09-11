@@ -11,12 +11,12 @@ export const previewMarkets = [
 ];
 
 /**
- * Deterministic landing fixture shaped like the production /api/news payload.
+ * Deterministic landing view-model adapted from the production /api/news payload.
  *
  * This is deliberately not a live article, a stored model result, or a claim
- * about FCX. The field names mirror the real V2 contract so the product story
- * can explain what the dashboard actually exposes without calling the API or
- * inventing a new scoring system for marketing.
+ * about FCX. These presentation fields are adapted from the real V2 contract so
+ * the product story can explain what the dashboard actually exposes without
+ * calling the API or inventing a new scoring system for marketing.
  */
 export const newsIntelligencePreview = {
   symbol: 'FCX',

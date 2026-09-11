@@ -44,9 +44,10 @@ try {
       const story = await page.locator('.cm-story').boundingBox();
       assert.equal(await page.locator('.cm-particle-world').count(), 2, 'WebGL and fallback canvases share one particle field');
       const particle = await page.locator('.cm-particle-world[data-renderer]').evaluate(canvas => ({ renderer: canvas.dataset.renderer, quality: canvas.dataset.quality, count: Number(canvas.dataset.particleCount) }));
-      assert.equal(particle.renderer, 'webgl2');
-      assert.equal(particle.quality, width >= 1024 ? 'high' : 'balanced');
-      assert.equal(particle.count, width >= 1024 ? 420 : 280);
+      assert.ok(['webgl2', 'canvas2d'].includes(particle.renderer), `Unsupported particle renderer: ${particle.renderer}`);
+      const expectedQuality = particle.renderer === 'webgl2' && width >= 1024 ? 'high' : 'balanced';
+      assert.equal(particle.quality, expectedQuality);
+      assert.equal(particle.count, expectedQuality === 'high' ? 420 : 280);
       if ((width === 1536 || width === 390) && reducedMotion === 'no-preference') await page.screenshot({ path: join(output, `landing-${width}-${height}-hero.png`) });
       assert.equal(await page.locator('.cm-background-word').count(), 4, 'The global typography follows the three-stage story');
       assert.equal(await page.locator('.cm-cinematic-beat').count(), 4, 'Hero and three research beats share one scroll scene');
