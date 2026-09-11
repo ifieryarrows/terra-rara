@@ -52,6 +52,7 @@ try {
       assert.equal(await page.locator('.cm-background-word').count(), 4, 'The global typography follows the three-stage story');
       assert.equal(await page.locator('.cm-cinematic-beat').count(), 4, 'Hero and three research beats share one scroll scene');
       assert.equal(await page.locator('.cm-cinematic-surface').count(), 3, 'Dashboard fragments stay inside the shared world');
+      assert.equal(await page.locator('.cm-atmosphere-stars').count(), 1, 'Global atmosphere keeps one shared star field');
       if (height > 650) {
         assert.ok(story.height >= height * 3.9 && story.height <= height * 4.2, `Pinned story tail is too long or short: ${story.height}`);
       }

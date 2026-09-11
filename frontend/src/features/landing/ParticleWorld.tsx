@@ -106,11 +106,37 @@ const evidenceMark = makeShape(index => {
   return [.725 + local * .15, .575 - local * .21];
 });
 
+// A compact, slightly faceted bar gives the final CTA a tangible destination
+// before the field releases back into the open research space.
+const copperIngot = makeShape(index => {
+  const horizontal = noise(index, 18);
+  const vertical = noise(index, 19);
+  const lane = index % 8;
+  if (lane < 5) {
+    // Front face: a shallow trapezoid rather than a flat rectangle.
+    const halfWidth = .135 + vertical * .035;
+    return [.735 + (horizontal - .5) * halfWidth * 2, .445 + vertical * .17];
+  }
+  if (lane < 7) {
+    // Top face: the offset makes the silhouette read as a small 3D ingot.
+    return [.595 + horizontal * .28 + vertical * .025, .378 + vertical * .07];
+  }
+  // Lower lip catches a soft line of copper as the form settles.
+  return [.57 + horizontal * .33, .605 + vertical * .018];
+});
+
+const researchSpreadField = makeShape(index => {
+  const side = index % 2 === 0 ? -1 : 1;
+  const spread = .08 + noise(index, 20) * .39;
+  return [.5 + side * spread, .1 + noise(index, 21) * .8];
+});
+
 const sourceKeyframes = [
   { at: 0, points: copperForm }, { at: .16, points: copperForm },
   { at: .27, points: dispersedField }, { at: .39, points: marketField },
   { at: .56, points: intelligenceNetwork }, { at: .75, points: forecastPath },
-  { at: .92, points: evidenceMark }, { at: 1, points: evidenceMark },
+  { at: .80, points: evidenceMark }, { at: .87, points: copperIngot },
+  { at: .93, points: copperIngot }, { at: 1, points: researchSpreadField },
 ];
 
 function sampleShape(source: Float32Array, count: number) {
@@ -183,6 +209,14 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       vec2 metric = delta * vec2(u_aspect, 1.0);
       float push = (1.0 - smoothstep(0.0, 0.095, length(metric))) * 0.018;
       position += normalize(delta + vec2(0.00001)) * push;
+      float cTilt = smoothstep(0.02, 0.09, u_progress) * (1.0 - smoothstep(0.17, 0.24, u_progress));
+      float cAngle = 0.58 * cTilt;
+      vec2 cLocal = position - vec2(0.72, 0.49);
+      float cDepth = cLocal.y * sin(cAngle);
+      float cPerspective = 1.0 / max(0.78, 1.0 + cDepth * 1.4);
+      cLocal.y *= cos(cAngle) * cPerspective;
+      cLocal.x = (cLocal.x + cDepth * 0.18) * cPerspective;
+      position = vec2(0.72, 0.49) + cLocal + vec2(0.0, 0.018 * cTilt);
       float earlyTide = smoothstep(0.04, 0.16, u_progress) * (1.0 - smoothstep(0.18, 0.3, u_progress));
       position.x += sin(a_drift.x * 1.8 + a_drift.y * 0.65 + u_time * 0.0009 + u_progress * 10.0) * earlyTide * 0.012;
       position.y += cos(a_drift.y * 1.2 + a_drift.x * 0.45 + u_time * 0.0007 + u_progress * 7.0) * earlyTide * 0.0035;
@@ -196,8 +230,9 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       float individualImpulse = 0.35 + fract(sin(a_drift.x * 12.9898 + a_drift.y * 78.233) * 43758.5453) * 0.65;
       position += impulseDirection * u_scroll_impulse * scatterBlend * individualImpulse;
       gl_Position = vec4(position.x * 2.0 - 1.0, 1.0 - position.y * 2.0, 0.0, 1.0);
-      gl_PointSize = a_size * u_pixel_ratio;
-      v_blue = a_blue * clamp((u_progress - 0.6) * 1.2, 0.0, 0.48);
+      gl_PointSize = a_size * u_pixel_ratio * mix(1.0, cPerspective, cTilt);
+      float copperSettle = 1.0 - smoothstep(0.82, 0.94, u_progress);
+      v_blue = a_blue * clamp((u_progress - 0.6) * 1.2, 0.0, 0.48) * mix(1.0, 0.18, copperSettle);
     }`);
   const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, `#version 300 es
     precision mediump float; in float v_blue; out vec4 color;
@@ -301,15 +336,23 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
       context.clearRect(0, 0, width, height); context.fillStyle = `rgba(230, 164, 122, ${config.canvasAlpha})`; context.beginPath();
       for (let index = 0; index < config.count; index += 1) {
         const offset = index * 2;
-        let x = (previous.points[offset] + (next.points[offset] - previous.points[offset]) * amount) * width;
-        let y = (previous.points[offset + 1] + (next.points[offset + 1] - previous.points[offset + 1]) * amount) * height;
+        let x = previous.points[offset] + (next.points[offset] - previous.points[offset]) * amount;
+        let y = previous.points[offset + 1] + (next.points[offset + 1] - previous.points[offset + 1]) * amount;
+        const cTilt = smoothstep(.02, .09, value) * (1 - smoothstep(.17, .24, value));
+        const cAngle = .58 * cTilt;
+        const cLocalX = x - .72;
+        const cLocalY = y - .49;
+        const cDepth = cLocalY * Math.sin(cAngle);
+        const cPerspective = 1 / Math.max(.78, 1 + cDepth * 1.4);
+        x = (.72 + (cLocalX + cDepth * .18) * cPerspective) * width;
+        y = (.49 + cLocalY * Math.cos(cAngle) * cPerspective + .018 * cTilt) * height;
         const dx = x - pointerX * width; const dy = y - pointerY * height; const squared = dx * dx + dy * dy;
         const reach = Math.min(width, height) * .095;
         if (squared > 0 && squared < reach * reach) {
           const distance = Math.sqrt(squared); const force = (1 - distance / reach) * 18;
           x += dx / distance * force; y += dy / distance * force;
         }
-        const radius = index % 11 === 0 ? config.largeRadius : config.radius;
+        const radius = (index % 11 === 0 ? config.largeRadius : config.radius) * (1 + (cPerspective - 1) * cTilt);
         const driftOffset = index * 4;
         const earlyTideX = Math.sin(drift[driftOffset] * 1.8 + drift[driftOffset + 1] * .65 + time * .0009 + value * 10) * earlyTide * .012 * width;
         const earlyTideY = Math.cos(drift[driftOffset + 1] * 1.2 + drift[driftOffset] * .45 + time * .0007 + value * 7) * earlyTide * .0035 * height;

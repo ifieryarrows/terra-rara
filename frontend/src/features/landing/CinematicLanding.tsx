@@ -41,10 +41,14 @@ function Atmosphere({ progress }: { progress: MotionValue<number> }) {
   const copperX = useTransform(progress, [0, .5, 1], ['8%', '42%', '74%']);
   const blueX = useTransform(progress, [0, .5, 1], ['96%', '72%', '38%']);
   const bandX = useTransform(progress, [0, 1], ['-16%', '16%']);
+  const starsOpacity = useTransform(progress, [0, .24, .72, 1], [.46, .72, .56, .68]);
+  const starsX = useTransform(progress, [0, 1], ['0%', '-4%']);
+  const starsY = useTransform(progress, [0, 1], ['0%', '2%']);
   return <motion.div className="cm-global-atmosphere" style={{ backgroundColor }} aria-hidden="true">
     <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--copper" style={{ x: copperX }}/>
     <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--blue" style={{ x: blueX }}/>
     <motion.div className="cm-atmosphere-band" style={{ x: bandX }}/>
+    <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, x: starsX, y: starsY }}/>
     <div className="cm-atmosphere-pointer"/>
     <div className="cm-atmosphere-grain"/>
   </motion.div>;
