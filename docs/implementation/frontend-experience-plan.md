@@ -42,7 +42,7 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 
 ### Cinematic CTA continuation (2026-09-10)
 
-The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the Possibilities scene can hand off through a restrained copper-to-research bridge without a second local scroll clock. As the `03 / THE POSSIBILITIES` scene exits at `0.84`, the CTA layer and its self-running staggered line-level blind reveal start together; the masks then complete over two seconds without being scrubbed by every scroll delta. On reverse scroll the layer stays mounted while its reveal value eases back to zero over `0.62s`, so the CTA crossfades into the returning story instead of disappearing on a visibility boundary. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
+The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the Possibilities scene can hand off through a restrained copper-to-research bridge without a second local scroll clock. As the `03 / THE POSSIBILITIES` scene exits at `.93`, the CTA layer and its self-running staggered line-level blind reveal start together; the masks then complete over two seconds without being scrubbed by every scroll delta. On reverse scroll the layer stays mounted while its reveal value eases back to zero over `.62s`, so the CTA crossfades into the returning story instead of disappearing on a visibility boundary. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
 
 ### Particle renderer fallback (2026-09-11)
 
@@ -50,7 +50,7 @@ The landing particle layer now treats WebGL2 shader compilation as an optional a
 
 ### Direct research CTA handoff (2026-09-11)
 
-The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene now uses `400svh`, matching the hero plus three story beats and removing the inert tail after the CTA while keeping the existing `.84` trigger and its reveal breathing space. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
+The landing story now moves directly from `03 / THE POSSIBILITIES` into `YOUR RESEARCH STARTS HERE`; the validation-result preview and its separate final beat are no longer part of the introduction. The pinned scene uses `400svh`, matching the hero plus three story beats. Forecast holds its final composition through `.93`, where the CTA reveal starts, leaving roughly 1.5 scrolls after the completed handoff instead of an inert 3.5-scroll tail. Validation remains available as a direct workspace route, and the landing footer has been removed so the CTA is the final landing action.
 
 ### News Intelligence sequence update (2026-09-10)
 
