@@ -15,6 +15,7 @@
 .cm-background-typography { position: absolute; inset: 0; display: grid; align-items: center; overflow: hidden; pointer-events: none; }
 .cm-background-word { grid-area: 1 / 1; display: block; width: max-content; margin-left: clamp(1rem, 5vw, 5rem); color: transparent; -webkit-text-stroke: 1px #d9e0e814; font-size: clamp(8rem, 22vw, 22rem); font-weight: 560; line-height: .74; letter-spacing: -.085em; white-space: nowrap; transform-origin: center; }
 .cm-particle-world { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .86; pointer-events: none; contain: strict; }
+.cm-particle-world--fallback { display: none; }
 .cm-cinematic-symbol { position: absolute; z-index: 1; right: clamp(1rem, 5vw, 5rem); top: 50%; width: min(50vw, 44rem); transform-origin: 65% 50%; translate: 0 -50%; pointer-events: none; }
 .cm-cinematic-symbol .cm-copper-signal { padding: 0; }
 .cm-cinematic-symbol .cm-signal-coordinate,

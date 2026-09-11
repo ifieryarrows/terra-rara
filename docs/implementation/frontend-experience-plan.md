@@ -45,6 +45,10 @@ The root changes intentionally from Overview to landing. Symbol-query-bearing ol
 
 The final CTA remains part of the same cinematic world rather than a detached card: it is a final pinned layer driven by the existing story `scrollYProgress`, so the Possibilities scene can hand off through a restrained copper-to-research bridge without a second local scroll clock. As the `03 / THE POSSIBILITIES` scene exits at `0.84`, the CTA layer and its self-running staggered line-level blind reveal start together; the masks then complete over two seconds without being scrubbed by every scroll delta. On reverse scroll the layer stays mounted while its reveal value eases back to zero over `0.62s`, so the CTA crossfades into the returning story instead of disappearing on a visibility boundary. The action and uncertainty note follow the same short reveal sequence. Static and `prefers-reduced-motion` paths render the identical copy immediately and without a second animation system.
 
+### Particle renderer fallback (2026-09-11)
+
+The landing particle layer now treats WebGL2 shader compilation as an optional acceleration path rather than a route prerequisite. If the browser or GPU rejects the particle shader, the failed context is released and the same scene switches to a balanced Canvas2D renderer on a separate canvas; the animation timeline, pointer response and visibility gating remain shared. This prevents a driver-specific shader failure from reaching the route boundary and showing the generic “Reload this page” screen, while preserving a lower-cost particle field for constrained devices.
+
 ### News Intelligence sequence update (2026-09-10)
 
 The former three-line news scenario is replaced by a continuous `News → Intelligence` product demonstration. The market preview's `FCX` context carries into one deterministic source headline, then the shared scroll timeline reveals semantic entities, a Copper Signal tone spectrum, production-shaped impact fields, and the article-level V2 `reasoning` string. This is documented in the [News Intelligence sequence plan](./frontend-news-intelligence-sequence.md).

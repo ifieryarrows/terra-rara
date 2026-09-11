@@ -145,6 +145,10 @@ function compileShader(gl: WebGL2RenderingContext, type: number, source: string)
   return shader;
 }
 
+function releaseWebglContext(canvas: HTMLCanvasElement) {
+  canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+}
+
 type Renderer = {
   draw: (progress: number, pointerX: number, pointerY: number, time: number, scrollImpulse: number) => void;
   resize: (width: number, height: number, ratio: number) => void;
@@ -313,21 +317,34 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
 
 export function ParticleWorld({ progress, quality = 'high' }: { progress: MotionValue<number>; quality?: ParticleQuality }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fallbackCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const fallbackCanvas = fallbackCanvasRef.current;
+    if (!canvas || !fallbackCanvas) return;
     let activeQuality = quality;
-    let renderer = createWebglRenderer(canvas, quality);
+    let activeCanvas = canvas;
+    let renderer: Renderer | null = null;
+    try {
+      renderer = createWebglRenderer(canvas, quality);
+    } catch (error) {
+      releaseWebglContext(canvas);
+      console.warn('[ParticleWorld] WebGL renderer unavailable; using the Canvas2D fallback.', error);
+    }
     if (!renderer) {
+      releaseWebglContext(canvas);
       activeQuality = 'balanced';
-      renderer = createCanvasRenderer(canvas, activeQuality);
+      activeCanvas = fallbackCanvas;
+      renderer = createCanvasRenderer(activeCanvas, activeQuality);
     }
     if (!renderer) return;
     const config = QUALITY[activeQuality];
-    canvas.dataset.renderer = renderer.name;
-    canvas.dataset.particleCount = String(config.count);
-    canvas.dataset.quality = activeQuality;
+    canvas.style.display = renderer.name === 'webgl2' ? 'block' : 'none';
+    fallbackCanvas.style.display = renderer.name === 'canvas2d' ? 'block' : 'none';
+    activeCanvas.dataset.renderer = renderer.name;
+    activeCanvas.dataset.particleCount = String(config.count);
+    activeCanvas.dataset.quality = activeQuality;
     let frame = 0;
     let visible = true;
     let width = 1;
@@ -359,10 +376,10 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
     };
     const schedule = () => { if (!frame && visible && !document.hidden) frame = window.requestAnimationFrame(draw); };
     const resize = () => {
-      const bounds = canvas.getBoundingClientRect();
+      const bounds = activeCanvas.getBoundingClientRect();
       const ratio = Math.min(window.devicePixelRatio || 1, config.dpr);
       width = Math.max(1, bounds.width); height = Math.max(1, bounds.height);
-      canvas.width = Math.max(1, Math.round(width * ratio)); canvas.height = Math.max(1, Math.round(height * ratio));
+      activeCanvas.width = Math.max(1, Math.round(width * ratio)); activeCanvas.height = Math.max(1, Math.round(height * ratio));
       renderer.resize(width, height, ratio); schedule();
     };
     const onPointerMove = (event: PointerEvent) => { pointerX = event.clientX / width; pointerY = event.clientY / height; schedule(); };
@@ -372,7 +389,7 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
     const unsubscribe = progress.on('change', () => {
       schedule();
     });
-    resizeObserver.observe(canvas); intersectionObserver.observe(canvas);
+    resizeObserver.observe(activeCanvas); intersectionObserver.observe(activeCanvas);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     document.addEventListener('visibilitychange', onVisibility, { passive: true });
     resize();
@@ -386,5 +403,8 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
     };
   }, [progress, quality]);
 
-  return <canvas ref={canvasRef} className="cm-particle-world" data-particle-count={QUALITY[quality].count} data-quality={quality} aria-hidden="true"/>;
+  return <>
+    <canvas ref={canvasRef} className="cm-particle-world" data-particle-count={QUALITY[quality].count} data-quality={quality} aria-hidden="true"/>
+    <canvas ref={fallbackCanvasRef} className="cm-particle-world cm-particle-world--fallback" aria-hidden="true"/>
+  </>;
 }
