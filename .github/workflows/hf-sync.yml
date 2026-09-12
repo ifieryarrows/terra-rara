@@ -33,24 +33,67 @@ jobs:
       - name: Configure production runtime variables
         run: |
           python - <<'PY'
+          import json
           import os
+          from urllib.request import Request, urlopen
           from huggingface_hub import HfApi
 
           api = HfApi(token=os.environ["HF_TOKEN"])
           variables = {
-              "OPENROUTER_MODEL": "minimax/minimax-m2.7:free",
-              "LLM_SENTIMENT_MODEL": "minimax/minimax-m2.7:free",
-              "OPENROUTER_MODEL_SCORING": "minimax/minimax-m2.7:free",
-              "OPENROUTER_MODEL_SCORING_FAST": "minimax/minimax-m2.7:free",
-              "OPENROUTER_MODEL_SCORING_RELIABLE": "minimax/minimax-m3:free",
-              "OPENROUTER_MODEL_COMMENTARY": "minimax/minimax-m3:free",
+              "OPENROUTER_MODEL": "nex-agi/nex-n2.5-mini:free",
+              "LLM_SENTIMENT_MODEL": "nex-agi/nex-n2.5-mini:free",
+              "OPENROUTER_MODEL_SCORING": "nex-agi/nex-n2.5-mini:free",
+              "OPENROUTER_MODEL_SCORING_FAST": "nex-agi/nex-n2.5-mini:free",
+              "OPENROUTER_MODEL_SCORING_RELIABLE": "google/gemma-4-31b-it:free",
+              "OPENROUTER_MODEL_COMMENTARY": "nex-agi/nex-n2.5-mini:free",
+              "OPENROUTER_RPM": "12",
               "OPENROUTER_MAX_RETRIES": "1",
               "OPENROUTER_TIMEOUT_SECONDS": "45",
               "OPENROUTER_CHAIN_DEADLINE_SECONDS": "120",
               "MAX_LLM_ARTICLES_PER_RUN": "100",
-              "OPENROUTER_FALLBACK_MODELS": "google/gemma-4-26b-a4b-it:free,z-ai/glm-5.2:free",
+              "OPENROUTER_FALLBACK_MODELS": "nex-agi/nex-n2.5-mini:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,liquid/lfm-2.5-2.6b:free",
               "XGB_ARTIFACT_SOURCE": "auto",
           }
+          role_models = {
+              variables["OPENROUTER_MODEL"],
+              variables["LLM_SENTIMENT_MODEL"],
+              variables["OPENROUTER_MODEL_SCORING"],
+              variables["OPENROUTER_MODEL_SCORING_FAST"],
+              variables["OPENROUTER_MODEL_SCORING_RELIABLE"],
+              variables["OPENROUTER_MODEL_COMMENTARY"],
+              *[item.strip() for item in variables["OPENROUTER_FALLBACK_MODELS"].split(",") if item.strip()],
+          }
+          catalog_request = Request(
+              "https://openrouter.ai/api/v1/models",
+              headers={"User-Agent": "terra-rara-hf-sync"},
+          )
+          with urlopen(catalog_request, timeout=30) as response:
+              catalog = {
+                  item["id"]: item
+                  for item in json.load(response).get("data", [])
+                  if item.get("id")
+              }
+          missing_models = sorted(role_models - set(catalog))
+          if missing_models:
+              raise RuntimeError(
+                  "OpenRouter model catalog no longer contains configured slugs: "
+                  + ", ".join(missing_models)
+              )
+          structured_roles = (
+              "OPENROUTER_MODEL_SCORING_RELIABLE",
+              "OPENROUTER_MODEL_COMMENTARY",
+          )
+          unsupported_structured = [
+              variables[key]
+              for key in structured_roles
+              if "response_format" not in (catalog[variables[key]].get("supported_parameters") or [])
+          ]
+          if unsupported_structured:
+              raise RuntimeError(
+                  "Configured structured-output roles do not support response_format: "
+                  + ", ".join(sorted(set(unsupported_structured)))
+              )
+          print(f"Validated {len(role_models)} OpenRouter model slugs against the live catalog")
           current_variables = api.get_space_variables("ifieryarrows/copper-mind")
           for key, value in variables.items():
               # Existing production configuration stored some runtime model

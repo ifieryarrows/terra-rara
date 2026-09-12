@@ -89,9 +89,9 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe exact OpenRouter production contracts")
-    parser.add_argument("--fast", default="minimax/minimax-m2.7:free")
-    parser.add_argument("--reliable", default="minimax/minimax-m3:free")
-    parser.add_argument("--commentary", default="minimax/minimax-m3:free")
+    parser.add_argument("--fast", default="nex-agi/nex-n2.5-mini:free")
+    parser.add_argument("--reliable", default="google/gemma-4-31b-it:free")
+    parser.add_argument("--commentary", default="nex-agi/nex-n2.5-mini:free")
     args = parser.parse_args()
     result = asyncio.run(run_probe(fast=args.fast, reliable=args.reliable, commentary_model=args.commentary))
     print(json.dumps(result, indent=2))

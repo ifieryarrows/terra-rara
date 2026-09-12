@@ -89,16 +89,21 @@ class Settings(BaseSettings):
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
-    # Deprecated - kept for backward compatibility
-    openrouter_model: str = "minimax/minimax-m2.7:free"
+    # Deprecated - kept for backward compatibility. Keep this on a currently
+    # listed free model so installations without an explicit env override do
+    # not silently start with a retired OpenRouter slug.
+    openrouter_model: str = "nex-agi/nex-n2.5-mini:free"
     # Keep fast and reliable roles independent so one provider/model removal
-    # cannot collapse the entire LLM path. These defaults passed the project's
-    # exact scoring/commentary contract probe on 2026-08-29.
-    openrouter_model_scoring: str = "minimax/minimax-m2.7:free"
-    openrouter_model_scoring_fast: Optional[str] = "minimax/minimax-m2.7:free"
-    openrouter_model_scoring_reliable: Optional[str] = "minimax/minimax-m3:free"
-    openrouter_model_commentary: str = "minimax/minimax-m3:free"
-    openrouter_rpm: int = 18
+    # cannot collapse the entire LLM path. Nex-N2.5-Mini passed the exact V2
+    # scoring contract probe on 2026-09-12; Gemma 4 31B is the independent
+    # structured-output repair/commentary fallback.
+    openrouter_model_scoring: str = "nex-agi/nex-n2.5-mini:free"
+    openrouter_model_scoring_fast: Optional[str] = "nex-agi/nex-n2.5-mini:free"
+    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-4-31b-it:free"
+    openrouter_model_commentary: str = "nex-agi/nex-n2.5-mini:free"
+    # Stay below the shared free-provider request ceiling. The worker still
+    # uses bounded retries and a per-chain deadline for transient 429s.
+    openrouter_rpm: int = 12
     openrouter_max_retries: int = 1
     openrouter_timeout_seconds: float = 45.0
     openrouter_chain_deadline_seconds: float = 120.0
@@ -110,7 +115,8 @@ class Settings(BaseSettings):
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
     openrouter_fallback_models: Optional[str] = (
-        "google/gemma-4-26b-a4b-it:free,z-ai/glm-5.2:free"
+        "nex-agi/nex-n2.5-mini:free,google/gemma-4-31b-it:free,"
+        "google/gemma-4-26b-a4b-it:free,liquid/lfm-2.5-2.6b:free"
     )
     tokenizers_parallelism: str = "false"
     
@@ -128,7 +134,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "minimax/minimax-m2.7:free"
+    llm_sentiment_model: str = "nex-agi/nex-n2.5-mini:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
@@ -249,7 +255,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model,
             )
-            or "minimax/minimax-m2.7:free"
+            or "nex-agi/nex-n2.5-mini:free"
         )
 
     @property
@@ -267,7 +273,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model_scoring,
             )
-            or "minimax/minimax-m3:free"
+            or "google/gemma-4-31b-it:free"
         )
 
     @property
@@ -279,7 +285,7 @@ class Settings(BaseSettings):
                 self.openrouter_model,
                 self.llm_sentiment_model,
             )
-            or "minimax/minimax-m3:free"
+            or "nex-agi/nex-n2.5-mini:free"
         )
 
     @property
