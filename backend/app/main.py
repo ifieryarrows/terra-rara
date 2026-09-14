@@ -1639,17 +1639,21 @@ async def get_pipeline_run_status(
     "/api/analysis/consensus",
     response_model=ConsensusSignal,
     summary="Get consensus signal",
-    description="Combines XGBoost and TFT-ASRO signals into a directional consensus."
+    description=(
+        "Combines the latest XGBoost snapshot and snapshot-first TFT-ASRO "
+        "signal into a directional consensus."
+    ),
 )
 async def get_consensus(
     symbol: str = Query(default=TARGET_SYMBOL, description="Trading symbol")
 ):
-    from deep_learning.inference.predictor import ensemble_directional_vote, generate_tft_analysis
+    from deep_learning.inference.predictor import ensemble_directional_vote
     
-    # 1. Get TFT analysis
+    # 1. Reuse the TFT endpoint's snapshot-first contract. This keeps the
+    # consensus response semantically identical while avoiding a fresh model
+    # inference when the pipeline already persisted a valid prediction.
     try:
-        with SessionLocal() as session:
-            tft_result = generate_tft_analysis(session, symbol)
+        tft_result = await get_tft_analysis(symbol=symbol, source="snapshot")
             
         if "error" in tft_result:
             raise HTTPException(status_code=500, detail=tft_result["error"])

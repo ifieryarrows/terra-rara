@@ -135,3 +135,28 @@ def test_matching_market_bar_keeps_snapshot_across_weekend_or_holiday(
     assert response.status_code == 200
     assert response.json()["source"] == "snapshot"
     assert response.json()["prediction"]["reference_price_date"] == "2020-01-03"
+
+
+def test_consensus_reuses_matching_tft_snapshot(monkeypatch, tft_api_session_factory):
+    Session = tft_api_session_factory
+    _seed_snapshot_and_price(
+        Session,
+        snapshot_date="2020-01-03",
+        price_date="2020-01-03",
+    )
+
+    calls: list[str] = []
+
+    def fake_generate(_session, symbol):
+        calls.append(symbol)
+        return {"prediction": {"predicted_return_median": 0.25}}
+
+    import deep_learning.inference.predictor as predictor_module
+
+    monkeypatch.setattr(predictor_module, "generate_tft_analysis", fake_generate)
+
+    response = TestClient(main.app).get("/api/analysis/consensus?symbol=HG=F")
+
+    assert response.status_code == 200
+    assert response.json()["tft_return"] == 0.0
+    assert calls == []

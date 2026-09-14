@@ -306,7 +306,9 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
         gl.bindBuffer(gl.ARRAY_BUFFER, toBuffer); gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.points);
         currentSegment = segment;
       }
-      gl.clear(gl.COLOR_BUFFER_BIT); gl.useProgram(program);
+      // The renderer owns this context and binds the program during setup;
+      // avoid redundant per-frame state validation without changing output.
+      gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform1f(amountLocation, (value - previous.at) / Math.max(.001, next.at - previous.at));
       gl.uniform1f(progressLocation, value); gl.uniform1f(timeLocation, time); gl.uniform1f(scrollImpulseLocation, scrollImpulse); gl.uniform1f(ratioLocation, ratio); gl.uniform1f(aspectLocation, width / Math.max(1, height));
       gl.uniform2f(pointerLocation, pointerX, pointerY); gl.drawArrays(gl.POINTS, 0, count);
@@ -337,6 +339,8 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
       const amount = raw * raw * (3 - 2 * raw);
       const earlyTide = smoothstep(.04, .16, value) * (1 - smoothstep(.18, .3, value));
       context.clearRect(0, 0, width, height); context.fillStyle = `rgba(230, 164, 122, ${config.canvasAlpha})`; context.beginPath();
+      const reach = Math.min(width, height) * .095;
+      const scatterBlend = Math.max(0, Math.min(1, (value - .2) / .18));
       for (let index = 0; index < config.count; index += 1) {
         const offset = index * 2;
         let x = previous.points[offset] + (next.points[offset] - previous.points[offset]) * amount;
@@ -350,7 +354,6 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
         x = (.72 + (cLocalX + cDepth * .18) * cPerspective) * width;
         y = (.49 + cLocalY * Math.cos(cAngle) * cPerspective + .018 * cTilt) * height;
         const dx = x - pointerX * width; const dy = y - pointerY * height; const squared = dx * dx + dy * dy;
-        const reach = Math.min(width, height) * .095;
         if (squared > 0 && squared < reach * reach) {
           const distance = Math.sqrt(squared); const force = (1 - distance / reach) * 18;
           x += dx / distance * force; y += dy / distance * force;
@@ -363,7 +366,6 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
         const driftPhaseY = drift[driftOffset + 1] + time * drift[driftOffset + 2] * .73;
         const driftX = Math.sin(driftPhaseX) * drift[driftOffset + 3] * width;
         const driftY = Math.cos(driftPhaseY) * drift[driftOffset + 3] * .68 * height;
-        const scatterBlend = Math.max(0, Math.min(1, (value - .2) / .18));
         const directionPhase = drift[driftOffset] * 1.7 + drift[driftOffset + 1] * .45;
         const impulseSeed = Math.sin(drift[driftOffset] * 12.9898 + drift[driftOffset + 1] * 78.233) * 43758.5453;
         const individualImpulse = .35 + (impulseSeed - Math.floor(impulseSeed)) * .65;

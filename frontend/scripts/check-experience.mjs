@@ -31,7 +31,9 @@ try {
     assert.equal(await page.locator('.cm-news-sequence-layer').count(), 4, 'News sequence has headline, entity, dial and two-read layers');
     const landingText = await page.locator('body').textContent();
     assert.ok(landingText?.includes('LLM rationale'), 'News preview exposes article-level rationale');
-    assert.ok(landingText?.includes('SIGNAL READ'), 'News preview exposes the rotating signal read');
+    const signalRead = page.locator('.cm-news-dial-layer .cm-news-step-label');
+    assert.equal(await signalRead.count(), 1, 'News preview contains the rotating signal read layer');
+    assert.ok((await signalRead.textContent()).includes('SIGNAL READ'), 'News preview exposes the rotating signal read');
     for (const href of ['#market', '#news', '#forecast']) {
       assert.equal(await page.locator(href).count(), 1);
     }

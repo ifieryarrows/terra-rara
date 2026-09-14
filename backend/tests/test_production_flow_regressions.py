@@ -417,6 +417,38 @@ def test_daily_embedding_backfill_only_runs_model_for_missing_rows(monkeypatch, 
     engine.dispose()
 
 
+def test_embedding_batch_insert_is_race_safe_and_ignores_duplicates():
+    from deep_learning.data.embeddings import _insert_embedding_batch
+
+    engine, session = _session_for(NewsEmbedding)
+    payloads = [
+        {
+            "news_processed_id": 101,
+            "embedding_full": b"full-101",
+            "embedding_pca": b"pca-101",
+            "pca_version": "pca2_v1",
+        },
+        {
+            "news_processed_id": 102,
+            "embedding_full": b"full-102",
+            "embedding_pca": b"pca-102",
+            "pca_version": "pca2_v1",
+        },
+    ]
+    try:
+        inserted, skipped = _insert_embedding_batch(session, payloads)
+        session.commit()
+        assert (inserted, skipped) == (2, 0)
+
+        inserted, skipped = _insert_embedding_batch(session, [payloads[0]])
+        session.commit()
+        assert (inserted, skipped) == (0, 1)
+        assert session.query(NewsEmbedding).count() == 2
+    finally:
+        session.close()
+        engine.dispose()
+
+
 def _tiny_booster():
     features = ["feature_a", "feature_b"]
     matrix = xgb.DMatrix(

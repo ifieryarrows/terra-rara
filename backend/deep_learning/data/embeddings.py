@@ -180,6 +180,58 @@ def bytes_to_embedding(data: bytes, dim: int = _EMBEDDING_DIM) -> np.ndarray:
 # DB backfill logic
 # ---------------------------------------------------------------------------
 
+def _insert_embedding_batch(
+    session,
+    payloads: Sequence[dict[str, object]],
+) -> tuple[int, int]:
+    """Insert a batch without per-row existence queries.
+
+    ``news_processed_id`` is unique, so PostgreSQL and SQLite can safely
+    ignore a concurrent duplicate at the database boundary. The fallback
+    keeps the function usable with other SQLAlchemy dialects while still
+    reducing existence checks to one query per batch.
+
+    Returns:
+        ``(inserted_count, skipped_count)`` for the attempted payloads.
+    """
+    if not payloads:
+        return 0, 0
+
+    from app.models import NewsEmbedding
+
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as dialect_insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
+    else:
+        article_ids = [int(payload["news_processed_id"]) for payload in payloads]
+        existing_ids = {
+            int(row[0])
+            for row in session.query(NewsEmbedding.news_processed_id)
+            .filter(NewsEmbedding.news_processed_id.in_(article_ids))
+            .all()
+        }
+        pending = [
+            NewsEmbedding(**payload)
+            for payload in payloads
+            if int(payload["news_processed_id"]) not in existing_ids
+        ]
+        session.add_all(pending)
+        return len(pending), len(payloads) - len(pending)
+
+    statement = (
+        dialect_insert(NewsEmbedding)
+        .values(list(payloads))
+        .on_conflict_do_nothing(
+            index_elements=[NewsEmbedding.news_processed_id]
+        )
+    )
+    result = session.execute(statement)
+    inserted = max(0, int(result.rowcount or 0))
+    return inserted, len(payloads) - inserted
+
+
 def backfill_embeddings(
     *,
     days: int = 180,
@@ -193,7 +245,7 @@ def backfill_embeddings(
         1. Query news_processed rows that lack a corresponding news_embeddings row.
         2. Extract CLS embeddings in batches.
         3. Fit or load PCA model.
-        4. Store reduced embeddings in news_embeddings table.
+        4. Store reduced embeddings in race-safe batches.
     """
     from app.db import SessionLocal
     from app.models import NewsEmbedding, NewsProcessed, NewsRaw
@@ -205,8 +257,6 @@ def backfill_embeddings(
     stats = {"embedded": 0, "skipped": 0, "pca_fitted": False}
 
     with SessionLocal() as session:
-        from sqlalchemy import text as sa_text
-
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
         rows = (
@@ -258,32 +308,31 @@ def backfill_embeddings(
 
         reduced = reduce_embeddings(full_embeddings, pca)
 
-        try:
-            from app.models import NewsEmbedding
-        except ImportError:
-            logger.error("NewsEmbedding model not found - run DB migration first")
-            return stats
+        payloads = [
+            {
+                "news_processed_id": article_id,
+                "embedding_full": embedding_to_bytes(full_embeddings[idx]),
+                "embedding_pca": embedding_to_bytes(reduced[idx]),
+                "pca_version": f"pca{pca_dim}_v1",
+            }
+            for idx, article_id in enumerate(ids)
+        ]
 
-        for idx, article_id in enumerate(ids):
-            existing = session.query(NewsEmbedding).filter(
-                NewsEmbedding.news_processed_id == article_id
-            ).first()
-            if existing:
-                stats["skipped"] += 1
-                continue
-
-            emb = NewsEmbedding(
-                news_processed_id=article_id,
-                embedding_full=embedding_to_bytes(full_embeddings[idx]),
-                embedding_pca=embedding_to_bytes(reduced[idx]),
-                pca_version=f"pca{pca_dim}_v1",
+        # Keep transactions bounded while reducing the previous N existence
+        # queries to one database-level upsert per persistence batch.
+        persist_batch_size = 200
+        for start in range(0, len(payloads), persist_batch_size):
+            batch = payloads[start : start + persist_batch_size]
+            inserted, skipped = _insert_embedding_batch(session, batch)
+            stats["embedded"] += inserted
+            stats["skipped"] += skipped
+            session.commit()
+            logger.info(
+                "Committed embedding batch: %d inserted, %d skipped, %d total",
+                inserted,
+                skipped,
+                stats["embedded"],
             )
-            session.add(emb)
-            stats["embedded"] += 1
-
-            if stats["embedded"] % 200 == 0:
-                session.commit()
-                logger.info("Committed %d embeddings so far", stats["embedded"])
 
         session.commit()
 
