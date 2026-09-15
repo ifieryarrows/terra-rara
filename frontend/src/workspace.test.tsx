@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelsPage } from './pages/ModelsPage';
 import { ValidationPage } from './pages/ValidationPage';
 import { SystemPage } from './pages/SystemPage';
+import { ViewState } from './components/ui/ViewState';
 
 const hooks = vi.hoisted(() => ({ model: vi.fn(), validation: vi.fn(), health: vi.fn() }));
 vi.mock('./hooks/useQueries', () => ({ useTftModelSummary: hooks.model, useBacktestReport: hooks.validation, useSystemStatus: hooks.health }));
@@ -14,6 +15,13 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);
 
 describe('workspace evidence and disclosure', () => {
+  it('makes loading states visibly active without changing their content contract', () => {
+    render(<ViewState kind="loading" title="Loading workspace" description="Retrieving the latest data."/>);
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-busy', 'true');
+    expect(status.querySelector('.cm-state-icon')).toHaveClass('cm-state-icon--loading');
+    expect(status.querySelectorAll('.cm-state-skeleton span')).toHaveLength(3);
+  });
   it('keeps weekly evidence primary and exposes the daily diagnostics on request', async () => {
     hooks.model.mockReturnValue(result({ metrics: { weekly_directional_accuracy: .54, weekly_sample_count: 100, directional_accuracy: .49 } }));
     render(<ModelsPage/>);

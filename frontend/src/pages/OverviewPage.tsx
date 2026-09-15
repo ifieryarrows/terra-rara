@@ -36,9 +36,13 @@ const NewsIntelligencePanel = lazy(() =>
 
 // --- Skeleton Components for perceived performance ---
 const MapSkeleton = () => (
-  <div className="h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl">
+  <div className="cm-map-skeleton h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl" role="status" aria-label="Loading intelligence map">
     <div className="flex flex-col items-center gap-3">
-      <Globe size={32} className="text-copper-500/50 animate-pulse" />
+      <div className="cm-map-skeleton__visual" aria-hidden="true">
+        <span className="cm-map-skeleton__orbit" />
+        <span className="cm-map-skeleton__orbit cm-map-skeleton__orbit--reverse" />
+        <Globe size={32} className="cm-map-skeleton__globe" />
+      </div>
       <span className="text-slate-400 text-xs font-mono">Loading intelligence map...</span>
     </div>
   </div>
@@ -553,7 +557,8 @@ export const OverviewPage = () => {
         <aside id="news-intelligence" className="cm-news-sidebar min-w-0">
           <Suspense
             fallback={
-              <div className="glass-panel h-full min-h-[480px] flex items-center justify-center">
+              <div className="glass-panel cm-news-loading h-full min-h-[480px] flex items-center justify-center gap-3" role="status">
+                <span className="cm-inline-loader" aria-hidden="true" />
                 <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
                   Loading news…
                 </span>

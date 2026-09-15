@@ -60,15 +60,28 @@
 .cm-button:disabled { opacity: .5; cursor: wait; }
 .cm-view-state { min-width: 0; display: flex; align-items: flex-start; flex-direction: column; gap: 1rem; padding: clamp(1.5rem, 4vw, 3rem); border: 1px solid var(--cm-border); border-radius: var(--cm-radius); background: var(--cm-surface); }
 .cm-state-icon { color: var(--cm-copper); flex-shrink: 0; }
+.cm-state-icon--loading { animation: cm-loading-spin 1.1s linear infinite; }
 .cm-view-state h2 { font-size: 1.2rem; font-weight: 500; letter-spacing: -.02em; }
 .cm-view-state > p { max-width: 38rem; font-size: .875rem; line-height: 1.7; color: var(--cm-muted); overflow-wrap: anywhere; }
 .cm-view-state--error { border-left: 2px solid var(--cm-negative); }
 .cm-view-state--error .cm-state-icon { color: var(--cm-negative); }
 .cm-view-state--compact { padding: 1.5rem; border: 0; min-height: 12rem; justify-content: center; }
 .cm-state-skeleton { width: min(100%, 35rem); display: grid; gap: .7rem; }
-.cm-state-skeleton span { height: .65rem; background: var(--cm-surface-raised); border-radius: .2rem; }
-.cm-state-skeleton span:nth-child(2) { width: 85%; }
-.cm-state-skeleton span:nth-child(3) { width: 60%; }
+.cm-state-skeleton span { height: .65rem; overflow: hidden; background: linear-gradient(90deg, var(--cm-surface-raised) 0%, #263750 50%, var(--cm-surface-raised) 100%); background-size: 220% 100%; border-radius: .2rem; animation: cm-skeleton-shimmer 1.55s var(--cm-ease) infinite; }
+.cm-state-skeleton span:nth-child(2) { width: 85%; animation-delay: 120ms; }
+.cm-state-skeleton span:nth-child(3) { width: 60%; animation-delay: 240ms; }
+.cm-map-skeleton__visual { position: relative; display: grid; place-items: center; width: 4rem; height: 4rem; perspective: 8rem; }
+.cm-map-skeleton__globe { position: relative; z-index: 1; color: #e6a47a80; animation: cm-map-globe-pulse 1.8s ease-in-out infinite; }
+.cm-map-skeleton__orbit { position: absolute; width: 3.8rem; height: 1.75rem; border: 1px solid #e6a47a66; border-radius: 50%; animation: cm-map-orbit 2.2s linear infinite; }
+.cm-map-skeleton__orbit::after { content: ''; position: absolute; top: 50%; left: -.2rem; width: .35rem; height: .35rem; transform: translateY(-50%); border-radius: 50%; background: var(--cm-copper); box-shadow: 0 0 .65rem #e6a47a99; }
+.cm-map-skeleton__orbit--reverse { width: 1.75rem; height: 3.8rem; border-color: #9bbcfb55; animation-name: cm-map-orbit-reverse; animation-duration: 1.9s; opacity: .7; }
+.cm-map-skeleton__orbit--reverse::after { background: var(--cm-forecast); box-shadow: 0 0 .65rem #9bbcfb99; }
+.cm-inline-loader { width: 1rem; height: 1rem; flex: 0 0 auto; border: 2px solid #e6a47a33; border-top-color: var(--cm-copper); border-radius: 50%; animation: cm-loading-spin .9s linear infinite; }
+@keyframes cm-loading-spin { to { transform: rotate(360deg); } }
+@keyframes cm-skeleton-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@keyframes cm-map-globe-pulse { 0%, 100% { opacity: .55; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.04); } }
+@keyframes cm-map-orbit { from { transform: rotateX(62deg) rotateZ(0deg); } to { transform: rotateX(62deg) rotateZ(360deg); } }
+@keyframes cm-map-orbit-reverse { from { transform: rotateY(62deg) rotateZ(360deg); } to { transform: rotateY(62deg) rotateZ(0deg); } }
 .cm-table-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--cm-border); border-radius: var(--cm-radius); background: var(--cm-surface); }
 .cm-table { width: 100%; min-width: 34rem; border-collapse: collapse; font-size: .875rem; text-align: left; font-variant-numeric: tabular-nums; }
 .cm-table caption { text-align: left; color: var(--cm-muted); font: .75rem/1.7 var(--cm-font-family); padding: 1rem; caption-side: bottom; border-top: 1px solid var(--cm-border); }
