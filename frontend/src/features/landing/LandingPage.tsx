@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
-import { animate, motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
+import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import { Hero } from './Hero';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
+import { CINEMATIC_ENTRY_TRIGGER } from './cinematic-entry';
 import './landing.css';
 
 const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
@@ -20,35 +21,6 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
     <motion.span className="cm-enter-reveal-text" style={progress ? { opacity: textOpacity, y: textY } : undefined}>{children}</motion.span>
     {progress ? <motion.span className="cm-enter-reveal-mask" style={{ x: maskX }} aria-hidden="true"/> : null}
   </span>;
-}
-
-const CINEMATIC_ENTRY_TRIGGER = .93;
-const CINEMATIC_ENTRY_RESET = .87;
-
-function useAutoReveal(progress: MotionValue<number>, trigger = CINEMATIC_ENTRY_TRIGGER, reset = CINEMATIC_ENTRY_RESET) {
-  const reveal = useMotionValue(0);
-  const animation = useRef<ReturnType<typeof animate> | null>(null);
-  const triggered = useRef(false);
-  useEffect(() => {
-    const update = (value: number) => {
-      if (value >= trigger && !triggered.current) {
-        triggered.current = true;
-        animation.current?.stop();
-        animation.current = animate(reveal, 1, { duration: 2, ease: [0.22, 0.61, 0.36, 1] });
-      } else if (value < reset && triggered.current) {
-        triggered.current = false;
-        animation.current?.stop();
-        animation.current = animate(reveal, 0, { duration: .62, ease: [0.4, 0, 0.2, 1] });
-      }
-    };
-    update(progress.get());
-    const unsubscribe = progress.on('change', update);
-    return () => {
-      unsubscribe();
-      animation.current?.stop();
-    };
-  }, [progress, reset, reveal, trigger]);
-  return reveal;
 }
 
 function EntryCTAContent({ progress, revealProgress, animated, cinematic = false }: { progress: MotionValue<number> | null; revealProgress?: MotionValue<number>; animated: boolean; cinematic?: boolean }) {
@@ -73,8 +45,7 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
   </>;
 }
 
-function CinematicEntryCTA({ progress }: { progress: MotionValue<number> }) {
-  const revealProgress = useAutoReveal(progress);
+function CinematicEntryCTA({ progress, revealProgress }: { progress: MotionValue<number>; revealProgress: MotionValue<number> }) {
   const opacity = useTransform(revealProgress, [0, .1], [0, 1]);
   const y = useTransform(revealProgress, [0, .1], [28, 0]);
   const visibility = useTransform(revealProgress, value => value > .001 ? 'visible' : 'hidden');
@@ -91,7 +62,7 @@ export function LandingPage() {
   return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
     <a className="cm-skip" href="#main-content">Skip to content</a>
     <main id="main-content" tabIndex={-1}>
-      {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={progress => <CinematicEntryCTA progress={progress}/>}/></Suspense> : <>
+      {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={(progress, revealProgress) => <CinematicEntryCTA progress={progress} revealProgress={revealProgress}/>}/></Suspense> : <>
         <Hero enhanced={false}/>
         <section id="research" className="cm-research-intro" aria-labelledby="research-title"><p className="cm-eyebrow">THE CONNECTED VIEW</p><h2 id="research-title">A price is a point.<br/><span>Intelligence is the connection.</span></h2><p>Move from market structure to evidence in one connected view.</p><div className="cm-capabilities">{[{label:'Market context',icon:ChartNoAxesCombined},{label:'News intelligence',icon:Newspaper},{label:'Forecast ranges',icon:ScanLine},{label:'Model validation',icon:ShieldCheck}].map(({label,icon:Icon},i)=><div key={label}><span className="cm-capability-index">0{i+1}</span><Icon size={22} strokeWidth={1.4} aria-hidden="true"/><span>{label}</span></div>)}</div></section>
         <ResearchStory enhanced={false}/>

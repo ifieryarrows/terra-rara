@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { MotionValue } from 'framer-motion';
+import { getCinematicParticleProgress } from './cinematic-entry';
 
 export type ParticleQuality = 'high' | 'balanced';
 
@@ -379,7 +380,7 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
   };
 }
 
-export function ParticleWorld({ progress, quality = 'high' }: { progress: MotionValue<number>; quality?: ParticleQuality }) {
+export function ParticleWorld({ progress, releaseProgress, quality = 'high' }: { progress: MotionValue<number>; releaseProgress?: MotionValue<number>; quality?: ParticleQuality }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fallbackCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -428,7 +429,9 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
       const deltaTime = Math.min(50, Math.max(0, timestamp - previousTimestamp));
       elapsed += Math.min(32, deltaTime);
       previousTimestamp = timestamp;
-      targetProgress = Math.max(0, Math.min(1, progress.get()));
+      const scrollProgress = Math.max(0, Math.min(1, progress.get()));
+      const release = releaseProgress?.get() ?? 0;
+      targetProgress = getCinematicParticleProgress(scrollProgress, release);
       const response = 1 - Math.exp(-deltaTime / PARTICLE_RESPONSE_MS);
       particleProgress += (targetProgress - particleProgress) * response;
       if (Math.abs(targetProgress - particleProgress) < .0001) particleProgress = targetProgress;
@@ -453,6 +456,9 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
     const unsubscribe = progress.on('change', () => {
       schedule();
     });
+    const unsubscribeRelease = releaseProgress?.on('change', () => {
+      schedule();
+    });
     resizeObserver.observe(activeCanvas); intersectionObserver.observe(activeCanvas);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     document.addEventListener('visibilitychange', onVisibility, { passive: true });
@@ -460,6 +466,7 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
 
     return () => {
       unsubscribe();
+      unsubscribeRelease?.();
       if (frame) window.cancelAnimationFrame(frame);
       resizeObserver.disconnect(); intersectionObserver.disconnect();
       window.removeEventListener('pointermove', onPointerMove); document.removeEventListener('visibilitychange', onVisibility);
@@ -472,7 +479,7 @@ export function ParticleWorld({ progress, quality = 'high' }: { progress: Motion
         element.style.display = '';
       }
     };
-  }, [progress, quality]);
+  }, [progress, quality, releaseProgress]);
 
   return <>
     <canvas ref={canvasRef} className="cm-particle-world" data-particle-count={QUALITY[quality].count} data-quality={quality} aria-hidden="true"/>

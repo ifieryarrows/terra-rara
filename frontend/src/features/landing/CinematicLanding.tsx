@@ -5,6 +5,8 @@ import { motion, useScroll, useTransform, type MotionValue } from 'framer-motion
 import { CopperSignal } from './CopperSignal';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
+import { createCinematicWheelDampener } from './cinematic-scroll';
+import { useCinematicEntryReveal } from './cinematic-entry';
 import './cinematic.css';
 
 const beats = [
@@ -25,7 +27,7 @@ const beats = [
   },
 ] as const;
 
-type CinematicEntryRenderer = (progress: MotionValue<number>) => ReactNode;
+type CinematicEntryRenderer = (progress: MotionValue<number>, revealProgress: MotionValue<number>) => ReactNode;
 
 function BackgroundWord({ progress, word, range, reverse = false }: { progress: MotionValue<number>; word: string; range: [number, number, number, number]; reverse?: boolean }) {
   const opacity = useTransform(progress, range, [0, .12, .12, 0]);
@@ -120,7 +122,7 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   </article>;
 }
 
-function StickyWorld({ progress, quality }: { progress: MotionValue<number>; quality: ParticleQuality }) {
+function StickyWorld({ progress, releaseProgress, quality }: { progress: MotionValue<number>; releaseProgress: MotionValue<number>; quality: ParticleQuality }) {
   const signalOpacity = useTransform(progress, [0, .11, .22], [1, .75, 0]);
   const signalScale = useTransform(progress, [0, .16, .23], [1, 1.03, 1.16]);
   const signalRotate = useTransform(progress, [0, .23], [0, -5]);
@@ -136,7 +138,7 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
       <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .69, .75]} reverse/>
       <BackgroundWord progress={progress} word="RESEARCH" range={[.92, .95, .99, 1]}/>
     </div>
-    <ParticleWorld progress={progress} quality={quality}/>
+    <ParticleWorld progress={progress} releaseProgress={releaseProgress} quality={quality}/>
     <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>
     <DashboardComposition progress={progress}/>
     <div className="cm-cinematic-progress" aria-hidden="true"><motion.span style={{ scaleX: progress }}/></div>
@@ -146,6 +148,7 @@ function StickyWorld({ progress, quality }: { progress: MotionValue<number>; qua
 export function CinematicLanding({ quality = 'high', entry }: { quality?: ParticleQuality; entry?: CinematicEntryRenderer }) {
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
+  const entryRevealProgress = useCinematicEntryReveal(scrollYProgress);
   useEffect(() => {
     const scene = ref.current;
     if (!scene) return;
@@ -164,20 +167,25 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
       schedule();
     };
     const onPointerLeave = () => { x = 72; y = 46; schedule(); };
+    const wheelDampener = createCinematicWheelDampener();
+    const onWheel = (event: WheelEvent) => { wheelDampener.handleWheel(event); };
     scene.addEventListener('pointermove', onPointerMove, { passive: true });
     scene.addEventListener('pointerleave', onPointerLeave, { passive: true });
+    scene.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       scene.removeEventListener('pointermove', onPointerMove);
       scene.removeEventListener('pointerleave', onPointerLeave);
+      scene.removeEventListener('wheel', onWheel);
+      wheelDampener.dispose();
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, []);
   return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
-    <StickyWorld progress={scrollYProgress} quality={quality}/>
+    <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality}/>
     <div className="cm-cinematic-copy">
       <HeroCopy progress={scrollYProgress}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }
     </div>
-    {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress)}</div> : null}
+    {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress, entryRevealProgress)}</div> : null}
   </section>;
 }
