@@ -1,0 +1,33 @@
+.cm-terra-cursor-dust { position: fixed; z-index: 9998; inset: 0; display: block; width: 100vw; height: 100vh; pointer-events: none; }
+
+#root.cm-terra-cursor-enabled,
+#root.cm-terra-cursor-enabled * {
+  cursor: var(--cm-terra-cursor, auto) !important;
+}
+
+#root.cm-terra-cursor-enabled a,
+#root.cm-terra-cursor-enabled button,
+#root.cm-terra-cursor-enabled [role="button"],
+#root.cm-terra-cursor-enabled [role="tab"],
+#root.cm-terra-cursor-enabled summary,
+#root.cm-terra-cursor-enabled [data-cursor="interactive"],
+#root.cm-terra-cursor-enabled a *,
+#root.cm-terra-cursor-enabled button *,
+#root.cm-terra-cursor-enabled [role="button"] *,
+#root.cm-terra-cursor-enabled [role="tab"] *,
+#root.cm-terra-cursor-enabled summary *,
+#root.cm-terra-cursor-enabled [data-cursor="interactive"] * {
+  cursor: var(--cm-terra-cursor-interactive, pointer) !important;
+}
+
+#root.cm-terra-cursor-enabled input,
+#root.cm-terra-cursor-enabled textarea,
+#root.cm-terra-cursor-enabled [contenteditable="true"],
+#root.cm-terra-cursor-enabled [contenteditable="true"] * { cursor: text !important; }
+#root.cm-terra-cursor-enabled select { cursor: auto !important; }
+
+@media (prefers-reduced-motion: reduce), (pointer: coarse) {
+  .cm-terra-cursor-dust { display: none; }
+  #root.cm-terra-cursor-enabled,
+  #root.cm-terra-cursor-enabled * { cursor: auto !important; }
+}

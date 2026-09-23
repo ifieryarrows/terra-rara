@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MotionConfig } from 'framer-motion';
 import { LandingPage } from './features/landing/LandingPage';
 import { RouteBoundary } from './components/ui/RouteBoundary';
+import { TerraCursor } from './components/ui/TerraCursor';
 import { motionTokens } from './design/motion';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import './App.css';
@@ -84,5 +85,5 @@ export function AppRoutes() {
   </Routes></Suspense></RouteBoundary></MotionConfig>;
 }
 export default function App() {
-  return <QueryClientProvider client={queryClient}><BrowserRouter><AppRoutes/><SpeedInsights/></BrowserRouter></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><BrowserRouter><TerraCursor/><AppRoutes/><SpeedInsights/></BrowserRouter></QueryClientProvider>;
 }
