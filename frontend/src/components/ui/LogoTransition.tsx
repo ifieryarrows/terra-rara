@@ -1,10 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, type LinkProps } from 'react-router-dom';
 import { useReducedMotion } from 'framer-motion';
 import { BrandMark } from './BrandMark';
 import { TERRA_RARA_MARK_STAR_PATH } from './brand-mark-geometry';
-import { TerraAtmosphere } from './TerraAtmosphere';
-import './LogoTransition.css';
+
+const TransitionAtmosphere = lazy(() => import('./TerraAtmosphere').then(module => ({ default: module.TerraAtmosphere })));
+const transitionStylesReady = import('./LogoTransition.css').then(() => true, () => false);
 
 type TransitionPhase = 'scatter' | 'assemble' | 'hold' | 'release' | 'reveal';
 type TransitionOrigin = { left: number; top: number; width: number; height: number };
@@ -243,19 +244,26 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const startTransition = useCallback((to = '/dashboard', source?: TransitionOrigin) => {
     if (started.current) return;
     started.current = true;
-    navigationStarted.current = false;
-    const useStaticMotion = reducedMotionPreference !== false;
-    document.documentElement.dataset.cmRouteTransition = 'leaving';
-    destination.current = to;
-    setOrigin(source ?? null);
-    setReducedMotion(useStaticMotion);
-    setActive(true);
-    if (useStaticMotion) {
-      setPhase('hold');
-    } else {
-      setPhase('scatter');
-    }
-  }, [reducedMotionPreference]);
+    void transitionStylesReady.then(stylesReady => {
+      if (!stylesReady) {
+        started.current = false;
+        navigate(to, { preventScrollReset: true });
+        return;
+      }
+      navigationStarted.current = false;
+      const useStaticMotion = reducedMotionPreference !== false;
+      document.documentElement.dataset.cmRouteTransition = 'leaving';
+      destination.current = to;
+      setOrigin(source ?? null);
+      setReducedMotion(useStaticMotion);
+      setActive(true);
+      if (useStaticMotion) {
+        setPhase('hold');
+      } else {
+        setPhase('scatter');
+      }
+    });
+  }, [navigate, reducedMotionPreference]);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -417,7 +425,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   return <TransitionContext.Provider value={startTransition}>
     {children}
     {active && <div className={`cm-logo-transition cm-logo-transition--${phase}${reducedMotion ? ' cm-logo-transition--reduced' : ''}`} role="status" aria-live="polite" aria-label="Opening CopperMind workspace">
-      <TerraAtmosphere className="cm-terra-atmosphere--transition"/>
+      <Suspense fallback={null}><TransitionAtmosphere className="cm-terra-atmosphere--transition"/></Suspense>
       <div className="cm-logo-transition__backdrop"/>
       <LogoParticleField phase={phase} reducedMotion={reducedMotion} origin={origin}/>
       <div className="cm-logo-transition__glow" aria-hidden="true"/>

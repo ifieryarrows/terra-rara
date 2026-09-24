@@ -4,13 +4,13 @@ import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-m
 import { Hero } from './Hero';
 import { BrandMark } from '../../components/ui/BrandMark';
 import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
-import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
 import { CINEMATIC_ENTRY_TRIGGER } from './cinematic-entry';
 import './landing.css';
 
 const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
+const TerraAtmosphere = lazy(() => import('../../components/ui/TerraAtmosphere').then(module => ({ default: module.TerraAtmosphere })));
 
 function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration = .16, className = '', children }: { progress: MotionValue<number> | null; index: number; startAt?: number; step?: number; duration?: number; className?: string; children: ReactNode }) {
   const staticProgress = useMotionValue(1);
@@ -65,7 +65,7 @@ function StaticEntryCTA() {
 export function LandingPage() {
   const { enhanced, quality } = useExperiencePolicy();
   return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
-    {!enhanced ? <TerraAtmosphere className="cm-terra-atmosphere--landing-static"/> : null}
+    {!enhanced ? <Suspense fallback={<div aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', background: '#080e17' }}/>}><TerraAtmosphere className="cm-terra-atmosphere--landing-static"/></Suspense> : null}
     <a className="cm-skip" href="#main-content">Skip to content</a>
     <main id="main-content" tabIndex={-1}>
       {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={(progress, revealProgress) => <CinematicEntryCTA progress={progress} revealProgress={revealProgress}/>}/></Suspense> : <>

@@ -1,8 +1,41 @@
-/* Loaded with AppShell. Landing does not pay for workspace-specific controls. */
+/* Workspace-only foundations load with AppShell, keeping them out of the landing bundle. */
+.cm-panel { min-width: 0; padding: var(--cm-space-panel); background: color-mix(in srgb, var(--cm-surface) 92%, transparent); border: 1px solid var(--cm-border); border-radius: var(--cm-radius); }
+.cm-panel-title { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.25rem; color: var(--cm-muted); font-size: .875rem; font-weight: 500; }
+.cm-panel-title svg { color: var(--cm-copper); flex-shrink: 0; }
+.cm-panel-body { position: relative; }
+.cm-financial-panel { grid-column: span 12; }
+.cm-metric-label { color: var(--cm-muted); font-size: .875rem; line-height: 1.4; }
+.cm-metric-value { margin: .5rem 0; font: 500 1.5rem/1.2 var(--cm-font-family); font-variant-numeric: tabular-nums; }
+.cm-metric-hint { color: var(--cm-muted); font-size: .75rem; line-height: 1.5; }
+.cm-tone-good { color: var(--cm-positive); }
+.cm-tone-bad { color: var(--cm-negative); }
+.cm-tone-neutral { color: var(--cm-text); }
+.cm-workspace { position: relative; isolation: isolate; min-height: 100svh; color: var(--cm-text); background: transparent; }
+.cm-workspace-header { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--cm-bg) 78%, transparent); border-bottom: 1px solid var(--cm-border); backdrop-filter: blur(14px); }
+.cm-workspace-bar { max-width: var(--cm-content-width); margin: auto; padding: .85rem clamp(1rem, 3vw, 2.5rem); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
+.cm-workspace-nav { display: flex; gap: .3rem; }
+.cm-nav-link { min-height: 2.75rem; display: inline-flex; align-items: center; gap: .5rem; padding: .65rem .9rem; border-radius: .5rem; color: var(--cm-muted); font-size: .875rem; text-decoration: none; border: 1px solid transparent; }
+.cm-nav-link:hover { color: var(--cm-text); background: var(--cm-surface); }
+.cm-nav-link[aria-current=page] { color: var(--cm-copper); background: var(--cm-copper-soft); border-color: #e6a47a35; }
+.cm-workspace-main { position: relative; z-index: 1; max-width: var(--cm-content-width); margin: auto; padding: 2rem clamp(1rem, 3vw, 2.5rem); min-width: 0; }
+.cm-workspace-main:focus { outline: none; }
+.cm-workspace-main > div > .flex.items-end.justify-between { flex-wrap: wrap; align-items: flex-start; gap: 1rem; }
+.cm-workspace-footer { position: relative; z-index: 1; max-width: var(--cm-content-width); margin: auto; border-top: 1px solid var(--cm-border); padding: 1.5rem clamp(1rem, 3vw, 2.5rem); display: flex; flex-wrap: wrap; gap: .7rem; justify-content: space-between; color: var(--cm-muted); font-size: .75rem; }
+.cm-overview-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; padding-bottom: 1.5rem; border-bottom: 1px solid var(--cm-border); }
+.cm-quote-strip { display: flex; flex-wrap: wrap; min-width: 0; gap: 1rem; align-items: center; }
+.cm-quote { width: min(100%, 23rem); min-width: 0; padding: .85rem; border: 1px solid var(--cm-border); border-radius: .65rem; background: var(--cm-surface); }
 .cm-overview-tools, .cm-chart-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
 .cm-overview-header { align-items: center; }
 .cm-quote-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: min(100%, 35rem); }
 .cm-quote-strip .cm-quote { width: auto; }
+@media (min-width: 1280px) { .cm-financial-panel { grid-column: span var(--cm-panel-span, 12); } }
+@media (max-width: 639px) {
+  .cm-workspace-bar { gap: .7rem; }
+  .cm-workspace-nav { width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); gap: .25rem; }
+  .cm-nav-link { justify-content: center; flex-direction: column; gap: .25rem; padding: .45rem .2rem; font-size: .75rem; }
+  .cm-quote-strip, .cm-quote { width: 100%; }
+  .cm-workspace-main { padding-top: 1.5rem; }
+}
 .cm-overview-tools nav { display: flex; flex-wrap: wrap; gap: .5rem; }
 .cm-overview-tools a, .cm-text-link { display: inline-flex; align-items: center; min-height: 2.75rem; padding: .4rem .65rem; color: var(--cm-copper); font-size: .875rem; }
 .cm-chart-period { display: flex; flex-wrap: wrap; gap: .4rem; }
