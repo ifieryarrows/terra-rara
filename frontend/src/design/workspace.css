@@ -130,3 +130,75 @@
   .cm-status-row > div { justify-content: flex-start; text-align: left; }
   .cm-page-actions { width: 100%; }
 }
+
+/* Start the workspace cascade only after the logo particles have dispersed. */
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main [data-cm-route-reveal="copy"] {
+  animation: cm-route-copy-reveal 560ms var(--cm-ease) backwards;
+  animation-delay: var(--cm-route-reveal-delay, 0ms);
+}
+
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main [data-cm-route-reveal="surface"],
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main > div > section,
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main .cm-system-grid > .cm-panel,
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main .cm-metric-grid > * {
+  animation: cm-route-surface-reveal 660ms var(--cm-ease) backwards;
+  animation-delay: var(--cm-route-reveal-delay, 140ms);
+}
+
+.cm-page-header [data-cm-route-reveal="copy"]:first-child { --cm-route-reveal-delay: 0ms; }
+.cm-page-header h1[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 65ms; }
+.cm-page-header .cm-page-description[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 130ms; }
+.cm-page-actions[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 190ms; }
+.cm-section-header .cm-eyebrow[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 0ms; }
+.cm-section-header h2[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 55ms; }
+.cm-section-header .cm-section-description[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 110ms; }
+
+.cm-overview-header > div:first-child > [data-cm-route-reveal="copy"]:first-child { --cm-route-reveal-delay: 0ms; }
+.cm-overview-header h1[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 70ms; }
+.cm-overview-header > div:first-child > [data-cm-route-reveal="copy"]:last-child { --cm-route-reveal-delay: 140ms; }
+.cm-quote-strip > :first-child { --cm-route-reveal-delay: 130ms; }
+.cm-quote-strip > :last-child { --cm-route-reveal-delay: 220ms; }
+.cm-overview-tools[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 260ms; }
+.cm-workspace-main [role="status"][data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 330ms; }
+.cm-dashboard-primary-column[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 410ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(1) { --cm-route-reveal-delay: 760ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(2) { --cm-route-reveal-delay: 870ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(3) { --cm-route-reveal-delay: 980ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(4) { --cm-route-reveal-delay: 1090ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(5) { --cm-route-reveal-delay: 1200ms; }
+.cm-dashboard-primary-column > .cm-financial-panel:nth-child(6) { --cm-route-reveal-delay: 1310ms; }
+.cm-news-sidebar[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 560ms; }
+.cm-workspace-main #market-map[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 1040ms; }
+.cm-news-panel[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 830ms; }
+.cm-heatmap[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 1220ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(1) { --cm-route-reveal-delay: 870ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(2) { --cm-route-reveal-delay: 930ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(3) { --cm-route-reveal-delay: 990ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(4) { --cm-route-reveal-delay: 1050ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(5) { --cm-route-reveal-delay: 1110ms; }
+.cm-news-scroll .cm-news-card:nth-of-type(n+6) { --cm-route-reveal-delay: 1170ms; }
+
+.cm-workspace-main > div > section:nth-of-type(1) { --cm-route-reveal-delay: 150ms; }
+.cm-workspace-main > div > section:nth-of-type(2) { --cm-route-reveal-delay: 230ms; }
+.cm-workspace-main > div > section:nth-of-type(3) { --cm-route-reveal-delay: 310ms; }
+.cm-system-grid > .cm-panel:nth-child(1) { --cm-route-reveal-delay: 190ms; }
+.cm-system-grid > .cm-panel:nth-child(2) { --cm-route-reveal-delay: 280ms; }
+.cm-metric-grid > :nth-child(1) { --cm-route-reveal-delay: 205ms; }
+.cm-metric-grid > :nth-child(2) { --cm-route-reveal-delay: 255ms; }
+.cm-metric-grid > :nth-child(3) { --cm-route-reveal-delay: 305ms; }
+.cm-metric-grid > :nth-child(4) { --cm-route-reveal-delay: 355ms; }
+.cm-metric-grid > :nth-child(5) { --cm-route-reveal-delay: 405ms; }
+.cm-metric-grid > :nth-child(6) { --cm-route-reveal-delay: 455ms; }
+.cm-metric-grid > :nth-child(7) { --cm-route-reveal-delay: 505ms; }
+.cm-metric-grid > :nth-child(8) { --cm-route-reveal-delay: 555ms; }
+.cm-metric-grid > :nth-child(9) { --cm-route-reveal-delay: 605ms; }
+.cm-metric-grid > :nth-child(10) { --cm-route-reveal-delay: 655ms; }
+.cm-metric-grid > :nth-child(11) { --cm-route-reveal-delay: 705ms; }
+.cm-metric-grid > :nth-child(12) { --cm-route-reveal-delay: 755ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-cm-route-transition="arriving"] .cm-workspace-main [data-cm-route-reveal],
+  .cm-workspace-main > div > section,
+  .cm-workspace-main .cm-system-grid > .cm-panel,
+  .cm-workspace-main .cm-metric-grid > * { animation: none !important; }
+}

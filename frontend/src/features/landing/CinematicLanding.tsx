@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUpRight } from 'lucide-react';
 import { motion, useScroll, useTransform, type MotionValue } from 'framer-motion';
 import { CopperSignal } from './CopperSignal';
+import { BrandMark } from '../../components/ui/BrandMark';
+import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
+import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
 import { createCinematicWheelDampener } from './cinematic-scroll';
@@ -38,24 +41,6 @@ function BackgroundWord({ progress, word, range, reverse = false }: { progress: 
   return <motion.span className="cm-background-word" style={{ opacity, visibility, x, scale, clipPath }}>{word}</motion.span>;
 }
 
-function Atmosphere({ progress }: { progress: MotionValue<number> }) {
-  const backgroundColor = useTransform(progress, [0, .25, .5, .75, 1], ['#080e17', '#0b1218', '#0a101a', '#090f1b', '#0b1119']);
-  const copperX = useTransform(progress, [0, .5, 1], ['8%', '42%', '74%']);
-  const blueX = useTransform(progress, [0, .5, 1], ['96%', '72%', '38%']);
-  const bandX = useTransform(progress, [0, 1], ['-16%', '16%']);
-  const starsOpacity = useTransform(progress, [0, .24, .72, 1], [.46, .72, .56, .68]);
-  const starsX = useTransform(progress, [0, 1], ['0%', '-4%']);
-  const starsY = useTransform(progress, [0, 1], ['0%', '2%']);
-  return <motion.div className="cm-global-atmosphere" style={{ backgroundColor }} aria-hidden="true">
-    <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--copper" style={{ x: copperX }}/>
-    <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--blue" style={{ x: blueX }}/>
-    <motion.div className="cm-atmosphere-band" style={{ x: bandX }}/>
-    <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, x: starsX, y: starsY }}/>
-    <div className="cm-atmosphere-pointer"/>
-    <div className="cm-atmosphere-grain"/>
-  </motion.div>;
-}
-
 function SceneSurface({ progress, range, persist = false, children }: { progress: MotionValue<number>; range: [number, number, number, number]; persist?: boolean; children: ReactNode }) {
   const opacity = useTransform(progress, range, persist ? [0, 1, 1, 1] : [0, 1, 1, 0]);
   const visibility = useTransform(progress, value => value >= range[0] && (persist || value <= range[3]) ? 'visible' : 'hidden');
@@ -85,13 +70,13 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
   const blur = useTransform(progress, [.1, .2], ['blur(0px)', 'blur(10px)']);
   return <article className="cm-cinematic-beat cm-cinematic-hero" aria-labelledby="hero-title">
     <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur }}>
-      <p className="cm-eyebrow"><span className="cm-eyebrow-line"/>COPPER INTELLIGENCE / TERRA RARA</p>
-      <h1 id="hero-title">Read the market.<br/><span>See the structure.</span></h1>
-      <p className="cm-hero-description">Behind every copper price, a bigger picture.</p>
-      <p className="cm-hero-detail">Market, news, forecasts and evidence in one workspace.</p>
-      <div className="cm-hero-actions"><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></Link><a href="#market" className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
-      <nav className="cm-hero-capabilities" aria-label="Explore the platform"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><Link to="/validation">Validation</Link></nav>
-      <p className="cm-hero-caption">Built around copper. Designed for perspective.</p>
+      <p className="cm-eyebrow cm-brand-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
+      <h1 id="hero-title" data-cm-route-reveal="copy">Read the market.<br/><span>See the structure.</span></h1>
+      <p className="cm-hero-description" data-cm-route-reveal="copy">Behind every copper price, a bigger picture.</p>
+      <p className="cm-hero-detail" data-cm-route-reveal="copy">Market, news, forecasts and evidence in one workspace.</p>
+      <div className="cm-hero-actions" data-cm-route-reveal="surface"><EnterWorkspaceLink className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></EnterWorkspaceLink><a href="#market" className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
+      <nav className="cm-hero-capabilities" aria-label="Explore the platform" data-cm-route-reveal="surface"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><Link to="/validation">Validation</Link></nav>
+      <p className="cm-hero-caption" data-cm-route-reveal="copy">Built around copper. Designed for perspective.</p>
     </motion.div>
   </article>;
 }
@@ -130,7 +115,7 @@ function StickyWorld({ progress, releaseProgress, quality }: { progress: MotionV
   const signalPath = useTransform(progress, [0, .14], [.66, 1]);
   const signalVisibility = useTransform(progress, value => value <= .23 ? 'visible' : 'hidden');
   return <div className="cm-cinematic-sticky">
-    <Atmosphere progress={progress}/>
+    <TerraAtmosphere progress={progress}/>
     <div className="cm-background-typography" aria-hidden="true">
       <BackgroundWord progress={progress} word="SIGNAL" range={[0, .025, .13, .21]}/>
       <BackgroundWord progress={progress} word="MARKET" range={[.14, .22, .34, .43]} reverse/>
@@ -139,7 +124,7 @@ function StickyWorld({ progress, releaseProgress, quality }: { progress: MotionV
       <BackgroundWord progress={progress} word="RESEARCH" range={[.92, .95, .99, 1]}/>
     </div>
     <ParticleWorld progress={progress} releaseProgress={releaseProgress} quality={quality}/>
-    <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><CopperSignal progress={signalPath}/></motion.div>
+    <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><div data-cm-route-reveal="surface" className="cm-cinematic-symbol-reveal"><CopperSignal progress={signalPath}/></div></motion.div>
     <DashboardComposition progress={progress}/>
     <div className="cm-cinematic-progress" aria-hidden="true"><motion.span style={{ scaleX: progress }}/></div>
   </div>;

@@ -1,4 +1,5 @@
-.cm-landing { color: var(--cm-text); background: var(--cm-bg); overflow: clip; }
+.cm-landing { position: relative; isolation: isolate; color: var(--cm-text); background: transparent; overflow: clip; }
+.cm-landing > main { position: relative; z-index: 1; }
 .cm-hero { max-width: var(--cm-content-width); padding: clamp(2rem, 4vw, 4rem) clamp(1.25rem, 4vw, 4rem) 0; margin: auto; }
 .cm-hero-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center; gap: 2rem; min-height: 36rem; }
 .cm-hero-heading { position: relative; z-index: 2; }
@@ -11,6 +12,7 @@
 .cm-eyebrow-line { display: inline-block; width: 1.75rem; height: 1px; background: var(--cm-copper); margin-right: .7rem; vertical-align: middle; }
 .cm-hero-visual { min-width: 0; }
 .cm-copper-signal { position: relative; margin: 0; padding-top: 1rem; }
+.cm-signal-brand-mark { overflow: visible; }
 .cm-signal-coordinate { display: flex; justify-content: space-between; color: var(--cm-muted); font: .65rem/1.5 var(--cm-font-family); letter-spacing: .12em; }
 .cm-signal-coordinate > span:first-child { color: var(--cm-copper); }
 .cm-signal-contours { display: block; width: 100%; height: auto; }
@@ -100,6 +102,7 @@
 .cm-enter .cm-button { min-width: 13rem; }
 .cm-enter-action { min-height: 2.75rem; }
 .cm-enter-note { display: block; max-width: 35rem; margin: 1.5rem auto 0; color: var(--cm-muted); font-size: .75rem; line-height: 1.6; }
+.cm-enter-brand-mark { display: grid; place-items: center; min-height: 3.5rem; margin: 0 auto 1rem; }
 .cm-enter-reveal-line { position: relative; display: block; width: fit-content; max-width: 100%; margin-inline: auto; overflow: hidden; }
 .cm-enter-reveal-text { position: relative; z-index: 0; display: block; }
 .cm-enter-reveal-mask { position: absolute; z-index: 1; inset: 0; display: block; background: linear-gradient(100deg, #0b1119dd 0%, #111b29d9 86%, #d28b68e8 100%); box-shadow: 0 0 1rem #e6a47a24; pointer-events: none; will-change: transform; }
@@ -129,9 +132,9 @@
 }
 @media (max-width: 639px) {
   .cm-brand { gap: .5rem; }
-  .cm-brand-mark { width: 2rem; height: 2rem; }
-  .cm-brand-name { font-size: .95rem; }
-  .cm-brand-sub { font-size: .75rem; letter-spacing: .04em; }
+  .cm-brand-mark { width: 1.875rem; height: 1.875rem; }
+  .cm-brand-name { font-size: .7rem; }
+  .cm-brand-sub { font-size: .52rem; letter-spacing: .16em; }
   .cm-hero { padding-top: 2.5rem; }
   .cm-hero h1 { font-size: clamp(2.8rem, 11vw, 4.4rem); }
   .cm-hero-actions { gap: .75rem; flex-wrap: wrap; }
@@ -164,6 +167,23 @@
 }
 .cm-hero-capabilities { display:flex; flex-wrap:wrap; gap:.35rem 1rem; margin-top:1.2rem}
 .cm-hero-capabilities a { min-height:2.75rem; display:inline-flex; align-items:center; font-size:.8rem; color:var(--cm-muted); text-decoration:underline; text-underline-offset:.3rem}
+
+/* Landing/About route arrivals stay held behind the particle transition, then
+   open from copy into signal, actions and supporting navigation. */
+.cm-hero .cm-brand-eyebrow,
+.cm-cinematic-hero .cm-brand-eyebrow { --cm-route-reveal-delay: 0ms; }
+.cm-hero h1,
+.cm-cinematic-hero h1 { --cm-route-reveal-delay: 80ms; }
+.cm-hero .cm-hero-description,
+.cm-cinematic-hero .cm-hero-description { --cm-route-reveal-delay: 160ms; }
+.cm-hero .cm-hero-detail,
+.cm-cinematic-hero .cm-hero-detail { --cm-route-reveal-delay: 230ms; }
+.cm-hero-actions { --cm-route-reveal-delay: 330ms; }
+.cm-hero-capabilities { --cm-route-reveal-delay: 430ms; }
+.cm-hero-caption { --cm-route-reveal-delay: 520ms; }
+.cm-hero-visual,
+.cm-cinematic-symbol-reveal { --cm-route-reveal-delay: 140ms; }
+.cm-hero-index { --cm-route-reveal-delay: 590ms; }
 
 .cm-reader-source { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.5rem; padding:1rem 1.35rem; color:var(--cm-muted); font-size:.65rem; letter-spacing:.06em; border-bottom:1px solid var(--cm-border)}
 
@@ -280,4 +300,24 @@
 .cm-news-branch-metrics { font-size:.48rem; gap:.18rem .35rem; }
 .cm-news-branch-metrics strong { font-size:.62rem; }
 .cm-news-tone-snapshot { font-size:.46rem; gap:.3rem; }
+}
+
+/* About re-enters on the same reveal beat as the dashboard. */
+@keyframes cm-route-world-reveal { from { opacity: 0; } to { opacity: 1; } }
+html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-landing--cinematic .cm-cinematic-sticky {
+  animation: cm-route-world-reveal 540ms ease-out both;
+}
+.cm-cinematic-hero .cm-eyebrow[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 0ms; }
+.cm-cinematic-hero h1[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 90ms; }
+.cm-cinematic-hero .cm-hero-description[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 180ms; }
+.cm-cinematic-hero .cm-hero-detail[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 270ms; }
+.cm-cinematic-hero .cm-hero-actions[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 380ms; }
+.cm-cinematic-hero .cm-hero-capabilities[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 490ms; }
+.cm-cinematic-hero .cm-hero-caption[data-cm-route-reveal="copy"] { --cm-route-reveal-delay: 580ms; }
+.cm-cinematic-symbol-reveal[data-cm-route-reveal="surface"],
+.cm-hero-visual[data-cm-route-reveal="surface"] { --cm-route-reveal-delay: 170ms; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-landing--cinematic .cm-cinematic-sticky {
+    animation: none;
+  }
 }

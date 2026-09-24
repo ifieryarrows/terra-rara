@@ -1,8 +1,10 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import { ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import { Hero } from './Hero';
+import { BrandMark } from '../../components/ui/BrandMark';
+import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
+import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
 import { CINEMATIC_ENTRY_TRIGGER } from './cinematic-entry';
@@ -34,13 +36,16 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
   const actionOpacity = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [0, 1]);
   const actionY = useTransform(contentTimeline, cinematic ? [.68, .86] : [.53, .73], [18, 0]);
   const noteOpacity = useTransform(contentTimeline, cinematic ? [.84, 1] : [.68, .84], [0, 1]);
+  const brandOpacity = useTransform(contentTimeline, [0, .12], [0, 1]);
+  const brandY = useTransform(contentTimeline, [0, .12], [14, 0]);
   const lineProgress = animated ? contentTimeline : progress;
   return <>
     {animated ? <div className="cm-enter-bridge" aria-hidden="true"><motion.span style={{ scaleX: bridgeScale }}/></div> : null}
+    <motion.div className="cm-enter-brand-mark" style={animated ? { opacity: brandOpacity, y: brandY } : undefined} aria-hidden="true"><BrandMark size={52} variant="primary"/></motion.div>
     <p className="cm-eyebrow"><EntryRevealLine progress={lineProgress} index={0} startAt={lineStart} step={lineStep} duration={lineDuration}>YOUR RESEARCH STARTS HERE</EntryRevealLine></p>
     <h2 id="enter-title"><EntryRevealLine progress={lineProgress} index={1} startAt={lineStart} step={lineStep} duration={lineDuration}>From perspective</EntryRevealLine><EntryRevealLine progress={lineProgress} index={2} startAt={lineStart} step={lineStep} duration={lineDuration}>to your next question.</EntryRevealLine></h2>
     <p className="cm-enter-lede"><EntryRevealLine progress={lineProgress} index={3} startAt={lineStart} step={lineStep} duration={lineDuration}>Open the workspace and explore the market.</EntryRevealLine></p>
-    <motion.div className="cm-enter-action" style={animated ? { opacity: actionOpacity, y: actionY } : undefined}><Link to="/dashboard" className="cm-button">Enter CopperMind <ArrowRight size={19} aria-hidden="true"/></Link></motion.div>
+    <motion.div className="cm-enter-action" style={animated ? { opacity: actionOpacity, y: actionY } : undefined}><EnterWorkspaceLink className="cm-button">Enter CopperMind <ArrowRight size={19} aria-hidden="true"/></EnterWorkspaceLink></motion.div>
     <motion.span className="cm-enter-note" style={animated ? { opacity: noteOpacity } : undefined}>Forecasts are uncertain. Availability and freshness are shown in the workspace.</motion.span>
   </>;
 }
@@ -60,6 +65,7 @@ function StaticEntryCTA() {
 export function LandingPage() {
   const { enhanced, quality } = useExperiencePolicy();
   return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
+    {!enhanced ? <TerraAtmosphere className="cm-terra-atmosphere--landing-static"/> : null}
     <a className="cm-skip" href="#main-content">Skip to content</a>
     <main id="main-content" tabIndex={-1}>
       {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={(progress, revealProgress) => <CinematicEntryCTA progress={progress} revealProgress={revealProgress}/>}/></Suspense> : <>

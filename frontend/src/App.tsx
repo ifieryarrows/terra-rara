@@ -4,8 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MotionConfig } from 'framer-motion';
 import { LandingPage } from './features/landing/LandingPage';
 import { RouteBoundary } from './components/ui/RouteBoundary';
+import { BrandMark } from './components/ui/BrandMark';
 import { TerraCursor } from './components/ui/TerraCursor';
+import { LogoTransitionProvider } from './components/ui/LogoTransition';
 import { motionTokens } from './design/motion';
+import { scrollToElement } from './design/scroll';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import './App.css';
 
@@ -26,16 +29,16 @@ function RouteLifecycle() {
   useEffect(() => {
     document.title = titles[pathname] || 'Page not found | CopperMind';
     let focused = false;
+    let cancelScroll: () => void = () => undefined;
     const focusMain = () => {
       const main = document.getElementById('main-content');
-      if (!main) return false;
-      if (!focused) { main.focus({ preventScroll: true }); focused = true; }
+      if (main && !focused) { main.focus({ preventScroll: true }); focused = true; }
       const anchor = hash ? document.getElementById(hash.slice(1)) : null;
       // A workspace section may arrive after its route shell and initial data.
       if (hash && !anchor) return false;
-      if (anchor) anchor.scrollIntoView({ behavior: 'instant' });
+      if (anchor) cancelScroll = scrollToElement(anchor, Boolean(document.querySelector('.cm-logo-transition')));
       else window.scrollTo({ top: navigationType === 'POP' ? (scrollPositions.get(key) ?? 0) : 0, behavior: 'instant' });
-      return true;
+      return Boolean(main) || pathname === '/';
     };
     let observer: MutationObserver | undefined;
     if (!focusMain()) {
@@ -50,6 +53,7 @@ function RouteLifecycle() {
       scrollPositions.set(key, window.scrollY);
       if (scrollPositions.size > 50) scrollPositions.delete(scrollPositions.keys().next().value!);
       observer?.disconnect();
+      cancelScroll();
       window.clearTimeout(deadline);
       window.removeEventListener('wheel', stopWaiting);
       window.removeEventListener('touchstart', stopWaiting);
@@ -63,7 +67,7 @@ function LandingEntry() {
   if (new URLSearchParams(search).has('symbol')) return <Navigate replace to={'/dashboard' + search + hash}/>;
   return <LandingPage/>;
 }
-function RouteLoading() { return <div className="cm-route-loading" role="status">Opening your workspace…</div>; }
+function RouteLoading() { return <div className="cm-route-loading" role="status"><BrandMark size={24} variant="small"/><span>Opening your workspace…</span></div>; }
 
 function OverviewAlias() {
   const { search, hash } = useLocation();
@@ -85,5 +89,5 @@ export function AppRoutes() {
   </Routes></Suspense></RouteBoundary></MotionConfig>;
 }
 export default function App() {
-  return <QueryClientProvider client={queryClient}><BrowserRouter><TerraCursor/><AppRoutes/><SpeedInsights/></BrowserRouter></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><BrowserRouter><LogoTransitionProvider><TerraCursor/><AppRoutes/><SpeedInsights/></LogoTransitionProvider></BrowserRouter></QueryClientProvider>;
 }

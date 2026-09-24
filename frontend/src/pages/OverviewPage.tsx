@@ -5,6 +5,7 @@ import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
 import { ViewState } from '../components/ui/ViewState';
+import { BrandMark } from '../components/ui/BrandMark';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
@@ -185,7 +186,7 @@ export const OverviewPage = () => {
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
-    return <div className="space-y-6"><PageHeader eyebrow="01 / MARKET INTELLIGENCE" title="Market overview" description="Copper prices, context and quantitative forecasts."/><ViewState kind="loading" title="Opening your market view" description="Retrieving prices, market context and available forecasts."/></div>;
+    return <div className="space-y-6" data-cm-dashboard-ready="false"><PageHeader eyebrow="01 / MARKET INTELLIGENCE" title="Market overview" description="Copper prices, context and quantitative forecasts."/><ViewState kind="loading" title="Opening your market view" description="Retrieving prices, market context and available forecasts."/></div>;
   }
 
   const tftReturn = tftAnalysis?.primary_forecast_return
@@ -226,7 +227,7 @@ export const OverviewPage = () => {
 
 
   return (
-    <div className="font-sans selection:bg-copper-500/30">
+    <div className="font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
 
 
       <div className="relative z-10 grid min-w-0 grid-cols-1 gap-8">
@@ -234,20 +235,21 @@ export const OverviewPage = () => {
         {/* Header */}
         <header className="cm-overview-header">
           <div className="space-y-1">
-            <p className="cm-eyebrow">01 / MARKET INTELLIGENCE</p>
+            <p className="cm-eyebrow" data-cm-route-reveal="copy">01 / MARKET INTELLIGENCE</p>
             <h1
               className="text-3xl sm:text-4xl font-medium text-white tracking-tight"
+              data-cm-route-reveal="copy"
             >
               Market overview
             </h1>
-            <p className="text-slate-400 text-sm">Copper prices, context and quantitative forecasts.</p>
+            <p className="text-slate-400 text-sm" data-cm-route-reveal="copy">Copper prices, context and quantitative forecasts.</p>
           </div>
 
           <div className="cm-quote-strip">
-            <div className="cm-quote">
+            <div className="cm-quote" data-cm-route-reveal="surface">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-md flex items-center justify-center shrink-0">
-                  <span className="cm-brand-mark" aria-hidden="true">Cu</span>
+                  <BrandMark size={34} variant="on-dark"/>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">
@@ -279,7 +281,7 @@ export const OverviewPage = () => {
                 </div>
               </div>
             </div>
-            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]">
+            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]" data-cm-route-reveal="surface">
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">7D News Sentiment</span>
               <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-semibold", newsSentimentMeta.chip)}>
                 <SentimentIcon size={12} />
@@ -292,12 +294,12 @@ export const OverviewPage = () => {
           </div>
         </header>
 
-        <div className="cm-overview-tools">
+        <div className="cm-overview-tools" data-cm-route-reveal="surface">
           <nav aria-label="Overview sections"><a href="#price-forecast">Price chart</a><a href="#news-intelligence">News</a><a href="#market-map">Market map</a></nav>
           <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
         </div>
         {Object.keys(loadErrors).length > 0 && (
-          <div className="flex flex-wrap gap-2" role="status">
+          <div className="flex flex-wrap gap-2" role="status" data-cm-route-reveal="surface">
             {Object.keys(loadErrors).map((endpoint) => (
               <span key={endpoint} className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200">
                 <AlertTriangle size={12} /> {endpoint} could not be refreshed; any visible values are from the previous response
@@ -309,9 +311,9 @@ export const OverviewPage = () => {
         {/* Dashboard Grid + persistent News sidebar (desktop).
             On mobile/tablet the news panel stacks under the dashboard.
             Width grows with the viewport so chips/filters have room to breathe. */}
-        <div className="grid gap-4 lg:gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="cm-dashboard-columns grid gap-4 lg:gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
         {/* Main dashboard column */}
-        <div className="grid grid-cols-12 gap-6">
+        <div className="cm-dashboard-primary-column grid grid-cols-12 gap-6" data-cm-route-reveal="surface">
 
           {/* Primary weekly forecast; single-step diagnostics are grouped below. */}
           <GlassCard title="Deep Learning Weekly Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
@@ -554,7 +556,7 @@ export const OverviewPage = () => {
 
         </div>
         {/* Right sticky News Intelligence sidebar (desktop) / stacks under on mobile */}
-        <aside id="news-intelligence" className="cm-news-sidebar min-w-0">
+        <aside id="news-intelligence" className="cm-news-sidebar min-w-0" data-cm-route-reveal="surface">
           <Suspense
             fallback={
               <div className="glass-panel cm-news-loading h-full min-h-[480px] flex items-center justify-center gap-3" role="status">
@@ -572,7 +574,7 @@ export const OverviewPage = () => {
 
         {/* The market map owns the full content width. News remains available
             above without consuming horizontal heatmap space. */}
-        <div id="market-map" className="min-w-0 w-full">
+        <div id="market-map" className="min-w-0 w-full" data-cm-route-reveal="surface">
           <Suspense fallback={<MapSkeleton />}>
             <HeatmapPanel />
           </Suspense>

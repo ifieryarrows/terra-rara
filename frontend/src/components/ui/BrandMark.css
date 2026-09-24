@@ -1,0 +1,9 @@
+.cm-brand-mark-svg { display: block; flex: 0 0 auto; overflow: visible; }
+.cm-brand-mark-svg--small,
+.cm-brand-mark-svg--primary.cm-brand-mark-svg--simplified { color: var(--cm-copper); }
+.cm-brand-mark-svg--small.cm-brand-mark-svg--on-dark,
+.cm-brand-mark-svg--on-dark.cm-brand-mark-svg--simplified { color: #fff1df; }
+.cm-brand-mark-svg--small.cm-brand-mark-svg--on-light,
+.cm-brand-mark-svg--on-light.cm-brand-mark-svg--simplified { color: #784832; }
+.cm-brand-mark-svg--small.cm-brand-mark-svg--monochrome,
+.cm-brand-mark-svg--monochrome.cm-brand-mark-svg--simplified { color: inherit; }
