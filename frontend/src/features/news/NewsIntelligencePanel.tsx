@@ -55,7 +55,6 @@ export const NewsIntelligencePanel: React.FC = () => {
   const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
   const effectiveFilters = useMemo<NewsFeedFilters>(
@@ -96,7 +95,7 @@ export const NewsIntelligencePanel: React.FC = () => {
           }
         }
       },
-      { root: scrollRef.current, rootMargin: '200px', threshold: 0 },
+      { root: null, rootMargin: '320px', threshold: 0 },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -118,10 +117,11 @@ export const NewsIntelligencePanel: React.FC = () => {
     >
       {/* Header */}
       <div className="cm-news-header flex items-center justify-between px-3 sm:px-4 pt-4 pb-2.5 border-b border-white/5">
-        <div className="flex items-center gap-2 text-gray-400">
-          <Newspaper size={16} className="text-copper-400" />
-          <h2>News Intelligence</h2>
+        <div className="cm-news-title-group">
+          <span className="cm-news-icon"><Newspaper size={16} aria-hidden="true" /></span>
+          <div><h2>Copper news flow</h2><p>Headlines, sentiment &amp; sources</p></div>
         </div>
+        <span className="cm-news-window-tag">{activeWindowLabel}</span>
         <button
           type="button"
           onClick={() => feed.refetch()}
@@ -134,9 +134,9 @@ export const NewsIntelligencePanel: React.FC = () => {
         </button>
       </div>
 
-      <div ref={scrollRef} className="cm-news-scroll" tabIndex={0} role="region" aria-label="News filters and headlines">
+      <div className="cm-news-scroll" role="region" aria-label="News filters and headlines">
       {/* Stats summary */}
-      <div className="px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
+      <div className="cm-news-summary px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
         <div className="flex items-center gap-1.5 text-xs font-mono mb-2">
           <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title={`Bullish (${activeWindowLabel})`}>
             ↑ {stats.data ? bullishCount : '—'}
@@ -184,7 +184,7 @@ export const NewsIntelligencePanel: React.FC = () => {
       </div>
       {/* Feed list */}
       {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
-      <div className="px-2 sm:px-2.5 py-2.5 space-y-1.5">
+      <div className="cm-news-feed">
         {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 
         {!isLoading && feed.isError && (

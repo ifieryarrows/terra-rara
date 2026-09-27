@@ -82,6 +82,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       type="button"
       onClick={handleSelect}
       className={clsx(
+        'cm-news-card',
         'w-full text-left rounded-lg border px-2.5 py-2 transition-colors duration-200',
         'bg-midnight/50 hover:bg-midnight/80',
         'border-white/5 hover:border-copper-400/40',
