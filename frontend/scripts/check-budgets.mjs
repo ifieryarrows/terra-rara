@@ -25,4 +25,6 @@ if (initial.jsGzipBytes > 190000 || initial.cssGzipBytes > 14000 || dashboard.js
 const html = await readFile('dist/index.html', 'utf8');
 if (!html.includes('Read the market.') || !html.includes('href="/dashboard"')) throw new Error('Critical landing HTML/CTA missing');
 const workspace = await readFile('dist/workspace.html', 'utf8');
-if (workspace.includes('Read the market.')) throw new Error('Workspace shell includes the marketing story');
+const workspaceBody = workspace.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1];
+if (!workspaceBody) throw new Error('Workspace shell body missing');
+if (workspaceBody.includes('Read the market.')) throw new Error('Workspace shell includes the marketing story');

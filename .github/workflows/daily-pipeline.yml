@@ -75,6 +75,15 @@ jobs:
                     QUALITY_STATE=$(echo "$STATUS_BODY" | jq -r '.quality_state')
                     echo "Poll $ATTEMPT: status=$RUN_STATUS quality=$QUALITY_STATE"
 
+                    if [ "$RUN_STATUS" != "queued" ] && [ "$RUN_STATUS" != "running" ]; then
+                      {
+                        echo "### Daily pipeline run $RUN_ID"
+                        echo '```json'
+                        echo "$STATUS_BODY" | jq '{status, quality_state, error_message, fallback_counts, commentary_generation_mode, stage_errors: ((.stage_results // {}) | with_entries(select(.key | endswith("_error"))))}'
+                        echo '```'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                    fi
+
                     case "$RUN_STATUS" in
                       success)
                         echo "$STATUS_BODY" | jq .

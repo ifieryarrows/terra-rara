@@ -8,7 +8,7 @@ import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './Heatmap
 import { HeatmapPanel } from './HeatmapPanel';
 import HeatmapTreemap from './HeatmapTreemap';
 import { clampTooltipPosition, computePanelPosition, computePointerPanelPosition, getColorForChange } from './heatmap-utils';
-import { resetFailedLogosForTests } from './logo-cache';
+import { resetLogoCacheForTests } from './logo-cache';
 import type { HeatmapNode } from './heatmap-layout';
 
 const heatmapQueryMocks = vi.hoisted(() => ({ context: null as any }));
@@ -42,7 +42,7 @@ describe('heatmap interaction primitives', () => {
   beforeEach(() => {
     heatmapQueryMocks.context = null;
     vi.stubEnv('VITE_LOGO_DEV_PUBLISHABLE_KEY', 'pk_test');
-    resetFailedLogosForTests();
+    resetLogoCacheForTests();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
     vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
     class TestPointerEvent extends MouseEvent {
@@ -71,7 +71,7 @@ describe('heatmap interaction primitives', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lazy-loads eligible logos and replaces broken images with initials', () => {
+  it('shows initials without a dark flash until the logo loads, then reuses the loaded image', () => {
     class ImmediateObserver {
       constructor(private callback: IntersectionObserverCallback) {}
       observe(element: Element) { this.callback([{ isIntersecting: true, target: element } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
@@ -81,12 +81,21 @@ describe('heatmap interaction primitives', () => {
       root = null; rootMargin = ''; thresholds = [];
     }
     vi.stubGlobal('IntersectionObserver', ImmediateObserver);
-    const { container } = render(<CompanyLogo ticker="BRK.B" label="Berkshire Hathaway" size={32} />);
+    const { container, unmount } = render(<CompanyLogo ticker="BRK.B" label="Berkshire Hathaway" size={32} />);
     const image = container.querySelector('img') as HTMLImageElement;
-    expect(image).toHaveAttribute('loading', 'lazy');
+    expect(image).toHaveAttribute('loading', 'eager');
     expect(image).toHaveAttribute('decoding', 'async');
     expect(image.getAttribute('src')).toContain('/ticker/BRK-B');
-    fireEvent.error(image);
+    expect(image).toHaveClass('opacity-0');
+    expect(screen.getByText('BR').parentElement).not.toHaveClass('bg-slate-950/85');
+    fireEvent.load(image);
+    expect(image).not.toHaveClass('opacity-0');
+    expect(screen.queryByText('BR')).toBeNull();
+    unmount();
+    const cached = render(<CompanyLogo ticker="BRK.B" label="Berkshire Hathaway" size={32} />);
+    expect(cached.container.querySelector('img')).not.toHaveClass('opacity-0');
+    expect(screen.queryByText('BR')).toBeNull();
+    fireEvent.error(cached.container.querySelector('img') as HTMLImageElement);
     expect(screen.getByText('BR')).toBeTruthy();
   });
 
@@ -263,6 +272,27 @@ describe('heatmap interaction primitives', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 5));
     expect(zoom).toHaveBeenCalledTimes(1);
     expect(zoom.mock.calls[0][0]).toBeGreaterThan(0);
+  });
+
+  it('previews a zoom burst without rebuilding tiles until wheel movement settles', async () => {
+    vi.useFakeTimers();
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'Technology', children: [{
+          id: 'industry', name: 'Semiconductors', children: [{ id: 'nvda', name: 'NVDA', weight: 100 }],
+        }],
+      }],
+    };
+    const props = { data, width: 700, height: 400, hoveredCategoryId: null, onCategoryHover: () => {} };
+    const { container, rerender } = render(<HeatmapTreemap {...props} zoom={1} />);
+    const layouts = window.__COPPERMIND_HEATMAP_METRICS__?.resizeLayouts ?? 0;
+    rerender(<HeatmapTreemap {...props} zoom={1.2} />);
+    rerender(<HeatmapTreemap {...props} zoom={1.4} />);
+    expect(window.__COPPERMIND_HEATMAP_METRICS__?.resizeLayouts).toBe(layouts);
+    expect(container.querySelector('[style*="scale(1.4)"]')).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(window.__COPPERMIND_HEATMAP_METRICS__?.resizeLayouts).toBe(layouts + 1);
+    expect(container.querySelector('[style*="scale("]')).toBeNull();
   });
 
   it('drags a zoomed map to pan without activating a category', () => {

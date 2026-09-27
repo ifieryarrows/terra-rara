@@ -17,7 +17,7 @@ from app import ai_engine, commentary
 from app.settings import get_settings
 
 
-async def run_probe(*, fast: str, reliable: str, commentary_model: str) -> dict:
+async def run_probe(*, fast: str, reliable: str, commentary_model: str, batch_size: int = 12) -> dict:
     runtime = get_settings()
     if not runtime.openrouter_api_key:
         return {"ok": False, "error": "OpenRouter credential is not configured"}
@@ -38,11 +38,26 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str) -> dict:
     ai_engine.get_settings = lambda: probe_settings
     commentary.get_settings = lambda: probe_settings
     try:
-        article = [{
-            "id": 1,
-            "title": "Copper mine disruption tightens near-term concentrate supply",
-            "description": "A temporary outage is expected to reduce shipments into the refined market.",
-        }]
+        # Match the worker's 12-article V2 scoring chunk, using synthetic
+        # scenarios so the probe never depends on mutable market data.
+        scenarios = [
+            ("Copper mine outage", "A temporary outage reduces concentrate shipments."),
+            ("Refinery restart", "A smelter resumes production after scheduled maintenance."),
+            ("Grid demand rises", "New grid projects increase near-term copper orders."),
+            ("Dollar strengthens", "The US dollar rises against major currencies."),
+            ("Warehouse inventories fall", "Exchange-registered copper stocks decline."),
+            ("Scrap supply expands", "More secondary copper enters the market."),
+            ("Housing starts slow", "Construction demand weakens this quarter."),
+            ("Electronics orders improve", "Manufacturers report stronger copper demand."),
+            ("Port disruption ends", "Concentrate exports resume after a short delay."),
+            ("Oil price changes", "Crude oil moves with no stated copper link."),
+            ("New mine commissioning", "Additional copper capacity begins operating."),
+            ("Mixed industrial data", "Orders rise in one region and fall in another."),
+        ]
+        articles = [
+            {"id": index + 1, "title": f"Synthetic contract probe: {title}", "description": description}
+            for index, (title, description) in enumerate(scenarios[:max(1, min(batch_size, 12))])
+        ]
         scoring = {}
         for role, model, repair in (
             ("fast", fast, reliable),
@@ -52,14 +67,16 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str) -> dict:
                 settings=probe_settings,
                 model_name=model,
                 repair_model_name=repair,
-                articles=article,
+                articles=articles,
                 horizon_days=5,
             )
             result = valid.get(1)
             scoring[role] = {
                 "requested_model": model,
                 "actual_model": result.get("llm_model") if result else None,
-                "ok_without_repair": bool(result and not failed and metrics.get("repair_success_count", 0) == 0),
+                "item_count": len(articles),
+                "valid_count": len(valid),
+                "ok_without_repair": bool(len(valid) == len(articles) and not failed and metrics.get("repair_success_count", 0) == 0),
                 "failure_category": metrics.get("failure_category"),
                 "rate_limited": bool(rate_limited),
             }
@@ -89,11 +106,12 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe exact OpenRouter production contracts")
-    parser.add_argument("--fast", default="nex-agi/nex-n2.5-mini:free")
-    parser.add_argument("--reliable", default="google/gemma-4-31b-it:free")
-    parser.add_argument("--commentary", default="nex-agi/nex-n2.5-mini:free")
+    parser.add_argument("--fast", default="nvidia/nemotron-3-super-120b-a12b:free")
+    parser.add_argument("--reliable", default="liquid/lfm-2.5-2.6b:free")
+    parser.add_argument("--commentary", default="nvidia/nemotron-3-super-120b-a12b:free")
+    parser.add_argument("--batch-size", type=int, default=12, help="Synthetic scoring items, up to the worker's 12-item chunk")
     args = parser.parse_args()
-    result = asyncio.run(run_probe(fast=args.fast, reliable=args.reliable, commentary_model=args.commentary))
+    result = asyncio.run(run_probe(fast=args.fast, reliable=args.reliable, commentary_model=args.commentary, batch_size=args.batch_size))
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
 

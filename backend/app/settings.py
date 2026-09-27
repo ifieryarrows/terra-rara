@@ -92,15 +92,15 @@ class Settings(BaseSettings):
     # Deprecated - kept for backward compatibility. Keep this on a currently
     # listed free model so installations without an explicit env override do
     # not silently start with a retired OpenRouter slug.
-    openrouter_model: str = "nex-agi/nex-n2.5-mini:free"
+    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
     # Keep fast and reliable roles independent so one provider/model removal
-    # cannot collapse the entire LLM path. Nex-N2.5-Mini passed the exact V2
-    # scoring contract probe on 2026-09-12; Gemma 4 31B is the independent
-    # structured-output repair/commentary fallback.
-    openrouter_model_scoring: str = "nex-agi/nex-n2.5-mini:free"
-    openrouter_model_scoring_fast: Optional[str] = "nex-agi/nex-n2.5-mini:free"
-    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-4-31b-it:free"
-    openrouter_model_commentary: str = "nex-agi/nex-n2.5-mini:free"
+    # cannot collapse the entire LLM path. NVIDIA and Liquid passed the exact
+    # credentialed scoring/commentary probe on 2026-09-27; the Gemma free
+    # models were temporarily rate-limited by their shared upstream pool.
+    openrouter_model_scoring: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3-super-120b-a12b:free"
+    openrouter_model_scoring_reliable: Optional[str] = "liquid/lfm-2.5-2.6b:free"
+    openrouter_model_commentary: str = "nvidia/nemotron-3-super-120b-a12b:free"
     # Stay below the shared free-provider request ceiling. The worker still
     # uses bounded retries and a per-chain deadline for transient 429s.
     openrouter_rpm: int = 12
@@ -115,8 +115,8 @@ class Settings(BaseSettings):
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
     openrouter_fallback_models: Optional[str] = (
-        "nex-agi/nex-n2.5-mini:free,google/gemma-4-31b-it:free,"
-        "google/gemma-4-26b-a4b-it:free,liquid/lfm-2.5-2.6b:free"
+        "liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,"
+        "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free"
     )
     tokenizers_parallelism: str = "false"
     
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "nex-agi/nex-n2.5-mini:free"
+    llm_sentiment_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
@@ -255,7 +255,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model,
             )
-            or "nex-agi/nex-n2.5-mini:free"
+            or "nvidia/nemotron-3-super-120b-a12b:free"
         )
 
     @property
@@ -273,7 +273,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model_scoring,
             )
-            or "google/gemma-4-31b-it:free"
+            or "nvidia/nemotron-3-super-120b-a12b:free"
         )
 
     @property
@@ -285,7 +285,7 @@ class Settings(BaseSettings):
                 self.openrouter_model,
                 self.llm_sentiment_model,
             )
-            or "nex-agi/nex-n2.5-mini:free"
+            or "google/gemma-4-31b-it:free"
         )
 
     @property

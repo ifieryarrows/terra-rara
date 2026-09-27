@@ -541,9 +541,9 @@ Copy `env.example` to `backend/.env` and configure:
 | `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM                                     |
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (active/champion/challenger)           |
-| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nex-agi/nex-n2.5-mini:free`           | Fast sentiment scoring role                                    |
-| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `google/gemma-4-31b-it:free`          | Independent reliable scoring role                              |
-| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nex-agi/nex-n2.5-mini:free`           | Commentary generation role                                     |
+| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Primary sentiment scoring role                            |
+| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`           | Independent scoring/repair role                                |
+| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Commentary generation role                                |
 | `OPENROUTER_RPM`                    | No       | `12`                                  | Soft throttle target for OpenRouter calls                      |
 | `OPENROUTER_MAX_RETRIES`            | No       | `1`                                   | One bounded retry for 408/429/5xx/network errors               |
 | `OPENROUTER_CHAIN_DEADLINE_SECONDS` | No       | `120`                                 | Total sentiment batch deadline                                 |

@@ -40,18 +40,18 @@ jobs:
 
           api = HfApi(token=os.environ["HF_TOKEN"])
           variables = {
-              "OPENROUTER_MODEL": "nex-agi/nex-n2.5-mini:free",
-              "LLM_SENTIMENT_MODEL": "nex-agi/nex-n2.5-mini:free",
-              "OPENROUTER_MODEL_SCORING": "nex-agi/nex-n2.5-mini:free",
-              "OPENROUTER_MODEL_SCORING_FAST": "nex-agi/nex-n2.5-mini:free",
-              "OPENROUTER_MODEL_SCORING_RELIABLE": "google/gemma-4-31b-it:free",
-              "OPENROUTER_MODEL_COMMENTARY": "nex-agi/nex-n2.5-mini:free",
+              "OPENROUTER_MODEL": "nvidia/nemotron-3-super-120b-a12b:free",
+              "LLM_SENTIMENT_MODEL": "nvidia/nemotron-3-super-120b-a12b:free",
+              "OPENROUTER_MODEL_SCORING": "nvidia/nemotron-3-super-120b-a12b:free",
+              "OPENROUTER_MODEL_SCORING_FAST": "nvidia/nemotron-3-super-120b-a12b:free",
+              "OPENROUTER_MODEL_SCORING_RELIABLE": "liquid/lfm-2.5-2.6b:free",
+              "OPENROUTER_MODEL_COMMENTARY": "nvidia/nemotron-3-super-120b-a12b:free",
               "OPENROUTER_RPM": "12",
               "OPENROUTER_MAX_RETRIES": "1",
               "OPENROUTER_TIMEOUT_SECONDS": "45",
               "OPENROUTER_CHAIN_DEADLINE_SECONDS": "120",
               "MAX_LLM_ARTICLES_PER_RUN": "100",
-              "OPENROUTER_FALLBACK_MODELS": "nex-agi/nex-n2.5-mini:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,liquid/lfm-2.5-2.6b:free",
+              "OPENROUTER_FALLBACK_MODELS": "liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free",
               "XGB_ARTIFACT_SOURCE": "auto",
           }
           role_models = {
@@ -79,14 +79,10 @@ jobs:
                   "OpenRouter model catalog no longer contains configured slugs: "
                   + ", ".join(missing_models)
               )
-          structured_roles = (
-              "OPENROUTER_MODEL_SCORING_RELIABLE",
-              "OPENROUTER_MODEL_COMMENTARY",
-          )
           unsupported_structured = [
-              variables[key]
-              for key in structured_roles
-              if "response_format" not in (catalog[variables[key]].get("supported_parameters") or [])
+              model
+              for model in role_models
+              if "response_format" not in (catalog[model].get("supported_parameters") or [])
           ]
           if unsupported_structured:
               raise RuntimeError(
