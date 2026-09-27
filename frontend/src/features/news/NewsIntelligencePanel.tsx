@@ -2,6 +2,8 @@ import React, { useId, useMemo, useState, useEffect, useRef, useCallback } from 
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import {
+  ArrowLeft,
+  ArrowRight,
   Newspaper,
   Filter,
   RefreshCw,
@@ -54,7 +56,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
   const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const newsRailRef = useRef<HTMLDivElement | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
   const effectiveFilters = useMemo<NewsFeedFilters>(
@@ -81,25 +83,19 @@ export const NewsIntelligencePanel: React.FC = () => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Infinite scroll — fire the next page request when the sentinel scrolls
-  // into view. Guarded on hasNextPage/isFetchingNextPage to avoid duplicate
-  // fetches under rapid scroll.
-  useEffect(() => {
-    const el = loadMoreRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting && feed.hasNextPage && !feed.isFetchingNextPage) {
-            feed.fetchNextPage();
-          }
-        }
-      },
-      { root: null, rootMargin: '320px', threshold: 0 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [feed]);
+  const scrollHeadlines = (direction: -1 | 1) => {
+    const rail = newsRailRef.current;
+    if (!rail) return;
+    rail.scrollBy({
+      left: direction * Math.max(240, rail.clientWidth * 0.82),
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  };
+
+  const pages = feed.data?.pages ?? [];
+  const priorPageIds = new Set(pages.slice(0, -1).flatMap((page) => page.items.map((item) => item.id)));
+  const latestPageHasNewItems = pages.length < 2 || (pages[pages.length - 1]?.items.some((item) => !priorPageIds.has(item.id)) ?? false);
+  const canLoadMore = !!feed.hasNextPage && latestPageHasNewItems;
 
   const isLoading = feed.isLoading && items.length === 0;
   const isRefreshing = feed.isFetching && !feed.isFetchingNextPage;
@@ -184,7 +180,21 @@ export const NewsIntelligencePanel: React.FC = () => {
       </div>
       {/* Feed list */}
       {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
-      <div className="cm-news-feed">
+      {items.length > 0 && <div className="cm-news-rail-tools">
+        <p><span>{items.length}{feed.data ? ` / ${totalMatching}` : ''}</span> headlines <small>· scroll sideways to browse</small></p>
+        <div className="cm-news-rail-controls" aria-label="Browse headlines">
+          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(-1)} aria-label="Previous headlines" aria-controls={`${filterId}-headlines`}><ArrowLeft size={15} aria-hidden="true"/></button>
+          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(1)} aria-label="Next headlines" aria-controls={`${filterId}-headlines`}><ArrowRight size={15} aria-hidden="true"/></button>
+        </div>
+      </div>}
+      <div
+        id={`${filterId}-headlines`}
+        ref={newsRailRef}
+        className="cm-news-feed"
+        role="region"
+        aria-label="Headlines, scroll horizontally"
+        tabIndex={0}
+      >
         {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 
         {!isLoading && feed.isError && (
@@ -204,21 +214,13 @@ export const NewsIntelligencePanel: React.FC = () => {
           />
         ))}
 
-        {/* Infinite scroll sentinel */}
-        <div ref={loadMoreRef} />
-
-        {feed.isFetchingNextPage && (
-          <div className="flex justify-center py-3">
-            <RefreshCw size={14} className="text-copper-400/80 animate-spin" />
-          </div>
-        )}
-
-        {!feed.hasNextPage && items.length > 0 && (
-          <div className="text-center py-2 text-xs font-mono text-slate-400 tracking-wider uppercase">
-            — end of feed —
-          </div>
-        )}
       </div>
+      {canLoadMore && items.length > 0 && <div className="cm-news-more">
+        <button type="button" className="cm-news-more-button" onClick={() => { void feed.fetchNextPage(); }} disabled={feed.isFetchingNextPage}>
+          {feed.isFetchingNextPage ? <><RefreshCw size={13} className="animate-spin" aria-hidden="true"/> Loading</> : <>Load more <ArrowRight size={13} aria-hidden="true"/></>}
+        </button>
+      </div>}
+      {feed.hasNextPage && items.length > 0 && !latestPageHasNewItems && <p className="cm-news-pagination-note" role="status">No additional unique headlines are available.</p>}
       </div>
 
       <NewsDetailDrawer item={selectedItem} onClose={() => setSelectedItem(null)} />

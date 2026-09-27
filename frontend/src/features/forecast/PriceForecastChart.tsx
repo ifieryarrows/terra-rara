@@ -4,9 +4,10 @@ import { useReducedMotion } from 'framer-motion';
 import type { HistoryDataPoint, TFTAnalysisResponse } from '../../types';
 import { chartTokens as theme } from '../../design/chart-tokens';
 import { DataTable } from '../../components/ui/DataTable';
-import { FilterChip } from '../../components/ui/FilterChip';
 import { ViewState } from '../../components/ui/ViewState';
 import { finite, formatChartDate, formatPrice, preparePriceChart, type PriceChartRow } from './chart-data';
+
+const HISTORY_WINDOWS = [30, 90, 180] as const;
 
 export function PriceTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: PriceChartRow }> }) {
   const row = payload?.[0]?.payload;
@@ -38,7 +39,12 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
     : 'No dated daily forecast is available. Showing historical closes only.';
   return <div className="cm-price-chart">
     <div className="cm-chart-toolbar">
-      <fieldset className="cm-chart-period"><legend>Historical window</legend>{[30, 90, 180].map(size => <FilterChip key={size} active={count === size} onClick={() => setCount(size)}>{size} closes</FilterChip>)}</fieldset>
+      <fieldset className="cm-chart-window">
+        <legend>WINDOW</legend>
+        <div className="cm-chart-window-options">
+          {HISTORY_WINDOWS.map(size => <button key={size} type="button" aria-pressed={count === size} aria-label={`Last ${size} daily closes`} onClick={() => setCount(size)}>{size}<span>D</span></button>)}
+        </div>
+      </fieldset>
       <p className="cm-chart-meta">USD · {chart.historyCount} closes<br/>Last close: {formatChartDate(chart.lastDate!)}</p>
     </div>
     <p id={`${id}-description`} className="cm-chart-note" role="status">{status}</p>

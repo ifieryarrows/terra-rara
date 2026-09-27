@@ -50,7 +50,7 @@ function buildNewsStatsKey(filters: NewsFeedFilters) {
 }
 
 /**
- * Infinite-scrolling news feed used by NewsIntelligencePanel.
+ * Paginated news feed used by NewsIntelligencePanel.
  *
  * Cache strategy:
  *   - staleTime 30s — debounce bursty UI refetches (filter toggles etc.)
@@ -83,7 +83,13 @@ export function useNewsFeed(filters: NewsFeedFilters = {}) {
  */
 export function flattenNewsPages(pages: NewsListResponse[] | undefined): NewsItem[] {
   if (!pages || pages.length === 0) return [];
-  return pages.flatMap((page) => page.items);
+  const uniqueItems = new Map<NewsItem['id'], NewsItem>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (!uniqueItems.has(item.id)) uniqueItems.set(item.id, item);
+    }
+  }
+  return Array.from(uniqueItems.values());
 }
 
 export function useNewsStats(filters: NewsFeedFilters = {}) {
