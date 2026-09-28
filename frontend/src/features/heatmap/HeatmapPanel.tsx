@@ -4,7 +4,6 @@ import HeatmapFilters from './HeatmapFilters';
 import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import {
-  aggregateTinyLeaves,
   compressLeafWeights,
   leavesForCategory,
   type HeatmapData,
@@ -197,10 +196,9 @@ export const HeatmapPanel: React.FC = () => {
     const { _meta: _meta, ...tree } = rawData as HeatmapNode;
     return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
   }, [groupFilter, rawData, sortFilter]);
-  const renderTree = useMemo(
-    () => sourceTree ? aggregateTinyLeaves(sourceTree, dimensions.width, dimensions.height) : null,
-    [dimensions.height, dimensions.width, sourceTree],
-  );
+  // Keep individual stocks in the zoomable tree. Tiny tiles are hidden at
+  // overview scale and revealed by HeatmapTreemap as their projected size grows.
+  const renderTree = sourceTree;
   const groups = useMemo<string[]>(() => {
     const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();

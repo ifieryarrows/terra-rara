@@ -40,7 +40,7 @@ const DEFAULT_FILTERS: NewsFeedFilters = {
 };
 
 const NEWS_FLOW_SPEED = 42;
-const NEWS_FLOW_EASE_MS = 240;
+const NEWS_FLOW_EASE_MS = 280;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -61,6 +61,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const newsRailRef = useRef<HTMLDivElement | null>(null);
+  const newsTrackRef = useRef<HTMLDivElement | null>(null);
   const originalNewsSetRef = useRef<HTMLDivElement | null>(null);
   const newsScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const newsScrollbarThumbRef = useRef<HTMLDivElement | null>(null);
@@ -68,6 +69,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const flowPausedRef = useRef(false);
   const flowHoveredRef = useRef(false);
   const flowVelocityRef = useRef(NEWS_FLOW_SPEED);
+  const flowTransitionRef = useRef({ from: NEWS_FLOW_SPEED, target: NEWS_FLOW_SPEED, startedAt: 0 });
   const flowResumeTimer = useRef<number | undefined>(undefined);
   const flowFrameRef = useRef<number | null>(null);
   const lastFlowFrameTimeRef = useRef<number | null>(null);
@@ -82,12 +84,29 @@ export const NewsIntelligencePanel: React.FC = () => {
   );
   const activeWindowHours = effectiveFilters.since_hours ?? 168;
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
+  const retargetNewsFlow = () => {
+    const target = flowPausedRef.current || flowHoveredRef.current ? 0 : NEWS_FLOW_SPEED;
+    const transition = flowTransitionRef.current;
+    if (transition.target === target) return;
+    flowTransitionRef.current = { from: flowVelocityRef.current, target, startedAt: performance.now() };
+  };
+
   const pauseNewsFlow = useCallback(() => {
     flowPausedRef.current = true;
+    retargetNewsFlow();
     if (flowResumeTimer.current !== undefined) window.clearTimeout(flowResumeTimer.current);
     flowResumeTimer.current = window.setTimeout(() => {
       flowPausedRef.current = false;
       flowResumeTimer.current = undefined;
+      const rail = newsRailRef.current;
+      const track = newsTrackRef.current;
+      const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+      if (rail && track && rail.scrollLeft && cycleWidth > 0) {
+        flowPositionRef.current = (flowPositionRef.current + rail.scrollLeft) % cycleWidth;
+        rail.scrollLeft = 0;
+        track.style.transform = `translate3d(${-flowPositionRef.current}px, 0, 0)`;
+      }
+      retargetNewsFlow();
     }, 3_000);
   }, []);
 
@@ -123,12 +142,23 @@ export const NewsIntelligencePanel: React.FC = () => {
     }
     const thumbWidth = Math.min(trackWidth, Math.max(30, trackWidth * rail.clientWidth / cycleWidth));
     const maxThumbOffset = trackWidth - thumbWidth;
-    const progress = Math.max(0, Math.min(1, rail.scrollLeft / cycleWidth));
+    const progress = ((flowPositionRef.current + rail.scrollLeft) % cycleWidth) / cycleWidth;
     thumb.style.width = `${thumbWidth}px`;
     thumb.style.transform = `translate3d(${progress * maxThumbOffset}px, 0, 0)`;
     track.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
-    flowPositionRef.current = rail.scrollLeft;
   }, []);
+
+  const applyNewsFlowPosition = (position: number) => {
+    const rail = newsRailRef.current;
+    const track = newsTrackRef.current;
+    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+    if (!rail || !track || cycleWidth <= 0) return;
+    const normalized = ((position % cycleWidth) + cycleWidth) % cycleWidth;
+    flowPositionRef.current = normalized;
+    track.style.transform = `translate3d(${-normalized}px, 0, 0)`;
+    if (rail.scrollLeft) rail.scrollLeft = 0;
+    syncNewsScrollbar();
+  };
 
   useLayoutEffect(() => {
     const rail = newsRailRef.current;
@@ -157,8 +187,9 @@ export const NewsIntelligencePanel: React.FC = () => {
       width = nextWidth;
       if (flowPositionRef.current >= width) {
         flowPositionRef.current %= width;
-        rail.scrollLeft = flowPositionRef.current;
+        if (newsTrackRef.current) newsTrackRef.current.style.transform = `translate3d(${-flowPositionRef.current}px, 0, 0)`;
       }
+      syncNewsScrollbar();
     };
     const resizeObserver = new ResizeObserver(recenter);
     resizeObserver.observe(rail);
@@ -169,17 +200,21 @@ export const NewsIntelligencePanel: React.FC = () => {
       const elapsed = Math.min(48, Math.max(0, timestamp - previous));
       lastFlowFrameTimeRef.current = timestamp;
       width = set.getBoundingClientRect().width;
-      const targetVelocity = flowPausedRef.current || flowHoveredRef.current ? 0 : NEWS_FLOW_SPEED;
-      const easing = 1 - Math.exp(-elapsed / NEWS_FLOW_EASE_MS);
-      let velocity = flowVelocityRef.current + (targetVelocity - flowVelocityRef.current) * easing;
-      if (Math.abs(targetVelocity - velocity) < 0.08) velocity = targetVelocity;
+      const transition = flowTransitionRef.current;
+      const progress = Math.min(1, Math.max(0, (timestamp - transition.startedAt) / NEWS_FLOW_EASE_MS));
+      // A linear velocity ramp gives a clean, finite braking distance instead
+      // of the long near-zero tail from exponential/ease-out curves. Restart
+      // with cubic ease-in so the rail gathers speed gently.
+      const easing = transition.target === 0 ? progress : Math.pow(progress, 3);
+      const previousVelocity = flowVelocityRef.current;
+      const velocity = transition.from + (transition.target - transition.from) * easing;
       flowVelocityRef.current = velocity;
       if (width > rail.clientWidth && width > 0 && velocity > 0) {
-        const next = flowPositionRef.current + velocity * elapsed / 1_000;
-        flowPositionRef.current = next >= width ? next % width : next;
-        rail.scrollLeft = flowPositionRef.current;
-      } else {
-        flowPositionRef.current = rail.scrollLeft;
+        const next = flowPositionRef.current + (previousVelocity + velocity) * 0.5 * elapsed / 1_000;
+        const position = next >= width ? next % width : next;
+        flowPositionRef.current = position;
+        if (newsTrackRef.current) newsTrackRef.current.style.transform = `translate3d(${-position}px, 0, 0)`;
+        syncNewsScrollbar();
       }
       flowFrameRef.current = window.requestAnimationFrame(animate);
     };
@@ -190,7 +225,7 @@ export const NewsIntelligencePanel: React.FC = () => {
       flowFrameRef.current = null;
       lastFlowFrameTimeRef.current = null;
     };
-  }, [items.length]);
+  }, [items.length, syncNewsScrollbar]);
 
   const availableChannels = useMemo(() => {
     const dist = stats.data?.channel_distribution ?? {};
@@ -222,7 +257,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     dragState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
-      startScroll: rail.scrollLeft,
+      startScroll: flowPositionRef.current + rail.scrollLeft,
       moved: false,
       captureTarget,
     };
@@ -239,14 +274,9 @@ export const NewsIntelligencePanel: React.FC = () => {
     pauseNewsFlow();
     const rail = event.currentTarget;
     const width = originalNewsSetRef.current?.getBoundingClientRect().width ?? 0;
-    const max = rail.scrollWidth - rail.clientWidth;
     let next = drag.startScroll - delta;
-    if (width > rail.clientWidth) {
-      while (next < 0) next += width;
-      while (next > max) next -= width;
-    }
-    rail.scrollLeft = Math.max(0, Math.min(max, next));
-    flowPositionRef.current = rail.scrollLeft;
+    if (width > rail.clientWidth) next = ((next % width) + width) % width;
+    applyNewsFlowPosition(next);
   };
 
   const finishHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -275,16 +305,14 @@ export const NewsIntelligencePanel: React.FC = () => {
     const thumbWidth = thumb.getBoundingClientRect().width;
     const maxThumbOffset = Math.max(0, track.clientWidth - thumbWidth);
     const isThumb = event.target === thumb;
-    const currentOffset = Math.max(0, Math.min(maxThumbOffset, rail.scrollLeft / cycleWidth * maxThumbOffset));
+    const currentOffset = Math.max(0, Math.min(maxThumbOffset, ((flowPositionRef.current + rail.scrollLeft) % cycleWidth) / cycleWidth * maxThumbOffset));
     const startThumbX = isThumb
       ? currentOffset
       : Math.max(0, Math.min(maxThumbOffset, event.clientX - bounds.left - thumbWidth / 2));
     newsScrollbarDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startThumbX };
     track.setPointerCapture(event.pointerId);
     if (!isThumb) {
-      rail.scrollLeft = maxThumbOffset ? startThumbX / maxThumbOffset * cycleWidth : 0;
-      flowPositionRef.current = rail.scrollLeft;
-      syncNewsScrollbar();
+      applyNewsFlowPosition(maxThumbOffset ? startThumbX / maxThumbOffset * cycleWidth : 0);
     }
   };
 
@@ -297,9 +325,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     if (!drag || drag.pointerId !== event.pointerId || !rail || !track || !thumb) return;
     const maxThumbOffset = Math.max(0, track.clientWidth - thumb.getBoundingClientRect().width);
     const thumbOffset = Math.max(0, Math.min(maxThumbOffset, drag.startThumbX + event.clientX - drag.startX));
-    rail.scrollLeft = maxThumbOffset ? thumbOffset / maxThumbOffset * cycleWidth : 0;
-    flowPositionRef.current = rail.scrollLeft;
-    syncNewsScrollbar();
+    applyNewsFlowPosition(maxThumbOffset ? thumbOffset / maxThumbOffset * cycleWidth : 0);
   };
 
   const finishNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -427,8 +453,8 @@ export const NewsIntelligencePanel: React.FC = () => {
       </div>}
       <div
         className="cm-news-feed-shell"
-        onMouseEnter={() => { flowHoveredRef.current = true; }}
-        onMouseLeave={() => { flowHoveredRef.current = false; }}
+        onMouseEnter={() => { flowHoveredRef.current = true; retargetNewsFlow(); }}
+        onMouseLeave={() => { flowHoveredRef.current = false; retargetNewsFlow(); }}
       >
         <div
           id={`${filterId}-headlines`}
@@ -452,6 +478,7 @@ export const NewsIntelligencePanel: React.FC = () => {
             suppressCardClick.current = false;
           }}
         >
+        <div ref={newsTrackRef} className="cm-news-feed-track">
         {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 
         {!isLoading && feed.isError && (
@@ -475,6 +502,7 @@ export const NewsIntelligencePanel: React.FC = () => {
           </div>
         </>}
 
+        </div>
         </div>
         <div
           ref={newsScrollbarTrackRef}

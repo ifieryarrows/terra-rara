@@ -62,13 +62,18 @@ export const CategoryTiles = memo(function CategoryTiles({
   });
 });
 
-export const LeafTiles = memo(function LeafTiles({ leafEntries, zoomed }: { leafEntries: LeafEntry[]; zoomed: boolean }) {
+export const LeafTiles = memo(function LeafTiles({ leafEntries, zoomed, detailZoom = 1 }: { leafEntries: LeafEntry[]; zoomed: boolean; detailZoom?: number }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
     const cellHeight = leaf.y1 - leaf.y0;
-    if (cellWidth < 4 || cellHeight < 4) return null;
-    const level = detailLevel(cellWidth, cellHeight);
+    const visibleWidth = cellWidth * detailZoom;
+    const visibleHeight = cellHeight * detailZoom;
+    if (visibleWidth < 4 || visibleHeight < 4) return null;
+    // Choose the detail tier from the tile's visible size after zooming. Keep
+    // font dimensions based on the layout size: the camera transform scales
+    // the existing text along with the tile, so scaling it twice would bloat it.
+    const level = detailLevel(visibleWidth, visibleHeight);
     const textSizes = stockTextSizes(cellWidth, cellHeight, level);
     const change = item.changePercent || 0;
     const showTicker = level !== 'color';
