@@ -1,4 +1,4 @@
-import React, { useId, useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { useId, useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import {
@@ -55,17 +55,16 @@ export const NewsIntelligencePanel: React.FC = () => {
   const [searchDraft, setSearchDraft] = useState('');
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
   const [isDraggingHeadlines, setIsDraggingHeadlines] = useState(false);
-  const [isTickerHovered, setIsTickerHovered] = useState(false);
-  const [isTickerPaused, setIsTickerPaused] = useState(false);
-  const [isTickerDragging, setIsTickerDragging] = useState(false);
   const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const newsRailRef = useRef<HTMLDivElement | null>(null);
-  const tickerPauseTimer = useRef<number | undefined>(undefined);
-  const tickerTrackRef = useRef<HTMLDivElement | null>(null);
-  const tickerAnimationRef = useRef<Animation | null>(null);
-  const tickerDragRef = useRef<{ pointerId: number; startX: number; startTime: number; duration: number; didMove: boolean } | null>(null);
-  const suppressTickerClick = useRef(false);
+  const originalNewsSetRef = useRef<HTMLDivElement | null>(null);
+  const flowPausedRef = useRef(false);
+  const flowHoveredRef = useRef(false);
+  const flowResumeTimer = useRef<number | undefined>(undefined);
+  const flowFrameRef = useRef<number | null>(null);
+  const lastFlowFrameTimeRef = useRef<number | null>(null);
+  const flowPositionRef = useRef(0);
   const dragState = useRef<{ pointerId: number; startX: number; startScroll: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
   const suppressCardClick = useRef(false);
 
@@ -77,57 +76,18 @@ export const NewsIntelligencePanel: React.FC = () => {
   const activeWindowHours = effectiveFilters.since_hours ?? 168;
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
 
-  const pauseTickerAfterInteraction = () => {
-    setIsTickerPaused(true);
-    if (tickerPauseTimer.current !== undefined) window.clearTimeout(tickerPauseTimer.current);
-    tickerPauseTimer.current = window.setTimeout(() => {
-      tickerAnimationRef.current?.play();
-      tickerAnimationRef.current = null;
-      setIsTickerPaused(false);
-      tickerPauseTimer.current = undefined;
+  const pauseNewsFlow = useCallback(() => {
+    flowPausedRef.current = true;
+    if (flowResumeTimer.current !== undefined) window.clearTimeout(flowResumeTimer.current);
+    flowResumeTimer.current = window.setTimeout(() => {
+      flowPausedRef.current = false;
+      flowResumeTimer.current = undefined;
     }, 3_000);
-  };
-  const startTickerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !event.isPrimary) return;
-    if (tickerPauseTimer.current !== undefined) window.clearTimeout(tickerPauseTimer.current);
-    tickerPauseTimer.current = undefined;
-    setIsTickerPaused(true);
-    const animation = tickerTrackRef.current?.getAnimations()[0] ?? null;
-    animation?.pause();
-    tickerAnimationRef.current = animation;
-    const currentTime = Number(animation?.currentTime ?? 0);
-    const duration = tickerDurationSeconds * (isTickerHovered ? 2.6 : 1) * 1_000;
-    tickerDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startTime: currentTime, duration, didMove: false };
-  };
-  const moveTickerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = tickerDragRef.current;
-    const track = tickerTrackRef.current;
-    const animation = tickerAnimationRef.current;
-    if (!drag || !track || !animation || drag.pointerId !== event.pointerId) return;
-    const delta = event.clientX - drag.startX;
-    if (!drag.didMove && Math.abs(delta) < 4) return;
-    if (!drag.didMove) {
-      drag.didMove = true;
-      setIsTickerDragging(true);
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    const loopWidth = Math.max(1, track.scrollWidth / 2);
-    const nextTime = drag.startTime + delta / loopWidth * drag.duration;
-    animation.currentTime = ((nextTime % drag.duration) + drag.duration) % drag.duration;
-  };
-  const finishTickerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = tickerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    suppressTickerClick.current = drag.didMove;
-    tickerDragRef.current = null;
-    setIsTickerDragging(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    pauseTickerAfterInteraction();
-    if (suppressTickerClick.current) window.setTimeout(() => { suppressTickerClick.current = false; }, 0);
-  };
+  }, []);
+
   useEffect(() => () => {
-    if (tickerPauseTimer.current !== undefined) window.clearTimeout(tickerPauseTimer.current);
-    tickerAnimationRef.current?.cancel();
+    if (flowResumeTimer.current !== undefined) window.clearTimeout(flowResumeTimer.current);
+    if (flowFrameRef.current !== null) window.cancelAnimationFrame(flowFrameRef.current);
   }, []);
 
   const feed = useNewsFeed(effectiveFilters);
@@ -135,6 +95,56 @@ export const NewsIntelligencePanel: React.FC = () => {
 
   const items = useMemo(() => flattenNewsPages(feed.data?.pages), [feed.data]);
   const totalMatching = feed.data?.pages?.[0]?.total ?? items.length;
+
+  useLayoutEffect(() => {
+    const rail = newsRailRef.current;
+    const set = originalNewsSetRef.current;
+    if (rail && set) {
+      rail.scrollLeft = set.getBoundingClientRect().width;
+      flowPositionRef.current = rail.scrollLeft;
+    }
+  }, [items]);
+
+  useEffect(() => {
+    const rail = newsRailRef.current;
+    const set = originalNewsSetRef.current;
+    if (!rail || !set || items.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    let width = set.getBoundingClientRect().width;
+    const recenter = () => {
+      const nextWidth = set.getBoundingClientRect().width;
+      if (nextWidth <= 0 || nextWidth === width) return;
+      width = nextWidth;
+      rail.scrollLeft = width;
+      flowPositionRef.current = rail.scrollLeft;
+    };
+    const resizeObserver = new ResizeObserver(recenter);
+    resizeObserver.observe(rail);
+    resizeObserver.observe(set);
+
+    const animate = (timestamp: number) => {
+      const previous = lastFlowFrameTimeRef.current ?? timestamp;
+      const elapsed = Math.min(48, Math.max(0, timestamp - previous));
+      lastFlowFrameTimeRef.current = timestamp;
+      width = set.getBoundingClientRect().width;
+      if (width > rail.clientWidth && width > 0 && !flowPausedRef.current) {
+        const speed = flowHoveredRef.current ? 3 : 14;
+        const next = flowPositionRef.current - speed * elapsed / 1_000;
+        flowPositionRef.current = next <= 0 ? width + next : next;
+        rail.scrollLeft = flowPositionRef.current;
+      } else {
+        flowPositionRef.current = rail.scrollLeft;
+      }
+      flowFrameRef.current = window.requestAnimationFrame(animate);
+    };
+    flowFrameRef.current = window.requestAnimationFrame(animate);
+    return () => {
+      resizeObserver.disconnect();
+      if (flowFrameRef.current !== null) window.cancelAnimationFrame(flowFrameRef.current);
+      flowFrameRef.current = null;
+      lastFlowFrameTimeRef.current = null;
+    };
+  }, [items.length]);
 
   const availableChannels = useMemo(() => {
     const dist = stats.data?.channel_distribution ?? {};
@@ -150,7 +160,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const scrollHeadlines = (direction: -1 | 1) => {
     const rail = newsRailRef.current;
     if (!rail) return;
-    pauseTickerAfterInteraction();
+    pauseNewsFlow();
     rail.scrollBy({
       left: direction * Math.max(240, rail.clientWidth * 0.82),
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
@@ -158,7 +168,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   };
 
   const startHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    pauseTickerAfterInteraction();
+    pauseNewsFlow();
     if (event.pointerType === 'touch' || event.button !== 0) return;
     const rail = event.currentTarget;
     const card = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('.cm-news-card') : null;
@@ -180,8 +190,17 @@ export const NewsIntelligencePanel: React.FC = () => {
     const delta = event.clientX - drag.startX;
     if (!drag.moved && Math.abs(delta) < 4) return;
     drag.moved = true;
-    pauseTickerAfterInteraction();
-    event.currentTarget.scrollLeft = drag.startScroll - delta;
+    pauseNewsFlow();
+    const rail = event.currentTarget;
+    const width = originalNewsSetRef.current?.getBoundingClientRect().width ?? 0;
+    const max = rail.scrollWidth - rail.clientWidth;
+    let next = drag.startScroll - delta;
+    if (width > rail.clientWidth) {
+      while (next < 0) next += width;
+      while (next > max) next -= width;
+    }
+    rail.scrollLeft = Math.max(0, Math.min(max, next));
+    flowPositionRef.current = rail.scrollLeft;
   };
 
   const finishHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -190,7 +209,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     suppressCardClick.current = drag.moved;
     dragState.current = null;
     setIsDraggingHeadlines(false);
-    pauseTickerAfterInteraction();
+    pauseNewsFlow();
     if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
       drag.captureTarget.releasePointerCapture(event.pointerId);
     }
@@ -209,24 +228,6 @@ export const NewsIntelligencePanel: React.FC = () => {
   const bullishCount = labelDist.BULLISH ?? 0;
   const bearishCount = labelDist.BEARISH ?? 0;
   const neutralCount = labelDist.NEUTRAL ?? 0;
-  const tickerItems = items.slice(0, 12);
-  const tickerDurationSeconds = Math.max(44, tickerItems.length * 5.5);
-
-  const renderTickerItem = (item: NewsItem, duplicate = false) => (
-    <button
-      key={`${duplicate ? 'copy-' : ''}${item.id}`}
-      type="button"
-      tabIndex={duplicate ? -1 : undefined}
-      className={`cm-news-ticker-item cm-news-ticker-item--${(item.sentiment?.label || 'neutral').toLowerCase()}`}
-      onClick={() => { pauseTickerAfterInteraction(); setSelectedItem(item); }}
-      aria-label={`${item.publisher || 'News source'}: ${item.title}`}
-    >
-      <i aria-hidden="true"/>
-      <span className="cm-news-ticker-source">{item.publisher || item.channel || 'Newswire'}</span>
-      <span className="cm-news-ticker-title">{item.title}</span>
-    </button>
-  );
-
   return (
     <motion.aside
       className="cm-news-panel glass-panel"
@@ -301,34 +302,6 @@ export const NewsIntelligencePanel: React.FC = () => {
           {(availableChannels.length > 1 || (filters.channel && filters.channel !== 'all')) && <fieldset className="cm-news-filter-group"><legend>Channel</legend><FilterChip active={!filters.channel || filters.channel === 'all'} onClick={() => updateFilter('channel', 'all')}>All channels</FilterChip>{Array.from(new Set([...availableChannels, ...(filters.channel && filters.channel !== 'all' ? [filters.channel] : [])])).map(channel => <FilterChip key={channel} active={filters.channel === channel} onClick={() => updateFilter('channel', channel)}>{channel === 'google_news' ? 'Google News' : channel === 'newsapi' ? 'NewsAPI' : channel}</FilterChip>)}</fieldset>}
         </div>
       </div>
-      {tickerItems.length > 0 && <div
-        className={`cm-news-ticker${isTickerHovered ? ' is-hovered' : ''}${isTickerPaused ? ' is-paused' : ''}${isTickerDragging ? ' is-dragging' : ''}`}
-        role="region"
-        aria-label="Scrolling news headlines"
-        aria-live="off"
-        onMouseEnter={() => setIsTickerHovered(true)}
-        onMouseLeave={() => setIsTickerHovered(false)}
-        onWheel={pauseTickerAfterInteraction}
-        onKeyDown={pauseTickerAfterInteraction}
-        onPointerDownCapture={startTickerDrag}
-        onPointerMove={moveTickerDrag}
-        onPointerUp={finishTickerDrag}
-        onPointerCancel={finishTickerDrag}
-        onClickCapture={event => {
-          if (!suppressTickerClick.current) return;
-          event.preventDefault();
-          event.stopPropagation();
-          suppressTickerClick.current = false;
-        }}
-      >
-        <span className="cm-news-ticker-label">NEWSWIRE <i aria-hidden="true"/></span>
-        <div className="cm-news-ticker-window">
-          <div ref={tickerTrackRef} className="cm-news-ticker-track" style={{ animationDuration: `${tickerDurationSeconds * (isTickerHovered ? 2.6 : 1)}s` }}>
-            <div className="cm-news-ticker-set">{tickerItems.map(item => renderTickerItem(item))}</div>
-            <div className="cm-news-ticker-set" aria-hidden="true">{tickerItems.map(item => renderTickerItem(item, true))}</div>
-          </div>
-        </div>
-      </div>}
       {/* Feed list */}
       {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
       {items.length > 0 && <div className="cm-news-rail-tools">
@@ -349,7 +322,12 @@ export const NewsIntelligencePanel: React.FC = () => {
         onPointerMove={moveHeadlineDrag}
         onPointerUp={finishHeadlineDrag}
         onPointerCancel={finishHeadlineDrag}
-        onScroll={pauseTickerAfterInteraction}
+        onMouseEnter={() => { flowHoveredRef.current = true; }}
+        onMouseLeave={() => { flowHoveredRef.current = false; }}
+        onWheel={pauseNewsFlow}
+        onKeyDown={event => {
+          if (['ArrowLeft', 'ArrowRight', 'Home', 'End', ' '].includes(event.key)) pauseNewsFlow();
+        }}
         onClickCapture={event => {
           if (!suppressCardClick.current) return;
           event.preventDefault();
@@ -367,14 +345,18 @@ export const NewsIntelligencePanel: React.FC = () => {
           <ViewState kind="empty" title="No matching headlines" description="Try a broader search or reset your filters." action={hasActiveFilters && <button type="button" className="cm-button cm-button--secondary" onClick={resetFilters}>Show all headlines</button>} compact/>
         )}
 
-        {items.map((item) => (
-          <NewsCard
-            key={item.id}
-            item={item}
-            selected={selectedItem?.id === item.id}
-            onSelect={setSelectedItem}
-          />
-        ))}
+        {items.length > 0 && <>
+          <div className="cm-news-feed-set cm-news-feed-set--duplicate" aria-hidden="true">
+            {items.map((item) => (
+              <NewsCard key={`copy-${item.id}`} item={item} duplicate selected={selectedItem?.id === item.id} onSelect={(newsItem) => { pauseNewsFlow(); setSelectedItem(newsItem); }}/>
+            ))}
+          </div>
+          <div ref={originalNewsSetRef} className="cm-news-feed-set">
+            {items.map((item) => (
+              <NewsCard key={item.id} item={item} selected={selectedItem?.id === item.id} onSelect={(newsItem) => { pauseNewsFlow(); setSelectedItem(newsItem); }}/>
+            ))}
+          </div>
+        </>}
 
       </div>
       {canLoadMore && items.length > 0 && <div className="cm-news-more">

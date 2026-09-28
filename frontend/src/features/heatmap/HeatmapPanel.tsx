@@ -15,6 +15,7 @@ import { recordCommit, recordLongTask } from './performance';
 import { useMarketHeatmap } from '../../hooks/useQueries';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 const OPEN_DELAY_MS = 90;
 const CLOSE_DELAY_MS = 180;
@@ -228,8 +229,12 @@ export const HeatmapPanel: React.FC = () => {
     <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`} data-cm-route-reveal="surface">
       <aside className="cm-heatmap-sidebar" aria-label="Market map controls">
         <header className="cm-heatmap-sidebar-head">
-          <span>MARKET MAP</span>
-          <h2>Heatmap</h2>
+          <div className="cm-heatmap-sidebar-title-row">
+            <div><span>MARKET MAP</span><h2>Heatmap</h2></div>
+            <button ref={fullscreenButtonRef} type="button" className="cm-heatmap-fullscreen-button" onClick={() => setIsFullscreen((current) => !current)} aria-pressed={isFullscreen} aria-label={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'} title={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'}>
+              {isFullscreen ? <Minimize2 size={15} aria-hidden="true"/> : <Maximize2 size={15} aria-hidden="true"/>}
+            </button>
+          </div>
           <p>{rawData
             ? <>{groups.length} sectors <i aria-hidden="true">/</i> {meta.payload_count ?? 0} instruments</>
             : isLoading || meta.refresh_in_progress ? 'Loading snapshot…' : 'No available snapshot'}</p>
@@ -246,17 +251,6 @@ export const HeatmapPanel: React.FC = () => {
           meta={meta}
           hasSnapshot={!!rawData}
         />
-
-        <div className="cm-heatmap-zoom">
-          <div className="cm-heatmap-zoom-label"><span>MAP SCALE</span><button type="button" onClick={() => setZoom(1)} aria-label="Reset map zoom">{Math.round(zoom * 100)}%</button></div>
-          <div className="cm-heatmap-zoom-controls" role="group" aria-label="Map zoom controls">
-            <button type="button" className="cm-icon-button" aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-.5)}>−</button>
-            <button type="button" className="cm-icon-button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(.5)}>+</button>
-            <button ref={fullscreenButtonRef} type="button" onClick={() => setIsFullscreen((current) => !current)} aria-pressed={isFullscreen} aria-label={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'}>
-              {isFullscreen ? 'Exit full screen' : 'Full screen'}
-            </button>
-          </div>
-        </div>
 
         {meta.refresh_error && <p className="cm-heatmap-error">Snapshot refresh failed. Showing the last available data.</p>}
       </aside>

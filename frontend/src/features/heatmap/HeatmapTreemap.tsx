@@ -9,7 +9,6 @@ import {
 import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
-const ZOOM_LAYOUT_SETTLE_MS = 380;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 
@@ -59,7 +58,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeLeafRef = useRef<string | null>(null);
   const activeCategoryRef = useRef<string | null>(null);
-  const pendingZoomRef = useRef<{ previous: number; x: number; y: number; contentX: number; contentY: number } | null>(null);
+  const zoomTargetRef = useRef(zoom);
+  const displayZoomRef = useRef(zoom);
+  const zoomAnchorRef = useRef<{ x: number; y: number; contentX: number; contentY: number } | null>(null);
+  const zoomFrameRef = useRef<number | null>(null);
+  const lastZoomFrameTimeRef = useRef<number | null>(null);
   const wheelFrameRef = useRef<number | null>(null);
   const wheelDeltaRef = useRef(0);
   const wheelPointerRef = useRef({ x: 0, y: 0 });
@@ -67,30 +70,21 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
-  // Keep the existing exact treemap geometry at rest. While the wheel is
-  // moving, a composited scale previews zoom without rebuilding every tile.
-  const [layoutZoom, setLayoutZoom] = useState(zoom);
-  const scaledWidth = Math.max(1, Math.round(width * zoom));
-  const scaledHeight = Math.max(1, Math.round(height * zoom));
-  const layoutWidth = Math.max(1, Math.round(width * layoutZoom));
-  const layoutHeight = Math.max(1, Math.round(height * layoutZoom));
-  const visualScale = zoom / layoutZoom;
-
-  useEffect(() => {
-    if (zoom === layoutZoom) return;
-    const timer = window.setTimeout(() => setLayoutZoom(zoom), ZOOM_LAYOUT_SETTLE_MS);
-    return () => window.clearTimeout(timer);
-  }, [layoutZoom, zoom]);
+  const [displayZoom, setDisplayZoom] = useState(zoom);
+  zoomTargetRef.current = zoom;
+  const visualScale = displayZoom;
+  const scaledWidth = Math.max(1, width * visualScale);
+  const scaledHeight = Math.max(1, height * visualScale);
 
   // Hierarchy construction only follows data; resquarify reuses its topology on resize.
   const hierarchyRoot = useMemo(() => createTreemapHierarchy(data), [data]);
   const layout = useMemo(() => {
     const started = performance.now();
-    const next = layoutTreemap(hierarchyRoot, layoutWidth, layoutHeight);
+    const next = layoutTreemap(hierarchyRoot, width, height);
     recordLayout(performance.now() - started);
     heatmapMetrics().resizeLayouts += 1;
     return next;
-  }, [hierarchyRoot, layoutHeight, layoutWidth]);
+  }, [hierarchyRoot, height, width]);
   const leaves = useMemo(() => layout.leaves(), [layout]);
   const parents = useMemo(
     () => layout.descendants().filter((node) => node.depth > 0 && node.children) as LayoutNode[],
@@ -120,6 +114,51 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const categoryById = useMemo(() => new Map(parents.map((node) => [String((node.data as HeatmapNode).id || node.data.name), node])), [parents]);
 
   useEffect(() => {
+    if (zoomFrameRef.current !== null) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      displayZoomRef.current = zoomTargetRef.current;
+      setDisplayZoom(zoomTargetRef.current);
+      return;
+    }
+
+    const animate = (timestamp: number) => {
+      const previous = lastZoomFrameTimeRef.current ?? timestamp;
+      const elapsed = Math.min(48, Math.max(0, timestamp - previous));
+      lastZoomFrameTimeRef.current = timestamp;
+      const current = displayZoomRef.current;
+      const target = zoomTargetRef.current;
+      const next = current + (target - current) * (1 - Math.exp(-elapsed / 68));
+      if (Math.abs(target - next) < 0.001) {
+        displayZoomRef.current = target;
+        setDisplayZoom(target);
+        zoomFrameRef.current = null;
+        lastZoomFrameTimeRef.current = null;
+        return;
+      }
+      displayZoomRef.current = next;
+      setDisplayZoom(next);
+      zoomFrameRef.current = window.requestAnimationFrame(animate);
+    };
+
+    zoomFrameRef.current = window.requestAnimationFrame(animate);
+  }, [zoom]);
+
+  useEffect(() => () => {
+    if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = null;
+    lastZoomFrameTimeRef.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    const anchor = zoomAnchorRef.current;
+    if (!element || !anchor) return;
+    element.scrollLeft = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, anchor.contentX * displayZoom - anchor.x));
+    element.scrollTop = Math.max(0, Math.min(element.scrollHeight - element.clientHeight, anchor.contentY * displayZoom - anchor.y));
+    if (Math.abs(displayZoom - zoomTargetRef.current) < 0.001) zoomAnchorRef.current = null;
+  }, [displayZoom]);
+
+  useEffect(() => {
     const element = scrollRef.current;
     if (!element || !onZoomDelta) return;
     const wheel = (event: WheelEvent) => {
@@ -135,19 +174,18 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         wheelDeltaRef.current = 0;
         if (Math.abs(delta) < 0.01) return;
 
-        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(zoom + delta).toFixed(2)));
-        if (nextZoom === zoom) {
-          pendingZoomRef.current = null;
-          return;
-        }
-        pendingZoomRef.current = {
-          previous: zoom,
+        const currentTarget = zoomTargetRef.current;
+        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget + delta).toFixed(2)));
+        if (nextZoom === currentTarget) return;
+        const currentScale = Math.max(0.001, displayZoomRef.current);
+        zoomAnchorRef.current = {
           x,
           y,
-          contentX: x + element.scrollLeft,
-          contentY: y + element.scrollTop,
+          contentX: (x + element.scrollLeft) / currentScale,
+          contentY: (y + element.scrollTop) / currentScale,
         };
-        onZoomDelta(delta);
+        zoomTargetRef.current = nextZoom;
+        onZoomDelta(nextZoom - currentTarget);
       });
     };
     element.addEventListener('wheel', wheel, { passive: false });
@@ -155,17 +193,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       element.removeEventListener('wheel', wheel);
       if (wheelFrameRef.current !== null) cancelAnimationFrame(wheelFrameRef.current);
     };
-  }, [onZoomDelta, zoom]);
-
-  useLayoutEffect(() => {
-    const element = scrollRef.current;
-    const pending = pendingZoomRef.current;
-    if (!element || !pending || pending.previous === zoom) return;
-    const ratio = zoom / pending.previous;
-    element.scrollLeft = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, pending.contentX * ratio - pending.x));
-    element.scrollTop = Math.max(0, Math.min(element.scrollHeight - element.clientHeight, pending.contentY * ratio - pending.y));
-    pendingZoomRef.current = null;
-  }, [zoom]);
+  }, [onZoomDelta]);
 
   const anchorFor = (
     id: string,
@@ -384,9 +412,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       style={{ width: '100%', height, overflow: 'hidden', touchAction: zoom > 1 ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none' }}
     >
       <div className="relative" style={{ width: scaledWidth, height: scaledHeight }}>
-        <div className="cm-heatmap-preview-content relative" style={{ width: layoutWidth, height: layoutHeight, transform: visualScale === 1 ? undefined : `scale(${visualScale})`, transformOrigin: 'top left' }}>
-          <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoom={layoutZoom} />
-          <LeafTiles leafEntries={leafEntries} zoom={layoutZoom} />
+        <div className="cm-heatmap-preview-content relative" style={{ width, height, transform: visualScale === 1 ? undefined : `scale(${visualScale})`, transformOrigin: 'top left' }}>
+          <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoom={zoom} />
+          <LeafTiles leafEntries={leafEntries} zoom={zoom} />
         </div>
       </div>
     </div>

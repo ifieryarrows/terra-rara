@@ -91,7 +91,6 @@ export function TerraAtmosphere({ progress, interactive = false, className = '' 
       if (!canRenderPointerGlow || !root) return;
       root.style.setProperty('--pointer-x', `${(pointerX * 100).toFixed(2)}%`);
       root.style.setProperty('--pointer-y', `${(pointerY * 100).toFixed(2)}%`);
-      root.style.setProperty('--cm-atmosphere-star-shift-x', `${((0.5 - pointerX) * 14).toFixed(1)}px`);
     };
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return;

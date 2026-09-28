@@ -8,6 +8,7 @@ interface NewsCardProps {
   item: NewsItem;
   onSelect: (item: NewsItem) => void;
   selected?: boolean;
+  duplicate?: boolean;
 }
 
 const LABEL_STYLES: Record<NewsLabel, { chip: string; icon: typeof TrendingUp; text: string }> = {
@@ -64,7 +65,7 @@ function formatEventType(raw: string | null | undefined): string {
     .join(' ');
 }
 
-export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = false }) => {
+export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = false, duplicate = false }) => {
   const sentiment = item.sentiment;
   const label = normaliseLabel(sentiment?.label);
   const style = LABEL_STYLES[label];
@@ -80,6 +81,8 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
   return (
     <motion.button
       type="button"
+      tabIndex={duplicate ? -1 : undefined}
+      aria-hidden={duplicate || undefined}
       onClick={handleSelect}
       className={clsx(
         'cm-news-card',
