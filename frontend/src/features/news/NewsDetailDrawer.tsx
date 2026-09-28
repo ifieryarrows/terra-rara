@@ -35,9 +35,9 @@ function formatEventType(raw: string | null | undefined): string {
 function ProbBar({ label, value, color }: { label: string; value: number; color: string }) {
   const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
   return (
-    <div className="flex items-center gap-2 text-xs font-mono">
+    <div className="cm-news-detail-probability flex items-center gap-2 text-xs font-mono">
       <span className="w-10 text-gray-400 uppercase tracking-wider">{label}</span>
-      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+      <div className="cm-news-detail-probability-track flex-1 h-1.5 overflow-hidden">
         <div className={clsx('h-full', color)} style={{ width: `${pct}%` }} />
       </div>
       <span className="w-10 text-right text-gray-300">{pct}%</span>
@@ -86,7 +86,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
         <>
           <motion.div
             key="news-drawer-backdrop"
-            className="fixed inset-0 z-[60] bg-black/60"
+            className="cm-news-detail-backdrop fixed inset-0 z-[60]"
             aria-hidden="true"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -100,16 +100,15 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
             aria-labelledby="news-drawer-title"
             tabIndex={-1}
             key="news-drawer-panel"
-            className="fixed top-0 right-0 bottom-0 z-[70] w-full sm:w-[480px] bg-cm-surface border-l border-cm-border shadow-2xl overflow-y-auto"
+            className="cm-news-detail-drawer fixed top-0 right-0 bottom-0 z-[70] w-full sm:w-[500px] overflow-y-auto"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 260 }}
           >
-            <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-3 bg-midnight/95 border-b border-white/10">
-              <div id="news-drawer-title" className="flex items-center gap-2 text-sm uppercase tracking-widest text-copper-400 font-semibold">
-                <Radio size={14} />
-                News detail
+            <div className="cm-news-detail-header sticky top-0 z-10 flex items-center justify-between">
+              <div id="news-drawer-title" className="flex items-center gap-2">
+                <Radio size={14} aria-hidden="true"/><span>NEWS INTELLIGENCE</span>
               </div>
               <button
                 type="button"
@@ -121,17 +120,17 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
               </button>
             </div>
 
-            <div className="p-5 space-y-5">
-              <div className="flex items-center gap-2 flex-wrap text-xs font-mono text-gray-400">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5">
-                  <Globe size={10} className="text-copper-400/80" />
+            <div className="cm-news-detail-body">
+              <div className="cm-news-detail-meta flex items-center gap-2 flex-wrap text-xs font-mono">
+                <span className="cm-news-detail-publisher inline-flex items-center gap-1">
+                  <Globe size={10} aria-hidden="true"/>
                   {displayed.publisher ?? 'Unknown publisher'}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-white/5 tracking-wider uppercase">
+                <span className="cm-news-detail-channel tracking-wider uppercase">
                   {displayed.channel}
                 </span>
                 {displayed.language && (
-                  <span className="px-2 py-0.5 rounded-full bg-white/5 uppercase">
+                  <span className="cm-news-detail-language uppercase">
                     {displayed.language}
                   </span>
                 )}
@@ -147,23 +146,23 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                 )}
               </div>
 
-              <h2 className="text-lg font-semibold text-white leading-snug">{displayed.title}</h2>
+              <h2 className="cm-news-detail-title">{displayed.title}</h2>
 
               {displayed.description && (
-                <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                <p className="cm-news-detail-description">
                   {displayed.description}
                 </p>
               )}
 
               {displayed.sentiment && (
-                <div className="space-y-3 rounded-xl border border-white/5 bg-white/[0.03] p-4">
+                <div className="cm-news-detail-sentiment space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs uppercase tracking-widest text-gray-400 font-semibold">
                       Sentiment
                     </span>
                     <span
                       className={clsx(
-                        'text-xs font-mono tracking-wider uppercase px-2 py-0.5 rounded-full border',
+                        'cm-news-detail-sentiment-tag text-xs font-mono tracking-wider uppercase',
                         LABEL_STYLES[normaliseLabel(displayed.sentiment.label)],
                       )}
                     >
@@ -171,7 +170,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                  <div className="cm-news-detail-stats grid grid-cols-2 gap-3 text-xs font-mono">
                     <Stat label="Final score" value={displayed.sentiment.final_score} signed />
                     <Stat label="LLM impact" value={displayed.sentiment.impact_score_llm} signed />
                     <Stat label="Confidence" value={displayed.sentiment.confidence} percent />
@@ -184,7 +183,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                   </div>
 
                   {displayed.sentiment.finbert && (
-                    <div className="space-y-1.5 pt-2 border-t border-white/5">
+                    <div className="cm-news-detail-probabilities space-y-1.5 pt-2">
                       <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">
                         FinBERT probabilities
                       </div>
@@ -195,7 +194,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                   )}
 
                   {displayed.sentiment.reasoning && (
-                    <div className="pt-3 border-t border-white/5">
+                    <div className="cm-news-detail-rationale pt-3">
                       <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">
                         LLM rationale
                       </div>
@@ -212,7 +211,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                   href={displayed.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-sm text-copper-300 hover:text-copper-200 font-medium"
+                  className="cm-news-detail-source inline-flex items-center gap-2"
                 >
                   Read full article
                   <ExternalLink size={14} />
@@ -250,8 +249,8 @@ function Stat({
     }
   }
   return (
-    <div className="rounded-lg bg-white/[0.02] px-2 py-1.5">
-      <div className="text-xs uppercase tracking-widest text-slate-400">{label}</div>
+    <div className="cm-news-detail-stat">
+      <div className="text-xs uppercase tracking-widest">{label}</div>
       <div className={clsx('text-sm', tone)}>{display}</div>
     </div>
   );

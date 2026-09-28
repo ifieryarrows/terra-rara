@@ -89,11 +89,12 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
         'focus:outline-none focus:ring-2 focus:ring-copper-400/50',
         selected && 'border-copper-400/70 bg-midnight/80 shadow-lg',
       )}
+      data-cm-route-reveal="surface"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <div className="flex items-center justify-between gap-1.5 mb-1 text-xs font-mono text-slate-400">
+      <div className="cm-news-card-meta flex items-center justify-between gap-1.5 mb-1 text-xs font-mono text-slate-400">
         <div className="flex items-center gap-1 min-w-0">
           <Globe size={10} className="text-copper-400/80 shrink-0" />
           <span className="truncate text-gray-400" title={item.publisher ?? item.channel}>
@@ -101,7 +102,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
           </span>
           {channelCode && (
             <span
-              className="px-1 py-0.5 rounded bg-white/5 text-xs tracking-wider text-slate-400 shrink-0"
+              className="cm-news-card-channel px-1 py-0.5 rounded bg-white/5 text-xs tracking-wider text-slate-400 shrink-0"
               title={`Ingestion channel: ${item.channel}`}
             >
               {channelCode}
@@ -111,24 +112,24 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
         <span className="shrink-0 whitespace-nowrap">{formatRelativeTime(item.published_at)}</span>
       </div>
 
-      <div className="flex items-start gap-1.5 mb-1.5">
-        <Newspaper size={13} className="text-copper-400/70 mt-0.5 shrink-0" />
-        <p className="text-[13px] text-gray-100 leading-snug line-clamp-2 break-words">{item.title}</p>
+      <div className="cm-news-card-headline flex items-start gap-1.5 mb-1.5">
+        <Newspaper size={13} className="text-copper-400/70 mt-0.5 shrink-0" aria-hidden="true" />
+        <p className="cm-news-card-title text-[13px] text-gray-100 leading-snug line-clamp-2 break-words">{item.title}</p>
       </div>
 
       {reasoning && (
         <p
-          className="text-xs text-gray-400/90 italic leading-snug line-clamp-2 mb-1.5 pl-[18px] break-words"
+          className="cm-news-card-summary text-xs text-gray-400/90 leading-snug line-clamp-2 mb-1.5 pl-[18px] break-words"
           title={reasoning}
         >
           {reasoning}
         </p>
       )}
 
-      <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="cm-news-card-footer flex items-center gap-1.5 flex-wrap">
         <span
           className={clsx(
-            'inline-flex items-center gap-0.5 text-xs font-mono tracking-wider uppercase',
+            'cm-news-card-sentiment inline-flex items-center gap-0.5 text-xs font-mono tracking-wider uppercase',
             'px-1.5 py-0.5 rounded-full border',
             style.chip,
           )}
@@ -139,7 +140,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
         {sentiment?.event_type && (
           <span
-            className="text-xs font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
+            className="cm-news-card-event text-xs font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
             title={sentiment.event_type}
           >
             {formatEventType(sentiment.event_type)}
@@ -155,7 +156,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
           </span>
         )}
 
-        <div className="flex items-center gap-2 ml-auto text-xs font-mono text-slate-400 shrink-0">
+        <div className="cm-news-card-metrics flex items-center gap-2 ml-auto text-xs font-mono text-slate-400 shrink-0">
           <div className="flex items-center gap-1" title={`Relevance ${relevancePct}%`}>
             <span className="text-slate-400">R</span>
             <div className="w-8 h-[3px] bg-white/5 rounded-full overflow-hidden">

@@ -9,6 +9,8 @@ import {
 import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
+const ZOOM_LAYOUT_SETTLE_MS = 380;
+
 export interface CategoryAnchor {
   id: string;
   name: string;
@@ -74,7 +76,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   useEffect(() => {
     if (zoom === layoutZoom) return;
-    const timer = window.setTimeout(() => setLayoutZoom(zoom), 120);
+    const timer = window.setTimeout(() => setLayoutZoom(zoom), ZOOM_LAYOUT_SETTLE_MS);
     return () => window.clearTimeout(timer);
   }, [layoutZoom, zoom]);
 
@@ -373,7 +375,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       style={{ width: '100%', height, overflow: 'hidden', touchAction: zoom > 1 ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none' }}
     >
       <div className="relative" style={{ width: scaledWidth, height: scaledHeight }}>
-        <div className="relative" style={{ width: layoutWidth, height: layoutHeight, transform: visualScale === 1 ? undefined : `scale(${visualScale})`, transformOrigin: 'top left' }}>
+        <div className="cm-heatmap-preview-content relative" style={{ width: layoutWidth, height: layoutHeight, transform: visualScale === 1 ? undefined : `scale(${visualScale})`, transformOrigin: 'top left' }}>
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoom={layoutZoom} />
           <LeafTiles leafEntries={leafEntries} zoom={layoutZoom} />
         </div>
