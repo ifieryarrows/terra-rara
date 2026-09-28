@@ -41,6 +41,7 @@
 }
 
 html { background: var(--cm-bg); scroll-padding-top: 7rem; scroll-behavior: smooth; }
+html[data-cm-route-transition] { scrollbar-gutter: stable; }
 body { margin: 0; min-width: 20rem; font-family: var(--cm-font-family); }
 
 @keyframes cm-route-copy-reveal {
@@ -53,7 +54,6 @@ body { margin: 0; min-width: 20rem; font-family: var(--cm-font-family); }
   to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
-@keyframes cm-route-depart { to { opacity: .12; } }
 @keyframes cm-route-shell-reveal {
   from { opacity: 0; transform: translate3d(0, -.3rem, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
@@ -69,15 +69,6 @@ html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] [da
   animation-delay: var(--cm-route-reveal-delay, 140ms);
 }
 
-html[data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
-  animation: cm-route-depart 260ms ease-out both;
-}
-
-html[data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"], [data-cm-transition-phase="release"], [data-cm-transition-phase="reduced"]) :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
-  opacity: 0;
-  pointer-events: none;
-}
-
 html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-header {
   animation: cm-route-shell-reveal 400ms var(--cm-ease) both;
 }
@@ -89,7 +80,6 @@ html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm
 
 @media (prefers-reduced-motion: reduce) {
   html[data-cm-route-transition="arriving"] [data-cm-route-reveal] { animation: none !important; }
-  html[data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading),
   html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] :is(.cm-workspace-header, .cm-workspace-footer) {
     animation: none !important;
   }

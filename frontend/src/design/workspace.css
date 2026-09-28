@@ -174,7 +174,7 @@
   .cm-page-actions { width: 100%; }
 }
 
-/* Start the workspace cascade only after the logo particles have dispersed. */
+/* Stagger workspace copy and surfaces in the same route-arrival reveal. */
 html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-main [data-cm-route-reveal="copy"] {
   animation: cm-route-copy-reveal 560ms var(--cm-ease) backwards;
   animation-delay: var(--cm-route-reveal-delay, 0ms);
@@ -704,24 +704,30 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   box-shadow: none !important;
 }
 .cm-heatmap-header {
+  box-sizing: border-box;
   min-height: 5.1rem;
   gap: .5rem 1.25rem;
-  padding: .8rem 0;
+  padding: .8rem 1rem;
   background: transparent;
 }
+.cm-heatmap-header > div:first-child { min-width: 0; }
 .cm-heatmap-header h2 { font-size: 1.05rem; letter-spacing: -.015em; }
 .cm-heatmap-header .cm-chart-note { font-size: .7rem; line-height: 1.4; }
 .cm-heatmap-toolbar {
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: .65rem 1rem;
+  width: 100%;
+  min-width: 0;
   min-height: 4rem;
-  padding: .45rem 0;
+  padding: .45rem 1rem;
   border-top: 1px solid var(--cm-dashboard-rule-soft, var(--cm-border));
   background: transparent;
 }
-.cm-heatmap-fields { flex-wrap: nowrap; align-items: center; gap: clamp(.7rem, 1.8vw, 1.5rem); }
+.cm-market-dashboard .cm-heatmap-fields .cm-news-filter-group { padding-top: 0; border-top: 0; }
+.cm-heatmap-fields { min-width: 0; flex-wrap: nowrap; align-items: center; gap: clamp(.7rem, 1.8vw, 1.5rem); }
 .cm-heatmap-fields .cm-news-filter-group { flex: 0 0 auto; gap: .85rem; }
 .cm-heatmap-fields .cm-field {
   display: flex;
@@ -743,11 +749,11 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   font-size: .75rem;
 }
 .cm-heatmap-fields .cm-field:first-of-type .cm-input { min-width: 9.2rem; max-width: 13rem; }
-.cm-heatmap-snapshot { justify-self: end; color: var(--cm-muted); font-size: .66rem; text-align: right; }
+.cm-heatmap-snapshot { min-width: 0; justify-self: end; color: var(--cm-muted); font-size: .66rem; text-align: right; }
 .cm-heatmap-actions { gap: .8rem; }
 .cm-heatmap-actions .cm-icon-button,
 .cm-heatmap-actions .cm-filter-chip { min-width: 2.15rem; min-height: 2.25rem; padding: .3rem .15rem; color: var(--cm-muted); font-size: .7rem; }
-.cm-heatmap-footer { padding: .55rem 0; font-size: .66rem; }
+.cm-heatmap-footer { padding: .55rem 1rem; font-size: .66rem; }
 .cm-map-fullscreen { padding-inline: clamp(1rem, 2vw, 2rem); background: var(--cm-bg) !important; }
 .cm-map-fullscreen .cm-heatmap-header { padding-top: 1rem; }
 .cm-map-fullscreen .cm-heatmap-toolbar { min-height: 3.7rem; }
@@ -818,7 +824,9 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   .cm-workspace-bar { grid-template-columns: minmax(0, 1fr); justify-items: stretch; }
   .cm-workspace-nav { grid-column: 1; justify-self: stretch; }
   .cm-nav-link { min-height: 2.8rem; }
-  .cm-heatmap-toolbar { gap: .45rem; padding-block: .65rem; }
+  .cm-heatmap-toolbar { gap: .45rem; padding-block: .65rem; padding-inline: .75rem; }
+  .cm-heatmap-header { padding-inline: .75rem; }
+  .cm-heatmap-footer { padding-inline: .75rem; }
   .cm-heatmap-snapshot { flex-wrap: wrap; }
 }
 @media (max-width: 760px) {
