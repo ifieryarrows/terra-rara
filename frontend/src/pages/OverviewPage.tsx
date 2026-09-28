@@ -296,7 +296,7 @@ export const OverviewPage = () => {
             </div>
 
             <div className="cm-dashboard-sentiment">
-              <div className="cm-dashboard-sentiment-copy"><span>7D NEWS SENTIMENT</span><small>Headline tone</small></div>
+              <div className="cm-dashboard-sentiment-copy"><span>NEWS SENTIMENT</span><small>Headline tone</small></div>
               <div className={clsx("cm-sentiment-badge", newsSentimentMeta.chip)}>
                 <SentimentIcon size={14} aria-hidden="true" />
                 <span>{newsSentimentIndex == null ? (sentimentSummary.isLoading ? 'Loading' : 'Unavailable') : newsSentimentMeta.label}</span>

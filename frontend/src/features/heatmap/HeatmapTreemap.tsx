@@ -11,6 +11,7 @@ import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
+const HEATMAP_RASTER_SCALE = MAX_ZOOM;
 
 export interface CategoryAnchor {
   id: string;
@@ -150,7 +151,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
     const camera = clampCamera(next, scroller, contentWidth, contentHeight);
     cameraRef.current = camera;
-    surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
+    // Keep the treemap laid out and rasterized at maximum zoom. The camera
+    // animation only scales that high-resolution layer down to the live zoom.
+    const rasterRatio = camera.scale / HEATMAP_RASTER_SCALE;
+    surface.style.transform = `matrix(${rasterRatio}, 0, 0, ${rasterRatio}, ${camera.x}, ${camera.y})`;
   };
 
   const setZoomedTarget = (target: number) => {
@@ -519,17 +523,29 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     >
       <div
         ref={surfaceRef}
-        className="cm-heatmap-preview-content relative"
+        className="relative"
         style={{
           width,
           height,
-          transform: 'matrix(1, 0, 0, 1, 0, 0)',
+          transform: `matrix(${zoom / HEATMAP_RASTER_SCALE}, 0, 0, ${zoom / HEATMAP_RASTER_SCALE}, 0, 0)`,
           transformOrigin: 'top left',
-          willChange: zoom > MIN_ZOOM ? 'transform' : 'auto',
+          willChange: 'transform',
         }}
       >
-        <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoomed={zoomed} />
-        <LeafTiles leafEntries={leafEntries} zoomed={zoomed} />
+        <div
+          className="cm-heatmap-preview-content relative"
+          style={{
+            width,
+            height,
+            zoom: HEATMAP_RASTER_SCALE,
+            transform: 'translate3d(0, 0, 0)',
+            transformOrigin: 'top left',
+            willChange: 'transform',
+          }}
+        >
+          <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoomed={zoomed} />
+          <LeafTiles leafEntries={leafEntries} zoomed={zoomed} />
+        </div>
       </div>
     </div>
   );

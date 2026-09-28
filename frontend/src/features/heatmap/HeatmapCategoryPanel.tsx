@@ -34,7 +34,6 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   anchor,
   view,
   pinned,
-  onClose,
   onPointerEnter,
   onPointerLeave,
 }, ref) {
@@ -178,11 +177,10 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       onPointerLeave={onPointerLeave}
       aria-label={`${categoryName} category details`}
     >
-      <header className="flex min-h-10 items-center justify-between gap-3 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
+      <header className="flex min-h-10 items-center justify-start gap-3 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
         <div className="min-w-0">
           <h3 className="truncate text-xs font-semibold tracking-wide text-slate-200">{heading}</h3>
         </div>
-        <button type="button" onClick={onClose} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-base leading-none text-slate-500 hover:bg-white/5 hover:text-white" aria-label="Close category panel">×</button>
       </header>
 
       {visibleNews && (

@@ -39,6 +39,9 @@ const DEFAULT_FILTERS: NewsFeedFilters = {
   channel: 'all',
 };
 
+const NEWS_FLOW_SPEED = 42;
+const NEWS_FLOW_EASE_MS = 240;
+
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -59,8 +62,12 @@ export const NewsIntelligencePanel: React.FC = () => {
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const newsRailRef = useRef<HTMLDivElement | null>(null);
   const originalNewsSetRef = useRef<HTMLDivElement | null>(null);
+  const newsScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+  const newsScrollbarThumbRef = useRef<HTMLDivElement | null>(null);
+  const newsScrollbarDragRef = useRef<{ pointerId: number; startX: number; startThumbX: number } | null>(null);
   const flowPausedRef = useRef(false);
   const flowHoveredRef = useRef(false);
+  const flowVelocityRef = useRef(NEWS_FLOW_SPEED);
   const flowResumeTimer = useRef<number | undefined>(undefined);
   const flowFrameRef = useRef<number | null>(null);
   const lastFlowFrameTimeRef = useRef<number | null>(null);
@@ -75,7 +82,6 @@ export const NewsIntelligencePanel: React.FC = () => {
   );
   const activeWindowHours = effectiveFilters.since_hours ?? 168;
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
-
   const pauseNewsFlow = useCallback(() => {
     flowPausedRef.current = true;
     if (flowResumeTimer.current !== undefined) window.clearTimeout(flowResumeTimer.current);
@@ -93,17 +99,51 @@ export const NewsIntelligencePanel: React.FC = () => {
   const feed = useNewsFeed(effectiveFilters);
   const stats = useNewsStats(effectiveFilters);
 
-  const items = useMemo(() => flattenNewsPages(feed.data?.pages), [feed.data]);
+  const items = useMemo(() => flattenNewsPages(feed.data?.pages).sort((a, b) => {
+    const timeA = a.published_at ? Date.parse(a.published_at) : Number.NEGATIVE_INFINITY;
+    const timeB = b.published_at ? Date.parse(b.published_at) : Number.NEGATIVE_INFINITY;
+    return timeB - timeA;
+  }), [feed.data]);
   const totalMatching = feed.data?.pages?.[0]?.total ?? items.length;
+
+  const syncNewsScrollbar = useCallback(() => {
+    const rail = newsRailRef.current;
+    const track = newsScrollbarTrackRef.current;
+    const thumb = newsScrollbarThumbRef.current;
+    if (!rail || !track || !thumb) return;
+    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+    const trackWidth = track.clientWidth;
+    const overflow = cycleWidth > rail.clientWidth + 1 && trackWidth > 0;
+    track.dataset.overflow = String(overflow);
+    if (!overflow) {
+      thumb.style.width = '100%';
+      thumb.style.transform = 'translate3d(0, 0, 0)';
+      track.setAttribute('aria-valuenow', '0');
+      return;
+    }
+    const thumbWidth = Math.min(trackWidth, Math.max(30, trackWidth * rail.clientWidth / cycleWidth));
+    const maxThumbOffset = trackWidth - thumbWidth;
+    const progress = Math.max(0, Math.min(1, rail.scrollLeft / cycleWidth));
+    thumb.style.width = `${thumbWidth}px`;
+    thumb.style.transform = `translate3d(${progress * maxThumbOffset}px, 0, 0)`;
+    track.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+    flowPositionRef.current = rail.scrollLeft;
+  }, []);
 
   useLayoutEffect(() => {
     const rail = newsRailRef.current;
     const set = originalNewsSetRef.current;
-    if (rail && set) {
-      rail.scrollLeft = set.getBoundingClientRect().width;
-      flowPositionRef.current = rail.scrollLeft;
-    }
-  }, [items]);
+    if (!rail) return undefined;
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncNewsScrollbar);
+    resizeObserver?.observe(rail);
+    if (set) resizeObserver?.observe(set);
+    rail.addEventListener('scroll', syncNewsScrollbar, { passive: true });
+    syncNewsScrollbar();
+    return () => {
+      resizeObserver?.disconnect();
+      rail.removeEventListener('scroll', syncNewsScrollbar);
+    };
+  }, [items.length, syncNewsScrollbar]);
 
   useEffect(() => {
     const rail = newsRailRef.current;
@@ -115,8 +155,10 @@ export const NewsIntelligencePanel: React.FC = () => {
       const nextWidth = set.getBoundingClientRect().width;
       if (nextWidth <= 0 || nextWidth === width) return;
       width = nextWidth;
-      rail.scrollLeft = width;
-      flowPositionRef.current = rail.scrollLeft;
+      if (flowPositionRef.current >= width) {
+        flowPositionRef.current %= width;
+        rail.scrollLeft = flowPositionRef.current;
+      }
     };
     const resizeObserver = new ResizeObserver(recenter);
     resizeObserver.observe(rail);
@@ -127,10 +169,14 @@ export const NewsIntelligencePanel: React.FC = () => {
       const elapsed = Math.min(48, Math.max(0, timestamp - previous));
       lastFlowFrameTimeRef.current = timestamp;
       width = set.getBoundingClientRect().width;
-      if (width > rail.clientWidth && width > 0 && !flowPausedRef.current) {
-        const speed = flowHoveredRef.current ? 4.5 : 21;
-        const next = flowPositionRef.current - speed * elapsed / 1_000;
-        flowPositionRef.current = next <= 0 ? width + next : next;
+      const targetVelocity = flowPausedRef.current || flowHoveredRef.current ? 0 : NEWS_FLOW_SPEED;
+      const easing = 1 - Math.exp(-elapsed / NEWS_FLOW_EASE_MS);
+      let velocity = flowVelocityRef.current + (targetVelocity - flowVelocityRef.current) * easing;
+      if (Math.abs(targetVelocity - velocity) < 0.08) velocity = targetVelocity;
+      flowVelocityRef.current = velocity;
+      if (width > rail.clientWidth && width > 0 && velocity > 0) {
+        const next = flowPositionRef.current + velocity * elapsed / 1_000;
+        flowPositionRef.current = next >= width ? next % width : next;
         rail.scrollLeft = flowPositionRef.current;
       } else {
         flowPositionRef.current = rail.scrollLeft;
@@ -216,6 +262,75 @@ export const NewsIntelligencePanel: React.FC = () => {
     if (suppressCardClick.current) window.setTimeout(() => { suppressCardClick.current = false; }, 0);
   };
 
+  const startNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rail = newsRailRef.current;
+    const track = newsScrollbarTrackRef.current;
+    const thumb = newsScrollbarThumbRef.current;
+    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+    if (!rail || !track || !thumb || cycleWidth <= rail.clientWidth) return;
+    event.preventDefault();
+    event.stopPropagation();
+    pauseNewsFlow();
+    const bounds = track.getBoundingClientRect();
+    const thumbWidth = thumb.getBoundingClientRect().width;
+    const maxThumbOffset = Math.max(0, track.clientWidth - thumbWidth);
+    const isThumb = event.target === thumb;
+    const currentOffset = Math.max(0, Math.min(maxThumbOffset, rail.scrollLeft / cycleWidth * maxThumbOffset));
+    const startThumbX = isThumb
+      ? currentOffset
+      : Math.max(0, Math.min(maxThumbOffset, event.clientX - bounds.left - thumbWidth / 2));
+    newsScrollbarDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startThumbX };
+    track.setPointerCapture(event.pointerId);
+    if (!isThumb) {
+      rail.scrollLeft = maxThumbOffset ? startThumbX / maxThumbOffset * cycleWidth : 0;
+      flowPositionRef.current = rail.scrollLeft;
+      syncNewsScrollbar();
+    }
+  };
+
+  const moveNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = newsScrollbarDragRef.current;
+    const rail = newsRailRef.current;
+    const track = newsScrollbarTrackRef.current;
+    const thumb = newsScrollbarThumbRef.current;
+    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+    if (!drag || drag.pointerId !== event.pointerId || !rail || !track || !thumb) return;
+    const maxThumbOffset = Math.max(0, track.clientWidth - thumb.getBoundingClientRect().width);
+    const thumbOffset = Math.max(0, Math.min(maxThumbOffset, drag.startThumbX + event.clientX - drag.startX));
+    rail.scrollLeft = maxThumbOffset ? thumbOffset / maxThumbOffset * cycleWidth : 0;
+    flowPositionRef.current = rail.scrollLeft;
+    syncNewsScrollbar();
+  };
+
+  const finishNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (newsScrollbarDragRef.current?.pointerId !== event.pointerId) return;
+    newsScrollbarDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    pauseNewsFlow();
+  };
+
+  const handleNewsScrollbarKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const rail = newsRailRef.current;
+    if (!rail) return;
+    const step = Math.max(80, rail.clientWidth * 0.16);
+    const offsets: Record<string, number> = {
+      ArrowLeft: -step,
+      ArrowRight: step,
+      PageUp: -rail.clientWidth * 0.8,
+      PageDown: rail.clientWidth * 0.8,
+    };
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      pauseNewsFlow();
+      rail.scrollTo({ left: event.key === 'Home' ? 0 : (originalNewsSetRef.current?.clientWidth ?? rail.scrollWidth) - rail.clientWidth, behavior: 'smooth' });
+      return;
+    }
+    if (!(event.key in offsets)) return;
+    event.preventDefault();
+    pauseNewsFlow();
+    rail.scrollBy({ left: offsets[event.key], behavior: 'smooth' });
+  };
+
   const pages = feed.data?.pages ?? [];
   const priorPageIds = new Set(pages.slice(0, -1).flatMap((page) => page.items.map((item) => item.id)));
   const latestPageHasNewItems = pages.length < 2 || (pages[pages.length - 1]?.items.some((item) => !priorPageIds.has(item.id)) ?? false);
@@ -241,7 +356,6 @@ export const NewsIntelligencePanel: React.FC = () => {
           <span className="cm-news-icon"><Newspaper size={16} aria-hidden="true" /></span>
           <div><h2>Copper news flow</h2><p>Headlines, sentiment &amp; sources</p></div>
         </div>
-        <span className="cm-news-window-tag">{activeWindowLabel}</span>
         <button
           type="button"
           onClick={() => feed.refetch()}
@@ -312,29 +426,32 @@ export const NewsIntelligencePanel: React.FC = () => {
         </div>
       </div>}
       <div
-        id={`${filterId}-headlines`}
-        ref={newsRailRef}
-        className={clsx('cm-news-feed', isDraggingHeadlines && 'is-dragging')}
-        role="region"
-        aria-label="Headlines, scroll horizontally"
-        tabIndex={0}
-        onPointerDown={startHeadlineDrag}
-        onPointerMove={moveHeadlineDrag}
-        onPointerUp={finishHeadlineDrag}
-        onPointerCancel={finishHeadlineDrag}
+        className="cm-news-feed-shell"
         onMouseEnter={() => { flowHoveredRef.current = true; }}
         onMouseLeave={() => { flowHoveredRef.current = false; }}
-        onWheel={pauseNewsFlow}
-        onKeyDown={event => {
-          if (['ArrowLeft', 'ArrowRight', 'Home', 'End', ' '].includes(event.key)) pauseNewsFlow();
-        }}
-        onClickCapture={event => {
-          if (!suppressCardClick.current) return;
-          event.preventDefault();
-          event.stopPropagation();
-          suppressCardClick.current = false;
-        }}
       >
+        <div
+          id={`${filterId}-headlines`}
+          ref={newsRailRef}
+          className={clsx('cm-news-feed', isDraggingHeadlines && 'is-dragging')}
+          role="region"
+          aria-label="Headlines, scroll horizontally"
+          tabIndex={0}
+          onPointerDown={startHeadlineDrag}
+          onPointerMove={moveHeadlineDrag}
+          onPointerUp={finishHeadlineDrag}
+          onPointerCancel={finishHeadlineDrag}
+          onWheel={pauseNewsFlow}
+          onKeyDown={event => {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End', ' '].includes(event.key)) pauseNewsFlow();
+          }}
+          onClickCapture={event => {
+            if (!suppressCardClick.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            suppressCardClick.current = false;
+          }}
+        >
         {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 
         {!isLoading && feed.isError && (
@@ -358,6 +475,26 @@ export const NewsIntelligencePanel: React.FC = () => {
           </div>
         </>}
 
+        </div>
+        <div
+          ref={newsScrollbarTrackRef}
+          className="cm-news-feed-scrollbar"
+          role="scrollbar"
+          aria-label="Headline scroll position"
+          aria-controls={`${filterId}-headlines`}
+          aria-orientation="horizontal"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={0}
+          tabIndex={0}
+          onPointerDown={startNewsScrollbarDrag}
+          onPointerMove={moveNewsScrollbarDrag}
+          onPointerUp={finishNewsScrollbarDrag}
+          onPointerCancel={finishNewsScrollbarDrag}
+          onKeyDown={handleNewsScrollbarKeyDown}
+        >
+          <div ref={newsScrollbarThumbRef} className="cm-news-feed-scrollbar-thumb" />
+        </div>
       </div>
       {canLoadMore && items.length > 0 && <div className="cm-news-more">
         <button type="button" className="cm-news-more-button" onClick={() => { void feed.fetchNextPage(); }} disabled={feed.isFetchingNextPage}>
