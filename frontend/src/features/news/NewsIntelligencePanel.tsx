@@ -54,9 +54,12 @@ export const NewsIntelligencePanel: React.FC = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState('');
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
+  const [isDraggingHeadlines, setIsDraggingHeadlines] = useState(false);
   const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
   const newsRailRef = useRef<HTMLDivElement | null>(null);
+  const dragState = useRef<{ pointerId: number; startX: number; startScroll: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
+  const suppressCardClick = useRef(false);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
   const effectiveFilters = useMemo<NewsFeedFilters>(
@@ -90,6 +93,43 @@ export const NewsIntelligencePanel: React.FC = () => {
       left: direction * Math.max(240, rail.clientWidth * 0.82),
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
+  };
+
+  const startHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' || event.button !== 0) return;
+    const rail = event.currentTarget;
+    const card = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('.cm-news-card') : null;
+    const captureTarget = card ?? rail;
+    dragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScroll: rail.scrollLeft,
+      moved: false,
+      captureTarget,
+    };
+    captureTarget.setPointerCapture(event.pointerId);
+    setIsDraggingHeadlines(true);
+  };
+
+  const moveHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragState.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const delta = event.clientX - drag.startX;
+    if (!drag.moved && Math.abs(delta) < 4) return;
+    drag.moved = true;
+    event.currentTarget.scrollLeft = drag.startScroll - delta;
+  };
+
+  const finishHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragState.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    suppressCardClick.current = drag.moved;
+    dragState.current = null;
+    setIsDraggingHeadlines(false);
+    if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
+      drag.captureTarget.releasePointerCapture(event.pointerId);
+    }
+    if (suppressCardClick.current) window.setTimeout(() => { suppressCardClick.current = false; }, 0);
   };
 
   const pages = feed.data?.pages ?? [];
@@ -190,10 +230,20 @@ export const NewsIntelligencePanel: React.FC = () => {
       <div
         id={`${filterId}-headlines`}
         ref={newsRailRef}
-        className="cm-news-feed"
+        className={clsx('cm-news-feed', isDraggingHeadlines && 'is-dragging')}
         role="region"
         aria-label="Headlines, scroll horizontally"
         tabIndex={0}
+        onPointerDown={startHeadlineDrag}
+        onPointerMove={moveHeadlineDrag}
+        onPointerUp={finishHeadlineDrag}
+        onPointerCancel={finishHeadlineDrag}
+        onClickCapture={event => {
+          if (!suppressCardClick.current) return;
+          event.preventDefault();
+          event.stopPropagation();
+          suppressCardClick.current = false;
+        }}
       >
         {isLoading && <ViewState kind="loading" title="Loading headlines" compact/>}
 

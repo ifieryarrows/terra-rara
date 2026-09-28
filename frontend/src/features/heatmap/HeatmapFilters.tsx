@@ -48,17 +48,17 @@ const HeatmapFilters = memo(function HeatmapFilters({
             </FilterChip>
           ))}
         </div>
-        <label className="cm-field"><span>Category</span><select className="cm-input" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="Filter top-level category">
+        <label className="cm-field"><span>Group</span><select className="cm-input" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="Filter top-level category">
           <option value="ALL">All categories</option>
           {availableGroups.map((group) => <option key={group} value={group}>{group}</option>)}
         </select></label>
-        <label className="cm-field"><span>Cell size</span><select className="cm-input" value={sortFilter} onChange={(event) => setSortFilter(event.target.value as 'Weight' | 'Performance')} aria-label="Cell sizing">
-          <option value="Weight">Size by weight</option>
-          <option value="Performance">Size by performance</option>
+        <label className="cm-field"><span>Size</span><select className="cm-input" value={sortFilter} onChange={(event) => setSortFilter(event.target.value as 'Weight' | 'Performance')} aria-label="Cell sizing">
+          <option value="Weight">Weight</option>
+          <option value="Performance">Change</option>
         </select></label>
         {(groupFilter !== 'ALL' || sortFilter !== 'Weight') && <button type="button" className="cm-filter-chip" onClick={() => { setGroupFilter('ALL'); setSortFilter('Weight'); }}>Reset map filters</button>}
       </div>
-      <div className="flex items-center gap-2 font-mono">
+      <div className="cm-heatmap-snapshot flex items-center gap-2 font-mono">
         <span className="cm-chart-note">
           {meta.refresh_in_progress ? 'Refreshing snapshot' : meta.is_stale ? 'Older snapshot' : 'Available snapshot'}
           {meta.next_refresh_at && ` · Next check ${format(countdown)}`}

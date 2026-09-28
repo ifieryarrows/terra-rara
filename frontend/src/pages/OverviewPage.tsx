@@ -82,6 +82,7 @@ NumberTicker.displayName = 'NumberTicker';
 
 export const OverviewPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeOverviewSection, setActiveOverviewSection] = useState('price-forecast');
   const refreshInFlight = useRef(false);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
@@ -151,6 +152,37 @@ export const OverviewPage = () => {
   useEffect(() => {
     loadData(false);
   }, [loadData]);
+
+  // Keep the section rail in sync with the part of the workspace in view.
+  useEffect(() => {
+    if (isInitialLoad) return;
+    const ids = ['price-forecast', 'weekly-outlook', 'market-drivers', 'news-intelligence', 'market-map'];
+    const main = document.getElementById('main-content');
+    if (!main || typeof IntersectionObserver === 'undefined') return;
+    const observed = new Set<Element>();
+    const observer = new IntersectionObserver((entries) => {
+      const current = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (current?.target.id) setActiveOverviewSection(current.target.id);
+    }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.2, 0.5, 1] });
+    const observeSections = () => {
+      ids.forEach((id) => {
+        const section = document.getElementById(id);
+        if (section && !observed.has(section)) {
+          observed.add(section);
+          observer.observe(section);
+        }
+      });
+    };
+    observeSections();
+    const mutations = new MutationObserver(observeSections);
+    mutations.observe(main, { childList: true, subtree: true });
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+    };
+  }, [isInitialLoad]);
 
   // Silent refresh every 60s - no UI flash
   useEffect(() => {
@@ -277,7 +309,7 @@ export const OverviewPage = () => {
         </header>
 
         <div className="cm-overview-tools" data-cm-route-reveal="surface">
-          <nav aria-label="Market overview sections"><a href="#price-forecast">Price action</a><a href="#weekly-outlook">Weekly outlook</a><a href="#market-drivers">Drivers</a><a href="#news-intelligence">News flow</a><a href="#market-map">Market map</a></nav>
+          <nav aria-label="Market overview sections"><a href="#price-forecast" aria-current={activeOverviewSection === 'price-forecast' ? 'location' : undefined}>Price action</a><a href="#weekly-outlook" aria-current={activeOverviewSection === 'weekly-outlook' ? 'location' : undefined}>Weekly outlook</a><a href="#market-drivers" aria-current={activeOverviewSection === 'market-drivers' ? 'location' : undefined}>Drivers</a><a href="#news-intelligence" aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a><a href="#market-map" aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a></nav>
           <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
         </div>
         {Object.keys(loadErrors).length > 0 && (
