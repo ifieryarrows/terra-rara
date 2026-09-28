@@ -14,11 +14,11 @@ export interface LeafEntry {
 export const CategoryTiles = memo(function CategoryTiles({
   parents,
   hoveredCategoryId,
-  zoom,
+  zoomed,
 }: {
   parents: LayoutNode[];
   hoveredCategoryId: string | null;
-  zoom: number;
+  zoomed: boolean;
 }) {
   return parents.map((node) => {
     const nodeData = node.data as HeatmapNode;
@@ -36,7 +36,7 @@ export const CategoryTiles = memo(function CategoryTiles({
         tabIndex={0}
         aria-label={`${node.depth === 1 ? 'Sector or asset class' : 'Industry or theme'}: ${nodeData.name}`}
         aria-pressed={active}
-        className={`absolute overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-copper-400 ${zoom > 1 ? 'cursor-grab' : 'cursor-pointer'}`}
+        className={`absolute overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-copper-400 ${zoomed ? 'cursor-grab' : 'cursor-pointer'}`}
         style={{
           left: node.x0, top: node.y0, width: nodeWidth, height: nodeHeight,
           border: active ? '2px solid #d99a5b' : node.depth === 1 ? '1px solid #334155' : '1px solid #1e293b',
@@ -62,7 +62,7 @@ export const CategoryTiles = memo(function CategoryTiles({
   });
 });
 
-export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom }: { leafEntries: LeafEntry[]; zoom: number }) {
+export const LeafTiles = memo(function LeafTiles({ leafEntries, zoomed }: { leafEntries: LeafEntry[]; zoomed: boolean }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
@@ -86,7 +86,7 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom }: { leafEn
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] flex flex-col items-center justify-center overflow-hidden text-center text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`absolute z-[2] flex flex-col items-center justify-center overflow-hidden text-center text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoomed ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,

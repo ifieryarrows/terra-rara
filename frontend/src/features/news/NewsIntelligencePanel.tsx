@@ -128,7 +128,7 @@ export const NewsIntelligencePanel: React.FC = () => {
       lastFlowFrameTimeRef.current = timestamp;
       width = set.getBoundingClientRect().width;
       if (width > rail.clientWidth && width > 0 && !flowPausedRef.current) {
-        const speed = flowHoveredRef.current ? 3 : 14;
+        const speed = flowHoveredRef.current ? 4.5 : 21;
         const next = flowPositionRef.current - speed * elapsed / 1_000;
         flowPositionRef.current = next <= 0 ? width + next : next;
         rail.scrollLeft = flowPositionRef.current;

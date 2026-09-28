@@ -19,9 +19,6 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 
 const OPEN_DELAY_MS = 90;
 const CLOSE_DELAY_MS = 180;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-
 function transformTree(
   raw: HeatmapNode,
   groupFilter: string,
@@ -48,7 +45,6 @@ export const HeatmapPanel: React.FC = () => {
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [zoom, setZoom] = useState(1);
   const [highlightedCategoryId, setHighlightedCategoryId] = useState<string | null>(null);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
@@ -193,7 +189,6 @@ export const HeatmapPanel: React.FC = () => {
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
-    setZoom(1);
   }, [view]);
 
   const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
@@ -216,7 +211,6 @@ export const HeatmapPanel: React.FC = () => {
     [activeAnchor, sourceTree],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
-  const zoomBy = useCallback((delta: number) => setZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(current + delta).toFixed(2)))), []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
     if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
@@ -278,7 +272,8 @@ export const HeatmapPanel: React.FC = () => {
                 data={renderTree!}
                 width={dimensions.width}
                 height={dimensions.height}
-                zoom={zoom}
+                zoom={1}
+                resetKey={view}
                 hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
                 onCategoryHover={handleCategoryHover}
                 onCategoryPointerMove={moveCategoryPanel}
@@ -290,7 +285,6 @@ export const HeatmapPanel: React.FC = () => {
                   setHighlightedCategoryId(anchor.id);
                   setHoveredAnchor(anchor);
                 }}
-                onZoomDelta={zoomBy}
               />
             </Profiler>
           )}
