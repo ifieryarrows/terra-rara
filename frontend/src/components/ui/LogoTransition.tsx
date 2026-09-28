@@ -33,6 +33,7 @@ const REVEAL_MS = 2_000;
 const ABOUT_REVEAL_MS = 1_200;
 const DASHBOARD_READY_TIMEOUT_MS = 15_000;
 const LOGO_SIZE = 224;
+const ROUTE_TRANSITION_MIN_HEIGHT = '--cm-route-transition-min-height';
 
 const coordinates = (TERRA_RARA_MARK_STAR_PATH.match(/-?\d*\.?\d+/g) ?? []).map(Number);
 const starVertices = Array.from({ length: Math.floor(coordinates.length / 2) }, (_, index) => ({
@@ -251,8 +252,11 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
         return;
       }
       navigationStarted.current = false;
-      const useStaticMotion = reducedMotionPreference !== false;
-      document.documentElement.dataset.cmRouteTransition = 'leaving';
+      const useStaticMotion = reducedMotionPreference === true;
+      const root = document.documentElement;
+      const transitionHeight = Math.max(root.scrollHeight, document.body.scrollHeight, window.innerHeight);
+      root.style.setProperty(ROUTE_TRANSITION_MIN_HEIGHT, `${transitionHeight}px`);
+      root.dataset.cmRouteTransition = 'leaving';
       destination.current = to;
       setOrigin(source ?? null);
       setReducedMotion(useStaticMotion);
@@ -278,6 +282,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
     }
     delete root.dataset.cmTransitionPhase;
     delete root.dataset.cmRouteTransition;
+    root.style.removeProperty(ROUTE_TRANSITION_MIN_HEIGHT);
   }, [active, phase, reducedMotion, key]);
 
   useEffect(() => {
@@ -286,7 +291,6 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       const target = event.target instanceof Element ? event.target : null;
       const anchor = target?.closest<HTMLAnchorElement>('a[href]');
       if (!anchor || anchor.hasAttribute('download') || (anchor.target && anchor.target !== '_self')) return;
-      if (anchor.closest('.cm-workspace-nav')) return;
 
       let url: URL;
       try { url = new URL(anchor.href, window.location.href); } catch { return; }

@@ -20,7 +20,7 @@ export function PriceTooltip({ active, payload }: { active?: boolean; payload?: 
   </div>;
 }
 
-export const PriceForecastChart = memo(function PriceForecastChart({ history, forecast, historyError, forecastError }: {
+export const PriceForecastChart = memo(function PriceForecastChart({ history, forecast, historyError }: {
   history: HistoryDataPoint[]; forecast: TFTAnalysisResponse | null; historyError?: boolean; forecastError?: boolean;
 }) {
   const id = useId();
@@ -31,12 +31,6 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
   const [tableOpen, setTableOpen] = useState(false);
   const chart = useMemo(() => preparePriceChart(history, forecast, count), [history, forecast, count]);
   if (!chart.rows.length) return <ViewState kind={historyError ? 'error' : 'empty'} title={historyError ? 'Price history could not be loaded' : 'No chart data available'} description="Historical closes are needed to anchor the daily forecast. Use Refresh overview to check again." compact/>;
-  const status = chart.hasForecast
-    ? 'Daily path · T+1 to T+5. The primary 5-day cumulative forecast is shown separately.'
-    : chart.degraded ? 'Forecast is degraded. Historical closes remain available.'
-    : forecastError ? 'Forecast could not be refreshed. Showing historical closes only.'
-    : forecast?.prediction?.daily_forecasts?.length && !chart.aligned ? 'Waiting for a forecast based on the latest close. An older path is not attached to newer prices.'
-    : 'No dated daily forecast is available. Showing historical closes only.';
   return <div className="cm-price-chart">
     <div className="cm-chart-toolbar">
       <fieldset className="cm-chart-window">
@@ -45,15 +39,13 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
           {HISTORY_WINDOWS.map(size => <button key={size} type="button" aria-pressed={count === size} aria-label={`Last ${size} daily closes`} onClick={() => setCount(size)}>{size}<span>D</span></button>)}
         </div>
       </fieldset>
-      <p className="cm-chart-meta">USD · {chart.historyCount} closes<br/>Last close: {formatChartDate(chart.lastDate!)}</p>
     </div>
-    <p id={`${id}-description`} className="cm-chart-note" role="status">{status}</p>
     <div className="cm-chart-legend" role="group" aria-label="Chart series">
       <span><i className="cm-chart-key cm-chart-key--observed" aria-hidden="true"/>Observed close</span>
       <button type="button" aria-pressed={medianVisible} disabled={!chart.hasForecast} onClick={() => setMedianVisible(value => !value)}><i className="cm-chart-key cm-chart-key--median" aria-hidden="true"/>Forecast median</button>
       <button type="button" aria-pressed={rangeVisible} disabled={!chart.hasForecast} onClick={() => setRangeVisible(value => !value)}><i className="cm-chart-key cm-chart-key--range" aria-hidden="true"/>Q10–Q90 range</button>
     </div>
-    <div className="cm-price-plot" role="group" aria-label="Copper historical prices and daily forecast" aria-describedby={`${id}-description ${id}-help`}>
+    <div className="cm-price-plot" role="group" aria-label="Copper historical prices and daily forecast" aria-describedby={`${id}-help`}>
       <ResponsiveContainer width="100%" height="100%" debounce={60}>
         <ComposedChart accessibilityLayer data={chart.rows} margin={{ top: 22, right: 8, left: 0, bottom: 4 }}>
           <CartesianGrid stroke={theme.grid} vertical={false} strokeDasharray="4 4"/>
