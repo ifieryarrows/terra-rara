@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import './TerraAtmosphere.css';
 
+let latestPointerPosition = { x: 0.5, y: 0.5 };
+
 type TerraAtmosphereProps = {
   progress?: MotionValue<number>;
   interactive?: boolean;
@@ -79,23 +81,28 @@ export function TerraAtmosphere({ progress, interactive = false, className = '' 
 
   useEffect(() => {
     const root = rootRef.current;
-    if (!interactive || !root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const canRenderPointerGlow = interactive && !!root && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     let frame = 0;
-    let pointerX = 0.5;
-    let pointerY = 0.5;
+    let pointerX = latestPointerPosition.x;
+    let pointerY = latestPointerPosition.y;
     const applyPointer = () => {
       frame = 0;
+      if (!canRenderPointerGlow || !root) return;
       root.style.setProperty('--pointer-x', `${(pointerX * 100).toFixed(2)}%`);
       root.style.setProperty('--pointer-y', `${(pointerY * 100).toFixed(2)}%`);
       root.style.setProperty('--cm-atmosphere-star-shift-x', `${((0.5 - pointerX) * 14).toFixed(1)}px`);
     };
     const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
       pointerX = Math.max(0, Math.min(1, event.clientX / Math.max(window.innerWidth, 1)));
       pointerY = Math.max(0, Math.min(1, event.clientY / Math.max(window.innerHeight, 1)));
+      latestPointerPosition = { x: pointerX, y: pointerY };
+      if (!canRenderPointerGlow) return;
       if (!frame) frame = window.requestAnimationFrame(applyPointer);
     };
 
+    applyPointer();
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     return () => {
       window.removeEventListener('pointermove', onPointerMove);

@@ -10,6 +10,8 @@ import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
 const ZOOM_LAYOUT_SETTLE_MS = 380;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
 
 export interface CategoryAnchor {
   id: string;
@@ -129,6 +131,15 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       wheelFrameRef.current = requestAnimationFrame(() => {
         wheelFrameRef.current = null;
         const { x, y } = wheelPointerRef.current;
+        const delta = Math.max(-0.24, Math.min(0.24, -wheelDeltaRef.current * 0.0015));
+        wheelDeltaRef.current = 0;
+        if (Math.abs(delta) < 0.01) return;
+
+        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(zoom + delta).toFixed(2)));
+        if (nextZoom === zoom) {
+          pendingZoomRef.current = null;
+          return;
+        }
         pendingZoomRef.current = {
           previous: zoom,
           x,
@@ -136,9 +147,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           contentX: x + element.scrollLeft,
           contentY: y + element.scrollTop,
         };
-        const delta = Math.max(-0.24, Math.min(0.24, -wheelDeltaRef.current * 0.0015));
-        wheelDeltaRef.current = 0;
-        if (Math.abs(delta) >= 0.01) onZoomDelta(delta);
+        onZoomDelta(delta);
       });
     };
     element.addEventListener('wheel', wheel, { passive: false });

@@ -532,7 +532,7 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   align-items: center;
   min-width: 0;
   min-height: 2.8rem;
-  margin-top: 1.1rem;
+  margin: .2rem 0 .8rem;
   overflow: hidden;
   border-block: 1px solid var(--cm-dashboard-rule-soft);
   background: color-mix(in srgb, var(--cm-surface) 28%, transparent);
@@ -884,15 +884,6 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-heatmap-error { margin: auto 0 0; padding-top: .7rem; border-top: 1px solid color-mix(in srgb, var(--cm-negative) 35%, var(--cm-border)); color: var(--cm-negative); font-size: .68rem; line-height: 1.5; }
 .cm-heatmap-main { display: flex; min-width: 0; flex-direction: column; }
 .cm-heatmap-stage { min-width: 0; overflow: hidden; background: #090e17; }
-.cm-heatmap-preview-content { transition: transform 260ms cubic-bezier(.2, .72, .2, 1); will-change: transform; }
-.cm-heatmap-preview-content [data-hm-category-id],
-.cm-heatmap-preview-content [data-hm-leaf-id] {
-  transition:
-    left 420ms cubic-bezier(.2, .72, .2, 1),
-    top 420ms cubic-bezier(.2, .72, .2, 1),
-    width 420ms cubic-bezier(.2, .72, .2, 1),
-    height 420ms cubic-bezier(.2, .72, .2, 1);
-}
 .cm-heatmap-main .cm-news-updating { margin: 0; padding-inline: .9rem; border-color: var(--cm-dashboard-rule-soft); }
 .cm-heatmap-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .55rem 1rem; min-height: 2.6rem; padding: .35rem .8rem; border-top: 1px solid var(--cm-dashboard-rule-soft, var(--cm-border)); color: var(--cm-muted); font-size: .61rem; }
 .cm-heatmap-footer span { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
@@ -1016,10 +1007,7 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   .cm-nav-link::after,
   .cm-market-dashboard .cm-overview-tools a::after,
   .cm-chart-window-options button::after,
-  .cm-chart-legend button::after,
-  .cm-heatmap-preview-content,
-  .cm-heatmap-preview-content [data-hm-category-id],
-  .cm-heatmap-preview-content [data-hm-leaf-id] { transition: none; }
+  .cm-chart-legend button::after { transition: none; }
 }
 @media (max-width: 359px) {
   .cm-market-dashboard .cm-dashboard-price-row { column-gap: .55rem; }

@@ -301,6 +301,34 @@ export const NewsIntelligencePanel: React.FC = () => {
           {(availableChannels.length > 1 || (filters.channel && filters.channel !== 'all')) && <fieldset className="cm-news-filter-group"><legend>Channel</legend><FilterChip active={!filters.channel || filters.channel === 'all'} onClick={() => updateFilter('channel', 'all')}>All channels</FilterChip>{Array.from(new Set([...availableChannels, ...(filters.channel && filters.channel !== 'all' ? [filters.channel] : [])])).map(channel => <FilterChip key={channel} active={filters.channel === channel} onClick={() => updateFilter('channel', channel)}>{channel === 'google_news' ? 'Google News' : channel === 'newsapi' ? 'NewsAPI' : channel}</FilterChip>)}</fieldset>}
         </div>
       </div>
+      {tickerItems.length > 0 && <div
+        className={`cm-news-ticker${isTickerHovered ? ' is-hovered' : ''}${isTickerPaused ? ' is-paused' : ''}${isTickerDragging ? ' is-dragging' : ''}`}
+        role="region"
+        aria-label="Scrolling news headlines"
+        aria-live="off"
+        onMouseEnter={() => setIsTickerHovered(true)}
+        onMouseLeave={() => setIsTickerHovered(false)}
+        onWheel={pauseTickerAfterInteraction}
+        onKeyDown={pauseTickerAfterInteraction}
+        onPointerDownCapture={startTickerDrag}
+        onPointerMove={moveTickerDrag}
+        onPointerUp={finishTickerDrag}
+        onPointerCancel={finishTickerDrag}
+        onClickCapture={event => {
+          if (!suppressTickerClick.current) return;
+          event.preventDefault();
+          event.stopPropagation();
+          suppressTickerClick.current = false;
+        }}
+      >
+        <span className="cm-news-ticker-label">NEWSWIRE <i aria-hidden="true"/></span>
+        <div className="cm-news-ticker-window">
+          <div ref={tickerTrackRef} className="cm-news-ticker-track" style={{ animationDuration: `${tickerDurationSeconds * (isTickerHovered ? 2.6 : 1)}s` }}>
+            <div className="cm-news-ticker-set">{tickerItems.map(item => renderTickerItem(item))}</div>
+            <div className="cm-news-ticker-set" aria-hidden="true">{tickerItems.map(item => renderTickerItem(item, true))}</div>
+          </div>
+        </div>
+      </div>}
       {/* Feed list */}
       {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
       {items.length > 0 && <div className="cm-news-rail-tools">
@@ -355,34 +383,6 @@ export const NewsIntelligencePanel: React.FC = () => {
         </button>
       </div>}
       {feed.hasNextPage && items.length > 0 && !latestPageHasNewItems && <p className="cm-news-pagination-note" role="status">No additional unique headlines are available.</p>}
-      {tickerItems.length > 0 && <div
-        className={`cm-news-ticker${isTickerHovered ? ' is-hovered' : ''}${isTickerPaused ? ' is-paused' : ''}${isTickerDragging ? ' is-dragging' : ''}`}
-        role="region"
-        aria-label="Scrolling news headlines"
-        aria-live="off"
-        onMouseEnter={() => setIsTickerHovered(true)}
-        onMouseLeave={() => setIsTickerHovered(false)}
-        onWheel={pauseTickerAfterInteraction}
-        onKeyDown={pauseTickerAfterInteraction}
-        onPointerDownCapture={startTickerDrag}
-        onPointerMove={moveTickerDrag}
-        onPointerUp={finishTickerDrag}
-        onPointerCancel={finishTickerDrag}
-        onClickCapture={event => {
-          if (!suppressTickerClick.current) return;
-          event.preventDefault();
-          event.stopPropagation();
-          suppressTickerClick.current = false;
-        }}
-      >
-        <span className="cm-news-ticker-label">NEWSWIRE <i aria-hidden="true"/></span>
-        <div className="cm-news-ticker-window">
-          <div ref={tickerTrackRef} className="cm-news-ticker-track" style={{ animationDuration: `${tickerDurationSeconds * (isTickerHovered ? 2.6 : 1)}s` }}>
-            <div className="cm-news-ticker-set">{tickerItems.map(item => renderTickerItem(item))}</div>
-            <div className="cm-news-ticker-set" aria-hidden="true">{tickerItems.map(item => renderTickerItem(item, true))}</div>
-          </div>
-        </div>
-      </div>}
       </div>
 
       <NewsDetailDrawer item={selectedItem} onClose={() => setSelectedItem(null)} />
