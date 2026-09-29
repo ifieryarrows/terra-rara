@@ -11,7 +11,6 @@ import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
-const HEATMAP_RASTER_SCALE = MAX_ZOOM;
 
 export interface CategoryAnchor {
   id: string;
@@ -103,6 +102,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const [zoomed, setZoomed] = useState(zoom > MIN_ZOOM);
+  const [detailZoom, setDetailZoom] = useState(zoom);
   const zoomedRef = useRef(zoom > MIN_ZOOM);
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
@@ -151,10 +151,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
     const camera = clampCamera(next, scroller, contentWidth, contentHeight);
     cameraRef.current = camera;
-    // Keep the treemap laid out and rasterized at maximum zoom. The camera
-    // animation only scales that high-resolution layer down to the live zoom.
-    const rasterRatio = camera.scale / HEATMAP_RASTER_SCALE;
-    surface.style.transform = `matrix(${rasterRatio}, 0, 0, ${rasterRatio}, ${camera.x}, ${camera.y})`;
+    // Transform the stable treemap geometry directly. A CSS `zoom` raster
+    // layer made coordinates and text detail drift apart while the camera
+    // moved, and forced the browser to resample a very large texture.
+    surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
   };
 
   const setZoomedTarget = (target: number) => {
@@ -168,7 +168,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   const startZoomAnimation = () => {
     if (zoomFrameRef.current !== null) return;
-    if (surfaceRef.current) surfaceRef.current.style.willChange = 'transform';
     const applyTarget = () => {
       const target = zoomTargetRef.current;
       const current = cameraRef.current;
@@ -178,9 +177,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         x: anchor ? anchor.x - anchor.contentX * target : current.x,
         y: anchor ? anchor.y - anchor.contentY * target : current.y,
       });
+      setDetailZoom(target);
       zoomAnchorRef.current = null;
       lastZoomFrameTimeRef.current = null;
-      if (surfaceRef.current) surfaceRef.current.style.willChange = target > MIN_ZOOM ? 'transform' : 'auto';
     };
 
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -204,10 +203,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         y: anchor ? anchor.y - anchor.contentY * scale : current.y,
       });
       if (finished) {
+        setDetailZoom(target);
         zoomAnchorRef.current = null;
         zoomFrameRef.current = null;
         lastZoomFrameTimeRef.current = null;
-        if (surfaceRef.current) surfaceRef.current.style.willChange = target > MIN_ZOOM ? 'transform' : 'auto';
         return;
       }
       zoomFrameRef.current = window.requestAnimationFrame(animate);
@@ -527,24 +526,13 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         style={{
           width,
           height,
-          transform: `matrix(${zoom / HEATMAP_RASTER_SCALE}, 0, 0, ${zoom / HEATMAP_RASTER_SCALE}, 0, 0)`,
+          transform: `matrix(${zoom}, 0, 0, ${zoom}, 0, 0)`,
           transformOrigin: 'top left',
-          willChange: 'transform',
         }}
       >
-        <div
-          className="cm-heatmap-preview-content relative"
-          style={{
-            width,
-            height,
-            zoom: HEATMAP_RASTER_SCALE,
-            transform: 'translate3d(0, 0, 0)',
-            transformOrigin: 'top left',
-            willChange: 'transform',
-          }}
-        >
+        <div className="relative" style={{ width, height }}>
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoomed={zoomed} />
-          <LeafTiles leafEntries={leafEntries} zoomed={zoomed} />
+          <LeafTiles leafEntries={leafEntries} zoomed={zoomed} detailZoom={detailZoom} />
         </div>
       </div>
     </div>
