@@ -860,6 +860,12 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-heatmap-error { margin: auto 0 0; padding-top: .7rem; border-top: 1px solid color-mix(in srgb, var(--cm-negative) 35%, var(--cm-border)); color: var(--cm-negative); font-size: .68rem; line-height: 1.5; }
 .cm-heatmap-main { display: flex; min-width: 0; flex-direction: column; }
 .cm-heatmap-stage { min-width: 0; overflow: hidden; background: #090e17; }
+.cm-heatmap-map [data-hm-category-id] { cursor: pointer; }
+.cm-heatmap-map [data-hm-leaf-id] { cursor: crosshair; }
+.cm-heatmap-map[data-zoomed="true"] [data-hm-category-id],
+.cm-heatmap-map[data-zoomed="true"] [data-hm-leaf-id] { cursor: grab; }
+.cm-heatmap-map[data-panning="true"] [data-hm-category-id],
+.cm-heatmap-map[data-panning="true"] [data-hm-leaf-id] { cursor: grabbing; }
 .cm-heatmap-main .cm-news-updating { margin: 0; padding-inline: .9rem; border-color: var(--cm-dashboard-rule-soft); }
 .cm-heatmap-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .55rem 1rem; min-height: 2.6rem; padding: .35rem .8rem; border-top: 1px solid var(--cm-dashboard-rule-soft, var(--cm-border)); color: var(--cm-muted); font-size: .61rem; }
 .cm-heatmap-footer span { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }

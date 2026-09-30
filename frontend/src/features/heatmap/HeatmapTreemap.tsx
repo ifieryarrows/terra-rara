@@ -10,7 +10,7 @@ import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
+const MAX_ZOOM = 8;
 
 export interface CategoryAnchor {
   id: string;
@@ -31,6 +31,8 @@ interface Props {
   onCategoryPointerMove?: (x: number, y: number) => void;
   onLeafHover?: (leaf: HeatmapData | null) => void;
   onCategoryClick?: (anchor: CategoryAnchor) => void;
+  onCategoryDrillDown?: (anchor: CategoryAnchor) => void;
+  onNavigateBack?: () => void;
   onZoomDelta?: (delta: number) => void;
   resetKey?: string | number;
 }
@@ -80,6 +82,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   onCategoryPointerMove,
   onLeafHover,
   onCategoryClick,
+  onCategoryDrillDown,
+  onNavigateBack,
   onZoomDelta,
   resetKey,
 }: Props) {
@@ -93,6 +97,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const zoomAnchorRef = useRef<{ x: number; y: number; contentX: number; contentY: number } | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const lastZoomFrameTimeRef = useRef<number | null>(null);
+  const zoomingRef = useRef(false);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const startZoomAnimationRef = useRef<() => void>(() => {});
   const wheelFrameRef = useRef<number | null>(null);
   const wheelDeltaRef = useRef(0);
@@ -101,9 +107,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
-  const [zoomed, setZoomed] = useState(zoom > MIN_ZOOM);
   const [detailZoom, setDetailZoom] = useState(zoom);
-  const zoomedRef = useRef(zoom > MIN_ZOOM);
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
 
@@ -126,7 +130,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     return leaves.map((leaf) => {
       const item = leaf.data as HeatmapData;
       const parent = leaf.parent as LayoutNode | null;
-      const parentId = parent ? String((parent.data as HeatmapNode).id || parent.data.name) : 'root';
+      const parentData = parent?.data as HeatmapNode | undefined;
+      const parentId = parent
+        ? String(parentData?.id || `${parent.depth}-${parentData?.name || parent.data.name}`)
+        : 'root';
       const baseId = String(item.id || item.name);
       const collisionKey = `${parentId}/${baseId}`;
       const occurrence = occurrences.get(collisionKey) || 0;
@@ -142,7 +149,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     () => new Map(leafEntries.map(({ leaf, renderId }) => [renderId, leaf])),
     [leafEntries],
   );
-  const categoryById = useMemo(() => new Map(parents.map((node) => [String((node.data as HeatmapNode).id || node.data.name), node])), [parents]);
+  const categoryById = useMemo(() => new Map(parents.map((node) => {
+    const nodeData = node.data as HeatmapNode;
+    return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
+  })), [parents]);
 
   const applyCamera = (next: ZoomCamera) => {
     const scroller = scrollRef.current;
@@ -151,6 +161,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
     const camera = clampCamera(next, scroller, contentWidth, contentHeight);
     cameraRef.current = camera;
+    const isZoomed = camera.scale > MIN_ZOOM;
+    const zoomedValue = String(isZoomed);
+    if (scroller.dataset.zoomed !== zoomedValue) scroller.dataset.zoomed = zoomedValue;
+    const touchAction = isZoomed ? 'none' : 'auto';
+    if (scroller.style.touchAction !== touchAction) scroller.style.touchAction = touchAction;
     // Transform the stable treemap geometry directly. A CSS `zoom` raster
     // layer made coordinates and text detail drift apart while the camera
     // moved, and forced the browser to resample a very large texture.
@@ -159,15 +174,47 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   const setZoomedTarget = (target: number) => {
     zoomTargetRef.current = target;
-    const nextZoomed = target > MIN_ZOOM;
-    if (nextZoomed !== zoomedRef.current) {
-      zoomedRef.current = nextZoomed;
-      setZoomed(nextZoomed);
-    }
   };
 
   const startZoomAnimation = () => {
     if (zoomFrameRef.current !== null) return;
+    zoomingRef.current = true;
+    const finishZoom = (target: number) => {
+      setDetailZoom(target);
+      zoomAnchorRef.current = null;
+      zoomFrameRef.current = null;
+      lastZoomFrameTimeRef.current = null;
+      zoomingRef.current = false;
+
+      // A stationary pointer can move over new cells as the map is transformed.
+      // Defer hover work until the camera settles, then resolve the final cell once.
+      const pointer = lastPointerRef.current;
+      const scroller = scrollRef.current;
+      if (pointer && scroller) {
+        const targetElement = document.elementFromPoint(pointer.x, pointer.y);
+        if (
+          targetElement
+          && scroller.contains(targetElement)
+          && targetElement.closest('[data-hm-leaf-id],[data-hm-category-id]')
+        ) {
+          activeLeafRef.current = null;
+          activeCategoryRef.current = null;
+          targetElement.dispatchEvent(new PointerEvent('pointerover', {
+            bubbles: true,
+            clientX: pointer.x,
+            clientY: pointer.y,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+          }));
+          return;
+        }
+      }
+      activeLeafRef.current = null;
+      activeCategoryRef.current = null;
+      onLeafHover?.(null);
+      onCategoryHover(null);
+    };
     const applyTarget = () => {
       const target = zoomTargetRef.current;
       const current = cameraRef.current;
@@ -177,9 +224,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         x: anchor ? anchor.x - anchor.contentX * target : current.x,
         y: anchor ? anchor.y - anchor.contentY * target : current.y,
       });
-      setDetailZoom(target);
-      zoomAnchorRef.current = null;
-      lastZoomFrameTimeRef.current = null;
+      finishZoom(target);
     };
 
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -203,10 +248,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         y: anchor ? anchor.y - anchor.contentY * scale : current.y,
       });
       if (finished) {
-        setDetailZoom(target);
-        zoomAnchorRef.current = null;
-        zoomFrameRef.current = null;
-        lastZoomFrameTimeRef.current = null;
+        finishZoom(target);
         return;
       }
       zoomFrameRef.current = window.requestAnimationFrame(animate);
@@ -257,13 +299,29 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
     zoomFrameRef.current = null;
     lastZoomFrameTimeRef.current = null;
+    zoomingRef.current = false;
   }, []);
+
+  const categoryAtPoint = (clientX: number, clientY: number) => {
+    if (!onCategoryDrillDown) return false;
+    const target = targetData(document.elementFromPoint(clientX, clientY));
+    const id = target?.dataset.hmCategoryId || target?.dataset.hmParentId;
+    if (!id) return false;
+    const node = categoryById.get(id);
+    const scroller = scrollRef.current;
+    if (!node || !scroller) return false;
+    const anchor = anchorFor(id, { x: clientX, y: clientY }, rectForNode(node, scroller, cameraRef.current));
+    if (!anchor) return false;
+    onCategoryDrillDown(anchor);
+    return true;
+  };
 
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       wheelPointerRef.current = localPoint(element, event.clientX, event.clientY);
       wheelDeltaRef.current += event.deltaY;
       if (wheelFrameRef.current !== null) return;
@@ -276,7 +334,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
         const currentTarget = zoomTargetRef.current;
         const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget + delta).toFixed(2)));
-        if (nextZoom === currentTarget) return;
+        if (nextZoom === currentTarget) {
+          if (delta > 0 && currentTarget >= MAX_ZOOM) categoryAtPoint(event.clientX, event.clientY);
+          else if (delta < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
+          return;
+        }
         const camera = cameraRef.current;
         zoomAnchorRef.current = {
           x,
@@ -296,7 +358,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       wheelFrameRef.current = null;
       wheelDeltaRef.current = 0;
     };
-  }, [onZoomDelta]);
+  }, [onCategoryDrillDown, onNavigateBack, onZoomDelta]);
 
   const anchorFor = (
     id: string,
@@ -339,6 +401,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerOver = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    if (zoomingRef.current) return;
     const target = targetData(event.target);
     if (!target) return;
     const leafId = target.dataset.hmLeafId;
@@ -367,8 +431,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
     const drag = dragRef.current;
     const element = scrollRef.current;
+    if (!drag && zoomingRef.current) return;
     if (drag && element && drag.pointerId === event.pointerId) {
       const deltaX = event.clientX - drag.startX;
       const deltaY = event.clientY - drag.startY;
@@ -394,6 +460,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerOut = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (zoomingRef.current) return;
     const next = targetData(event.relatedTarget);
     const nextLeaf = next?.dataset.hmLeafId || null;
     const nextCategory = next?.dataset.hmParentId || next?.dataset.hmCategoryId || null;
@@ -440,17 +507,26 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     suppressClickRef.current = drag.moved;
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    event.currentTarget.style.cursor = '';
+    delete event.currentTarget.dataset.panning;
   };
 
   return (
-    <div
-      ref={scrollRef}
+      <div
+        ref={scrollRef}
       onPointerOver={onPointerOver}
       onPointerMove={onPointerMove}
       onPointerOut={onPointerOut}
       onPointerDown={(event) => {
         if (zoomTargetRef.current <= MIN_ZOOM || event.button !== 0 || !scrollRef.current) return;
+        if (zoomFrameRef.current !== null) {
+          window.cancelAnimationFrame(zoomFrameRef.current);
+          zoomFrameRef.current = null;
+          lastZoomFrameTimeRef.current = null;
+          zoomAnchorRef.current = null;
+          zoomTargetRef.current = cameraRef.current.scale;
+          zoomingRef.current = false;
+          setDetailZoom(cameraRef.current.scale);
+        }
         event.preventDefault();
         dragRef.current = {
           pointerId: event.pointerId,
@@ -461,7 +537,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           moved: false,
         };
         event.currentTarget.setPointerCapture(event.pointerId);
-        event.currentTarget.style.cursor = 'grabbing';
+        event.currentTarget.dataset.panning = 'true';
       }}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
@@ -474,6 +550,15 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }}
       onDoubleClick={(event) => {
         const target = targetData(event.target);
+        const categoryId = target?.dataset.hmCategoryId;
+        if (categoryId && onCategoryDrillDown) {
+          const anchor = anchorFor(categoryId, { x: event.clientX, y: event.clientY });
+          if (anchor) {
+            event.preventDefault();
+            onCategoryDrillDown(anchor);
+          }
+          return;
+        }
         const leafId = target?.dataset.hmLeafId;
         const item = leafId ? leafById.get(leafId)?.data as HeatmapData | undefined : undefined;
         if (!item || item.aggregateCount) return;
@@ -485,7 +570,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           const target = targetData(event.target);
           if (target?.dataset.hmCategoryId) {
             event.preventDefault();
-            activateCategory(target);
+            if (event.shiftKey && onCategoryDrillDown) {
+              const anchor = anchorFor(target.dataset.hmCategoryId);
+              if (anchor) onCategoryDrillDown(anchor);
+            } else activateCategory(target);
           }
         }
       }}
@@ -517,8 +605,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }}
       aria-label="Interactive market heatmap. Use Tab to inspect categories and instruments."
       onDragStart={(event) => event.preventDefault()}
-      className="custom-scrollbar relative min-w-0 max-w-full select-none bg-slate-950 outline-none"
-      style={{ width: '100%', height, overflow: 'hidden', touchAction: zoomed ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none' }}
+      className="cm-heatmap-map custom-scrollbar relative min-w-0 max-w-full select-none bg-slate-950 outline-none"
+      style={{ width: '100%', height, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none' }}
     >
       <div
         ref={surfaceRef}
@@ -531,8 +619,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         }}
       >
         <div className="relative" style={{ width, height }}>
-          <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} zoomed={zoomed} />
-          <LeafTiles leafEntries={leafEntries} zoomed={zoomed} detailZoom={detailZoom} />
+          <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
+          <LeafTiles leafEntries={leafEntries} detailZoom={detailZoom} />
         </div>
       </div>
     </div>

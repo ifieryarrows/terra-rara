@@ -39,6 +39,22 @@ function transformTree(
   return sortFilter === 'Weight' ? compressLeafWeights(transformed, 0.1) : transformed;
 }
 
+function findMapCategory(node: HeatmapNode, id: string): HeatmapNode | null {
+  if (!node.children?.length) return null;
+  if (String(node.id || node.name) === id) return node;
+  for (const child of node.children) {
+    if (!('children' in child) || !child.children?.length) continue;
+    const match = findMapCategory(child as HeatmapNode, id);
+    if (match) return match;
+  }
+  return null;
+}
+
+interface HeatmapFocusEntry {
+  id: string;
+  name: string;
+}
+
 export const HeatmapPanel: React.FC = () => {
   const [view, setView] = useState<'market' | 'themes'>('market');
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
@@ -48,6 +64,7 @@ export const HeatmapPanel: React.FC = () => {
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
+  const [focusedPath, setFocusedPath] = useState<HeatmapFocusEntry[]>([]);
   const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -188,7 +205,10 @@ export const HeatmapPanel: React.FC = () => {
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
+    setFocusedPath([]);
   }, [view]);
+
+  useEffect(() => setFocusedPath([]), [groupFilter]);
 
   const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
   const sourceTree = useMemo<HeatmapNode | null>(() => {
@@ -196,9 +216,16 @@ export const HeatmapPanel: React.FC = () => {
     const { _meta: _meta, ...tree } = rawData as HeatmapNode;
     return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
   }, [groupFilter, rawData, sortFilter]);
-  // Keep individual stocks in the zoomable tree. Tiny tiles are hidden at
-  // overview scale and revealed by HeatmapTreemap as their projected size grows.
-  const renderTree = sourceTree;
+  const renderTree = useMemo(() => {
+    if (!sourceTree) return null;
+    let current = sourceTree;
+    for (const entry of focusedPath) {
+      const next = findMapCategory(current, entry.id);
+      if (!next) return null;
+      current = next;
+    }
+    return current;
+  }, [focusedPath, sourceTree]);
   const groups = useMemo<string[]>(() => {
     const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();
@@ -216,6 +243,25 @@ export const HeatmapPanel: React.FC = () => {
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
     if (!pinnedAnchor) setHoveredLeaf(leaf);
   }, [pinnedAnchor]);
+  const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
+    setPinnedAnchor(null);
+    setHoveredAnchor(null);
+    setHighlightedCategoryId(null);
+    setHoveredLeaf(null);
+    setFocusedPath((current) => {
+      const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
+      if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
+      if (!sourceTree || !findMapCategory(renderTree || sourceTree, anchor.id)) return current;
+      return [...current, { id: anchor.id, name: anchor.name }];
+    });
+  }, [renderTree, sourceTree]);
+  const handleMapNavigateBack = useCallback(() => {
+    setFocusedPath((current) => current.length ? current.slice(0, -1) : current);
+    setPinnedAnchor(null);
+    setHoveredAnchor(null);
+    setHighlightedCategoryId(null);
+    setHoveredLeaf(null);
+  }, []);
 
   const content = (
     <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`} data-cm-route-reveal="surface">
@@ -262,29 +308,55 @@ export const HeatmapPanel: React.FC = () => {
               <span>{isLoading || meta.refresh_in_progress ? 'Preparing the market snapshot…' : 'No instruments match this filter.'}</span>
             </div>
           ) : (
-            <Profiler
-              id="MarketHeatmap"
-              onRender={(_id, phase, actualDuration) => recordCommit(phase, actualDuration)}
-            >
-              <HeatmapTreemap
-                data={renderTree!}
-                width={dimensions.width}
-                height={dimensions.height}
-                zoom={1}
-                resetKey={view}
-                hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
-                onCategoryHover={handleCategoryHover}
-                onCategoryPointerMove={moveCategoryPanel}
-                onLeafHover={handleLeafHover}
-                onCategoryClick={(anchor) => {
-                  clearTimer(openTimer);
-                  clearTimer(closeTimer);
-                  setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
-                  setHighlightedCategoryId(anchor.id);
-                  setHoveredAnchor(anchor);
-                }}
-              />
-            </Profiler>
+            <>
+              {focusedPath.length > 0 && (
+                <nav
+                  aria-label="Heatmap drill-down path"
+                  className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-md border border-slate-700/80 bg-slate-950/90 px-2 py-1 text-xs text-slate-300 shadow backdrop-blur"
+                >
+                  <button type="button" className="shrink-0 hover:text-white" onClick={() => setFocusedPath([])}>Market</button>
+                  {focusedPath.map((entry, index) => (
+                    <React.Fragment key={entry.id}>
+                      <span aria-hidden="true" className="text-slate-600">/</span>
+                      <button
+                        type="button"
+                        className="shrink-0 hover:text-white"
+                        aria-current={index === focusedPath.length - 1 ? 'page' : undefined}
+                        onClick={() => setFocusedPath((current) => current.slice(0, index + 1))}
+                      >
+                        {entry.name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </nav>
+              )}
+              <Profiler
+                id="MarketHeatmap"
+                onRender={(_id, phase, actualDuration) => recordCommit(phase, actualDuration)}
+              >
+                <HeatmapTreemap
+                  key={focusedPath.map((entry) => entry.id).join('/') || 'market-root'}
+                  data={renderTree!}
+                  width={dimensions.width}
+                  height={dimensions.height}
+                  zoom={1}
+                  resetKey={view}
+                  hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
+                  onCategoryHover={handleCategoryHover}
+                  onCategoryPointerMove={moveCategoryPanel}
+                  onLeafHover={handleLeafHover}
+                  onCategoryDrillDown={handleCategoryDrillDown}
+                  onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
+                  onCategoryClick={(anchor) => {
+                    clearTimer(openTimer);
+                    clearTimer(closeTimer);
+                    setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
+                    setHighlightedCategoryId(anchor.id);
+                    setHoveredAnchor(anchor);
+                  }}
+                />
+              </Profiler>
+            </>
           )}
           {activeAnchor && (
             <HeatmapCategoryPanel
@@ -303,7 +375,7 @@ export const HeatmapPanel: React.FC = () => {
           )}
         </div>
         <footer className="cm-heatmap-footer">
-          <span>Wheel to zoom <i/> drag to pan <i/> double-click a ticker for its quote</span>
+          <span>Wheel to zoom <i/> drag to pan <i/> double-click a category to drill in or a ticker to open its quote <i/> keep scrolling at limits to drill in or go back</span>
           <a href="https://www.logo.dev" target="_blank" rel="noopener">Logos by Logo.dev</a>
         </footer>
       </div>
