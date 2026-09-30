@@ -142,28 +142,30 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >
-        {showLogo && (
-          <CompanyLogo
-            ticker={logoTicker || item.name}
-            label={item.shortName}
-            size={logoSize}
-            className="absolute left-1/2 top-[30%] -translate-x-1/2 -translate-y-1/2"
-          />
-        )}
-        <strong
-          data-hm-detail-min-scale={tickerScale}
-          className="absolute left-1/2 top-[43%] max-w-full -translate-x-1/2 -translate-y-1/2 whitespace-nowrap px-1 font-bold tracking-[-0.02em]"
-          style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
-        >
-          {item.name}
-        </strong>
-        <span
-          data-hm-detail-min-scale={changeScale}
-          className="absolute left-1/2 top-[77%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
-          style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
-        >
-          {changeLabel}
-        </span>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          {showLogo && (
+            <CompanyLogo
+              ticker={logoTicker || item.name}
+              label={item.shortName}
+              size={logoSize}
+              className="mb-1"
+            />
+          )}
+          <strong
+            data-hm-detail-min-scale={tickerScale}
+            className="max-w-full whitespace-nowrap px-1 font-bold tracking-[-0.02em]"
+            style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
+          >
+            {item.name}
+          </strong>
+          <span
+            data-hm-detail-min-scale={changeScale}
+            className="whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
+            style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
+          >
+            {changeLabel}
+          </span>
+        </div>
       </div>
     );
   });
