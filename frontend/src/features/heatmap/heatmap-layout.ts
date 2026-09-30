@@ -84,7 +84,7 @@ export function createTreemapHierarchy(data: HeatmapNode): LayoutNode {
     .sort((a, b) => (b.value || 0) - (a.value || 0)) as LayoutNode;
 }
 
-const HEADER_WIDTH_THRESHOLD = 38;
+const HEADER_WIDTH_THRESHOLD = 46;
 const MINIMUM_HEADER_CONTENT_HEIGHT = 4;
 
 /**
@@ -94,7 +94,7 @@ const MINIMUM_HEADER_CONTENT_HEIGHT = 4;
  * parent's bottom edge.
  */
 export function categoryHeaderPadding(depth: number, width: number, height: number): number {
-  const target = depth === 1 ? 16 : depth === 2 ? 11 : 1;
+  const target = depth === 1 ? 22 : depth === 2 ? 16 : 1;
   return (
     depth > 0
     && depth < 3
@@ -105,12 +105,21 @@ export function categoryHeaderPadding(depth: number, width: number, height: numb
 
 /** Mutates and reuses the hierarchy so resquarify preserves row topology on resize. */
 export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
+  const gutterForNode = (node: LayoutNode) => {
+    const nodeWidth = Math.max(0, node.x1 - node.x0);
+    const nodeHeight = Math.max(0, node.y1 - node.y0);
+    const childCount = Math.max(1, node.children?.length || 1);
+    const typicalChildSize = Math.min(Math.sqrt(nodeWidth * nodeHeight / childCount), nodeWidth, nodeHeight);
+    if (typicalChildSize < 32) return 0.35;
+    if (typicalChildSize < 64) return 0.65;
+    return 1;
+  };
   treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
-    // Keep nested gutters under one screen pixel at maximum camera zoom.
-    // Category backplates provide the boundary color without stacked borders.
-    .paddingInner(0.35)
-    .paddingOuter(0.35)
+    // Preserve room around large groups, while shrinking gutters where a
+    // one-pixel boundary would consume too much of a small child cell.
+    .paddingInner(gutterForNode)
+    .paddingOuter(gutterForNode)
     .paddingTop((node) => categoryHeaderPadding(
       node.depth,
       Math.max(0, node.x1 - node.x0),

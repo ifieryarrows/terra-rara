@@ -5,6 +5,26 @@ import { getColorForChange } from './heatmap-utils';
 
 const LOGO_INSTRUMENT_TYPES = new Set(['equity', 'etf', 'mutualfund']);
 const MIN_TILE_SIZE = 4;
+const textWidthCache = new Map<string, number>();
+let textMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function textWidthAt100px(text: string, weight: 600 | 700) {
+  const key = `${weight}:${text}`;
+  const cached = textWidthCache.get(key);
+  if (cached != null) return cached;
+  if (typeof document !== 'undefined') {
+    textMeasureContext ??= document.createElement('canvas').getContext('2d');
+  }
+  const context = textMeasureContext;
+  let width = text.length * 66;
+  if (context) {
+    context.font = `${weight} 100px "Geist Sans", system-ui, sans-serif`;
+    width = context.measureText(text).width;
+  }
+  if (textWidthCache.size >= 2_048) textWidthCache.clear();
+  textWidthCache.set(key, width);
+  return width;
+}
 
 function minimumScaleForSize(width: number, height: number, minWidth: number, minHeight: number, minArea: number) {
   const safeWidth = Math.max(width, 0.001);
@@ -39,9 +59,11 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
   if (nodeWidth < 24 || nodeHeight < 20) return null;
   const headerPadding = categoryHeaderPadding(node.depth, nodeWidth, nodeHeight);
   const id = String(nodeData.id || `${node.depth}-${nodeData.name}`);
+  const headerWeight = node.depth === 1 ? 700 : 600;
+  const headerTextWidth = (textWidthAt100px(nodeData.name.toLocaleUpperCase(), headerWeight) / 100) * 1.06;
   const headerFontSize = Math.max(5, Math.min(
     node.depth === 1 ? 10 : 8,
-    (nodeWidth - 12) / Math.max(1, nodeData.name.length * 0.62),
+    (nodeWidth - 10) / Math.max(0.1, headerTextWidth),
     (headerPadding - 2) * 0.72,
   ));
   return (
@@ -93,9 +115,10 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
     const tickerHeight = cellHeight * tickerSizingScale;
     const tickerLevel = level === 'color' ? 'ticker' : level;
     const tickerSizes = stockTextSizes(tickerWidth, tickerHeight, tickerLevel);
+    const tickerTextWidth = (textWidthAt100px(item.name, 700) / 100) * 1.04;
     const tickerFontSize = Math.max(0.5, Math.min(
       tickerSizes.ticker,
-      Math.max(0, tickerWidth - 6) / Math.max(1, item.name.length * 0.58),
+      Math.max(0, tickerWidth - 8) / Math.max(0.1, tickerTextWidth),
       Math.max(0, tickerHeight * 0.19) / 1.04,
     ) / tickerSizingScale);
     const changeSizingScale = ['change', 'logo', 'price'].includes(level) ? 1 : changeScale;
@@ -103,9 +126,10 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
     const changeHeight = cellHeight * changeSizingScale;
     const changeLevel = ['change', 'logo', 'price'].includes(level) ? level : 'change';
     const changeSizes = stockTextSizes(changeWidth, changeHeight, changeLevel);
+    const changeTextWidth = (textWidthAt100px(changeLabel, 600) / 100) * 1.08;
     const changeFontSize = Math.max(0.5, Math.min(
       changeSizes.change,
-      Math.max(0, changeWidth - 8) / Math.max(1, changeLabel.length * 0.58),
+      Math.max(0, changeWidth - 2) / Math.max(0.1, changeTextWidth),
       Math.max(0, changeHeight * 0.13) / 1.08,
     ) / changeSizingScale);
     const showTicker = level !== 'color';
@@ -160,7 +184,7 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
           </strong>
           <span
             data-hm-detail-min-scale={changeScale}
-            className="whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
+            className="max-w-full whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
             style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
           >
             {changeLabel}
