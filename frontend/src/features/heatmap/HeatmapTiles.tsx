@@ -4,6 +4,13 @@ import { CompanyLogo } from './CompanyLogo';
 import { getColorForChange } from './heatmap-utils';
 
 const LOGO_INSTRUMENT_TYPES = new Set(['equity', 'etf', 'mutualfund']);
+const MIN_TILE_SIZE = 4;
+
+function minimumScaleForSize(width: number, height: number, minWidth: number, minHeight: number, minArea: number) {
+  const safeWidth = Math.max(width, 0.001);
+  const safeHeight = Math.max(height, 0.001);
+  return Math.max(1, minWidth / safeWidth, minHeight / safeHeight, Math.sqrt(minArea / (safeWidth * safeHeight)));
+}
 
 export interface LeafEntry {
   leaf: LayoutNode;
@@ -64,55 +71,48 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
   );
 });
 
-export const LeafTiles = memo(function LeafTiles({
-  leafEntries,
-  detailZoom = 1,
-}: {
-  leafEntries: LeafEntry[];
-  detailZoom?: number;
-}) {
+export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries: LeafEntry[] }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
     const cellHeight = leaf.y1 - leaf.y0;
-    const contentScale = Math.max(1, detailZoom);
-    const detailWidth = cellWidth * contentScale;
-    const detailHeight = cellHeight * contentScale;
-    if (detailWidth < 4 || detailHeight < 4) return null;
-    // Match the main branch's content thresholds against the visible cell size.
-    // The camera scales this stable surface, so divide font/logo sizes by the
-    // detail scale to keep their on-screen size aligned with that layout.
-    const level = detailLevel(detailWidth, detailHeight);
+    if (cellWidth <= 0 || cellHeight <= 0) return null;
+    const level = detailLevel(cellWidth, cellHeight);
+    const tickerScale = minimumScaleForSize(cellWidth, cellHeight, 24, 18, 520);
+    const changeScale = minimumScaleForSize(cellWidth, cellHeight, 44, 25, 1_250);
+    const tileScale = minimumScaleForSize(cellWidth, cellHeight, MIN_TILE_SIZE, MIN_TILE_SIZE, MIN_TILE_SIZE ** 2);
     const change = item.changePercent || 0;
     const changeLabel = `${change > 0 ? '+' : ''}${change.toFixed(2)}%`;
-    const targetTextSizes = stockTextSizes(detailWidth, detailHeight, level);
-    const innerWidth = Math.max(0, detailWidth - 8);
-    const innerHeight = Math.max(0, detailHeight - 8);
-    const tickerFontSize = level === 'color' ? 0 : Math.max(0.5, Math.min(
-      targetTextSizes.ticker,
-      innerWidth / Math.max(1, item.name.length * 0.58),
-      innerHeight / 1.04,
-    ));
-    const changeFontSize = level === 'color' ? 0 : Math.max(0, Math.min(
-      targetTextSizes.change,
-      innerWidth / Math.max(1, changeLabel.length * 0.58),
-      innerHeight / 1.08,
-    ));
-    const tickerHeight = tickerFontSize * 1.04;
-    const changeHeight = changeFontSize * 1.08;
-    const showChange = ['change', 'logo', 'price'].includes(level)
-      && changeFontSize > 0
-      && tickerHeight + changeHeight <= innerHeight;
+    const tickerSizingScale = level === 'color' ? tickerScale : 1;
+    const tickerWidth = cellWidth * tickerSizingScale;
+    const tickerHeight = cellHeight * tickerSizingScale;
+    const tickerLevel = level === 'color' ? 'ticker' : level;
+    const tickerSizes = stockTextSizes(tickerWidth, tickerHeight, tickerLevel);
+    const tickerFontSize = Math.max(0.5, Math.min(
+      tickerSizes.ticker,
+      Math.max(0, tickerWidth - 8) / Math.max(1, item.name.length * 0.58),
+      Math.max(0, tickerHeight - 8) / 1.04,
+    ) / tickerSizingScale);
+    const changeSizingScale = ['change', 'logo', 'price'].includes(level) ? 1 : changeScale;
+    const changeWidth = cellWidth * changeSizingScale;
+    const changeHeight = cellHeight * changeSizingScale;
+    const changeLevel = ['change', 'logo', 'price'].includes(level) ? level : 'change';
+    const changeSizes = stockTextSizes(changeWidth, changeHeight, changeLevel);
+    const changeFontSize = Math.max(0.5, Math.min(
+      changeSizes.change,
+      Math.max(0, changeWidth - 8) / Math.max(1, changeLabel.length * 0.58),
+      Math.max(0, changeHeight - 8) / 1.08,
+    ) / changeSizingScale);
     const showTicker = level !== 'color';
+    const showChange = ['change', 'logo', 'price'].includes(level);
     const fallbackLogoTicker = LOGO_INSTRUMENT_TYPES.has((item.instrumentType || '').toLowerCase())
       ? item.name
       : null;
     const logoTicker = item.logoTicker || fallbackLogoTicker;
-    const logoMargin = 4;
     const targetLogoSize = level === 'price'
-      ? Math.min(42, detailHeight * 0.34)
-      : Math.min(28, detailHeight * 0.3);
-    const logoSize = Math.min(targetLogoSize, innerWidth, Math.max(0, innerHeight - tickerHeight - changeHeight - logoMargin));
+      ? Math.min(42, cellHeight * 0.34)
+      : Math.min(28, cellHeight * 0.3);
+    const logoSize = Math.min(targetLogoSize, cellWidth - 8, cellHeight * 0.22);
     const showLogo = ['logo', 'price'].includes(level)
       && showChange
       && logoSize >= 8
@@ -123,6 +123,7 @@ export const LeafTiles = memo(function LeafTiles({
         key={renderId}
         data-hm-leaf-id={renderId}
         data-hm-parent-id={parentId}
+        data-hm-tile-min-scale={tileScale}
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
@@ -133,32 +134,31 @@ export const LeafTiles = memo(function LeafTiles({
           width: cellWidth,
           height: cellHeight,
           backgroundColor: getColorForChange(item.changePercent),
+          visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >
         {showLogo && (
           <CompanyLogo
             ticker={logoTicker || item.name}
             label={item.shortName}
-            size={logoSize / contentScale}
-            className="mb-1"
+            size={logoSize}
+            className="absolute left-1/2 top-[30%] -translate-x-1/2 -translate-y-1/2"
           />
         )}
-        {showTicker && (
-          <strong
-            className="max-w-full truncate px-1 font-bold tracking-[-0.02em]"
-            style={{ fontSize: tickerFontSize / contentScale, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
-          >
-            {item.name}
-          </strong>
-        )}
-        {showChange && (
-          <span
-            className="font-semibold tabular-nums tracking-[-0.015em]"
-            style={{ fontSize: changeFontSize / contentScale, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
-          >
-            {changeLabel}
-          </span>
-        )}
+        <strong
+          data-hm-detail-min-scale={tickerScale}
+          className="absolute left-1/2 top-1/2 max-w-full -translate-x-1/2 -translate-y-1/2 truncate px-1 font-bold tracking-[-0.02em]"
+          style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
+        >
+          {item.name}
+        </strong>
+        <span
+          data-hm-detail-min-scale={changeScale}
+          className="absolute left-1/2 top-[68%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
+          style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
+        >
+          {changeLabel}
+        </span>
       </div>
     );
   });

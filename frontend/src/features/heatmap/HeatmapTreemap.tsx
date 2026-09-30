@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   createTreemapHierarchy,
   layoutTreemap,
@@ -93,7 +93,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const activeCategoryRef = useRef<string | null>(null);
   const zoomTargetRef = useRef(zoom);
   const previousZoomPropRef = useRef(zoom);
-  const [detailZoom, setDetailZoom] = useState(zoom);
   const cameraRef = useRef<ZoomCamera>({ scale: zoom, x: 0, y: 0 });
   const zoomAnchorRef = useRef<{ x: number; y: number; contentX: number; contentY: number } | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
@@ -154,6 +153,17 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
   })), [parents]);
 
+  const updateTileVisibility = (scale: number) => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    surface.querySelectorAll<HTMLElement>('[data-hm-tile-min-scale]').forEach((tile) => {
+      tile.style.visibility = scale >= Number(tile.dataset.hmTileMinScale) ? 'visible' : 'hidden';
+    });
+    surface.querySelectorAll<HTMLElement>('[data-hm-detail-min-scale]').forEach((detail) => {
+      detail.style.visibility = scale >= Number(detail.dataset.hmDetailMinScale) ? 'visible' : 'hidden';
+    });
+  };
+
   const applyCamera = (next: ZoomCamera) => {
     const scroller = scrollRef.current;
     const surface = surfaceRef.current;
@@ -184,7 +194,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       zoomFrameRef.current = null;
       lastZoomFrameTimeRef.current = null;
       zoomingRef.current = false;
-      setDetailZoom(zoomTargetRef.current);
+      updateTileVisibility(zoomTargetRef.current);
 
       // A stationary pointer can move over new cells as the map is transformed.
       // Defer hover work until the camera settles, then resolve the final cell once.
@@ -274,6 +284,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   useLayoutEffect(() => {
     applyCamera(cameraRef.current);
+    updateTileVisibility(cameraRef.current.scale);
   }, [height, width]);
 
   useEffect(() => {
@@ -304,8 +315,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   const categoryAtPoint = (clientX: number, clientY: number) => {
     if (!onCategoryDrillDown) return false;
-    const target = targetData(document.elementFromPoint(clientX, clientY));
-    const id = target?.dataset.hmCategoryId || target?.dataset.hmParentId;
+    const pointedElement = document.elementFromPoint(clientX, clientY);
+    const category = pointedElement instanceof Element
+      ? pointedElement.closest<HTMLElement>('[data-hm-category-id]')
+      : null;
+    const id = category?.dataset.hmCategoryId;
     if (!id) return false;
     const node = categoryById.get(id);
     const scroller = scrollRef.current;
@@ -525,7 +539,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           zoomAnchorRef.current = null;
           zoomTargetRef.current = cameraRef.current.scale;
           zoomingRef.current = false;
-          setDetailZoom(cameraRef.current.scale);
+          updateTileVisibility(cameraRef.current.scale);
         }
         event.preventDefault();
         dragRef.current = {
@@ -620,7 +634,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       >
         <div className="relative" style={{ width, height }}>
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
-          <LeafTiles leafEntries={leafEntries} detailZoom={detailZoom} />
+          <LeafTiles leafEntries={leafEntries} />
         </div>
       </div>
     </div>
