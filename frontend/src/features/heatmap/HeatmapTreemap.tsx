@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   createTreemapHierarchy,
   layoutTreemap,
@@ -10,7 +10,7 @@ import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 4;
 
 export interface CategoryAnchor {
   id: string;
@@ -107,7 +107,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
-  const [detailZoom, setDetailZoom] = useState(zoom);
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
 
@@ -179,8 +178,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const startZoomAnimation = () => {
     if (zoomFrameRef.current !== null) return;
     zoomingRef.current = true;
-    const finishZoom = (target: number) => {
-      setDetailZoom(target);
+    const finishZoom = () => {
       zoomAnchorRef.current = null;
       zoomFrameRef.current = null;
       lastZoomFrameTimeRef.current = null;
@@ -224,7 +222,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         x: anchor ? anchor.x - anchor.contentX * target : current.x,
         y: anchor ? anchor.y - anchor.contentY * target : current.y,
       });
-      finishZoom(target);
+      finishZoom();
     };
 
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -248,7 +246,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         y: anchor ? anchor.y - anchor.contentY * scale : current.y,
       });
       if (finished) {
-        finishZoom(target);
+        finishZoom();
         return;
       }
       zoomFrameRef.current = window.requestAnimationFrame(animate);
@@ -328,15 +326,15 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       wheelFrameRef.current = requestAnimationFrame(() => {
         wheelFrameRef.current = null;
         const { x, y } = wheelPointerRef.current;
-        const delta = Math.max(-0.24, Math.min(0.24, -wheelDeltaRef.current * 0.0015));
+        const zoomExponent = Math.max(-0.34, Math.min(0.34, -wheelDeltaRef.current * 0.0021));
         wheelDeltaRef.current = 0;
-        if (Math.abs(delta) < 0.01) return;
+        if (Math.abs(zoomExponent) < 0.01) return;
 
         const currentTarget = zoomTargetRef.current;
-        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget + delta).toFixed(2)));
+        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget * Math.exp(zoomExponent)).toFixed(2)));
         if (nextZoom === currentTarget) {
-          if (delta > 0 && currentTarget >= MAX_ZOOM) categoryAtPoint(event.clientX, event.clientY);
-          else if (delta < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
+          if (zoomExponent > 0 && currentTarget >= MAX_ZOOM) categoryAtPoint(event.clientX, event.clientY);
+          else if (zoomExponent < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
           return;
         }
         const camera = cameraRef.current;
@@ -525,7 +523,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           zoomAnchorRef.current = null;
           zoomTargetRef.current = cameraRef.current.scale;
           zoomingRef.current = false;
-          setDetailZoom(cameraRef.current.scale);
         }
         event.preventDefault();
         dragRef.current = {
@@ -620,7 +617,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       >
         <div className="relative" style={{ width, height }}>
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
-          <LeafTiles leafEntries={leafEntries} detailZoom={detailZoom} />
+          <LeafTiles leafEntries={leafEntries} />
         </div>
       </div>
     </div>

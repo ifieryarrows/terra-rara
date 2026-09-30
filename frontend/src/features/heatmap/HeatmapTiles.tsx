@@ -5,6 +5,12 @@ import { getColorForChange } from './heatmap-utils';
 
 const LOGO_INSTRUMENT_TYPES = new Set(['equity', 'etf', 'mutualfund']);
 
+function compactTickerFontSize(label: string, width: number, height: number) {
+  const safeWidth = Math.max(0, width - 8);
+  const safeHeight = Math.max(0, height - 8);
+  return Math.max(0.5, Math.min(14, safeWidth / Math.max(1, label.length * 0.58), safeHeight / 1.04));
+}
+
 export interface LeafEntry {
   leaf: LayoutNode;
   parentId: string;
@@ -64,26 +70,53 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
   );
 });
 
-export const LeafTiles = memo(function LeafTiles({ leafEntries, detailZoom = 1 }: { leafEntries: LeafEntry[]; detailZoom?: number }) {
+export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries: LeafEntry[] }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
     const cellHeight = leaf.y1 - leaf.y0;
-    const visibleWidth = cellWidth * detailZoom;
-    const visibleHeight = cellHeight * detailZoom;
-    if (visibleWidth < 4 || visibleHeight < 4) return null;
-    // Choose the detail tier from the projected cell size, while font sizes
-    // remain based on the layout size so the camera does not scale them twice.
-    const level = detailLevel(visibleWidth, visibleHeight);
-    const textSizes = stockTextSizes(cellWidth, cellHeight, level);
+    if (cellWidth < 1 || cellHeight < 1) return null;
+    // Choose content once from the unscaled layout. Camera zoom then scales the
+    // same tile contents with the tile instead of recalculating its contents.
+    const level = detailLevel(cellWidth, cellHeight);
+    const label = item.name;
     const change = item.changePercent || 0;
-    const showTicker = level !== 'color';
-    const showChange = ['change', 'logo', 'price'].includes(level);
+    const changeLabel = `${change > 0 ? '+' : ''}${change.toFixed(2)}%`;
+    const targetTextSizes = stockTextSizes(cellWidth, cellHeight, level);
+    const innerWidth = Math.max(0, cellWidth - 8);
+    const innerHeight = Math.max(0, cellHeight - 8);
+    const tickerFontSize = level === 'color'
+      ? compactTickerFontSize(label, cellWidth, cellHeight)
+      : Math.max(0.5, Math.min(
+        targetTextSizes.ticker,
+        innerWidth / Math.max(1, label.length * 0.58),
+        innerHeight / 1.04,
+      ));
+    const changeFontSize = level === 'color' ? 0 : Math.max(0, Math.min(
+      targetTextSizes.change,
+      innerWidth / Math.max(1, changeLabel.length * 0.58),
+      innerHeight / 1.08,
+    ));
+    const tickerHeight = tickerFontSize * 1.04;
+    const changeHeight = changeFontSize * 1.08;
+    const showChange = ['change', 'logo', 'price'].includes(level)
+      && changeFontSize > 0
+      && tickerHeight + changeHeight <= innerHeight;
+    const showTicker = true;
     const fallbackLogoTicker = LOGO_INSTRUMENT_TYPES.has((item.instrumentType || '').toLowerCase())
       ? item.name
       : null;
     const logoTicker = item.logoTicker || fallbackLogoTicker;
-    const showLogo = ['logo', 'price'].includes(level) && !!logoTicker && !item.aggregateCount;
+    const logoMargin = 4;
+    const targetLogoSize = level === 'price'
+      ? Math.min(42, cellHeight * 0.34)
+      : Math.min(28, cellHeight * 0.3);
+    const logoSize = Math.min(targetLogoSize, innerWidth, Math.max(0, innerHeight - tickerHeight - changeHeight - logoMargin));
+    const showLogo = ['logo', 'price'].includes(level)
+      && showChange
+      && logoSize >= 8
+      && !!logoTicker
+      && !item.aggregateCount;
     return (
       <div
         key={renderId}
@@ -105,14 +138,14 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, detailZoom = 1 }
           <CompanyLogo
             ticker={logoTicker || item.name}
             label={item.shortName}
-            size={level === 'price' ? Math.min(42, cellHeight * 0.34) : Math.min(28, cellHeight * 0.3)}
+            size={logoSize}
             className="mb-1"
           />
         )}
         {showTicker && (
           <strong
             className="max-w-full truncate px-1 font-bold tracking-[-0.02em]"
-            style={{ fontSize: textSizes.ticker, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
+            style={{ fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
           >
             {item.name}
           </strong>
@@ -120,9 +153,9 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, detailZoom = 1 }
         {showChange && (
           <span
             className="font-semibold tabular-nums tracking-[-0.015em]"
-            style={{ fontSize: textSizes.change, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
+            style={{ fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
           >
-            {change > 0 ? '+' : ''}{change.toFixed(2)}%
+            {changeLabel}
           </span>
         )}
       </div>
