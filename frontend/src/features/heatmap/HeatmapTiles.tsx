@@ -54,9 +54,9 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
       className="absolute overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-copper-400"
       style={{
         left: node.x0, top: node.y0, width: nodeWidth, height: nodeHeight,
-        border: active ? '2px solid #d99a5b' : node.depth === 1 ? '1px solid #334155' : '1px solid #1e293b',
-        backgroundColor: active ? '#d99a5b' : '#020617',
-        boxShadow: active ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)' : undefined,
+        border: active ? '1px solid #d99a5b' : '0.5px solid #253244',
+        backgroundColor: '#020617',
+        boxShadow: undefined,
         // Category geometry stays below stock cells so the copper
         // highlight never intercepts stock hover/focus events.
         zIndex: 1,

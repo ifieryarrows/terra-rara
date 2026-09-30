@@ -91,6 +91,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const tileVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
   const detailVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
+  const categoryElementsRef = useRef(new Map<string, HTMLElement>());
+  const hoveredCategoryElementRef = useRef<HTMLElement | null>(null);
   const visibleTileCountRef = useRef(0);
   const visibleDetailCountRef = useRef(0);
   const activeLeafRef = useRef<string | null>(null);
@@ -156,6 +158,26 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const nodeData = node.data as HeatmapNode;
     return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
   })), [parents]);
+
+  const setCategoryHoverVisual = (id: string | null) => {
+    const previous = hoveredCategoryElementRef.current;
+    const next = id ? categoryElementsRef.current.get(id) || null : null;
+    if (previous === next) return;
+    const restore = (element: HTMLElement) => {
+      element.style.border = element.dataset.hmCategoryId === hoveredCategoryId
+        ? '1px solid #d99a5b'
+        : '0.5px solid #253244';
+      element.style.backgroundColor = '#020617';
+      element.style.boxShadow = 'none';
+    };
+    if (previous) restore(previous);
+    hoveredCategoryElementRef.current = next;
+    if (next && next.dataset.hmCategoryId !== hoveredCategoryId) {
+      next.style.border = '1px solid #d99a5b';
+      next.style.backgroundColor = '#020617';
+      next.style.boxShadow = 'none';
+    }
+  };
 
   const updateTileVisibility = (scale: number) => {
     const updateGroup = (
@@ -239,6 +261,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           return;
         }
       }
+      setCategoryHoverVisual(null);
       activeLeafRef.current = null;
       activeCategoryRef.current = null;
       onLeafHover?.(null);
@@ -304,6 +327,12 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
+    categoryElementsRef.current = new Map(
+      Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-category-id]'))
+        .map((element) => [element.dataset.hmCategoryId || '', element] as const)
+        .filter(([id]) => !!id),
+    );
+    hoveredCategoryElementRef.current = null;
     tileVisibilityRef.current = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-tile-min-scale]'))
       .map((element) => ({ element, minScale: Number(element.dataset.hmTileMinScale) || 1 }))
       .sort((a, b) => a.minScale - b.minScale);
@@ -314,7 +343,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     visibleDetailCountRef.current = 0;
     applyCamera(cameraRef.current);
     updateTileVisibility(cameraRef.current.scale);
-  }, [height, leafEntries, width]);
+  }, [height, leafEntries, parents, width]);
 
   useEffect(() => {
     if (zoom === previousZoomPropRef.current) return;
@@ -342,23 +371,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     zoomingRef.current = false;
   }, []);
 
-  const categoryAtPoint = (clientX: number, clientY: number) => {
-    if (!onCategoryDrillDown) return false;
-    const pointedElement = document.elementFromPoint(clientX, clientY);
-    const category = pointedElement instanceof Element
-      ? pointedElement.closest<HTMLElement>('[data-hm-category-id]')
-      : null;
-    const id = category?.dataset.hmCategoryId;
-    if (!id) return false;
-    const node = categoryById.get(id);
-    const scroller = scrollRef.current;
-    if (!node || !scroller) return false;
-    const anchor = anchorFor(id, { x: clientX, y: clientY }, rectForNode(node, scroller, cameraRef.current));
-    if (!anchor) return false;
-    onCategoryDrillDown(anchor);
-    return true;
-  };
-
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -378,8 +390,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         const currentTarget = zoomTargetRef.current;
         const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget * Math.exp(zoomExponent)).toFixed(2)));
         if (nextZoom === currentTarget) {
-          if (zoomExponent > 0 && currentTarget >= MAX_ZOOM) categoryAtPoint(event.clientX, event.clientY);
-          else if (zoomExponent < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
+          if (zoomExponent < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
           return;
         }
         const camera = cameraRef.current;
@@ -401,7 +412,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       wheelFrameRef.current = null;
       wheelDeltaRef.current = 0;
     };
-  }, [onCategoryDrillDown, onNavigateBack, onZoomDelta]);
+  }, [onNavigateBack, onZoomDelta]);
 
   const anchorFor = (
     id: string,
@@ -436,6 +447,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     forceAnchorUpdate = false,
   ) => {
     if (!id) return;
+    setCategoryHoverVisual(id);
     if (x != null && y != null) onCategoryPointerMove?.(x, y);
     if (activeCategoryRef.current === id && !forceAnchorUpdate) return;
     activeCategoryRef.current = id;
@@ -484,6 +496,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       if (!drag.moved && Math.hypot(deltaX, deltaY) > 3) {
         drag.moved = true;
         activeLeafRef.current = null;
+        setCategoryHoverVisual(null);
         onLeafHover?.(null);
         onCategoryHover(null);
       }
@@ -507,6 +520,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const next = targetData(event.relatedTarget);
     const nextLeaf = next?.dataset.hmLeafId || null;
     const nextCategory = next?.dataset.hmParentId || next?.dataset.hmCategoryId || null;
+    setCategoryHoverVisual(nextCategory);
     if (nextLeaf !== activeLeafRef.current) {
       activeLeafRef.current = nextLeaf;
       if (nextLeaf) {
@@ -642,6 +656,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
+          setCategoryHoverVisual(null);
           onLeafHover?.(null);
           onCategoryHover(null);
         }

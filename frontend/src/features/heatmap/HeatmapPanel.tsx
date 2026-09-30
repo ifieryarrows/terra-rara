@@ -5,7 +5,6 @@ import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import {
   compressLeafWeights,
-  leavesForCategory,
   type HeatmapData,
   type HeatmapMeta,
   type HeatmapNode,
@@ -50,6 +49,22 @@ function findMapCategory(node: HeatmapNode, id: string): HeatmapNode | null {
   return null;
 }
 
+function indexCategoryLeaves(root: HeatmapNode): Map<string, HeatmapData[]> {
+  const index = new Map<string, HeatmapData[]>();
+  const visit = (node: HeatmapNode | HeatmapData, depth: number): HeatmapData[] => {
+    const children = 'children' in node ? node.children : undefined;
+    if (!children?.length) return [node as HeatmapData];
+    const leaves = children.flatMap((child) => visit(child, depth + 1));
+    const category = node as HeatmapNode;
+    index.set(String(category.id || `${depth}-${category.name}`), leaves);
+    if (category.id) index.set(String(category.id), leaves);
+    if (!index.has(category.name)) index.set(category.name, leaves);
+    return leaves;
+  };
+  visit(root, 0);
+  return index;
+}
+
 interface HeatmapFocusEntry {
   id: string;
   name: string;
@@ -60,7 +75,6 @@ export const HeatmapPanel: React.FC = () => {
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [highlightedCategoryId, setHighlightedCategoryId] = useState<string | null>(null);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
@@ -161,17 +175,14 @@ export const HeatmapPanel: React.FC = () => {
       // Finviz paints selection on a dedicated hover canvas. Mirror that
       // immediacy for the visual boundary while retaining the panel's close
       // grace period.
-      setHighlightedCategoryId(null);
       scheduleClose();
       return;
     }
-    setHighlightedCategoryId(anchor.id);
     if (anchor.pointer) latestPointer.current = anchor.pointer;
     const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
     clearTimer(openTimer);
     if (hoveredAnchor?.id === anchor.id) {
-      setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
       return;
     }
     openTimer.current = window.setTimeout(() => {
@@ -190,7 +201,6 @@ export const HeatmapPanel: React.FC = () => {
       if (pinnedAnchor || hoveredAnchor) {
         setPinnedAnchor(null);
         setHoveredAnchor(null);
-        setHighlightedCategoryId(null);
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -201,7 +211,6 @@ export const HeatmapPanel: React.FC = () => {
 
   useEffect(() => {
     setGroupFilter('ALL');
-    setHighlightedCategoryId(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
@@ -230,10 +239,16 @@ export const HeatmapPanel: React.FC = () => {
     const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();
   }, [rawData]);
+  const categoryLeafIndex = useMemo(
+    () => sourceTree ? indexCategoryLeaves(sourceTree) : new Map<string, HeatmapData[]>(),
+    [sourceTree],
+  );
   const activeAnchor = pinnedAnchor || hoveredAnchor;
   const panelLeaves = useMemo(
-    () => activeAnchor && sourceTree ? leavesForCategory(sourceTree, activeAnchor.id, activeAnchor.name) : [],
-    [activeAnchor, sourceTree],
+    () => activeAnchor
+      ? categoryLeafIndex.get(activeAnchor.id) || categoryLeafIndex.get(activeAnchor.name) || []
+      : [],
+    [activeAnchor?.id, activeAnchor?.name, categoryLeafIndex],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
   const moveCategoryPanel = useCallback((x: number, y: number) => {
@@ -246,7 +261,6 @@ export const HeatmapPanel: React.FC = () => {
   const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
-    setHighlightedCategoryId(null);
     setHoveredLeaf(null);
     setFocusedPath((current) => {
       const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
@@ -259,8 +273,13 @@ export const HeatmapPanel: React.FC = () => {
     setFocusedPath((current) => current.length ? current.slice(0, -1) : current);
     setPinnedAnchor(null);
     setHoveredAnchor(null);
-    setHighlightedCategoryId(null);
     setHoveredLeaf(null);
+  }, []);
+  const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
+    setHoveredAnchor(anchor);
   }, []);
 
   const content = (
@@ -341,19 +360,13 @@ export const HeatmapPanel: React.FC = () => {
                   height={dimensions.height}
                   zoom={1}
                   resetKey={view}
-                  hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
+                  hoveredCategoryId={pinnedAnchor?.id || null}
                   onCategoryHover={handleCategoryHover}
                   onCategoryPointerMove={moveCategoryPanel}
                   onLeafHover={handleLeafHover}
                   onCategoryDrillDown={handleCategoryDrillDown}
                   onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
-                  onCategoryClick={(anchor) => {
-                    clearTimer(openTimer);
-                    clearTimer(closeTimer);
-                    setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
-                    setHighlightedCategoryId(anchor.id);
-                    setHoveredAnchor(anchor);
-                  }}
+                  onCategoryClick={handleCategoryClick}
                 />
               </Profiler>
             </>
@@ -370,12 +383,12 @@ export const HeatmapPanel: React.FC = () => {
               pinned={!!pinnedAnchor}
               onPointerEnter={cancelClose}
               onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
-              onClose={() => { setPinnedAnchor(null); setHighlightedCategoryId(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
+              onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
             />
           )}
         </div>
         <footer className="cm-heatmap-footer">
-          <span>Wheel to zoom <i/> drag to pan <i/> double-click a category to drill in or a ticker to open its quote <i/> keep scrolling at limits to drill in or go back</span>
+          <span>Wheel to zoom <i/> drag to pan <i/> double-click a category to drill in or a ticker to open its quote</span>
           <a href="https://www.logo.dev" target="_blank" rel="noopener">Logos by Logo.dev</a>
         </footer>
       </div>

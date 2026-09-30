@@ -84,7 +84,7 @@ export function createTreemapHierarchy(data: HeatmapNode): LayoutNode {
     .sort((a, b) => (b.value || 0) - (a.value || 0)) as LayoutNode;
 }
 
-const HEADER_WIDTH_THRESHOLD = 46;
+const HEADER_WIDTH_THRESHOLD = 38;
 const MINIMUM_HEADER_CONTENT_HEIGHT = 4;
 
 /**
@@ -94,7 +94,7 @@ const MINIMUM_HEADER_CONTENT_HEIGHT = 4;
  * parent's bottom edge.
  */
 export function categoryHeaderPadding(depth: number, width: number, height: number): number {
-  const target = depth === 1 ? 22 : depth === 2 ? 16 : 1;
+  const target = depth === 1 ? 16 : depth === 2 ? 11 : 1;
   return (
     depth > 0
     && depth < 3
@@ -107,12 +107,10 @@ export function categoryHeaderPadding(depth: number, width: number, height: numb
 export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
   treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
-    // A single layout pixel is the shared boundary between adjacent cells.
-    // Cells do not draw their own borders, avoiding the old 1 + 1 + 1px
-    // stacked gutter while allowing the category backing layer to recolour
-    // every internal boundary on hover.
-    .paddingInner(1)
-    .paddingOuter(1)
+    // Keep nested gutters under one screen pixel at maximum camera zoom.
+    // Category backplates provide the boundary color without stacked borders.
+    .paddingInner(0.35)
+    .paddingOuter(0.35)
     .paddingTop((node) => categoryHeaderPadding(
       node.depth,
       Math.max(0, node.x1 - node.x0),
