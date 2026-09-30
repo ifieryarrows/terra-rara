@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createTreemapHierarchy,
   layoutTreemap,
@@ -93,6 +93,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const activeCategoryRef = useRef<string | null>(null);
   const zoomTargetRef = useRef(zoom);
   const previousZoomPropRef = useRef(zoom);
+  const [detailZoom, setDetailZoom] = useState(zoom);
   const cameraRef = useRef<ZoomCamera>({ scale: zoom, x: 0, y: 0 });
   const zoomAnchorRef = useRef<{ x: number; y: number; contentX: number; contentY: number } | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
@@ -183,6 +184,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       zoomFrameRef.current = null;
       lastZoomFrameTimeRef.current = null;
       zoomingRef.current = false;
+      setDetailZoom(zoomTargetRef.current);
 
       // A stationary pointer can move over new cells as the map is transformed.
       // Defer hover work until the camera settles, then resolve the final cell once.
@@ -523,6 +525,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           zoomAnchorRef.current = null;
           zoomTargetRef.current = cameraRef.current.scale;
           zoomingRef.current = false;
+          setDetailZoom(cameraRef.current.scale);
         }
         event.preventDefault();
         dragRef.current = {
@@ -617,7 +620,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       >
         <div className="relative" style={{ width, height }}>
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
-          <LeafTiles leafEntries={leafEntries} />
+          <LeafTiles leafEntries={leafEntries} detailZoom={detailZoom} />
         </div>
       </div>
     </div>
