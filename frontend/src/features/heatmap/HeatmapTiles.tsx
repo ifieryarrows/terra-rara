@@ -39,6 +39,11 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
   if (nodeWidth < 24 || nodeHeight < 20) return null;
   const headerPadding = categoryHeaderPadding(node.depth, nodeWidth, nodeHeight);
   const id = String(nodeData.id || `${node.depth}-${nodeData.name}`);
+  const headerFontSize = Math.max(5, Math.min(
+    node.depth === 1 ? 10 : 8,
+    (nodeWidth - 12) / Math.max(1, nodeData.name.length * 0.62),
+    (headerPadding - 2) * 0.72,
+  ));
   return (
     <div
       data-hm-category-id={id}
@@ -60,9 +65,9 @@ const CategoryTile = memo(function CategoryTile({ node, active }: { node: Layout
       {headerPadding > 1 && (
         <div
           className={node.depth === 1
-            ? 'pointer-events-none truncate bg-slate-900/95 px-1.5 pt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200'
-            : 'pointer-events-none truncate bg-slate-800/95 px-1 text-[8px] font-semibold uppercase tracking-wide text-slate-400'}
-          style={{ height: headerPadding - 1 }}
+            ? 'pointer-events-none overflow-hidden whitespace-nowrap bg-slate-900/95 px-1.5 pt-0.5 font-bold uppercase tracking-wide text-slate-200'
+            : 'pointer-events-none overflow-hidden whitespace-nowrap bg-slate-800/95 px-1 font-semibold uppercase tracking-wide text-slate-400'}
+          style={{ height: headerPadding - 1, fontSize: headerFontSize, lineHeight: 1.15 }}
         >
           {nodeData.name}
         </div>
@@ -90,8 +95,8 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
     const tickerSizes = stockTextSizes(tickerWidth, tickerHeight, tickerLevel);
     const tickerFontSize = Math.max(0.5, Math.min(
       tickerSizes.ticker,
-      Math.max(0, tickerWidth - 8) / Math.max(1, item.name.length * 0.58),
-      Math.max(0, tickerHeight - 8) / 1.04,
+      Math.max(0, tickerWidth - 6) / Math.max(1, item.name.length * 0.58),
+      Math.max(0, tickerHeight * 0.19) / 1.04,
     ) / tickerSizingScale);
     const changeSizingScale = ['change', 'logo', 'price'].includes(level) ? 1 : changeScale;
     const changeWidth = cellWidth * changeSizingScale;
@@ -101,7 +106,7 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
     const changeFontSize = Math.max(0.5, Math.min(
       changeSizes.change,
       Math.max(0, changeWidth - 8) / Math.max(1, changeLabel.length * 0.58),
-      Math.max(0, changeHeight - 8) / 1.08,
+      Math.max(0, changeHeight * 0.13) / 1.08,
     ) / changeSizingScale);
     const showTicker = level !== 'color';
     const showChange = ['change', 'logo', 'price'].includes(level);
@@ -147,14 +152,14 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
         )}
         <strong
           data-hm-detail-min-scale={tickerScale}
-          className="absolute left-1/2 top-1/2 max-w-full -translate-x-1/2 -translate-y-1/2 truncate px-1 font-bold tracking-[-0.02em]"
+          className="absolute left-1/2 top-[43%] max-w-full -translate-x-1/2 -translate-y-1/2 whitespace-nowrap px-1 font-bold tracking-[-0.02em]"
           style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
         >
           {item.name}
         </strong>
         <span
           data-hm-detail-min-scale={changeScale}
-          className="absolute left-1/2 top-[68%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
+          className="absolute left-1/2 top-[77%] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
           style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
         >
           {changeLabel}

@@ -89,6 +89,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const tileVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
+  const detailVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
+  const visibleTileCountRef = useRef(0);
+  const visibleDetailCountRef = useRef(0);
   const activeLeafRef = useRef<string | null>(null);
   const activeCategoryRef = useRef<string | null>(null);
   const zoomTargetRef = useRef(zoom);
@@ -154,14 +158,25 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   })), [parents]);
 
   const updateTileVisibility = (scale: number) => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    surface.querySelectorAll<HTMLElement>('[data-hm-tile-min-scale]').forEach((tile) => {
-      tile.style.visibility = scale >= Number(tile.dataset.hmTileMinScale) ? 'visible' : 'hidden';
-    });
-    surface.querySelectorAll<HTMLElement>('[data-hm-detail-min-scale]').forEach((detail) => {
-      detail.style.visibility = scale >= Number(detail.dataset.hmDetailMinScale) ? 'visible' : 'hidden';
-    });
+    const updateGroup = (
+      entries: Array<{ element: HTMLElement; minScale: number }>,
+      visibleCount: { current: number },
+    ) => {
+      let low = 0;
+      let high = entries.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (entries[middle].minScale <= scale) low = middle + 1;
+        else high = middle;
+      }
+      for (let i = Math.min(low, visibleCount.current); i < Math.max(low, visibleCount.current); i += 1) {
+        const visibility = i < low ? 'visible' : 'hidden';
+        if (entries[i].element.style.visibility !== visibility) entries[i].element.style.visibility = visibility;
+      }
+      visibleCount.current = low;
+    };
+    updateGroup(tileVisibilityRef.current, visibleTileCountRef);
+    updateGroup(detailVisibilityRef.current, visibleDetailCountRef);
   };
 
   const applyCamera = (next: ZoomCamera) => {
@@ -180,6 +195,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     // layer made coordinates and text detail drift apart while the camera
     // moved, and forced the browser to resample a very large texture.
     surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
+    // Reveal labels at the exact zoom scale where they fit. The element list
+    // is cached after layout, so animation frames do not query the DOM or
+    // trigger a React render/re-layout.
+    updateTileVisibility(camera.scale);
   };
 
   const setZoomedTarget = (target: number) => {
@@ -283,9 +302,19 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   useLayoutEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    tileVisibilityRef.current = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-tile-min-scale]'))
+      .map((element) => ({ element, minScale: Number(element.dataset.hmTileMinScale) || 1 }))
+      .sort((a, b) => a.minScale - b.minScale);
+    detailVisibilityRef.current = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-detail-min-scale]'))
+      .map((element) => ({ element, minScale: Number(element.dataset.hmDetailMinScale) || 1 }))
+      .sort((a, b) => a.minScale - b.minScale);
+    visibleTileCountRef.current = 0;
+    visibleDetailCountRef.current = 0;
     applyCamera(cameraRef.current);
     updateTileVisibility(cameraRef.current.scale);
-  }, [height, width]);
+  }, [height, leafEntries, width]);
 
   useEffect(() => {
     if (zoom === previousZoomPropRef.current) return;
