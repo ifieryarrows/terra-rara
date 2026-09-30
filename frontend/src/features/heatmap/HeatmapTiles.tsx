@@ -163,6 +163,8 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
           width: cellWidth,
           height: cellHeight,
           backgroundColor: getColorForChange(item.changePercent),
+          border: '0.75px solid #101827',
+          boxSizing: 'border-box',
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >
@@ -178,14 +180,14 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries }: { leafEntries:
           <strong
             data-hm-detail-min-scale={tickerScale}
             className="max-w-full whitespace-nowrap px-1 font-bold tracking-[-0.02em]"
-            style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04, textShadow: '0 1px 2px rgba(0,0,0,.45)' }}
+            style={{ visibility: showTicker ? 'visible' : 'hidden', fontSize: tickerFontSize, lineHeight: 1.04 }}
           >
             {item.name}
           </strong>
           <span
             data-hm-detail-min-scale={changeScale}
             className="max-w-full whitespace-nowrap font-semibold tabular-nums tracking-[-0.015em]"
-            style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08, textShadow: '0 1px 2px rgba(0,0,0,.42)' }}
+            style={{ visibility: showChange ? 'visible' : 'hidden', fontSize: changeFontSize, lineHeight: 1.08 }}
           >
             {changeLabel}
           </span>

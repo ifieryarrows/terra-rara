@@ -110,8 +110,8 @@ export function layoutTreemap(root: LayoutNode, width: number, height: number): 
     const nodeHeight = Math.max(0, node.y1 - node.y0);
     const childCount = Math.max(1, node.children?.length || 1);
     const typicalChildSize = Math.min(Math.sqrt(nodeWidth * nodeHeight / childCount), nodeWidth, nodeHeight);
-    if (typicalChildSize < 32) return 0.35;
-    if (typicalChildSize < 64) return 0.65;
+    if (typicalChildSize < 32) return 0.75;
+    if (typicalChildSize < 64) return 0.85;
     return 1;
   };
   treemap<HeatmapNode | HeatmapData>()
