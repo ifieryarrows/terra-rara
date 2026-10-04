@@ -818,6 +818,10 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-heatmap-fullscreen-button:hover { border-color: var(--cm-copper); background: color-mix(in srgb, var(--cm-copper) 7%, transparent); color: var(--cm-copper); }
 .cm-heatmap-sidebar-head p { margin: 0; color: var(--cm-muted); font-size: .67rem; line-height: 1.5; }
 .cm-heatmap-sidebar-head p i { padding-inline: .25rem; color: var(--cm-copper); font-style: normal; }
+.cm-heatmap-zoom-controls { display: flex; align-items: center; gap: .35rem; margin-top: .55rem; }
+.cm-heatmap-zoom-controls button { min-width: 1.9rem; min-height: 1.85rem; padding: .2rem .45rem; border: 1px solid var(--cm-dashboard-rule-soft, var(--cm-border)); border-radius: .3rem; background: transparent; color: var(--cm-muted); font-size: .68rem; }
+.cm-heatmap-zoom-controls button:hover:not(:disabled) { border-color: var(--cm-copper); color: var(--cm-copper); }
+.cm-heatmap-zoom-controls button:disabled { opacity: .45; cursor: not-allowed; }
 .cm-heatmap-filters { display: flex; min-width: 0; flex-direction: column; gap: 1.05rem; }
 .cm-heatmap-filter-group { display: grid; min-width: 0; gap: .35rem; margin: 0; padding: 0; border: 0; }
 .cm-heatmap-filter-group legend { margin: 0 0 .15rem; padding: 0; color: var(--cm-muted); font-size: .61rem; font-weight: 580; letter-spacing: .12em; text-transform: uppercase; }

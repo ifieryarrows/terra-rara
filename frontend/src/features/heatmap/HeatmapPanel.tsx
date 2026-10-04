@@ -6,6 +6,7 @@ import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './Heatmap
 import {
   aggregateTinyLeaves,
   compressLeafWeights,
+  HEATMAP_MAX_ZOOM,
   type HeatmapData,
   type HeatmapMeta,
   type HeatmapNode,
@@ -76,6 +77,7 @@ export const HeatmapPanel: React.FC = () => {
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
+  const [zoom, setZoom] = useState(1);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
@@ -212,6 +214,7 @@ export const HeatmapPanel: React.FC = () => {
 
   useEffect(() => {
     setGroupFilter('ALL');
+    setZoom(1);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
@@ -256,6 +259,9 @@ export const HeatmapPanel: React.FC = () => {
     [activeAnchor?.id, activeAnchor?.name, categoryLeafIndex],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
+  const zoomBy = useCallback((delta: number) => {
+    setZoom((current) => Math.max(1, Math.min(HEATMAP_MAX_ZOOM, +(current + delta).toFixed(2))));
+  }, []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
     if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
@@ -267,6 +273,7 @@ export const HeatmapPanel: React.FC = () => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
+    setZoom(1);
     setFocusedPath((current) => {
       const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
       if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
@@ -279,6 +286,7 @@ export const HeatmapPanel: React.FC = () => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
+    setZoom(1);
   }, []);
   const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
     clearTimer(openTimer);
@@ -300,6 +308,11 @@ export const HeatmapPanel: React.FC = () => {
           <p>{rawData
             ? <>{groups.length} sectors <i aria-hidden="true">/</i> {meta.payload_count ?? 0} instruments</>
             : isLoading || meta.refresh_in_progress ? 'Loading snapshot…' : 'No available snapshot'}</p>
+          <div className="cm-heatmap-zoom-controls" role="group" aria-label="Map zoom controls">
+            <button type="button" aria-label="Zoom out" disabled={zoom <= 1} onClick={() => zoomBy(-.5)}>−</button>
+            <button type="button" aria-label="Reset map zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+            <button type="button" aria-label="Zoom in" disabled={zoom >= HEATMAP_MAX_ZOOM} onClick={() => zoomBy(.5)}>+</button>
+          </div>
         </header>
 
         <HeatmapFilters
@@ -338,7 +351,7 @@ export const HeatmapPanel: React.FC = () => {
                   aria-label="Heatmap drill-down path"
                   className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-md border border-slate-700/80 bg-slate-950/90 px-2 py-1 text-xs text-slate-300 shadow backdrop-blur"
                 >
-                  <button type="button" className="shrink-0 hover:text-white" onClick={() => setFocusedPath([])}>Market</button>
+                  <button type="button" className="shrink-0 hover:text-white" onClick={() => { setFocusedPath([]); setZoom(1); }}>Market</button>
                   {focusedPath.map((entry, index) => (
                     <React.Fragment key={entry.id}>
                       <span aria-hidden="true" className="text-slate-600">/</span>
@@ -346,7 +359,7 @@ export const HeatmapPanel: React.FC = () => {
                         type="button"
                         className="shrink-0 hover:text-white"
                         aria-current={index === focusedPath.length - 1 ? 'page' : undefined}
-                        onClick={() => setFocusedPath((current) => current.slice(0, index + 1))}
+                        onClick={() => { setFocusedPath((current) => current.slice(0, index + 1)); setZoom(1); }}
                       >
                         {entry.name}
                       </button>
@@ -363,8 +376,7 @@ export const HeatmapPanel: React.FC = () => {
                   data={renderTree!}
                   width={dimensions.width}
                   height={dimensions.height}
-                  zoom={1}
-                  resetKey={view}
+                  zoom={zoom}
                   hoveredCategoryId={pinnedAnchor?.id || null}
                   onCategoryHover={handleCategoryHover}
                   onCategoryPointerMove={moveCategoryPanel}
@@ -372,6 +384,7 @@ export const HeatmapPanel: React.FC = () => {
                   onCategoryDrillDown={handleCategoryDrillDown}
                   onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
                   onCategoryClick={handleCategoryClick}
+                  onZoomDelta={zoomBy}
                 />
               </Profiler>
             </>
