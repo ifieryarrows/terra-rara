@@ -6,8 +6,6 @@ import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './Heatmap
 import {
   aggregateTinyLeaves,
   compressLeafWeights,
-  getNextZoomLevel,
-  getPreviousZoomLevel,
   type HeatmapData,
   type HeatmapMeta,
   type HeatmapNode,
@@ -78,8 +76,6 @@ export const HeatmapPanel: React.FC = () => {
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [zoom, setZoom] = useState(1);
-  const [highlightedCategoryId, setHighlightedCategoryId] = useState<string | null>(null);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
@@ -177,11 +173,12 @@ export const HeatmapPanel: React.FC = () => {
   const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
     if (pinnedAnchor) return;
     if (!anchor) {
-      setHighlightedCategoryId(null);
+      // Finviz paints selection on a dedicated hover canvas. Mirror that
+      // immediacy for the visual boundary while retaining the panel's close
+      // grace period.
       scheduleClose();
       return;
     }
-    setHighlightedCategoryId(anchor.id);
     if (anchor.pointer) latestPointer.current = anchor.pointer;
     const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
@@ -205,7 +202,6 @@ export const HeatmapPanel: React.FC = () => {
       if (pinnedAnchor || hoveredAnchor) {
         setPinnedAnchor(null);
         setHoveredAnchor(null);
-        setHighlightedCategoryId(null);
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -219,15 +215,10 @@ export const HeatmapPanel: React.FC = () => {
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
-    setHighlightedCategoryId(null);
     setFocusedPath([]);
-    setZoom(1);
   }, [view]);
 
-  useEffect(() => {
-    setFocusedPath([]);
-    setZoom(1);
-  }, [groupFilter]);
+  useEffect(() => setFocusedPath([]), [groupFilter]);
 
   const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
   const sourceTree = useMemo<HeatmapNode | null>(() => {
@@ -265,9 +256,6 @@ export const HeatmapPanel: React.FC = () => {
     [activeAnchor?.id, activeAnchor?.name, categoryLeafIndex],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
-  const zoomBy = useCallback((delta: number) => {
-    setZoom((current) => delta > 0 ? getNextZoomLevel(current) : getPreviousZoomLevel(current));
-  }, []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
     if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
@@ -279,7 +267,6 @@ export const HeatmapPanel: React.FC = () => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
-    setZoom(1);
     setFocusedPath((current) => {
       const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
       if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
@@ -292,13 +279,11 @@ export const HeatmapPanel: React.FC = () => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
-    setZoom(1);
   }, []);
   const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
     clearTimer(openTimer);
     clearTimer(closeTimer);
     setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
-    setHighlightedCategoryId(anchor.id);
     setHoveredAnchor(anchor);
   }, []);
 
@@ -353,7 +338,7 @@ export const HeatmapPanel: React.FC = () => {
                   aria-label="Heatmap drill-down path"
                   className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-md border border-slate-700/80 bg-slate-950/90 px-2 py-1 text-xs text-slate-300 shadow backdrop-blur"
                 >
-                  <button type="button" className="shrink-0 hover:text-white" onClick={() => { setFocusedPath([]); setZoom(1); }}>Market</button>
+                  <button type="button" className="shrink-0 hover:text-white" onClick={() => setFocusedPath([])}>Market</button>
                   {focusedPath.map((entry, index) => (
                     <React.Fragment key={entry.id}>
                       <span aria-hidden="true" className="text-slate-600">/</span>
@@ -361,7 +346,7 @@ export const HeatmapPanel: React.FC = () => {
                         type="button"
                         className="shrink-0 hover:text-white"
                         aria-current={index === focusedPath.length - 1 ? 'page' : undefined}
-                        onClick={() => { setFocusedPath((current) => current.slice(0, index + 1)); setZoom(1); }}
+                        onClick={() => setFocusedPath((current) => current.slice(0, index + 1))}
                       >
                         {entry.name}
                       </button>
@@ -378,16 +363,15 @@ export const HeatmapPanel: React.FC = () => {
                   data={renderTree!}
                   width={dimensions.width}
                   height={dimensions.height}
-                  zoom={zoom}
+                  zoom={1}
                   resetKey={view}
-                  hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
+                  hoveredCategoryId={pinnedAnchor?.id || null}
                   onCategoryHover={handleCategoryHover}
                   onCategoryPointerMove={moveCategoryPanel}
                   onLeafHover={handleLeafHover}
                   onCategoryDrillDown={handleCategoryDrillDown}
                   onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
                   onCategoryClick={handleCategoryClick}
-                  onZoomDelta={zoomBy}
                 />
               </Profiler>
             </>

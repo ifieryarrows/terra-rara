@@ -170,23 +170,6 @@ export function leavesForCategory(root: HeatmapNode, categoryId: string, categor
 
 export const HEATMAP_MAX_ZOOM = 4;
 
-/** Discrete zoom levels matching Finviz market map architecture. */
-export const FINVIZ_ZOOM_LEVELS = [1, 1.5, 2.25, 3] as const;
-
-export function getNextZoomLevel(current: number): number {
-  for (const level of FINVIZ_ZOOM_LEVELS) {
-    if (level > current + 0.01) return level;
-  }
-  return FINVIZ_ZOOM_LEVELS[FINVIZ_ZOOM_LEVELS.length - 1];
-}
-
-export function getPreviousZoomLevel(current: number): number {
-  for (let i = FINVIZ_ZOOM_LEVELS.length - 1; i >= 0; i--) {
-    if (FINVIZ_ZOOM_LEVELS[i] < current - 0.01) return FINVIZ_ZOOM_LEVELS[i];
-  }
-  return FINVIZ_ZOOM_LEVELS[0];
-}
-
 export type TileTier = 'micro' | 'small' | 'medium' | 'large';
 export type TextTier = Exclude<TileTier, 'micro'>;
 
