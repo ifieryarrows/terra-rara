@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createTreemapHierarchy,
   HEATMAP_MAX_ZOOM,
@@ -93,8 +93,10 @@ interface ZoomCamera {
 }
 
 function clampCamera(camera: ZoomCamera, scroller: HTMLDivElement, contentWidth: number, contentHeight: number): ZoomCamera {
-  const minX = Math.min(0, scroller.clientWidth - contentWidth * camera.scale);
-  const minY = Math.min(0, scroller.clientHeight - contentHeight * camera.scale);
+  const viewWidth = contentWidth > 0 ? contentWidth : (scroller.clientWidth || contentWidth);
+  const viewHeight = contentHeight > 0 ? contentHeight : (scroller.clientHeight || contentHeight);
+  const minX = Math.min(0, viewWidth - contentWidth * camera.scale);
+  const minY = Math.min(0, viewHeight - contentHeight * camera.scale);
   return {
     scale: camera.scale,
     x: Math.max(minX, Math.min(0, camera.x)),
@@ -102,18 +104,28 @@ function clampCamera(camera: ZoomCamera, scroller: HTMLDivElement, contentWidth:
   };
 }
 
-function localPoint(scroller: HTMLDivElement, clientX: number, clientY: number) {
+function localPoint(scroller: HTMLDivElement, clientX: number, clientY: number, fallbackWidth = 0, fallbackHeight = 0) {
   const bounds = scroller.getBoundingClientRect();
+  const clientWidth = fallbackWidth > 0 ? fallbackWidth : (scroller.clientWidth || bounds.width || 1);
+  const clientHeight = fallbackHeight > 0 ? fallbackHeight : (scroller.clientHeight || bounds.height || 1);
   return {
-    x: (clientX - bounds.left) * scroller.clientWidth / Math.max(bounds.width, 1),
-    y: (clientY - bounds.top) * scroller.clientHeight / Math.max(bounds.height, 1),
+    x: (clientX - bounds.left) * clientWidth / Math.max(bounds.width, 1),
+    y: (clientY - bounds.top) * clientHeight / Math.max(bounds.height, 1),
   };
 }
 
-function rectForNode(node: LayoutNode, scroller: HTMLDivElement, camera: ZoomCamera): CategoryAnchor['rect'] {
+function rectForNode(
+  node: LayoutNode,
+  scroller: HTMLDivElement,
+  camera: ZoomCamera,
+  contentWidth?: number,
+  contentHeight?: number,
+): CategoryAnchor['rect'] {
   const bounds = scroller.getBoundingClientRect();
-  const screenScaleX = bounds.width / Math.max(scroller.clientWidth, 1);
-  const screenScaleY = bounds.height / Math.max(scroller.clientHeight, 1);
+  const clientWidth = (contentWidth && contentWidth > 0) ? contentWidth : (scroller.clientWidth || bounds.width || 1);
+  const clientHeight = (contentHeight && contentHeight > 0) ? contentHeight : (scroller.clientHeight || bounds.height || 1);
+  const screenScaleX = clientWidth > 0 ? bounds.width / clientWidth : 1;
+  const screenScaleY = clientHeight > 0 ? bounds.height / clientHeight : 1;
   const left = bounds.left + (node.x0 * camera.scale + camera.x) * screenScaleX;
   const top = bounds.top + (node.y0 * camera.scale + camera.y) * screenScaleY;
   const width = (node.x1 - node.x0) * camera.scale * screenScaleX;
@@ -144,6 +156,18 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const hoveredCategoryElementRef = useRef<HTMLElement | null>(null);
   const activeLeafRef = useRef<string | null>(null);
   const activeCategoryRef = useRef<string | null>(null);
+  const [layoutZoom, setLayoutZoom] = useState(zoom);
+  const visualScale = zoom !== layoutZoom ? zoom / layoutZoom : 1;
+
+  useEffect(() => {
+    if (zoom === layoutZoom) return;
+    const timer = window.setTimeout(() => {
+      setLayoutZoom(zoom);
+      heatmapMetrics().resizeLayouts += 1;
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [zoom, layoutZoom]);
+
   const zoomTargetRef = useRef(zoom);
   const previousZoomPropRef = useRef(zoom);
   const cameraRef = useRef<ZoomCamera>({ scale: zoom, x: 0, y: 0 });
@@ -153,9 +177,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const zoomingRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const startZoomAnimationRef = useRef<() => void>(() => {});
-  const wheelFrameRef = useRef<number | null>(null);
-  const wheelDeltaRef = useRef(0);
-  const wheelPointerRef = useRef({ x: 0, y: 0 });
   const dragRef = useRef<{
     pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
   } | null>(null);
@@ -211,22 +232,29 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const next = id ? categoryElementsRef.current.get(id) || null : null;
     if (previous === next) return;
     const restore = (element: HTMLElement) => {
+      const isSector = element.dataset.hmDepth === '1';
       element.style.border = element.dataset.hmCategoryId === hoveredCategoryId
-        ? '1px solid #d99a5b'
-        : '0.5px solid #253244';
-      element.style.backgroundColor = '#020617';
-      element.style.boxShadow = 'none';
+        ? '2px solid #d99a5b'
+        : isSector
+          ? '1px solid #334155'
+          : '1px solid #1e293b';
+      element.style.backgroundColor = element.dataset.hmCategoryId === hoveredCategoryId
+        ? '#d99a5b'
+        : '#020617';
+      element.style.boxShadow = element.dataset.hmCategoryId === hoveredCategoryId
+        ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)'
+        : 'none';
     };
     if (previous) restore(previous);
     hoveredCategoryElementRef.current = next;
-    if (next && next.dataset.hmCategoryId !== hoveredCategoryId) {
-      next.style.border = '1px solid #d99a5b';
-      next.style.backgroundColor = '#020617';
-      next.style.boxShadow = 'none';
+    if (next) {
+      next.style.border = '2px solid #d99a5b';
+      next.style.backgroundColor = '#d99a5b';
+      next.style.boxShadow = '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)';
     }
   };
 
-  const updateTileVisibility = (scale: number) => {
+  const updateTileVisibility = useCallback((scale: number) => {
     const { entries, boundaries } = lodRef.current;
     const previous = lodScaleRef.current;
     lodScaleRef.current = scale;
@@ -243,9 +271,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       applyLodVisibility(boundaries[index].entry, scale);
       index += 1;
     }
-  };
+  }, []);
 
-  const applyCamera = (next: ZoomCamera) => {
+  const applyCamera = useCallback((next: ZoomCamera) => {
     const scroller = scrollRef.current;
     const surface = surfaceRef.current;
     if (!scroller || !surface) return;
@@ -257,15 +285,20 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (scroller.dataset.zoomed !== zoomedValue) scroller.dataset.zoomed = zoomedValue;
     const touchAction = isZoomed ? 'none' : 'auto';
     if (scroller.style.touchAction !== touchAction) scroller.style.touchAction = touchAction;
-    // Transform the stable treemap geometry directly. A CSS `zoom` raster
-    // layer made coordinates and text detail drift apart while the camera
-    // moved, and forced the browser to resample a very large texture.
+    if (!zoomingRef.current) {
+      scroller.scrollLeft = Math.round(-camera.x);
+      scroller.scrollTop = Math.round(-camera.y);
+    }
+    // Transform the stable treemap geometry directly.
     surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
-    // Reveal labels at the exact zoom scale where they fit. The element list
-    // is cached after layout, so animation frames do not query the DOM or
-    // trigger a React render/re-layout.
-    updateTileVisibility(camera.scale);
-  };
+    // Reveal labels at the exact zoom scale where they fit when not actively animating.
+    // Mutating inline style visibility on hundreds of elements during 60/120fps zoom animation
+    // causes layout thrashing, style recalculations, and kicks off async image loading.
+    // When the zoom animation settles, finishZoom performs a single clean LOD reconciliation.
+    if (!zoomingRef.current) {
+      updateTileVisibility(camera.scale);
+    }
+  }, [updateTileVisibility]);
 
   const setZoomedTarget = (target: number) => {
     zoomTargetRef.current = target;
@@ -274,17 +307,25 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const startZoomAnimation = () => {
     if (zoomFrameRef.current !== null) return;
     zoomingRef.current = true;
+    const surface = surfaceRef.current;
+    if (surface) surface.style.pointerEvents = 'none';
+    lastZoomFrameTimeRef.current = performance.now();
     const finishZoom = () => {
+      if (surface) surface.style.pointerEvents = '';
       zoomAnchorRef.current = null;
       zoomFrameRef.current = null;
       lastZoomFrameTimeRef.current = null;
       zoomingRef.current = false;
-      updateTileVisibility(zoomTargetRef.current);
+      const scroller = scrollRef.current;
+      if (scroller) {
+        scroller.scrollLeft = Math.round(-cameraRef.current.x);
+        scroller.scrollTop = Math.round(-cameraRef.current.y);
+      }
+      updateTileVisibility(cameraRef.current.scale);
 
       // A stationary pointer can move over new cells as the map is transformed.
       // Defer hover work until the camera settles, then resolve the final cell once.
       const pointer = lastPointerRef.current;
-      const scroller = scrollRef.current;
       if (pointer && scroller) {
         const targetElement = document.elementFromPoint(pointer.x, pointer.y);
         if (
@@ -323,19 +364,20 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       finishZoom();
     };
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)')?.matches) {
       applyTarget();
       return;
     }
 
     const animate = (timestamp: number) => {
       const previous = lastZoomFrameTimeRef.current ?? timestamp;
-      const elapsed = Math.min(48, Math.max(0, timestamp - previous));
+      const elapsed = Math.min(48, Math.max(1, timestamp - previous));
       lastZoomFrameTimeRef.current = timestamp;
       const current = cameraRef.current;
       const target = zoomTargetRef.current;
-      const nextScale = current.scale + (target - current.scale) * (1 - Math.exp(-elapsed / 68));
-      const finished = Math.abs(target - nextScale) < 0.001;
+      // Snappy decay with ~38ms time constant for a smooth, stutter-free zoom animation like Finviz
+      const nextScale = current.scale + (target - current.scale) * (1 - Math.exp(-elapsed / 38));
+      const finished = Math.abs(target - nextScale) < 0.002;
       const scale = finished ? target : nextScale;
       const anchor = zoomAnchorRef.current;
       applyCamera({
@@ -376,13 +418,15 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         .map((element) => [element.dataset.hmCategoryId || '', element] as const)
         .filter(([id]) => !!id),
     );
-    hoveredCategoryElementRef.current = null;
+    hoveredCategoryElementRef.current = activeCategoryRef.current
+      ? categoryElementsRef.current.get(activeCategoryRef.current) || null
+      : null;
     // Newly rendered tiles carry visibility for scale 1; a null previous scale
     // forces a full pass so a zoomed camera is reconciled immediately.
     lodRef.current = buildLodIndex(surface);
     lodScaleRef.current = null;
     applyCamera(cameraRef.current);
-  }, [height, leafEntries, parents, width]);
+  }, [applyCamera, height, leafEntries, parents, width]);
 
   useEffect(() => {
     if (zoom === previousZoomPropRef.current) return;
@@ -416,40 +460,33 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      wheelPointerRef.current = localPoint(element, event.clientX, event.clientY);
-      wheelDeltaRef.current += event.deltaY;
-      if (wheelFrameRef.current !== null) return;
-      wheelFrameRef.current = requestAnimationFrame(() => {
-        wheelFrameRef.current = null;
-        const { x, y } = wheelPointerRef.current;
-        const zoomExponent = Math.max(-0.34, Math.min(0.34, -wheelDeltaRef.current * 0.0021));
-        wheelDeltaRef.current = 0;
-        if (Math.abs(zoomExponent) < 0.01) return;
+      const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
+      const pointer = localPoint(element, event.clientX, event.clientY, contentWidth, contentHeight);
+      const zoomExponent = Math.max(-0.34, Math.min(0.34, -event.deltaY * 0.0021));
+      if (Math.abs(zoomExponent) < 0.005) return;
 
-        const currentTarget = zoomTargetRef.current;
-        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget * Math.exp(zoomExponent)).toFixed(2)));
-        if (nextZoom === currentTarget) {
-          if (zoomExponent < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
-          return;
-        }
-        const camera = cameraRef.current;
-        zoomAnchorRef.current = {
-          x,
-          y,
-          contentX: (x - camera.x) / camera.scale,
-          contentY: (y - camera.y) / camera.scale,
-        };
-        setZoomedTarget(nextZoom);
-        startZoomAnimationRef.current();
-        onZoomDelta?.(nextZoom - currentTarget);
-      });
+      const currentTarget = zoomTargetRef.current;
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(currentTarget * Math.exp(zoomExponent)).toFixed(2)));
+      if (nextZoom === currentTarget) {
+        if (zoomExponent < 0 && currentTarget <= MIN_ZOOM) onNavigateBack?.();
+        return;
+      }
+
+      const camera = cameraRef.current;
+      zoomAnchorRef.current = {
+        x: pointer.x,
+        y: pointer.y,
+        contentX: (pointer.x - camera.x) / camera.scale,
+        contentY: (pointer.y - camera.y) / camera.scale,
+      };
+
+      setZoomedTarget(nextZoom);
+      startZoomAnimationRef.current();
+      onZoomDelta?.(nextZoom - currentTarget);
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => {
       element.removeEventListener('wheel', wheel);
-      if (wheelFrameRef.current !== null) cancelAnimationFrame(wheelFrameRef.current);
-      wheelFrameRef.current = null;
-      wheelDeltaRef.current = 0;
     };
   }, [onNavigateBack, onZoomDelta]);
 
@@ -467,7 +504,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       name: String(node.data.name),
       depth: node.depth,
       pointer,
-      rect: rectOverride || rectForNode(node, scroller, cameraRef.current),
+      rect: rectOverride || rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height),
       containerRect: {
         left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom,
         width: bounds.width, height: bounds.height,
@@ -512,7 +549,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         target.dataset.hmParentId,
         event.clientX,
         event.clientY,
-        node && scroller ? rectForNode(node, scroller, cameraRef.current) : undefined,
+        node && scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
         leafChanged,
       );
     } else {
@@ -541,8 +578,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }
       if (drag.moved) {
         const bounds = element.getBoundingClientRect();
-        const scaleX = element.clientWidth / Math.max(bounds.width, 1);
-        const scaleY = element.clientHeight / Math.max(bounds.height, 1);
+        const scaleX = element.clientWidth > 0 ? element.clientWidth / Math.max(bounds.width, 1) : 1;
+        const scaleY = element.clientHeight > 0 ? element.clientHeight / Math.max(bounds.height, 1) : 1;
         applyCamera({
           ...cameraRef.current,
           x: drag.x + deltaX * scaleX,
@@ -571,7 +608,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
             nextCategory || undefined,
             event.clientX,
             event.clientY,
-            scroller ? rectForNode(node, scroller, cameraRef.current) : undefined,
+            scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
             true,
           );
         }
@@ -621,6 +658,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           zoomAnchorRef.current = null;
           zoomTargetRef.current = cameraRef.current.scale;
           zoomingRef.current = false;
+          if (surfaceRef.current) surfaceRef.current.style.pointerEvents = '';
           updateTileVisibility(cameraRef.current.scale);
         }
         event.preventDefault();
@@ -685,7 +723,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
             target.dataset.hmParentId,
             undefined,
             undefined,
-            scroller ? rectForNode(node, scroller, cameraRef.current) : undefined,
+            scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
             true,
           );
         } else {
@@ -703,7 +741,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       aria-label="Interactive market heatmap. Use Tab to inspect categories and instruments."
       onDragStart={(event) => event.preventDefault()}
       className="cm-heatmap-map custom-scrollbar relative min-w-0 max-w-full select-none bg-slate-950 outline-none"
-      style={{ width: '100%', height, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none' }}
+      style={{ width: '100%', height, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none', contain: 'paint' }}
     >
       <div
         ref={surfaceRef}
@@ -713,9 +751,18 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           height,
           transform: `matrix(${zoom}, 0, 0, ${zoom}, 0, 0)`,
           transformOrigin: 'top left',
+          willChange: 'transform',
         }}
       >
-        <div className="relative" style={{ width, height }}>
+        <div
+          className="relative"
+          style={{
+            width,
+            height,
+            transform: visualScale === 1 ? undefined : `scale(${visualScale})`,
+            transformOrigin: 'top left',
+          }}
+        >
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
           <LeafTiles leafEntries={leafEntries} />
         </div>

@@ -253,7 +253,7 @@ export const HeatmapPanel: React.FC = () => {
     () => activeAnchor
       ? categoryLeafIndex.get(activeAnchor.id) || categoryLeafIndex.get(activeAnchor.name) || []
       : [],
-    [activeAnchor?.id, activeAnchor?.name, categoryLeafIndex],
+    [activeAnchor, categoryLeafIndex],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
   const moveCategoryPanel = useCallback((x: number, y: number) => {
