@@ -105,21 +105,14 @@ export function categoryHeaderPadding(depth: number, width: number, height: numb
 
 /** Mutates and reuses the hierarchy so resquarify preserves row topology on resize. */
 export function layoutTreemap(root: LayoutNode, width: number, height: number): LayoutNode {
-  const gutterForNode = (node: LayoutNode) => {
-    const nodeWidth = Math.max(0, node.x1 - node.x0);
-    const nodeHeight = Math.max(0, node.y1 - node.y0);
-    const childCount = Math.max(1, node.children?.length || 1);
-    const typicalChildSize = Math.min(Math.sqrt(nodeWidth * nodeHeight / childCount), nodeWidth, nodeHeight);
-    if (typicalChildSize < 32) return 0.75;
-    if (typicalChildSize < 64) return 0.85;
-    return 1;
-  };
   treemap<HeatmapNode | HeatmapData>()
     .size([Math.max(1, width), Math.max(1, height)])
-    // Preserve room around large groups, while shrinking gutters where a
-    // one-pixel boundary would consume too much of a small child cell.
-    .paddingInner(gutterForNode)
-    .paddingOuter(gutterForNode)
+    // A single layout pixel is the shared boundary between adjacent cells.
+    // Cells do not draw their own borders, avoiding the old 1 + 1 + 1px
+    // stacked gutter while allowing the category backing layer to recolour
+    // every internal boundary on hover.
+    .paddingInner(1)
+    .paddingOuter(1)
     .paddingTop((node) => categoryHeaderPadding(
       node.depth,
       Math.max(0, node.x1 - node.x0),

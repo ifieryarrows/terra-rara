@@ -4,6 +4,7 @@ import HeatmapFilters from './HeatmapFilters';
 import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import {
+  aggregateTinyLeaves,
   compressLeafWeights,
   type HeatmapData,
   type HeatmapMeta,
@@ -225,7 +226,7 @@ export const HeatmapPanel: React.FC = () => {
     const { _meta: _meta, ...tree } = rawData as HeatmapNode;
     return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
   }, [groupFilter, rawData, sortFilter]);
-  const renderTree = useMemo(() => {
+  const focusedTree = useMemo(() => {
     if (!sourceTree) return null;
     let current = sourceTree;
     for (const entry of focusedPath) {
@@ -235,6 +236,10 @@ export const HeatmapPanel: React.FC = () => {
     }
     return current;
   }, [focusedPath, sourceTree]);
+  const renderTree = useMemo(
+    () => focusedTree ? aggregateTinyLeaves(focusedTree, dimensions.width, dimensions.height) : null,
+    [dimensions.height, dimensions.width, focusedTree],
+  );
   const groups = useMemo<string[]>(() => {
     const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();
