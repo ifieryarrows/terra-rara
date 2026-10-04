@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createTreemapHierarchy,
   FINVIZ_ZOOM_LEVELS,
@@ -78,6 +78,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const activeCategoryRef = useRef<string | null>(null);
   const categoryElementsRef = useRef(new Map<string, HTMLElement>());
   const hoveredCategoryElementRef = useRef<HTMLElement | null>(null);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const hoverCallbacksRef = useRef({ onCategoryHover, onLeafHover });
+  hoverCallbacksRef.current = { onCategoryHover, onLeafHover };
+  const hoveredCategoryIdRef = useRef(hoveredCategoryId);
+  hoveredCategoryIdRef.current = hoveredCategoryId;
   const pendingZoomRef = useRef<{ previous: number; x: number; y: number; contentX: number; contentY: number } | null>(null);
   const wheelFrameRef = useRef<number | null>(null);
   const wheelDeltaRef = useRef(0);
@@ -155,12 +160,12 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
   })), [parents]);
 
-  const setCategoryHoverVisual = (id: string | null) => {
+  const setCategoryHoverVisual = useCallback((id: string | null) => {
     const previous = hoveredCategoryElementRef.current;
     const next = id ? categoryElementsRef.current.get(id) || null : null;
     if (previous === next) return;
     const restore = (element: HTMLElement) => {
-      element.style.border = element.dataset.hmCategoryId === hoveredCategoryId
+      element.style.border = element.dataset.hmCategoryId === hoveredCategoryIdRef.current
         ? '1px solid #d99a5b'
         : '0.5px solid #253244';
       element.style.backgroundColor = '#020617';
@@ -168,12 +173,48 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     };
     if (previous) restore(previous);
     hoveredCategoryElementRef.current = next;
-    if (next && next.dataset.hmCategoryId !== hoveredCategoryId) {
+    if (next && next.dataset.hmCategoryId !== hoveredCategoryIdRef.current) {
       next.style.border = '1px solid #d99a5b';
       next.style.backgroundColor = '#d99a5b';
       next.style.boxShadow = 'none';
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (zoom !== layoutZoom) return;
+    const frame = window.requestAnimationFrame(() => {
+      const pointer = lastPointerRef.current;
+      const scroller = scrollRef.current;
+      if (!pointer || !scroller) return;
+
+      const target = document.elementFromPoint(pointer.x, pointer.y);
+      const tile = target instanceof Element
+        ? target.closest<HTMLElement>('[data-hm-leaf-id],[data-hm-category-id]')
+        : null;
+      if (tile && scroller.contains(tile)) {
+        // Force the delegated hover handler to resolve the element now under
+        // a stationary pointer after the zoomed layout and scroll position settle.
+        activeLeafRef.current = null;
+        activeCategoryRef.current = null;
+        tile.dispatchEvent(new PointerEvent('pointerover', {
+          bubbles: true,
+          clientX: pointer.x,
+          clientY: pointer.y,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+        }));
+        return;
+      }
+
+      activeLeafRef.current = null;
+      activeCategoryRef.current = null;
+      setCategoryHoverVisual(null);
+      hoverCallbacksRef.current.onLeafHover?.(null);
+      hoverCallbacksRef.current.onCategoryHover(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hierarchyRoot, layoutHeight, layoutWidth, layoutZoom, setCategoryHoverVisual, zoom]);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -191,6 +232,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (!element || !onZoomDelta) return;
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
       wheelPointerRef.current = localPoint(element, event.clientX, event.clientY);
       wheelDeltaRef.current += event.deltaY;
       if (wheelFrameRef.current !== null) return;
@@ -274,6 +316,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerOver = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
     const target = targetData(event.target);
     if (!target) return;
     const leafId = target.dataset.hmLeafId;
@@ -302,6 +345,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
     const drag = dragRef.current;
     const element = scrollRef.current;
     if (drag && element && drag.pointerId === event.pointerId) {
@@ -324,6 +368,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const onPointerOut = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
     const next = targetData(event.relatedTarget);
     const nextLeaf = next?.dataset.hmLeafId || null;
     const nextCategory = next?.dataset.hmParentId || next?.dataset.hmCategoryId || null;
