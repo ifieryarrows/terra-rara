@@ -326,7 +326,10 @@ describe('heatmap interaction primitives', () => {
     rerender(<HeatmapTreemap {...props} zoom={1.2} />);
     rerender(<HeatmapTreemap {...props} zoom={1.4} />);
     expect(window.__COPPERMIND_HEATMAP_METRICS__?.resizeLayouts).toBe(layouts);
-    expect(container.querySelector('[style*="1.4"]')).toBeTruthy();
+    expect(container.querySelector('[style*="scale(1.4)"]')).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(window.__COPPERMIND_HEATMAP_METRICS__?.resizeLayouts).toBe(layouts + 1);
+    expect(container.querySelector('[style*="scale("]')).toBeNull();
   });
 
   it('drags a zoomed map to pan without activating a category', () => {

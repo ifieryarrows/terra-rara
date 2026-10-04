@@ -93,10 +93,8 @@ interface ZoomCamera {
 }
 
 function clampCamera(camera: ZoomCamera, scroller: HTMLDivElement, contentWidth: number, contentHeight: number): ZoomCamera {
-  const viewWidth = scroller.clientWidth || contentWidth;
-  const viewHeight = scroller.clientHeight || contentHeight;
-  const minX = Math.min(0, viewWidth - contentWidth * camera.scale);
-  const minY = Math.min(0, viewHeight - contentHeight * camera.scale);
+  const minX = Math.min(0, scroller.clientWidth - contentWidth * camera.scale);
+  const minY = Math.min(0, scroller.clientHeight - contentHeight * camera.scale);
   return {
     scale: camera.scale,
     x: Math.max(minX, Math.min(0, camera.x)),
@@ -114,8 +112,8 @@ function localPoint(scroller: HTMLDivElement, clientX: number, clientY: number) 
 
 function rectForNode(node: LayoutNode, scroller: HTMLDivElement, camera: ZoomCamera): CategoryAnchor['rect'] {
   const bounds = scroller.getBoundingClientRect();
-  const screenScaleX = scroller.clientWidth > 0 ? bounds.width / scroller.clientWidth : 1;
-  const screenScaleY = scroller.clientHeight > 0 ? bounds.height / scroller.clientHeight : 1;
+  const screenScaleX = bounds.width / Math.max(scroller.clientWidth, 1);
+  const screenScaleY = bounds.height / Math.max(scroller.clientHeight, 1);
   const left = bounds.left + (node.x0 * camera.scale + camera.x) * screenScaleX;
   const top = bounds.top + (node.y0 * camera.scale + camera.y) * screenScaleY;
   const width = (node.x1 - node.x0) * camera.scale * screenScaleX;
@@ -213,17 +211,18 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const next = id ? categoryElementsRef.current.get(id) || null : null;
     if (previous === next) return;
     const restore = (element: HTMLElement) => {
-      const isSector = element.dataset.hmDepth === '1';
-      element.style.border = isSector ? '1px solid #334155' : '1px solid #1e293b';
+      element.style.border = element.dataset.hmCategoryId === hoveredCategoryId
+        ? '1px solid #d99a5b'
+        : '0.5px solid #253244';
       element.style.backgroundColor = '#020617';
       element.style.boxShadow = 'none';
     };
     if (previous) restore(previous);
     hoveredCategoryElementRef.current = next;
-    if (next) {
-      next.style.border = '2px solid #d99a5b';
-      next.style.backgroundColor = '#d99a5b';
-      next.style.boxShadow = '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)';
+    if (next && next.dataset.hmCategoryId !== hoveredCategoryId) {
+      next.style.border = '1px solid #d99a5b';
+      next.style.backgroundColor = '#020617';
+      next.style.boxShadow = 'none';
     }
   };
 
@@ -258,8 +257,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (scroller.dataset.zoomed !== zoomedValue) scroller.dataset.zoomed = zoomedValue;
     const touchAction = isZoomed ? 'none' : 'auto';
     if (scroller.style.touchAction !== touchAction) scroller.style.touchAction = touchAction;
-    scroller.scrollLeft = Math.round(-camera.x);
-    scroller.scrollTop = Math.round(-camera.y);
+    // Transform the stable treemap geometry directly. A CSS `zoom` raster
+    // layer made coordinates and text detail drift apart while the camera
+    // moved, and forced the browser to resample a very large texture.
     surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
     // Reveal labels at the exact zoom scale where they fit. The element list
     // is cached after layout, so animation frames do not query the DOM or
@@ -323,7 +323,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       finishZoom();
     };
 
-    if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       applyTarget();
       return;
     }
@@ -376,9 +376,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         .map((element) => [element.dataset.hmCategoryId || '', element] as const)
         .filter(([id]) => !!id),
     );
-    hoveredCategoryElementRef.current = activeCategoryRef.current
-      ? categoryElementsRef.current.get(activeCategoryRef.current) || null
-      : null;
+    hoveredCategoryElementRef.current = null;
     // Newly rendered tiles carry visibility for scale 1; a null previous scale
     // forces a full pass so a zoomed camera is reconciled immediately.
     lodRef.current = buildLodIndex(surface);
@@ -543,8 +541,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }
       if (drag.moved) {
         const bounds = element.getBoundingClientRect();
-        const scaleX = element.clientWidth > 0 ? element.clientWidth / Math.max(bounds.width, 1) : 1;
-        const scaleY = element.clientHeight > 0 ? element.clientHeight / Math.max(bounds.height, 1) : 1;
+        const scaleX = element.clientWidth / Math.max(bounds.width, 1);
+        const scaleY = element.clientHeight / Math.max(bounds.height, 1);
         applyCamera({
           ...cameraRef.current,
           x: drag.x + deltaX * scaleX,
