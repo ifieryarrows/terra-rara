@@ -5,48 +5,19 @@ const PANEL_WIDTH = 380;
 const PANEL_GAP = 18;
 const PANEL_POINTER_Y_OFFSET = 48;
 
-interface ColorStop {
-  pct: number;
-  r: number;
-  g: number;
-  b: number;
-}
-
-// Finviz exact market heatmap color palette:
-// Radiant green on the upside (+3% and above -> #30cc5a)
-// Distinct dark charcoal neutral at 0.00% (#414554)
-// Radiant red on the downside (-3% and below -> #f63538)
-const FINVIZ_COLOR_STOPS: readonly ColorStop[] = [
-  { pct: -3.0, r: 246, g: 53,  b: 56 },  // #f63538 (Finviz max red)
-  { pct: -2.0, r: 199, g: 62,  b: 67 },  // #c73e43
-  { pct: -1.0, r: 139, g: 68,  b: 78 },  // #8b444e
-  { pct: -0.5, r: 100, g: 69,  b: 83 },  // #644553
-  { pct:  0.0, r:  65, g: 69,  b: 84 },  // #414554 (Finviz neutral slate)
-  { pct:  0.5, r:  55, g: 100, b: 78 },  // #37644e
-  { pct:  1.0, r:  53, g: 118, b: 78 },  // #35764e
-  { pct:  2.0, r:  46, g: 189, b: 89 },  // #2ebd59
-  { pct:  3.0, r:  48, g: 204, b: 90 },  // #30cc5a (Finviz max green)
-];
+const rgb = (hex: string) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
+const mix = (from: string, to: string, amount: number) => {
+  const a = rgb(from);
+  const b = rgb(to);
+  return `rgb(${a.map((channel, index) => Math.round(channel + (b[index] - channel) * amount)).join(',')})`;
+};
 
 export function getColorForChange(change?: number): string {
-  if (change == null || !Number.isFinite(change)) return '#414554';
-  const first = FINVIZ_COLOR_STOPS[0];
-  const last = FINVIZ_COLOR_STOPS[FINVIZ_COLOR_STOPS.length - 1];
-  if (change <= first.pct) return `rgb(${first.r},${first.g},${first.b})`;
-  if (change >= last.pct) return `rgb(${last.r},${last.g},${last.b})`;
-
-  for (let i = 0; i < FINVIZ_COLOR_STOPS.length - 1; i += 1) {
-    const s0 = FINVIZ_COLOR_STOPS[i];
-    const s1 = FINVIZ_COLOR_STOPS[i + 1];
-    if (change >= s0.pct && change <= s1.pct) {
-      const t = (change - s0.pct) / (s1.pct - s0.pct);
-      const r = Math.round(s0.r + (s1.r - s0.r) * t);
-      const g = Math.round(s0.g + (s1.g - s0.g) * t);
-      const b = Math.round(s0.b + (s1.b - s0.b) * t);
-      return `rgb(${r},${g},${b})`;
-    }
-  }
-  return '#414554';
+  if (change == null || !Number.isFinite(change)) return '#3f4652';
+  const strength = Math.min(1, Math.abs(change) / 4.5);
+  if (change > 0) return mix('#315445', '#12c45b', 0.22 + strength * 0.78);
+  if (change < 0) return mix('#60434a', '#ff3048', 0.22 + strength * 0.78);
+  return '#414852';
 }
 
 export function clampTooltipPosition(

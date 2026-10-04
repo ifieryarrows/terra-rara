@@ -31,21 +31,6 @@ export interface LeafEntry {
   renderId: string;
 }
 
-function categoryWeightedChange(node: LayoutNode): number {
-  const leaves = node.leaves();
-  if (!leaves.length) return 0;
-  let totalWeight = 0;
-  let weightedChange = 0;
-  for (const leaf of leaves) {
-    const data = leaf.data as HeatmapData;
-    const w = Math.max(0.0001, data.weight || 1);
-    const chg = data.changePercent || 0;
-    weightedChange += chg * w;
-    totalWeight += w;
-  }
-  return totalWeight > 0 ? weightedChange / totalWeight : 0;
-}
-
 export const CategoryTiles = memo(function CategoryTiles({
   parents,
   hoveredCategoryId,
@@ -55,19 +40,20 @@ export const CategoryTiles = memo(function CategoryTiles({
   hoveredCategoryId: string | null;
   zoom?: number;
 }) {
-  return parents.map((node) => {
+  const tiles: React.ReactNode[] = [];
+  const notches: React.ReactNode[] = [];
+
+  for (const node of parents) {
     const nodeData = node.data as HeatmapNode;
     const id = String(nodeData.id || `${node.depth}-${nodeData.name}`);
     const nodeWidth = node.x1 - node.x0;
     const nodeHeight = node.y1 - node.y0;
-    if (nodeWidth < 24 || nodeHeight < 20) return null;
+    if (nodeWidth < 24 || nodeHeight < 20) continue;
     const headerPadding = categoryHeaderPadding(node.depth, nodeWidth, nodeHeight);
     const active = hoveredCategoryId === id;
     const isSector = node.depth === 1;
-    const avgChange = isSector ? 0 : categoryWeightedChange(node);
-    const industryHeaderBg = getColorForChange(avgChange);
 
-    return (
+    tiles.push(
       <div
         key={id}
         data-hm-category-id={id}
@@ -85,8 +71,8 @@ export const CategoryTiles = memo(function CategoryTiles({
           border: active
             ? '2px solid #d99a5b'
             : isSector
-              ? '1.5px solid #202432'
-              : '1px solid #12151c',
+              ? '1px solid #334155'
+              : '1px solid #1e293b',
           backgroundColor: active ? '#d99a5b' : '#020617',
           boxShadow: active
             ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)'
@@ -98,49 +84,55 @@ export const CategoryTiles = memo(function CategoryTiles({
       >
         {headerPadding > 1 && (
           <div
-            className={`pointer-events-none relative z-[3] flex items-center ${
+            className={
               isSector
-                ? 'border-b border-[#10131a] bg-[#161922] px-2 font-bold uppercase tracking-wider text-white'
-                : 'border-b border-[#12151c] px-1.5 font-bold uppercase tracking-wide text-white'
-            }`}
+                ? 'pointer-events-none truncate bg-slate-900/95 px-1.5 pt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200'
+                : 'pointer-events-none truncate bg-slate-800/95 px-1.5 text-[8.5px] font-bold uppercase tracking-wide text-white'
+            }
             style={{
               height: headerPadding - 1,
-              backgroundColor: isSector ? '#161922' : industryHeaderBg,
+              textShadow: '0 1px 2px rgba(0,0,0,0.85)',
             }}
           >
-            <span
-              className="truncate"
-              style={{
-                fontSize: isSector ? '10.5px' : '8.5px',
-                lineHeight: 1,
-                textShadow: '0 1px 2px rgba(0,0,0,0.85)',
-              }}
-            >
-              {nodeData.name}
-            </span>
-            {!isSector && nodeWidth >= 28 && (
-              <svg
-                className="pointer-events-none absolute -bottom-[4px] left-1.5 z-[3]"
-                width="10"
-                height="5"
-                viewBox="0 0 10 5"
-                aria-hidden="true"
-              >
-                <polygon points="0,0 5,5 10,0" fill={industryHeaderBg} />
-                <polyline
-                  points="0,0 5,5 10,0"
-                  fill="none"
-                  stroke="#12151c"
-                  strokeWidth="1"
-                  strokeLinejoin="miter"
-                />
-              </svg>
-            )}
+            {nodeData.name}
           </div>
         )}
       </div>
     );
-  });
+
+    if (!isSector && headerPadding > 1 && nodeWidth >= 28) {
+      notches.push(
+        <svg
+          key={`${id}-notch`}
+          className="pointer-events-none absolute z-[4]"
+          style={{
+            left: node.x0 + 6,
+            top: node.y0 + headerPadding - 1,
+            width: 10,
+            height: 5,
+          }}
+          viewBox="0 0 10 5"
+          aria-hidden="true"
+        >
+          <polygon points="0,0 5,5 10,0" fill="#1e293b" />
+          <polyline
+            points="0,0 5,5 10,0"
+            fill="none"
+            stroke="#334155"
+            strokeWidth="1"
+            strokeLinejoin="miter"
+          />
+        </svg>
+      );
+    }
+  }
+
+  return (
+    <>
+      {tiles}
+      {notches}
+    </>
+  );
 });
 
 const TEXT_SHADOW = '0 1px 2px rgba(0,0,0,0.85), 0 0 1px rgba(0,0,0,0.9)';
@@ -263,15 +255,13 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { le
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter,box-shadow] duration-75 hover:brightness-125 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.4)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,
           width: cellWidth,
           height: cellHeight,
           backgroundColor: getColorForChange(item.changePercent),
-          border: '1px solid #12151c',
-          boxSizing: 'border-box',
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >

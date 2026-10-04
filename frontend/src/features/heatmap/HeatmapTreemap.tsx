@@ -214,7 +214,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (previous === next) return;
     const restore = (element: HTMLElement) => {
       const isSector = element.dataset.hmDepth === '1';
-      element.style.border = isSector ? '1.5px solid #202432' : '1px solid #12151c';
+      element.style.border = isSector ? '1px solid #334155' : '1px solid #1e293b';
       element.style.backgroundColor = '#020617';
       element.style.boxShadow = 'none';
     };
