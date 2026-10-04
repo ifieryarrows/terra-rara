@@ -1,5 +1,18 @@
 import { memo } from 'react';
-import { categoryHeaderPadding, detailLevel, stockTextSizes, type HeatmapData, type HeatmapNode, type LayoutNode } from './heatmap-layout';
+import {
+  categoryHeaderPadding,
+  formatTileChange,
+  formatTilePrice,
+  planTileTiers,
+  tierAtScale,
+  TICKER_TRACKING_EM,
+  TILE_LINE_HEIGHT as LINE_HEIGHT,
+  TILE_LOGO_GAP_EM,
+  type HeatmapData,
+  type HeatmapNode,
+  type LayoutNode,
+  type TileTierPlan,
+} from './heatmap-layout';
 import { CompanyLogo } from './CompanyLogo';
 import { getColorForChange } from './heatmap-utils';
 
@@ -69,43 +82,127 @@ export const CategoryTiles = memo(function CategoryTiles({
   });
 });
 
+const TEXT_SHADOW = '0 1px 2px rgba(0,0,0,.45)';
+
+function lodVisibility(minScale: number, maxScale: number, scale: number) {
+  return minScale <= scale && scale < maxScale ? 'visible' : 'hidden';
+}
+
+/**
+ * One self-contained layer per disclosure tier. Layers are absolutely
+ * positioned over the tile and toggled with `visibility`, so a hidden tier
+ * (e.g. the logo row of `large`) never reserves height in the visible one.
+ */
+function TileTierLayer({
+  plan,
+  item,
+  logoTicker,
+  changeText,
+  priceText,
+}: {
+  plan: TileTierPlan;
+  item: HeatmapData;
+  logoTicker: string | null;
+  changeText: string;
+  priceText: string | null;
+}) {
+  const { tier, minScale, maxScale, typography } = plan;
+  const showChange = tier !== 'small' && typography.change > 0;
+  const showPrice = tier === 'large' && !!priceText && typography.price > 0;
+  const showLogo = tier === 'large' && !!logoTicker && typography.logo > 0;
+  return (
+    <div
+      data-hm-lod-min={minScale}
+      data-hm-lod-max={Number.isFinite(maxScale) ? maxScale : undefined}
+      data-hm-tier={tier}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center overflow-hidden text-center"
+      style={{ padding: typography.padding, visibility: lodVisibility(minScale, maxScale, 1) }}
+    >
+      {showLogo && (
+        <CompanyLogo
+          ticker={logoTicker as string}
+          label={item.shortName}
+          size={typography.logo}
+          className="block"
+        />
+      )}
+      <strong
+        className="block whitespace-nowrap font-bold"
+        style={{
+          fontSize: typography.ticker,
+          lineHeight: LINE_HEIGHT,
+          letterSpacing: `${TICKER_TRACKING_EM}em`,
+          marginTop: showLogo ? typography.ticker * TILE_LOGO_GAP_EM : 0,
+          textShadow: TEXT_SHADOW,
+        }}
+      >
+        {item.name}
+      </strong>
+      {showChange && (
+        <span
+          className="block whitespace-nowrap font-semibold tabular-nums"
+          style={{
+            fontSize: typography.change,
+            lineHeight: LINE_HEIGHT,
+            marginTop: typography.gap,
+            textShadow: TEXT_SHADOW,
+          }}
+        >
+          {changeText}
+        </span>
+      )}
+      {showPrice && (
+        <span
+          className="block whitespace-nowrap font-medium tabular-nums text-white/80"
+          style={{
+            fontSize: typography.price,
+            lineHeight: LINE_HEIGHT,
+            marginTop: typography.gap,
+            textShadow: TEXT_SHADOW,
+          }}
+        >
+          {priceText}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { leafEntries: LeafEntry[]; zoom?: number }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
     const cellHeight = leaf.y1 - leaf.y0;
     if (cellWidth <= 0 || cellHeight <= 0) return null;
-    const level = detailLevel(cellWidth, cellHeight);
-    const textSizes = stockTextSizes(cellWidth, cellHeight, level);
     const tileScale = minimumScaleForSize(cellWidth, cellHeight, MIN_TILE_SIZE, MIN_TILE_SIZE, MIN_TILE_SIZE ** 2);
-    const tickerScale = minimumScaleForSize(cellWidth, cellHeight, 24, 18, 520);
-    const changeScale = minimumScaleForSize(cellWidth, cellHeight, 44, 25, 1_250);
-    const logoScale = minimumScaleForSize(cellWidth, cellHeight, 66, 42, 2_800);
-    const tickerSizesAtReveal = stockTextSizes(cellWidth * tickerScale, cellHeight * tickerScale, 'ticker');
-    const changeSizesAtReveal = stockTextSizes(cellWidth * changeScale, cellHeight * changeScale, 'change');
     const change = item.changePercent || 0;
-    const showTicker = level !== 'color';
-    const showChange = ['change', 'logo', 'price'].includes(level);
+    const changeText = formatTileChange(item.changePercent);
+    const priceText = item.aggregateCount ? null : formatTilePrice(item.price);
     const fallbackLogoTicker = LOGO_INSTRUMENT_TYPES.has((item.instrumentType || '').toLowerCase())
       ? item.name
       : null;
-    const logoTicker = item.logoTicker || fallbackLogoTicker;
-    const showLogo = ['logo', 'price'].includes(level) && !!logoTicker && !item.aggregateCount;
-    const logoSize = level === 'price'
-      ? Math.min(42, cellHeight * 0.34)
-      : level === 'logo'
-        ? Math.min(28, cellHeight * 0.3)
-        : Math.min(28, cellHeight * logoScale * 0.3) / logoScale;
+    const logoTicker = item.aggregateCount ? null : item.logoTicker || fallbackLogoTicker;
+    // Tiles below the readability floor at every zoom level render colour only;
+    // their details stay reachable through hover/focus (stock details panel).
+    const plans = planTileTiers(cellWidth, cellHeight, {
+      ticker: item.name,
+      change: changeText,
+      price: priceText,
+      hasLogo: !!logoTicker,
+    });
+    const tierAtRest = tierAtScale(plans, 1);
     return (
       <div
         key={renderId}
         data-hm-leaf-id={renderId}
         data-hm-parent-id={parentId}
-        data-hm-tile-min-scale={tileScale}
+        data-hm-lod-min={tileScale}
+        data-hm-tier-at-rest={tierAtRest}
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] flex flex-col items-center justify-center overflow-hidden text-center text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,
@@ -115,43 +212,16 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { le
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >
-        {logoTicker && !item.aggregateCount && (
-          <div
-            data-hm-detail-min-scale={logoScale}
-            style={{ visibility: showLogo ? 'visible' : 'hidden' }}
-          >
-            <CompanyLogo
-              ticker={logoTicker}
-              label={item.shortName}
-              size={logoSize}
-              className="mb-1"
-            />
-          </div>
-        )}
-        <strong
-          data-hm-detail-min-scale={tickerScale}
-          className="max-w-full truncate px-1 font-bold tracking-[-0.02em]"
-          style={{
-            visibility: showTicker ? 'visible' : 'hidden',
-            fontSize: showTicker ? textSizes.ticker : tickerSizesAtReveal.ticker / tickerScale,
-            lineHeight: 1.04,
-            textShadow: '0 1px 2px rgba(0,0,0,.45)',
-          }}
-        >
-          {item.name}
-        </strong>
-        <span
-          data-hm-detail-min-scale={changeScale}
-          className="font-semibold tabular-nums tracking-[-0.015em]"
-          style={{
-            visibility: showChange ? 'visible' : 'hidden',
-            fontSize: showChange ? textSizes.change : changeSizesAtReveal.change / changeScale,
-            lineHeight: 1.08,
-            textShadow: '0 1px 2px rgba(0,0,0,.42)',
-          }}
-        >
-          {change > 0 ? '+' : ''}{change.toFixed(2)}%
-        </span>
+        {plans.map((plan) => (
+          <TileTierLayer
+            key={plan.tier}
+            plan={plan}
+            item={item}
+            logoTicker={logoTicker}
+            changeText={changeText}
+            priceText={priceText}
+          />
+        ))}
       </div>
     );
   });

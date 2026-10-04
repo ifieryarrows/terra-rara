@@ -252,7 +252,44 @@ describe('heatmap interaction primitives', () => {
     expect(pin).toHaveBeenCalledWith(expect.objectContaining({ id: 'sector' }));
     fireEvent.doubleClick(screen.getByRole('button', { name: /^NVDA,/i }));
     expect(open).toHaveBeenCalledWith('https://finance.yahoo.com/quote/NVDA', '_blank', 'noopener,noreferrer');
-    expect(screen.getByRole('button', { name: /^NVDA,/i })).not.toHaveTextContent('$100');
+    const tile = screen.getByRole('button', { name: /^NVDA,/i });
+    const visibleLayer = Array.from(tile.querySelectorAll<HTMLElement>('[data-hm-tier]'))
+      .filter((layer) => layer.style.visibility === 'visible');
+    expect(visibleLayer).toHaveLength(1);
+    expect(visibleLayer[0].dataset.hmTier).toBe('large');
+    expect(visibleLayer[0]).toHaveTextContent('NVDA+2.00%$100.00');
+  });
+
+  it('renders exactly one non-overlapping disclosure tier per tile and leaves micro tiles text-free', () => {
+    const leaves = [
+      { id: 'big', name: 'BIG', shortName: 'Big Co', weight: 4_000, price: 250, changePercent: 1.5, instrumentType: 'equity' },
+      ...Array.from({ length: 120 }, (_, index) => ({
+        id: `s${index}`, name: `S${index}`, shortName: `Small ${index}`,
+        weight: index < 20 ? 60 : index < 60 ? 6 : 1, price: 10 + index, changePercent: index % 2 ? -1 : 1,
+      })),
+    ];
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'Technology', children: [{ id: 'industry', name: 'Semiconductors', children: leaves }],
+      }],
+    };
+    const { container } = render(
+      <HeatmapTreemap data={data} width={900} height={500} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} />,
+    );
+    const seen = new Set<string>();
+    for (const tile of Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'))) {
+      const layers = Array.from(tile.querySelectorAll<HTMLElement>('[data-hm-tier]'));
+      const visible = layers.filter((layer) => layer.style.visibility === 'visible');
+      expect(visible.length).toBeLessThanOrEqual(1);
+      const tier = tile.dataset.hmTierAtRest || 'micro';
+      seen.add(tier);
+      expect(visible[0]?.dataset.hmTier ?? 'micro').toBe(tier);
+      if (tier === 'small') expect(visible[0].children).toHaveLength(1);
+      if (tier === 'medium') expect(visible[0].querySelector('.rounded-full')).toBeNull();
+      // Every tier is its own absolute layer, so hidden tiers never take up flow space.
+      layers.forEach((layer) => expect(layer.className).toContain('absolute'));
+    }
+    expect(seen).toEqual(new Set(['large', 'medium', 'small', 'micro']));
   });
 
   it('zooms directly with the mouse wheel around the pointer', async () => {

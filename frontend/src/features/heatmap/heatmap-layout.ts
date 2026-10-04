@@ -149,42 +149,205 @@ export function leavesForCategory(root: HeatmapNode, categoryId: string, categor
   return output;
 }
 
-export type DetailLevel = 'color' | 'ticker' | 'change' | 'logo' | 'price';
+/* ------------------------------------------------------------------------- *
+ * Progressive disclosure (tile level-of-detail)
+ *
+ * Every leaf is planned once, in layout (base) pixels. The camera only applies
+ * a uniform transform, so a tier that fits geometrically at scale 1 fits at
+ * every scale; the only scale-dependent question is whether the transformed
+ * glyphs are readable. Each tier therefore gets the exact camera scale at
+ * which its smallest line reaches the readability floor:
+ *
+ *   micro  -> colour only (hover/focus still opens the stock details)
+ *   small  -> ticker only, compact type
+ *   medium -> ticker + daily change (logo dropped to save vertical space)
+ *   large  -> logo + ticker + daily change + price
+ *
+ * Exactly one tier is visible per tile at any scale, and every tier is laid
+ * out in its own layer, so hidden content never reserves space or pushes
+ * visible text out of the cell.
+ * ------------------------------------------------------------------------- */
 
-export interface StockTextSizes {
+export const HEATMAP_MAX_ZOOM = 4;
+
+export type TileTier = 'micro' | 'small' | 'medium' | 'large';
+export type TextTier = Exclude<TileTier, 'micro'>;
+
+export interface TileContent {
+  ticker: string;
+  change: string;
+  price?: string | null;
+  hasLogo: boolean;
+}
+
+export interface TileTypography {
+  /** All values are layout pixels; the camera transform scales them uniformly. */
   ticker: number;
   change: number;
+  price: number;
+  logo: number;
+  gap: number;
+  padding: number;
 }
 
-const clamp = (value: number, minimum: number, maximum: number) => (
-  Math.max(minimum, Math.min(maximum, value))
-);
-
-/** Finviz-inspired type scaling that remains bounded at every LOD level. */
-export function stockTextSizes(width: number, height: number, level: DetailLevel): StockTextSizes {
-  if (level === 'color') return { ticker: 0, change: 0 };
-  if (level === 'price') {
-    const ticker = clamp(Math.min(width / 6.5, height / 6), 16, 44);
-    return { ticker, change: clamp(ticker * 0.64, 11, 28) };
-  }
-  if (level === 'logo') {
-    const ticker = clamp(Math.min(width / 5.4, height / 4.8), 10.5, 20);
-    return { ticker, change: clamp(ticker * 0.68, 8.5, 14) };
-  }
-  if (level === 'change') {
-    const ticker = clamp(Math.min(width / 4.8, height / 3.2), 9.5, 16);
-    return { ticker, change: clamp(ticker * 0.7, 8, 12) };
-  }
-  return { ticker: clamp(Math.min(width / 4.6, height / 2.8), 8.5, 14), change: 0 };
+export interface TileTierPlan {
+  tier: TextTier;
+  /** Camera scale from which the tier is readable (inclusive). */
+  minScale: number;
+  /** Camera scale from which the next tier takes over (exclusive). */
+  maxScale: number;
+  typography: TileTypography;
 }
 
-export function detailLevel(width: number, height: number): DetailLevel {
-  const area = width * height;
-  if (width < 24 || height < 18 || area < 520) return 'color';
-  if (width < 44 || height < 25 || area < 1_250) return 'ticker';
-  if (width < 66 || height < 42 || area < 2_800) return 'change';
-  if (width < 100 || height < 72 || area < 6_800) return 'logo';
-  return 'price';
+/** Smallest on-screen size (CSS px) at which secondary lines remain legible. */
+export const READABLE_SECONDARY_PX = 8.5;
+
+interface TierSpec {
+  minTicker: number;
+  maxTicker: number;
+  changeRatio: number;
+  priceRatio: number;
+  logoRatio: number;
+  maxLogo: number;
+}
+
+const TIER_SPECS: Record<TextTier, TierSpec> = {
+  small: { minTicker: 9, maxTicker: 13, changeRatio: 0, priceRatio: 0, logoRatio: 0, maxLogo: 0 },
+  medium: { minTicker: 11, maxTicker: 22, changeRatio: 0.76, priceRatio: 0, logoRatio: 0, maxLogo: 0 },
+  large: { minTicker: 14, maxTicker: 44, changeRatio: 0.66, priceRatio: 0.56, logoRatio: 1.45, maxLogo: 44 },
+};
+
+export const TILE_LINE_HEIGHT = 1.1;
+const LINE_HEIGHT = TILE_LINE_HEIGHT;
+const LINE_GAP_EM = 0.1;
+/** Gap between logo and ticker (em of ticker size). */
+export const TILE_LOGO_GAP_EM = 0.22;
+const LOGO_GAP_EM = TILE_LOGO_GAP_EM;
+/** Guards against font fallback / rendering differences in the width estimate. */
+const WIDTH_SAFETY = 1.08;
+/** Letter spacing applied to the ticker line (em). */
+export const TICKER_TRACKING_EM = -0.02;
+
+/** Conservative advance widths (em) for a bold geometric sans such as Geist. */
+function charAdvance(char: string): number {
+  if (char >= '0' && char <= '9') return 0.62; // tabular figures
+  if ('MW'.includes(char)) return 0.92;
+  if ('IJ1'.includes(char)) return 0.4;
+  if (char === '%') return 0.88;
+  if (char === '$') return 0.64;
+  if (char === '+') return 0.62;
+  if (char === '-' || char === '\u2212') return 0.44;
+  if (char === '.' || char === ',' || char === ':') return 0.3;
+  if (char === ' ') return 0.28;
+  if (char === '&') return 0.76;
+  if (char >= 'A' && char <= 'Z') return 0.72;
+  if (char >= 'a' && char <= 'z') return 0.58;
+  return 0.72;
+}
+
+/** Estimated rendered width of `text` in em units (font-size = 1). */
+export function estimateTextWidthEm(text: string, trackingEm = 0): number {
+  let width = 0;
+  for (const char of text) width += charAdvance(char) + trackingEm;
+  return Math.max(0, width);
+}
+
+export function formatTileChange(change: number | undefined): string {
+  const value = Number.isFinite(change) ? (change as number) : 0;
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+export function formatTilePrice(price: number | null | undefined): string | null {
+  if (price == null || !Number.isFinite(price)) return null;
+  const digits = Math.abs(price) < 1 ? 4 : 2;
+  return `$${price.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+function cellPadding(width: number, height: number): number {
+  return Math.max(1.5, Math.min(8, Math.min(width, height) * 0.07));
+}
+
+function planTier(tier: TextTier, width: number, height: number, content: TileContent): Omit<TileTierPlan, 'maxScale'> {
+  const spec = TIER_SPECS[tier];
+  const padding = cellPadding(width, height);
+  const innerWidth = Math.max(0, width - padding * 2);
+  const innerHeight = Math.max(0, height - padding * 2);
+  const changeRatio = content.change ? spec.changeRatio : 0;
+  const priceRatio = content.price ? spec.priceRatio : 0;
+  const logoRatio = content.hasLogo ? spec.logoRatio : 0;
+
+  const widthEm = Math.max(
+    estimateTextWidthEm(content.ticker, TICKER_TRACKING_EM),
+    changeRatio ? estimateTextWidthEm(content.change) * changeRatio : 0,
+    priceRatio ? estimateTextWidthEm(content.price || '') * priceRatio : 0,
+    logoRatio,
+  ) * WIDTH_SAFETY;
+  const textHeightEm = LINE_HEIGHT
+    + (changeRatio ? LINE_GAP_EM + changeRatio * LINE_HEIGHT : 0)
+    + (priceRatio ? LINE_GAP_EM + priceRatio * LINE_HEIGHT : 0);
+  const logoHeightEm = logoRatio ? logoRatio + LOGO_GAP_EM : 0;
+
+  const byWidth = widthEm > 0 ? innerWidth / widthEm : 0;
+  let ticker = Math.min(spec.maxTicker, byWidth, innerHeight / (textHeightEm + logoHeightEm));
+  let logo = logoRatio ? ticker * logoRatio : 0;
+  if (logoRatio && logo > spec.maxLogo) {
+    // The logo stops growing at its cap; give the remaining height to text.
+    ticker = Math.min(spec.maxTicker, byWidth, (innerHeight - spec.maxLogo) / (textHeightEm + LOGO_GAP_EM));
+    logo = Math.min(spec.maxLogo, ticker * logoRatio);
+  }
+  ticker = Math.max(0, ticker);
+
+  const change = ticker * changeRatio;
+  const price = ticker * priceRatio;
+  const minScale = ticker > 0
+    ? Math.max(
+      spec.minTicker / ticker,
+      changeRatio ? READABLE_SECONDARY_PX / change : 0,
+      priceRatio ? READABLE_SECONDARY_PX / price : 0,
+    )
+    : Number.POSITIVE_INFINITY;
+
+  return {
+    tier,
+    minScale,
+    typography: { ticker, change, price, logo, gap: ticker * LINE_GAP_EM, padding },
+  };
+}
+
+/**
+ * Plan every readable tier of a tile. Tiers are returned in ascending order,
+ * have monotonic, non-overlapping [minScale, maxScale) ranges, and tiers that
+ * can never become readable within `maxZoom` are omitted.
+ */
+export function planTileTiers(
+  width: number,
+  height: number,
+  content: TileContent,
+  maxZoom = HEATMAP_MAX_ZOOM,
+): TileTierPlan[] {
+  if (!(width > 0) || !(height > 0) || !content.ticker) return [];
+  const tiers: TextTier[] = ['small', 'medium'];
+  // `large` only exists when it adds content beyond `medium`.
+  if (content.hasLogo || content.price) tiers.push('large');
+
+  let floor = 0;
+  const planned = tiers.map((tier) => {
+    const plan = planTier(tier, width, height, content);
+    floor = Math.max(floor, plan.minScale);
+    return { ...plan, minScale: floor };
+  });
+
+  return planned
+    .map((plan, index) => ({
+      ...plan,
+      maxScale: planned[index + 1]?.minScale ?? Number.POSITIVE_INFINITY,
+    }))
+    .filter((plan) => plan.minScale <= maxZoom && plan.minScale < plan.maxScale);
+}
+
+/** Tier shown at a given camera scale; `micro` when no text is readable. */
+export function tierAtScale(plans: TileTierPlan[], scale: number): TileTier {
+  return plans.find((plan) => plan.minScale <= scale && scale < plan.maxScale)?.tier ?? 'micro';
 }
 
 /**

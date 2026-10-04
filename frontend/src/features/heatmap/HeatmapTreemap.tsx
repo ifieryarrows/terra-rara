@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   createTreemapHierarchy,
+  HEATMAP_MAX_ZOOM,
   layoutTreemap,
   type HeatmapData,
   type HeatmapNode,
@@ -10,7 +11,55 @@ import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
+const MAX_ZOOM = HEATMAP_MAX_ZOOM;
+
+/** An element shown only while the camera scale is within [minScale, maxScale). */
+interface LodEntry {
+  element: HTMLElement;
+  minScale: number;
+  maxScale: number;
+}
+
+interface LodIndex {
+  entries: LodEntry[];
+  /** Every finite range boundary, sorted ascending, for incremental updates. */
+  boundaries: Array<{ scale: number; entry: LodEntry }>;
+}
+
+function buildLodIndex(surface: HTMLElement): LodIndex {
+  const entries = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-lod-min]')).map((element) => {
+    const min = Number(element.dataset.hmLodMin);
+    const max = element.dataset.hmLodMax == null ? Number.NaN : Number(element.dataset.hmLodMax);
+    return {
+      element,
+      minScale: Number.isFinite(min) ? min : 1,
+      maxScale: Number.isFinite(max) ? max : Number.POSITIVE_INFINITY,
+    };
+  });
+  const boundaries: LodIndex['boundaries'] = [];
+  for (const entry of entries) {
+    boundaries.push({ scale: entry.minScale, entry });
+    if (Number.isFinite(entry.maxScale)) boundaries.push({ scale: entry.maxScale, entry });
+  }
+  boundaries.sort((a, b) => a.scale - b.scale);
+  return { entries, boundaries };
+}
+
+function applyLodVisibility(entry: LodEntry, scale: number) {
+  const visibility = entry.minScale <= scale && scale < entry.maxScale ? 'visible' : 'hidden';
+  if (entry.element.style.visibility !== visibility) entry.element.style.visibility = visibility;
+}
+
+function firstBoundaryAbove(boundaries: LodIndex['boundaries'], scale: number) {
+  let low = 0;
+  let high = boundaries.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (boundaries[middle].scale <= scale) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 
 export interface CategoryAnchor {
   id: string;
@@ -89,12 +138,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const tileVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
-  const detailVisibilityRef = useRef<Array<{ element: HTMLElement; minScale: number }>>([]);
+  const lodRef = useRef<LodIndex>({ entries: [], boundaries: [] });
+  const lodScaleRef = useRef<number | null>(null);
   const categoryElementsRef = useRef(new Map<string, HTMLElement>());
   const hoveredCategoryElementRef = useRef<HTMLElement | null>(null);
-  const visibleTileCountRef = useRef(0);
-  const visibleDetailCountRef = useRef(0);
   const activeLeafRef = useRef<string | null>(null);
   const activeCategoryRef = useRef<string | null>(null);
   const zoomTargetRef = useRef(zoom);
@@ -180,25 +227,22 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   };
 
   const updateTileVisibility = (scale: number) => {
-    const updateGroup = (
-      entries: Array<{ element: HTMLElement; minScale: number }>,
-      visibleCount: { current: number },
-    ) => {
-      let low = 0;
-      let high = entries.length;
-      while (low < high) {
-        const middle = (low + high) >>> 1;
-        if (entries[middle].minScale <= scale) low = middle + 1;
-        else high = middle;
-      }
-      for (let i = Math.min(low, visibleCount.current); i < Math.max(low, visibleCount.current); i += 1) {
-        const visibility = i < low ? 'visible' : 'hidden';
-        if (entries[i].element.style.visibility !== visibility) entries[i].element.style.visibility = visibility;
-      }
-      visibleCount.current = low;
-    };
-    updateGroup(tileVisibilityRef.current, visibleTileCountRef);
-    updateGroup(detailVisibilityRef.current, visibleDetailCountRef);
+    const { entries, boundaries } = lodRef.current;
+    const previous = lodScaleRef.current;
+    lodScaleRef.current = scale;
+    if (previous === null) {
+      for (const entry of entries) applyLodVisibility(entry, scale);
+      return;
+    }
+    if (previous === scale) return;
+    // Only elements with a [min, max) boundary in (low, high] can change.
+    const low = Math.min(previous, scale);
+    const high = Math.max(previous, scale);
+    let index = firstBoundaryAbove(boundaries, low);
+    while (index < boundaries.length && boundaries[index].scale <= high) {
+      applyLodVisibility(boundaries[index].entry, scale);
+      index += 1;
+    }
   };
 
   const applyCamera = (next: ZoomCamera) => {
@@ -333,16 +377,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         .filter(([id]) => !!id),
     );
     hoveredCategoryElementRef.current = null;
-    tileVisibilityRef.current = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-tile-min-scale]'))
-      .map((element) => ({ element, minScale: Number(element.dataset.hmTileMinScale) || 1 }))
-      .sort((a, b) => a.minScale - b.minScale);
-    detailVisibilityRef.current = Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-detail-min-scale]'))
-      .map((element) => ({ element, minScale: Number(element.dataset.hmDetailMinScale) || 1 }))
-      .sort((a, b) => a.minScale - b.minScale);
-    visibleTileCountRef.current = 0;
-    visibleDetailCountRef.current = 0;
+    // Newly rendered tiles carry visibility for scale 1; a null previous scale
+    // forces a full pass so a zoomed camera is reconciled immediately.
+    lodRef.current = buildLodIndex(surface);
+    lodScaleRef.current = null;
     applyCamera(cameraRef.current);
-    updateTileVisibility(cameraRef.current.scale);
   }, [height, leafEntries, parents, width]);
 
   useEffect(() => {
