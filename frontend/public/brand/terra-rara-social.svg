@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0b121b"/><stop offset="1" stop-color="#080e17"/></linearGradient>
+    <radialGradient id="atmosphere" cx="0" cy="0" r="1" gradientTransform="translate(123 68) rotate(49) scale(700 690)" gradientUnits="userSpaceOnUse"><stop stop-color="#b76c48" stop-opacity=".22"/><stop offset="1" stop-color="#b76c48" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#background)"/><rect width="1200" height="630" fill="url(#atmosphere)"/>
+  <g fill="none" stroke="#e6a47a" stroke-opacity=".09"><circle cx="1018" cy="320" r="150"/><circle cx="1018" cy="320" r="181"/><circle cx="1018" cy="320" r="213"/><circle cx="1018" cy="320" r="246"/></g>
+  <path d="M0 566H1200" stroke="#e6a47a" stroke-opacity=".18"/>
+  
+    <svg x="78" y="127" width="132" height="132" viewBox="0 0 48 48" aria-label="Terra Rara mark">
+      <defs>
+        <linearGradient id="mark-copper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2c39f"/><stop offset=".34" stop-color="#d9956c"/><stop offset=".68" stop-color="#a96545"/><stop offset="1" stop-color="#704431"/></linearGradient>
+        <linearGradient id="mark-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2c39f" stop-opacity=".9"/><stop offset=".58" stop-color="#c9825b" stop-opacity=".64"/><stop offset="1" stop-color="#764832" stop-opacity=".82"/></linearGradient>
+      </defs>
+      <circle cx="24" cy="24" r="15.75" fill="none" stroke="url(#mark-ring)" stroke-width="1.35"/>
+      <path d="M24 11.25 26.55 21.45 36.75 24 26.55 26.55 24 36.75 21.45 26.55 11.25 24 21.45 21.45Z" transform="translate(.35 1.05)" fill="#4c2b25" opacity=".48"/>
+      <path d="M24 11.25 26.55 21.45 36.75 24 26.55 26.55 24 36.75 21.45 26.55 11.25 24 21.45 21.45Z" fill="url(#mark-copper)"/>
+      <path d="M24 11.25 26.55 21.45 36.75 24" fill="none" stroke="#fff4e7" stroke-width=".6" stroke-linecap="round" opacity=".58"/>
+      <circle cx="24" cy="24" r="1.15" fill="#fff8ef" opacity=".88"/>
+    </svg>
+  <text x="224" y="184" fill="#e6a47a" font-family="Geist Sans, Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="3.4">COPPER INTELLIGENCE / TERRA RARA</text>
+  <text x="224" y="226" fill="#f2f4f7" font-family="Geist Sans, Arial, sans-serif" font-size="28" font-weight="600" letter-spacing="4.2">COPPERMIND</text>
+  <text x="225" y="251" fill="#a3afbf" font-family="Geist Sans, Arial, sans-serif" font-size="12" font-weight="500" letter-spacing="4.2">TERRA RARA</text>
+  <text x="94" y="360" fill="#f2f4f7" font-family="Geist Sans, Arial, sans-serif" font-size="61" font-weight="500" letter-spacing="-2.5">Read the market.</text>
+  <text x="94" y="432" fill="#e6a47a" font-family="Geist Sans, Arial, sans-serif" font-size="61" font-weight="500" letter-spacing="-2.5">See the structure.</text>
+  <text x="98" y="489" fill="#b2bdcb" font-family="Geist Sans, Arial, sans-serif" font-size="18" font-weight="400">Market context, news, forecasts and evidence in one workspace.</text>
+  <text x="96" y="603" fill="#a3afbf" font-family="Geist Sans, Arial, sans-serif" font-size="12" font-weight="500" letter-spacing="2.1">BUILT AROUND COPPER. DESIGNED FOR PERSPECTIVE.</text>
+  <text x="1104" y="603" text-anchor="end" fill="#e6a47a" font-family="Geist Sans, Arial, sans-serif" font-size="12" font-weight="600" letter-spacing="1.9">TERRA RARA</text>
+</svg>

@@ -3,5 +3,5 @@ import type { ReactNode } from 'react';
 export function MetricCard({ label, value, hint, tone = 'neutral' }: {
   label: string; value: ReactNode; hint?: string; tone?: 'good' | 'bad' | 'neutral';
 }) {
-  return <div className="cm-metric"><p className="cm-metric-label">{label}</p><p className={`cm-metric-value cm-tone-${tone}`}>{value}</p>{hint && <p className="cm-metric-hint">{hint}</p>}</div>;
+  return <div className="cm-metric" data-cm-route-reveal="surface"><p className="cm-metric-label">{label}</p><p className={`cm-metric-value cm-tone-${tone}`}>{value}</p>{hint && <p className="cm-metric-hint">{hint}</p>}</div>;
 }

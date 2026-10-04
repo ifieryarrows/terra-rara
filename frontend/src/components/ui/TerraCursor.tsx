@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useReducedMotion } from 'framer-motion';
+import { TERRA_RARA_MARK_STAR_PATH } from './brand-mark-geometry';
 import './TerraCursor.css';
 
 type DustMote = {
@@ -21,8 +22,12 @@ const DUST_COLORS = ['#946047', '#a66d4e', '#bb8060'];
 const DUST_FRAME_INTERVAL_MS = 32;
 const randomBetween = (min: number, max: number) => min + Math.random() * (max - min);
 
-function makeCursor(fill: string) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="10.5" fill="none" stroke="#e6a47a" stroke-opacity=".42" stroke-width="1"/><path d="M16 7.5 17.7 14.3 24.5 16 17.7 17.7 16 24.5 14.3 17.7 7.5 16 14.3 14.3Z" fill="${fill}"/><circle cx="16" cy="16" r="1.2" fill="#fff"/></svg>`;
+function makeCursor(fill: string, pressed = false) {
+  const ring = pressed
+    ? '<circle cx="24" cy="24" r="18.1" fill="none" stroke="#f2c39f" stroke-opacity=".92" stroke-width="1.8"/>'
+    : '<circle cx="24" cy="24" r="15.75" fill="none" stroke="#e6a47a" stroke-opacity=".42" stroke-width="1.5"/>';
+  const centerRadius = pressed ? 2.55 : 1.8;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48">${ring}<path d="${TERRA_RARA_MARK_STAR_PATH}" fill="${fill}"/><circle cx="24" cy="24" r="${centerRadius}" fill="#fff8ef"/></svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, auto`;
 }
 
@@ -196,9 +201,16 @@ export function TerraCursor() {
       previousPoint = { x, y };
       if (moteCount) schedule();
     };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch') return;
+      root.classList.add('cm-terra-cursor-pressed');
+    };
+    const clearPressedCursor = () => root.classList.remove('cm-terra-cursor-pressed');
     const onPointerLeave = () => resetTrailOrigin();
     const onBlur = () => {
       resetTrailOrigin();
+      clearPressedCursor();
       particles.length = 0;
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
@@ -208,17 +220,26 @@ export function TerraCursor() {
     resize();
     root.style.setProperty('--cm-terra-cursor', makeCursor('#f3eee6'));
     root.style.setProperty('--cm-terra-cursor-interactive', makeCursor('#f1bc97'));
+    root.style.setProperty('--cm-terra-cursor-pressed', makeCursor('#c9825b', true));
     root.classList.add('cm-terra-cursor-enabled');
     window.addEventListener('resize', resize, { passive: true });
     window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointerup', clearPressedCursor, { passive: true });
+    window.addEventListener('pointercancel', clearPressedCursor, { passive: true });
     window.addEventListener('blur', onBlur);
     root.addEventListener('pointerleave', onPointerLeave, { passive: true });
     return () => {
       root.classList.remove('cm-terra-cursor-enabled');
+      clearPressedCursor();
       root.style.removeProperty('--cm-terra-cursor');
       root.style.removeProperty('--cm-terra-cursor-interactive');
+      root.style.removeProperty('--cm-terra-cursor-pressed');
       window.removeEventListener('resize', resize);
       window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', clearPressedCursor);
+      window.removeEventListener('pointercancel', clearPressedCursor);
       window.removeEventListener('blur', onBlur);
       root.removeEventListener('pointerleave', onPointerLeave);
       if (frame) window.cancelAnimationFrame(frame);

@@ -26,6 +26,11 @@
 #root.cm-terra-cursor-enabled [contenteditable="true"] * { cursor: text !important; }
 #root.cm-terra-cursor-enabled select { cursor: auto !important; }
 
+#root.cm-terra-cursor-enabled.cm-terra-cursor-pressed,
+#root.cm-terra-cursor-enabled.cm-terra-cursor-pressed * {
+  cursor: var(--cm-terra-cursor-pressed, var(--cm-terra-cursor, auto)) !important;
+}
+
 @media (prefers-reduced-motion: reduce), (pointer: coarse) {
   .cm-terra-cursor-dust { display: none; }
   #root.cm-terra-cursor-enabled,
