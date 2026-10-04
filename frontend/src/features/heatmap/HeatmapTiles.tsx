@@ -31,6 +31,21 @@ export interface LeafEntry {
   renderId: string;
 }
 
+function categoryWeightedChange(node: LayoutNode): number {
+  const leaves = node.leaves();
+  if (!leaves.length) return 0;
+  let totalWeight = 0;
+  let weightedChange = 0;
+  for (const leaf of leaves) {
+    const data = leaf.data as HeatmapData;
+    const w = Math.max(0.0001, data.weight || 1);
+    const chg = data.changePercent || 0;
+    weightedChange += chg * w;
+    totalWeight += w;
+  }
+  return totalWeight > 0 ? weightedChange / totalWeight : 0;
+}
+
 export const CategoryTiles = memo(function CategoryTiles({
   parents,
   hoveredCategoryId,
@@ -48,20 +63,34 @@ export const CategoryTiles = memo(function CategoryTiles({
     if (nodeWidth < 24 || nodeHeight < 20) return null;
     const headerPadding = categoryHeaderPadding(node.depth, nodeWidth, nodeHeight);
     const active = hoveredCategoryId === id;
+    const isSector = node.depth === 1;
+    const avgChange = isSector ? 0 : categoryWeightedChange(node);
+    const industryHeaderBg = getColorForChange(avgChange);
+
     return (
       <div
         key={id}
         data-hm-category-id={id}
+        data-hm-depth={node.depth}
         role="button"
         tabIndex={0}
-        aria-label={`${node.depth === 1 ? 'Sector or asset class' : 'Industry or theme'}: ${nodeData.name}`}
+        aria-label={`${isSector ? 'Sector or asset class' : 'Industry or theme'}: ${nodeData.name}`}
         aria-pressed={active}
         className={`absolute overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-copper-400 ${zoom > 1 ? 'cursor-grab' : 'cursor-pointer'}`}
         style={{
-          left: node.x0, top: node.y0, width: nodeWidth, height: nodeHeight,
-          border: active ? '2px solid #d99a5b' : node.depth === 1 ? '1px solid #334155' : '1px solid #1e293b',
+          left: node.x0,
+          top: node.y0,
+          width: nodeWidth,
+          height: nodeHeight,
+          border: active
+            ? '2px solid #d99a5b'
+            : isSector
+              ? '1.5px solid #202432'
+              : '1px solid #12151c',
           backgroundColor: active ? '#d99a5b' : '#020617',
-          boxShadow: active ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)' : undefined,
+          boxShadow: active
+            ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)'
+            : undefined,
           // Category geometry stays below stock cells so the copper
           // highlight never intercepts stock hover/focus events.
           zIndex: 1,
@@ -69,12 +98,44 @@ export const CategoryTiles = memo(function CategoryTiles({
       >
         {headerPadding > 1 && (
           <div
-            className={node.depth === 1
-              ? 'pointer-events-none truncate bg-slate-900/95 px-1.5 pt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200'
-              : 'pointer-events-none truncate bg-slate-800/95 px-1 text-[8px] font-semibold uppercase tracking-wide text-slate-400'}
-            style={{ height: headerPadding - 1 }}
+            className={`pointer-events-none relative z-[3] flex items-center ${
+              isSector
+                ? 'border-b border-[#10131a] bg-[#161922] px-2 font-bold uppercase tracking-wider text-white'
+                : 'border-b border-[#12151c] px-1.5 font-bold uppercase tracking-wide text-white'
+            }`}
+            style={{
+              height: headerPadding - 1,
+              backgroundColor: isSector ? '#161922' : industryHeaderBg,
+            }}
           >
-            {nodeData.name}
+            <span
+              className="truncate"
+              style={{
+                fontSize: isSector ? '10.5px' : '8.5px',
+                lineHeight: 1,
+                textShadow: '0 1px 2px rgba(0,0,0,0.85)',
+              }}
+            >
+              {nodeData.name}
+            </span>
+            {!isSector && nodeWidth >= 28 && (
+              <svg
+                className="pointer-events-none absolute -bottom-[4px] left-1.5 z-[3]"
+                width="10"
+                height="5"
+                viewBox="0 0 10 5"
+                aria-hidden="true"
+              >
+                <polygon points="0,0 5,5 10,0" fill={industryHeaderBg} />
+                <polyline
+                  points="0,0 5,5 10,0"
+                  fill="none"
+                  stroke="#12151c"
+                  strokeWidth="1"
+                  strokeLinejoin="miter"
+                />
+              </svg>
+            )}
           </div>
         )}
       </div>
@@ -82,7 +143,7 @@ export const CategoryTiles = memo(function CategoryTiles({
   });
 });
 
-const TEXT_SHADOW = '0 1px 2px rgba(0,0,0,.45)';
+const TEXT_SHADOW = '0 1px 2px rgba(0,0,0,0.85), 0 0 1px rgba(0,0,0,0.9)';
 
 function lodVisibility(minScale: number, maxScale: number, scale: number) {
   return minScale <= scale && scale < maxScale ? 'visible' : 'hidden';
@@ -128,7 +189,7 @@ function TileTierLayer({
         />
       )}
       <strong
-        className="block whitespace-nowrap font-bold"
+        className="block whitespace-nowrap font-bold text-white"
         style={{
           fontSize: typography.ticker,
           lineHeight: LINE_HEIGHT,
@@ -141,7 +202,7 @@ function TileTierLayer({
       </strong>
       {showChange && (
         <span
-          className="block whitespace-nowrap font-semibold tabular-nums"
+          className="block whitespace-nowrap font-bold tabular-nums text-white"
           style={{
             fontSize: typography.change,
             lineHeight: LINE_HEIGHT,
@@ -154,7 +215,7 @@ function TileTierLayer({
       )}
       {showPrice && (
         <span
-          className="block whitespace-nowrap font-medium tabular-nums text-white/80"
+          className="block whitespace-nowrap font-medium tabular-nums text-white/85"
           style={{
             fontSize: typography.price,
             lineHeight: LINE_HEIGHT,
@@ -202,13 +263,15 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { le
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter,box-shadow] duration-75 hover:brightness-125 hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.4)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,
           width: cellWidth,
           height: cellHeight,
           backgroundColor: getColorForChange(item.changePercent),
+          border: '1px solid #12151c',
+          boxSizing: 'border-box',
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >
