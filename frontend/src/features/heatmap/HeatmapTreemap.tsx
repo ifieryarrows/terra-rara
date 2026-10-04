@@ -285,10 +285,6 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (scroller.dataset.zoomed !== zoomedValue) scroller.dataset.zoomed = zoomedValue;
     const touchAction = isZoomed ? 'none' : 'auto';
     if (scroller.style.touchAction !== touchAction) scroller.style.touchAction = touchAction;
-    if (!zoomingRef.current) {
-      scroller.scrollLeft = Math.round(-camera.x);
-      scroller.scrollTop = Math.round(-camera.y);
-    }
     // Transform the stable treemap geometry directly.
     surface.style.transform = `matrix(${camera.scale}, 0, 0, ${camera.scale}, ${camera.x}, ${camera.y})`;
     // Reveal labels at the exact zoom scale where they fit when not actively animating.
@@ -317,16 +313,12 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       lastZoomFrameTimeRef.current = null;
       zoomingRef.current = false;
       const scroller = scrollRef.current;
-      if (scroller) {
-        scroller.scrollLeft = Math.round(-cameraRef.current.x);
-        scroller.scrollTop = Math.round(-cameraRef.current.y);
-      }
       updateTileVisibility(cameraRef.current.scale);
 
       // A stationary pointer can move over new cells as the map is transformed.
       // Defer hover work until the camera settles, then resolve the final cell once.
       const pointer = lastPointerRef.current;
-      if (pointer && scroller) {
+      if (pointer && scroller && typeof document.elementFromPoint === 'function') {
         const targetElement = document.elementFromPoint(pointer.x, pointer.y);
         if (
           targetElement
@@ -400,8 +392,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const scroller = scrollRef.current;
     if (!scroller) return null;
     const camera = cameraRef.current;
-    const x = scroller.clientWidth / 2;
-    const y = scroller.clientHeight / 2;
+    const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
+    const x = (scroller.clientWidth || contentWidth || 1) / 2;
+    const y = (scroller.clientHeight || contentHeight || 1) / 2;
     return {
       x,
       y,
@@ -409,6 +402,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       contentY: (y - camera.y) / camera.scale,
     };
   };
+
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -646,6 +640,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   return (
       <div
         ref={scrollRef}
+      onScroll={(event) => {
+        if (event.currentTarget.scrollLeft !== 0) event.currentTarget.scrollLeft = 0;
+        if (event.currentTarget.scrollTop !== 0) event.currentTarget.scrollTop = 0;
+      }}
       onPointerOver={onPointerOver}
       onPointerMove={onPointerMove}
       onPointerOut={onPointerOut}

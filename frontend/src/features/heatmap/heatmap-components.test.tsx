@@ -311,6 +311,85 @@ describe('heatmap interaction primitives', () => {
     expect(zoom.mock.calls[0][0]).toBeGreaterThan(0);
   });
 
+  it('settles zoom animation at the target scale without snapping position or double-translating scroll', async () => {
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'Technology', children: [{
+          id: 'industry', name: 'Semiconductors', children: [{ id: 'nvda', name: 'NVDA', weight: 100 }],
+        }],
+      }],
+    };
+    render(<HeatmapTreemap data={data} width={700} height={400} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} />);
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    const surface = map.firstElementChild as HTMLDivElement;
+    expect(surface.style.transform).toContain('matrix(1, 0, 0, 1, 0, 0)');
+
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, clientX: 350, clientY: 200 });
+    map.dispatchEvent(wheel);
+
+    // Wait for zoom animation to settle (decay constant ~38ms, completes within ~250ms)
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+
+    expect(surface.style.transform).not.toContain('matrix(1, 0, 0, 1, 0, 0)');
+    const matrixMatch = surface.style.transform.match(/matrix\(([^)]+)\)/);
+    expect(matrixMatch).toBeTruthy();
+    const parts = matrixMatch![1].split(',').map((v) => Number(v.trim()));
+    const [scaleX, , , scaleY, tx, ty] = parts;
+    expect(scaleX).toBeGreaterThan(1.1);
+    expect(scaleY).toBeGreaterThan(1.1);
+    expect(tx).toBeLessThanOrEqual(0);
+    expect(ty).toBeLessThanOrEqual(0);
+    expect(map.scrollLeft).toBe(0);
+    expect(map.scrollTop).toBe(0);
+    expect(surface.style.pointerEvents).toBe('');
+
+    // If native scrolling is attempted on the container, onScroll locks it at (0, 0)
+    map.scrollLeft = 50;
+    map.scrollTop = 50;
+    fireEvent.scroll(map);
+    expect(map.scrollLeft).toBe(0);
+    expect(map.scrollTop).toBe(0);
+  });
+
+  it('handles rapid wheel direction reversals and successive zoom bursts smoothly', async () => {
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'Technology', children: [{
+          id: 'industry', name: 'Semiconductors', children: [{ id: 'nvda', name: 'NVDA', weight: 100 }],
+        }],
+      }],
+    };
+    render(<HeatmapTreemap data={data} width={700} height={400} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} />);
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    const surface = map.firstElementChild as HTMLDivElement;
+
+    // Zoom in twice rapidly
+    map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, clientX: 350, clientY: 200 }));
+    map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, clientX: 350, clientY: 200 }));
+
+    // Wait a brief tick (50ms, animation in-flight)
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+
+    // Reverse wheel direction to zoom out (two steps because delta per event is clamped to max exponent 0.34)
+    map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 150, clientX: 350, clientY: 200 }));
+    map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 150, clientX: 350, clientY: 200 }));
+
+    // Wait for animation to settle completely
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+    expect(map.scrollLeft).toBe(0);
+    expect(map.scrollTop).toBe(0);
+    const matrixMatch = surface.style.transform.match(/matrix\(([^)]+)\)/);
+    expect(matrixMatch).toBeTruthy();
+    const parts = matrixMatch![1].split(',').map((v) => Number(v.trim()));
+    const [scaleX, , , scaleY, tx, ty] = parts;
+    expect(scaleX).toBeCloseTo(1, 1);
+    expect(scaleY).toBeCloseTo(1, 1);
+    expect(tx).toBeCloseTo(0, 1);
+    expect(ty).toBeCloseTo(0, 1);
+    expect(surface.style.pointerEvents).toBe('');
+  });
+
   it('previews a zoom burst without rebuilding tiles until wheel movement settles', async () => {
     vi.useFakeTimers();
     const data: HeatmapNode = {
@@ -343,6 +422,7 @@ describe('heatmap interaction primitives', () => {
     const pin = vi.fn();
     render(<HeatmapTreemap data={data} width={700} height={400} zoom={2} hoveredCategoryId={null} onCategoryHover={() => {}} onCategoryClick={pin} />);
     const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    const surface = map.firstElementChild as HTMLDivElement;
     Object.assign(map, {
       setPointerCapture: vi.fn(),
       hasPointerCapture: vi.fn(() => true),
@@ -353,8 +433,9 @@ describe('heatmap interaction primitives', () => {
     expect(pointerDown.defaultPrevented).toBe(true);
     fireEvent.pointerMove(map, { pointerId: 7, clientX: 140, clientY: 120 });
     fireEvent.pointerUp(map, { pointerId: 7, clientX: 140, clientY: 120, button: 0 });
-    expect(map.scrollLeft).toBe(60);
-    expect(map.scrollTop).toBe(60);
+    expect(surface.style.transform).toBe('matrix(2, 0, 0, 2, -60, -60)');
+    expect(map.scrollLeft).toBe(0);
+    expect(map.scrollTop).toBe(0);
     expect(pin).not.toHaveBeenCalled();
   });
 
