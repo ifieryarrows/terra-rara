@@ -246,6 +246,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const started = useRef(false);
   const navigationStarted = useRef(false);
   const destination = useRef('/dashboard');
+  const previousPathnameRef = useRef(pathname);
   const previousLocationKey = useRef(key);
   const genericRevealTimer = useRef<number | undefined>(undefined);
 
@@ -283,8 +284,11 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    if (previousLocationKey.current !== key) {
-      previousLocationKey.current = key;
+    const isPathnameChange = previousPathnameRef.current !== pathname;
+    previousPathnameRef.current = pathname;
+    previousLocationKey.current = key;
+
+    if (isPathnameChange) {
       if (active) {
         root.dataset.cmRouteTransition = 'arriving';
       } else {
@@ -302,13 +306,13 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       root.dataset.cmTransitionPhase = reducedMotion ? 'reduced' : phase;
       return;
     }
-    if (genericRevealTimer.current === undefined) {
+    if (!isPathnameChange && genericRevealTimer.current === undefined) {
       delete root.dataset.cmTransitionPhase;
       delete root.dataset.cmRouteTransition;
     }
     delete root.dataset.cmLogoTransition;
     root.style.removeProperty(ROUTE_TRANSITION_MIN_HEIGHT);
-  }, [active, phase, reducedMotion, key]);
+  }, [active, phase, reducedMotion, key, pathname]);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -325,9 +329,11 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
         if (!url.hash || url.hash === current.hash) return;
         let targetId: string;
         try { targetId = decodeURIComponent(url.hash.slice(1)); } catch { return; }
-        if (!document.getElementById(targetId)) return;
+        const targetElement = document.getElementById(targetId);
+        if (!targetElement) return;
         event.preventDefault();
-        navigate(`${url.pathname}${url.search}${url.hash}`, { preventScrollReset: true });
+        window.history.pushState(null, '', url.hash);
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
 

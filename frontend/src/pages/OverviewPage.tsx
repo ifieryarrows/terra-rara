@@ -157,29 +157,22 @@ export const OverviewPage = () => {
   useEffect(() => {
     if (isInitialLoad) return;
     const ids = ['price-forecast', 'weekly-outlook', 'market-drivers', 'news-intelligence', 'market-map'];
-    const main = document.getElementById('main-content');
-    if (!main || typeof IntersectionObserver === 'undefined') return;
-    const observed = new Set<Element>();
+    if (typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver((entries) => {
       const current = entries
         .filter((entry) => entry.isIntersecting)
         .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (current?.target.id) setActiveOverviewSection(current.target.id);
+      if (current?.target.id) {
+        setActiveOverviewSection((prev) => (prev === current.target.id ? prev : current.target.id));
+      }
     }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.2, 0.5, 1] });
-    const observeSections = () => {
-      ids.forEach((id) => {
-        const section = document.getElementById(id);
-        if (section && !observed.has(section)) {
-          observed.add(section);
-          observer.observe(section);
-        }
-      });
-    };
-    observeSections();
-    const mutations = new MutationObserver(observeSections);
-    mutations.observe(main, { childList: true, subtree: true });
+
+    ids.forEach((id) => {
+      const section = document.getElementById(id);
+      if (section) observer.observe(section);
+    });
+
     return () => {
-      mutations.disconnect();
       observer.disconnect();
     };
   }, [isInitialLoad]);
@@ -258,6 +251,16 @@ export const OverviewPage = () => {
   const quoteChange = quoteComparison(livePrice, latestHistoryPrice);
 
 
+  const handleSectionNav = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    setActiveOverviewSection(id);
+    const target = document.getElementById(id);
+    if (target) {
+      window.history.pushState(null, '', `#${id}`);
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
     <div className="cm-market-dashboard font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
       <div className="cm-dashboard-page relative z-10 grid min-w-0 grid-cols-1">
@@ -309,7 +312,13 @@ export const OverviewPage = () => {
         </header>
 
         <div className="cm-overview-tools" data-cm-route-reveal="surface">
-          <nav aria-label="Market overview sections"><a href="#price-forecast" aria-current={activeOverviewSection === 'price-forecast' ? 'location' : undefined}>Price action</a><a href="#weekly-outlook" aria-current={activeOverviewSection === 'weekly-outlook' ? 'location' : undefined}>Weekly outlook</a><a href="#market-drivers" aria-current={activeOverviewSection === 'market-drivers' ? 'location' : undefined}>Drivers</a><a href="#news-intelligence" aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a><a href="#market-map" aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a></nav>
+          <nav aria-label="Market overview sections">
+            <a href="#price-forecast" onClick={(e) => handleSectionNav(e, 'price-forecast')} aria-current={activeOverviewSection === 'price-forecast' ? 'location' : undefined}>Price action</a>
+            <a href="#weekly-outlook" onClick={(e) => handleSectionNav(e, 'weekly-outlook')} aria-current={activeOverviewSection === 'weekly-outlook' ? 'location' : undefined}>Weekly outlook</a>
+            <a href="#market-drivers" onClick={(e) => handleSectionNav(e, 'market-drivers')} aria-current={activeOverviewSection === 'market-drivers' ? 'location' : undefined}>Drivers</a>
+            <a href="#news-intelligence" onClick={(e) => handleSectionNav(e, 'news-intelligence')} aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a>
+            <a href="#market-map" onClick={(e) => handleSectionNav(e, 'market-map')} aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a>
+          </nav>
           <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
         </div>
         {Object.keys(loadErrors).length > 0 && (

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigationType } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MotionConfig } from 'framer-motion';
@@ -26,13 +26,16 @@ const scrollPositions = new Map<string, number>();
 function RouteLifecycle() {
   const { pathname, key, hash } = useLocation();
   const navigationType = useNavigationType();
+  const previousPathnameRef = useRef(pathname);
   useEffect(() => {
     document.title = titles[pathname] || 'Page not found | CopperMind';
     let focused = false;
     let cancelScroll: () => void = () => undefined;
+    const isNewPathname = previousPathnameRef.current !== pathname;
+    previousPathnameRef.current = pathname;
     const focusMain = () => {
       const main = document.getElementById('main-content');
-      if (main && !focused) { main.focus({ preventScroll: true }); focused = true; }
+      if (isNewPathname && main && !focused) { main.focus({ preventScroll: true }); focused = true; }
       const anchor = hash ? document.getElementById(hash.slice(1)) : null;
       // A workspace section may arrive after its route shell and initial data.
       if (hash && !anchor) return false;
