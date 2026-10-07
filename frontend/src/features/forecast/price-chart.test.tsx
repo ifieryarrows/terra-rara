@@ -55,8 +55,8 @@ it('lets readers change periods and series and inspect all available table value
   const user = userEvent.setup();
   const { container } = render(<PriceForecastChart history={history} forecast={forecast}/>);
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: '90 closes' }));
-  expect(screen.getByRole('button', { name: '90 closes' })).toHaveAttribute('aria-pressed', 'true');
+  await user.click(screen.getByRole('button', { name: 'Last 90 daily closes' }));
+  expect(screen.getByRole('button', { name: 'Last 90 daily closes' })).toHaveAttribute('aria-pressed', 'true');
   await user.click(screen.getByRole('button', { name: 'Forecast median' }));
   expect(screen.getByRole('button', { name: 'Forecast median' })).toHaveAttribute('aria-pressed', 'false');
   const details = container.querySelector('details')!;
@@ -74,7 +74,7 @@ it('lets readers change periods and series and inspect all available table value
 it('labels historical-only, unavailable and loading failures without inventing forecast values', () => {
   const { rerender } = render(<PriceForecastChart history={history} forecast={null}/>);
   expect(screen.getByRole('button', { name: 'Forecast median' })).toBeDisabled();
-  expect(screen.getByText(/Showing historical closes only/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Q10–Q90 range' })).toBeDisabled();
   rerender(<PriceForecastChart history={[]} forecast={null} historyError/>);
   expect(screen.getByRole('alert')).toHaveTextContent('Price history could not be loaded');
   rerender(<PriceForecastChart history={[]} forecast={null}/>);

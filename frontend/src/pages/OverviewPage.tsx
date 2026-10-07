@@ -5,8 +5,8 @@ import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
 import { ViewState } from '../components/ui/ViewState';
+import { OverviewSkeleton } from '../components/skeletons';
 import { BrandMark } from '../components/ui/BrandMark';
-import { PageHeader } from '../components/ui/PageHeader';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
   Brain, Crosshair, AlertTriangle, Minus
@@ -218,7 +218,7 @@ export const OverviewPage = () => {
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
-    return <div className="space-y-6" data-cm-dashboard-ready="false"><PageHeader eyebrow="01 / COMMODITIES INTELLIGENCE" title="Copper market" description="Price action, market context and quantitative forecasts."/><ViewState kind="loading" title="Opening your market view" description="Retrieving prices, market context and available forecasts."/></div>;
+    return <OverviewSkeleton />;
   }
 
   const tftReturn = tftAnalysis?.primary_forecast_return

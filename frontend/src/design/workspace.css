@@ -1,3 +1,4 @@
+@import './skeleton.css';
 /* Workspace-only foundations load with AppShell, keeping them out of the landing bundle. */
 .cm-panel { min-width: 0; padding: var(--cm-space-panel); background: color-mix(in srgb, var(--cm-surface) 92%, transparent); border: 1px solid var(--cm-border); border-radius: var(--cm-radius); }
 .cm-panel-title { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.25rem; color: var(--cm-muted); font-size: .875rem; font-weight: 500; }

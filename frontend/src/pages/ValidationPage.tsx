@@ -1,6 +1,7 @@
 import { MetricCard as Stat } from '../components/ui/MetricCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ViewState } from '../components/ui/ViewState';
+import { ValidationSkeleton } from '../components/skeletons';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { DataTable } from '../components/ui/DataTable';
 import { SectionHeader } from '../components/ui/SectionHeader';
@@ -17,7 +18,7 @@ export const ValidationPage = () => {
   const header = <PageHeader eyebrow="03 / THE EVIDENCE" title="Walk-Forward Validation" description={<>Out-of-sample backtest results and baseline comparisons.{data?.report_date && <span className="block">Report generated {new Date(data.report_date).toLocaleString()}</span>}</>} actions={<>{data?.verdict && <span className="cm-filter-chip">Verdict: {data.verdict}</span>}<RefreshButton onClick={() => refetch()} busy={isFetching}/></>}/>;
 
   if (isLoading) {
-    return <div className="space-y-6">{header}<ViewState kind="loading" title="Loading validation evidence" description="Retrieving the available out-of-sample report."/></div>;
+    return <ValidationSkeleton />;
   }
 
   // Empty-state (204-like) or real error

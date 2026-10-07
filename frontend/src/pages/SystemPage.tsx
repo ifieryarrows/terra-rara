@@ -1,6 +1,7 @@
 import { useSystemStatus } from '../hooks/useQueries';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ViewState } from '../components/ui/ViewState';
+import { SystemSkeleton } from '../components/skeletons';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { SectionHeader } from '../components/ui/SectionHeader';
 import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
@@ -45,7 +46,7 @@ export const SystemPage = () => {
   const header = <PageHeader eyebrow="04 / AVAILABILITY & FRESHNESS" title="System Status" description="Infrastructure health, snapshot freshness and queue connectivity." actions={<>{data?.status && <span className={`cm-filter-chip cm-tone-${data.status === 'healthy' ? 'good' : data.status === 'unhealthy' ? 'bad' : 'neutral'}`}>{data.status}</span>}<RefreshButton onClick={() => refetch()} busy={isFetching}/></>}/>;
 
   if (isLoading) {
-    return <div className="space-y-6">{header}<ViewState kind="loading" title="Checking system status" description="Retrieving service availability and data timestamps."/></div>;
+    return <SystemSkeleton />;
   }
 
   if (isError || !data) {

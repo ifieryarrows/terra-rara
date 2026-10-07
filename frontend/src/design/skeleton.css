@@ -1,0 +1,63 @@
+/* CopperMind High-Fidelity Skeletons */
+
+.cm-skeleton-bone {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    90deg,
+    var(--cm-surface-raised) 0%,
+    color-mix(in srgb, var(--cm-surface-raised) 65%, var(--cm-copper) 14%) 50%,
+    var(--cm-surface-raised) 100%
+  );
+  background-size: 200% 100%;
+  border-radius: var(--cm-radius, 0.375rem);
+  animation: cm-skeleton-shimmer 1.6s var(--cm-ease, cubic-bezier(0.22, 1, 0.36, 1)) infinite;
+}
+
+@keyframes cm-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.cm-skeleton-bone--text {
+  height: 0.85rem;
+  border-radius: 0.25rem;
+}
+
+.cm-skeleton-bone--chip {
+  display: inline-block;
+  height: 1.5rem;
+  width: 5.5rem;
+  border-radius: 9999px;
+}
+
+.cm-skeleton-bone--dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.cm-chart-skeleton-plot {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--cm-surface-raised) 40%, transparent) 0%,
+    transparent 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-skeleton-bone,
+  .cm-state-skeleton span,
+  .cm-map-skeleton__globe,
+  .cm-map-skeleton__orbit,
+  .cm-map-skeleton__orbit--reverse {
+    animation: none !important;
+    background-image: none !important;
+    background-color: var(--cm-surface-raised) !important;
+  }
+}
