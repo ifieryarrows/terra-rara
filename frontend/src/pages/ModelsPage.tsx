@@ -1,6 +1,7 @@
 import { MetricCard as Metric } from '../components/ui/MetricCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ViewState } from '../components/ui/ViewState';
+import { ModelsSkeleton } from '../components/skeletons';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { SectionHeader } from '../components/ui/SectionHeader';
 import { useTftModelSummary } from '../hooks/useQueries';
@@ -14,7 +15,7 @@ export const ModelsPage = () => {
   const header = <PageHeader eyebrow="02 / MODEL INTELLIGENCE" title="TFT-ASRO Model" description={<>Weekly strategy, daily diagnostics and the evidence behind each forecast.{data?.trained_at && <span className="block">{data.symbol} · Checkpoint trained {new Date(data.trained_at).toLocaleString()}</span>}</>} actions={data?.quality_gate && <span className={`cm-filter-chip cm-tone-${data.quality_gate.passed ? 'good' : 'bad'}`}>Quality gate: {data.quality_gate.passed ? 'Passed' : 'Failed'}</span>}/>;
 
   if (isLoading) {
-    return <div className="space-y-6">{header}<ViewState kind="loading" title="Loading model intelligence" description="Retrieving the available checkpoint and validation metrics."/></div>;
+    return <ModelsSkeleton />;
   }
 
   if (isError || !data) {

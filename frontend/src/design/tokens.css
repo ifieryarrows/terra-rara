@@ -41,7 +41,9 @@
 }
 
 html { background: var(--cm-bg); scroll-padding-top: 7rem; scroll-behavior: smooth; }
-body { margin: 0; min-width: 20rem; font-family: var(--cm-font-family); }
+html[data-cm-route-transition] { scrollbar-gutter: stable; }
+/* Preserve the outgoing page's scroll range only during the logo transition. */
+body { margin: 0; min-width: 20rem; min-height: max(100vh, var(--cm-route-transition-min-height, 0px)); font-family: var(--cm-font-family); }
 
 @keyframes cm-route-copy-reveal {
   from { clip-path: inset(0 0 100%); opacity: 0; transform: translate3d(0, .55rem, 0); }
@@ -53,11 +55,12 @@ body { margin: 0; min-width: 20rem; font-family: var(--cm-font-family); }
   to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
-@keyframes cm-route-depart { to { opacity: .12; } }
 @keyframes cm-route-shell-reveal {
   from { opacity: 0; transform: translate3d(0, -.3rem, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+
+@keyframes cm-route-depart { to { opacity: .12; } }
 
 html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] [data-cm-route-reveal="copy"] {
   animation: cm-route-copy-reveal 560ms var(--cm-ease) backwards;
@@ -69,11 +72,11 @@ html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] [da
   animation-delay: var(--cm-route-reveal-delay, 140ms);
 }
 
-html[data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
   animation: cm-route-depart 260ms ease-out both;
 }
 
-html[data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"], [data-cm-transition-phase="release"], [data-cm-transition-phase="reduced"]) :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"], [data-cm-transition-phase="release"], [data-cm-transition-phase="reduced"]) :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
   opacity: 0;
   pointer-events: none;
 }
@@ -89,7 +92,9 @@ html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm
 
 @media (prefers-reduced-motion: reduce) {
   html[data-cm-route-transition="arriving"] [data-cm-route-reveal] { animation: none !important; }
-  html[data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading),
+  html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
+    animation: none !important;
+  }
   html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] :is(.cm-workspace-header, .cm-workspace-footer) {
     animation: none !important;
   }

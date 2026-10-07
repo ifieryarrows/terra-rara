@@ -13,8 +13,8 @@ interface PanelProps {
 
 export const FinancialPanel = memo(function FinancialPanel({ id, title, icon: Icon, children, className, colSpan = 12 }: PanelProps) {
   return (
-    <section id={id} className={clsx('cm-panel cm-financial-panel', className)} style={{ '--cm-panel-span': colSpan } as CSSProperties} aria-label={title}>
-      <h2 className="cm-panel-title">{Icon && <Icon size={18} aria-hidden="true" />}{title}</h2>
+    <section id={id} className={clsx('cm-panel cm-financial-panel', className)} style={{ '--cm-panel-span': colSpan } as CSSProperties} aria-label={title} data-cm-route-reveal="surface">
+      <h2 className="cm-panel-title" data-cm-route-reveal="copy">{Icon && <Icon size={18} aria-hidden="true" />}{title}</h2>
       <div className="cm-panel-body">{children}</div>
     </section>
   );

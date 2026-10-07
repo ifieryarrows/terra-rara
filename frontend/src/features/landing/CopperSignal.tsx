@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { motion, type MotionValue } from 'framer-motion';
+import { BrandMark } from '../../components/ui/BrandMark';
 import { linePath, previewSeries } from './preview-data';
 
 const contours = Array.from({ length: 26 }, (_, layer) => {
@@ -26,8 +27,8 @@ export function CopperSignal({ progress }: { progress?: MotionValue<number> }) {
       <g fill="none" stroke={`url(#${id}-copper)`} strokeWidth="1.25">{contours.map((d, i) => <path key={i} d={d} opacity={.5 + i / 52}/>)}</g>
       <path d="M18 230H112 M428 230H522 M270 14V72 M270 394V450" stroke="var(--cm-border)" strokeDasharray="2 5"/>
       <circle cx="270" cy="230" r="4" fill="var(--cm-copper)"/>
-      <text x="270" y="214" textAnchor="middle" fill="var(--cm-text)" fontSize="60" fontWeight="300" letterSpacing="-4">Cu</text>
-      <text x="270" y="262" textAnchor="middle" fill="var(--cm-copper)" fontSize="11" letterSpacing="3">COPPER</text>
+      <BrandMark size={72} x={234} y={194} variant="primary" className="cm-signal-brand-mark"/>
+      <text x="270" y="283" textAnchor="middle" fill="var(--cm-copper)" fontSize="10" letterSpacing="2.6">COPPER</text>
     </svg>
     <div className="cm-signal-note cm-signal-note--market"><span>01 / MARKET</span><strong>Find the relationships.</strong></div>
     <div className="cm-signal-note cm-signal-note--context"><span>02 / INTELLIGENCE</span><strong>Connect the context.</strong></div>

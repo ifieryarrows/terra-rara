@@ -6,7 +6,6 @@ import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './Heatmap
 import {
   aggregateTinyLeaves,
   compressLeafWeights,
-  leavesForCategory,
   type HeatmapData,
   type HeatmapMeta,
   type HeatmapNode,
@@ -15,12 +14,10 @@ import { recordCommit, recordLongTask } from './performance';
 import { useMarketHeatmap } from '../../hooks/useQueries';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 const OPEN_DELAY_MS = 90;
 const CLOSE_DELAY_MS = 180;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-
 function transformTree(
   raw: HeatmapNode,
   groupFilter: string,
@@ -42,16 +39,47 @@ function transformTree(
   return sortFilter === 'Weight' ? compressLeafWeights(transformed, 0.1) : transformed;
 }
 
+function findMapCategory(node: HeatmapNode, id: string): HeatmapNode | null {
+  if (!node.children?.length) return null;
+  if (String(node.id || node.name) === id) return node;
+  for (const child of node.children) {
+    if (!('children' in child) || !child.children?.length) continue;
+    const match = findMapCategory(child as HeatmapNode, id);
+    if (match) return match;
+  }
+  return null;
+}
+
+function indexCategoryLeaves(root: HeatmapNode): Map<string, HeatmapData[]> {
+  const index = new Map<string, HeatmapData[]>();
+  const visit = (node: HeatmapNode | HeatmapData, depth: number): HeatmapData[] => {
+    const children = 'children' in node ? node.children : undefined;
+    if (!children?.length) return [node as HeatmapData];
+    const leaves = children.flatMap((child) => visit(child, depth + 1));
+    const category = node as HeatmapNode;
+    index.set(String(category.id || `${depth}-${category.name}`), leaves);
+    if (category.id) index.set(String(category.id), leaves);
+    if (!index.has(category.name)) index.set(category.name, leaves);
+    return leaves;
+  };
+  visit(root, 0);
+  return index;
+}
+
+interface HeatmapFocusEntry {
+  id: string;
+  name: string;
+}
+
 export const HeatmapPanel: React.FC = () => {
   const [view, setView] = useState<'market' | 'themes'>('market');
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [zoom, setZoom] = useState(1);
-  const [highlightedCategoryId, setHighlightedCategoryId] = useState<string | null>(null);
   const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
   const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
   const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
+  const [focusedPath, setFocusedPath] = useState<HeatmapFocusEntry[]>([]);
   const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -148,17 +176,14 @@ export const HeatmapPanel: React.FC = () => {
       // Finviz paints selection on a dedicated hover canvas. Mirror that
       // immediacy for the visual boundary while retaining the panel's close
       // grace period.
-      setHighlightedCategoryId(null);
       scheduleClose();
       return;
     }
-    setHighlightedCategoryId(anchor.id);
     if (anchor.pointer) latestPointer.current = anchor.pointer;
     const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
     clearTimer(openTimer);
     if (hoveredAnchor?.id === anchor.id) {
-      setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
       return;
     }
     openTimer.current = window.setTimeout(() => {
@@ -177,7 +202,6 @@ export const HeatmapPanel: React.FC = () => {
       if (pinnedAnchor || hoveredAnchor) {
         setPinnedAnchor(null);
         setHoveredAnchor(null);
-        setHighlightedCategoryId(null);
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -188,12 +212,13 @@ export const HeatmapPanel: React.FC = () => {
 
   useEffect(() => {
     setGroupFilter('ALL');
-    setHighlightedCategoryId(null);
     setHoveredAnchor(null);
     setHoveredLeaf(null);
     setPinnedAnchor(null);
-    setZoom(1);
+    setFocusedPath([]);
   }, [view]);
+
+  useEffect(() => setFocusedPath([]), [groupFilter]);
 
   const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
   const sourceTree = useMemo<HeatmapNode | null>(() => {
@@ -201,21 +226,36 @@ export const HeatmapPanel: React.FC = () => {
     const { _meta: _meta, ...tree } = rawData as HeatmapNode;
     return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
   }, [groupFilter, rawData, sortFilter]);
+  const focusedTree = useMemo(() => {
+    if (!sourceTree) return null;
+    let current = sourceTree;
+    for (const entry of focusedPath) {
+      const next = findMapCategory(current, entry.id);
+      if (!next) return null;
+      current = next;
+    }
+    return current;
+  }, [focusedPath, sourceTree]);
   const renderTree = useMemo(
-    () => sourceTree ? aggregateTinyLeaves(sourceTree, dimensions.width, dimensions.height) : null,
-    [dimensions.height, dimensions.width, sourceTree],
+    () => focusedTree ? aggregateTinyLeaves(focusedTree, dimensions.width, dimensions.height) : null,
+    [dimensions.height, dimensions.width, focusedTree],
   );
   const groups = useMemo<string[]>(() => {
     const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();
   }, [rawData]);
+  const categoryLeafIndex = useMemo(
+    () => sourceTree ? indexCategoryLeaves(sourceTree) : new Map<string, HeatmapData[]>(),
+    [sourceTree],
+  );
   const activeAnchor = pinnedAnchor || hoveredAnchor;
   const panelLeaves = useMemo(
-    () => activeAnchor && sourceTree ? leavesForCategory(sourceTree, activeAnchor.id, activeAnchor.name) : [],
-    [activeAnchor, sourceTree],
+    () => activeAnchor
+      ? categoryLeafIndex.get(activeAnchor.id) || categoryLeafIndex.get(activeAnchor.name) || []
+      : [],
+    [activeAnchor, categoryLeafIndex],
   );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
-  const zoomBy = useCallback((delta: number) => setZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(current + delta).toFixed(2)))), []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
     if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
@@ -223,96 +263,140 @@ export const HeatmapPanel: React.FC = () => {
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
     if (!pinnedAnchor) setHoveredLeaf(leaf);
   }, [pinnedAnchor]);
+  const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
+    setPinnedAnchor(null);
+    setHoveredAnchor(null);
+    setHoveredLeaf(null);
+    setFocusedPath((current) => {
+      const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
+      if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
+      if (!sourceTree || !findMapCategory(renderTree || sourceTree, anchor.id)) return current;
+      return [...current, { id: anchor.id, name: anchor.name }];
+    });
+  }, [renderTree, sourceTree]);
+  const handleMapNavigateBack = useCallback(() => {
+    setFocusedPath((current) => current.length ? current.slice(0, -1) : current);
+    setPinnedAnchor(null);
+    setHoveredAnchor(null);
+    setHoveredLeaf(null);
+  }, []);
+  const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
+    setHoveredAnchor(anchor);
+  }, []);
 
   const content = (
-    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`flex min-w-0 max-w-full flex-col bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`}>
-      <header className="cm-heatmap-header">
-        <div>
-          <h2 className="text-base font-semibold tracking-wide text-white">Market Heatmap</h2>
-          <p className="cm-chart-note">
-            {groups.length} top-level groups · {meta.payload_count ?? 0} instruments · sector → industry → instrument
-          </p>
-        </div>
-        <div className="cm-heatmap-actions" role="group" aria-label="Map controls">
-        <button type="button" className="cm-icon-button" aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-.5)}>−</button>
-        <button type="button" className="cm-filter-chip" aria-label="Reset map zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-        <button type="button" className="cm-icon-button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(.5)}>+</button>
-        <button ref={fullscreenButtonRef} type="button" onClick={() => setIsFullscreen((current) => !current)} className="cm-filter-chip" aria-pressed={isFullscreen}>
-          {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        </button>
-        </div>
-      </header>
-
-      <HeatmapFilters
-        groupFilter={groupFilter}
-        setGroupFilter={setGroupFilter}
-        sortFilter={sortFilter}
-        setSortFilter={setSortFilter}
-        view={view}
-        setView={setView}
-        availableGroups={groups}
-        meta={meta}
-      />
-      {meta.refresh_error && <div className="border-b border-rose-800 bg-rose-950/60 px-4 py-2 text-xs text-rose-200">Last refresh failed; showing the last healthy snapshot. {meta.refresh_error}</div>}
-      {isError && hasContent && <p className="cm-news-updating" role="status">Map refresh failed. The previous snapshot remains visible.</p>}
-
-      <div
-        ref={containerRef}
-        className="relative min-w-0 flex-1"
-        style={{ height: isFullscreen ? undefined : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 280 : 560 }}
-      >
-        {isError && !hasContent ? (
-          <ViewState kind="error" title="Market map could not be loaded" description="Check again to retrieve an available snapshot." action={<RefreshButton onClick={() => refetch()} busy={isFetching} label="Retry market map"/>} compact/>
-        ) : !hasContent ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
-            {(isLoading || meta.refresh_in_progress) && <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-copper-400" />}
-            <span>{isLoading || meta.refresh_in_progress ? 'Preparing the market snapshot…' : 'No instruments match this filter.'}</span>
+    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`} data-cm-route-reveal="surface">
+      <aside className="cm-heatmap-sidebar" aria-label="Market map controls">
+        <header className="cm-heatmap-sidebar-head">
+          <div className="cm-heatmap-sidebar-title-row">
+            <div><span>MARKET MAP</span><h2>Heatmap</h2></div>
+            <button ref={fullscreenButtonRef} type="button" className="cm-heatmap-fullscreen-button" onClick={() => setIsFullscreen((current) => !current)} aria-pressed={isFullscreen} aria-label={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'} title={isFullscreen ? 'Exit fullscreen' : 'Open fullscreen'}>
+              {isFullscreen ? <Minimize2 size={15} aria-hidden="true"/> : <Maximize2 size={15} aria-hidden="true"/>}
+            </button>
           </div>
-        ) : (
-          <Profiler
-            id="MarketHeatmap"
-            onRender={(_id, phase, actualDuration) => recordCommit(phase, actualDuration)}
-          >
-            <HeatmapTreemap
-              data={renderTree!}
-              width={dimensions.width}
-              height={dimensions.height}
-              zoom={zoom}
-              hoveredCategoryId={pinnedAnchor?.id || highlightedCategoryId}
-              onCategoryHover={handleCategoryHover}
-              onCategoryPointerMove={moveCategoryPanel}
-              onLeafHover={handleLeafHover}
-              onCategoryClick={(anchor) => {
-                clearTimer(openTimer);
-                clearTimer(closeTimer);
-                setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
-                setHighlightedCategoryId(anchor.id);
-                setHoveredAnchor(anchor);
-              }}
-              onZoomDelta={zoomBy}
+          <p>{rawData
+            ? <>{groups.length} sectors <i aria-hidden="true">/</i> {meta.payload_count ?? 0} instruments</>
+            : isLoading || meta.refresh_in_progress ? 'Loading snapshot…' : 'No available snapshot'}</p>
+        </header>
+
+        <HeatmapFilters
+          groupFilter={groupFilter}
+          setGroupFilter={setGroupFilter}
+          sortFilter={sortFilter}
+          setSortFilter={setSortFilter}
+          view={view}
+          setView={setView}
+          availableGroups={groups}
+          meta={meta}
+          hasSnapshot={!!rawData}
+        />
+
+        {meta.refresh_error && <p className="cm-heatmap-error">Snapshot refresh failed. Showing the last available data.</p>}
+      </aside>
+
+      <div className="cm-heatmap-main">
+        {isError && hasContent && <p className="cm-news-updating" role="status">Map refresh failed. The previous snapshot remains visible.</p>}
+        <div
+          ref={containerRef}
+          className="cm-heatmap-stage relative min-w-0 flex-1"
+          style={{ height: isFullscreen ? undefined : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 280 : 560 }}
+        >
+          {isError && !hasContent ? (
+            <ViewState kind="error" title="Market map could not be loaded" description="Check again to retrieve an available snapshot." action={<RefreshButton onClick={() => refetch()} busy={isFetching} label="Retry market map"/>} compact/>
+          ) : !hasContent ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
+              {(isLoading || meta.refresh_in_progress) && <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-copper-400" />}
+              <span>{isLoading || meta.refresh_in_progress ? 'Preparing the market snapshot…' : 'No instruments match this filter.'}</span>
+            </div>
+          ) : (
+            <>
+              {focusedPath.length > 0 && (
+                <nav
+                  aria-label="Heatmap drill-down path"
+                  className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-md border border-slate-700/80 bg-slate-950/90 px-2 py-1 text-xs text-slate-300 shadow backdrop-blur"
+                >
+                  <button type="button" className="shrink-0 hover:text-white" onClick={() => setFocusedPath([])}>Market</button>
+                  {focusedPath.map((entry, index) => (
+                    <React.Fragment key={entry.id}>
+                      <span aria-hidden="true" className="text-slate-600">/</span>
+                      <button
+                        type="button"
+                        className="shrink-0 hover:text-white"
+                        aria-current={index === focusedPath.length - 1 ? 'page' : undefined}
+                        onClick={() => setFocusedPath((current) => current.slice(0, index + 1))}
+                      >
+                        {entry.name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </nav>
+              )}
+              <Profiler
+                id="MarketHeatmap"
+                onRender={(_id, phase, actualDuration) => recordCommit(phase, actualDuration)}
+              >
+                <HeatmapTreemap
+                  key={focusedPath.map((entry) => entry.id).join('/') || 'market-root'}
+                  data={renderTree!}
+                  width={dimensions.width}
+                  height={dimensions.height}
+                  zoom={1}
+                  resetKey={view}
+                  hoveredCategoryId={pinnedAnchor?.id || null}
+                  onCategoryHover={handleCategoryHover}
+                  onCategoryPointerMove={moveCategoryPanel}
+                  onLeafHover={handleLeafHover}
+                  onCategoryDrillDown={handleCategoryDrillDown}
+                  onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
+                  onCategoryClick={handleCategoryClick}
+                />
+              </Profiler>
+            </>
+          )}
+          {activeAnchor && (
+            <HeatmapCategoryPanel
+              ref={categoryPanelRef}
+              categoryId={activeAnchor.id}
+              categoryName={activeAnchor.name}
+              leaves={panelLeaves}
+              activeLeaf={hoveredLeaf}
+              anchor={activeAnchor}
+              view={view}
+              pinned={!!pinnedAnchor}
+              onPointerEnter={cancelClose}
+              onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
+              onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
             />
-          </Profiler>
-        )}
-        {activeAnchor && (
-          <HeatmapCategoryPanel
-            ref={categoryPanelRef}
-            categoryId={activeAnchor.id}
-            categoryName={activeAnchor.name}
-            leaves={panelLeaves}
-            activeLeaf={hoveredLeaf}
-            anchor={activeAnchor}
-            view={view}
-            pinned={!!pinnedAnchor}
-            onPointerEnter={cancelClose}
-            onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
-            onClose={() => { setPinnedAnchor(null); setHighlightedCategoryId(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
-          />
-        )}
+          )}
+        </div>
+        <footer className="cm-heatmap-footer">
+          <span>Wheel to zoom <i/> drag to pan <i/> double-click a category to drill in or a ticker to open its quote</span>
+          <a href="https://www.logo.dev" target="_blank" rel="noopener">Logos by Logo.dev</a>
+        </footer>
       </div>
-      <footer className="cm-heatmap-footer">
-        <span>Mouse wheel zooms · Drag zoomed map to pan · Double-click a ticker for details · Enter pins · Esc closes</span>
-        <a href="https://www.logo.dev" target="_blank" rel="noopener" className="text-slate-500 hover:text-copper-300">Logos provided by Logo.dev</a>
-      </footer>
     </section>
   );
   return isFullscreen ? createPortal(content, document.body) : content;

@@ -33,6 +33,7 @@ const REVEAL_MS = 2_000;
 const ABOUT_REVEAL_MS = 1_200;
 const DASHBOARD_READY_TIMEOUT_MS = 15_000;
 const LOGO_SIZE = 224;
+const ROUTE_TRANSITION_MIN_HEIGHT = '--cm-route-transition-min-height';
 
 const coordinates = (TERRA_RARA_MARK_STAR_PATH.match(/-?\d*\.?\d+/g) ?? []).map(Number);
 const starVertices = Array.from({ length: Math.floor(coordinates.length / 2) }, (_, index) => ({
@@ -228,6 +229,12 @@ function canonicalPath(pathname: string) {
   return pathname === '/overview' ? '/dashboard' : pathname;
 }
 
+function isAboutDashboardPair(from: string, to: string) {
+  const source = canonicalPath(from);
+  const destination = canonicalPath(to);
+  return (source === '/' && destination === '/dashboard') || (source === '/dashboard' && destination === '/');
+}
+
 export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { pathname, key } = useLocation();
@@ -240,10 +247,15 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const navigationStarted = useRef(false);
   const destination = useRef('/dashboard');
   const previousLocationKey = useRef(key);
+  const genericRevealTimer = useRef<number | undefined>(undefined);
 
   const startTransition = useCallback((to = '/dashboard', source?: TransitionOrigin) => {
     if (started.current) return;
     started.current = true;
+    if (genericRevealTimer.current !== undefined) {
+      window.clearTimeout(genericRevealTimer.current);
+      genericRevealTimer.current = undefined;
+    }
     void transitionStylesReady.then(stylesReady => {
       if (!stylesReady) {
         started.current = false;
@@ -251,8 +263,12 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
         return;
       }
       navigationStarted.current = false;
-      const useStaticMotion = reducedMotionPreference !== false;
-      document.documentElement.dataset.cmRouteTransition = 'leaving';
+      const useStaticMotion = reducedMotionPreference === true;
+      const root = document.documentElement;
+      const transitionHeight = Math.max(root.scrollHeight, document.body.scrollHeight, window.innerHeight);
+      root.style.setProperty(ROUTE_TRANSITION_MIN_HEIGHT, `${transitionHeight}px`);
+      root.dataset.cmLogoTransition = 'true';
+      root.dataset.cmRouteTransition = 'leaving';
       destination.current = to;
       setOrigin(source ?? null);
       setReducedMotion(useStaticMotion);
@@ -269,15 +285,29 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     if (previousLocationKey.current !== key) {
       previousLocationKey.current = key;
-      if (active) root.dataset.cmRouteTransition = 'arriving';
-      else delete root.dataset.cmRouteTransition;
+      if (active) {
+        root.dataset.cmRouteTransition = 'arriving';
+      } else {
+        root.dataset.cmRouteTransition = 'arriving';
+        root.dataset.cmTransitionPhase = 'reveal';
+        if (genericRevealTimer.current !== undefined) window.clearTimeout(genericRevealTimer.current);
+        genericRevealTimer.current = window.setTimeout(() => {
+          delete root.dataset.cmTransitionPhase;
+          delete root.dataset.cmRouteTransition;
+          genericRevealTimer.current = undefined;
+        }, REVEAL_MS);
+      }
     }
     if (active) {
       root.dataset.cmTransitionPhase = reducedMotion ? 'reduced' : phase;
       return;
     }
-    delete root.dataset.cmTransitionPhase;
-    delete root.dataset.cmRouteTransition;
+    if (genericRevealTimer.current === undefined) {
+      delete root.dataset.cmTransitionPhase;
+      delete root.dataset.cmRouteTransition;
+    }
+    delete root.dataset.cmLogoTransition;
+    root.style.removeProperty(ROUTE_TRANSITION_MIN_HEIGHT);
   }, [active, phase, reducedMotion, key]);
 
   useEffect(() => {
@@ -286,7 +316,6 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       const target = event.target instanceof Element ? event.target : null;
       const anchor = target?.closest<HTMLAnchorElement>('a[href]');
       if (!anchor || anchor.hasAttribute('download') || (anchor.target && anchor.target !== '_self')) return;
-      if (anchor.closest('.cm-workspace-nav')) return;
 
       let url: URL;
       try { url = new URL(anchor.href, window.location.href); } catch { return; }
@@ -301,6 +330,8 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
         navigate(`${url.pathname}${url.search}${url.hash}`, { preventScrollReset: true });
         return;
       }
+
+      if (!isAboutDashboardPair(current.pathname, url.pathname)) return;
 
       const rect = anchor.getBoundingClientRect();
       event.preventDefault();

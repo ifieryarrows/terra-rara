@@ -34,7 +34,6 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   anchor,
   view,
   pinned,
-  onClose,
   onPointerEnter,
   onPointerLeave,
 }, ref) {
@@ -45,27 +44,38 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   const panelRef = useRef<HTMLElement>(null);
   const panelSizeRef = useRef({ width: 380, height: 480 });
   const pointerRef = useRef(anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top });
-  const scopedLeaves = useMemo(() => {
-    if (!activeLeaf) return leaves;
-    const activeIndustry = (activeLeaf.industry || activeLeaf.subgroup || '').trim().toLocaleLowerCase();
-    const activeSector = (activeLeaf.sector || activeLeaf.group || '').trim().toLocaleLowerCase();
-    if (!activeIndustry) return leaves;
-    const matches = leaves.filter((item) => {
-      const industry = (item.industry || item.subgroup || '').trim().toLocaleLowerCase();
-      const sector = (item.sector || item.group || '').trim().toLocaleLowerCase();
-      return industry === activeIndustry && (!activeSector || !sector || sector === activeSector);
-    });
-    return matches.length ? matches : leaves;
-  }, [activeLeaf, leaves]);
   const sorted = useMemo(
-    () => [...scopedLeaves].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0)),
-    [scopedLeaves],
+    () => [...leaves].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0)),
+    [leaves],
   );
-  const peers = useMemo(() => sorted.filter((item) => {
-    if (!activeLeaf) return true;
-    if (activeLeaf.id && item.id) return activeLeaf.id !== item.id;
-    return activeLeaf.name !== item.name;
-  }), [activeLeaf, sorted]);
+  const leavesByIndustry = useMemo(() => {
+    const groups = new Map<string, HeatmapData[]>();
+    sorted.forEach((item) => {
+      const industry = (item.industry || item.subgroup || '').trim().toLocaleLowerCase();
+      if (!industry) return;
+      const group = groups.get(industry) || [];
+      group.push(item);
+      groups.set(industry, group);
+    });
+    return groups;
+  }, [sorted]);
+  const peers = useMemo(() => {
+    if (!activeLeaf) return sorted;
+    const industry = (activeLeaf.industry || activeLeaf.subgroup || '').trim().toLocaleLowerCase();
+    const sector = (activeLeaf.sector || activeLeaf.group || '').trim().toLocaleLowerCase();
+    const industryLeaves = industry ? leavesByIndustry.get(industry) : undefined;
+    const scopedLeaves = industryLeaves && sector
+      ? industryLeaves.filter((item) => {
+        const itemSector = (item.sector || item.group || '').trim().toLocaleLowerCase();
+        return !itemSector || itemSector === sector;
+      })
+      : industryLeaves;
+    const candidates = scopedLeaves?.length ? scopedLeaves : sorted;
+    return candidates.filter((item) => {
+      if (activeLeaf.id && item.id) return activeLeaf.id !== item.id;
+      return activeLeaf.name !== item.name;
+    });
+  }, [activeLeaf, leavesByIndustry, sorted]);
   const sectorName = activeLeaf?.sector || activeLeaf?.group;
   const industryName = activeLeaf?.industry || activeLeaf?.subgroup || categoryName;
   const heading = activeLeaf && sectorName && sectorName !== industryName
@@ -178,11 +188,10 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       onPointerLeave={onPointerLeave}
       aria-label={`${categoryName} category details`}
     >
-      <header className="flex min-h-10 items-center justify-between gap-3 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
+      <header className="flex min-h-10 items-center justify-start gap-3 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
         <div className="min-w-0">
           <h3 className="truncate text-xs font-semibold tracking-wide text-slate-200">{heading}</h3>
         </div>
-        <button type="button" onClick={onClose} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-base leading-none text-slate-500 hover:bg-white/5 hover:text-white" aria-label="Close category panel">×</button>
       </header>
 
       {visibleNews && (

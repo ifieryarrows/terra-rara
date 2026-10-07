@@ -2,8 +2,11 @@ import { useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import './TerraAtmosphere.css';
 
+let latestPointerPosition = { x: 0.5, y: 0.5 };
+
 type TerraAtmosphereProps = {
   progress?: MotionValue<number>;
+  interactive?: boolean;
   className?: string;
 };
 
@@ -64,7 +67,8 @@ function StarFieldCanvas() {
   return <canvas ref={canvasRef} className="cm-atmosphere-starfield" aria-hidden="true"/>;
 }
 
-export function TerraAtmosphere({ progress, className = '' }: TerraAtmosphereProps) {
+export function TerraAtmosphere({ progress, interactive = false, className = '' }: TerraAtmosphereProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const staticProgress = useMotionValue(1);
   const timeline = progress ?? staticProgress;
   const backgroundColor = useTransform(timeline, [0, .25, .5, .75, 1], ['#080e17', '#0b1218', '#0a101a', '#090f1b', '#0b1119']);
@@ -73,18 +77,47 @@ export function TerraAtmosphere({ progress, className = '' }: TerraAtmospherePro
   const bandX = useTransform(timeline, [0, 1], ['-16%', '16%']);
   const starsOpacity = useTransform(timeline, [0, .24, .72, 1], [.72, .96, .82, .94]);
   const starsX = useTransform(timeline, [0, 1], ['0%', '-4%']);
-  const starsY = useTransform(timeline, [0, 1], ['0%', '2%']);
   const names = ['cm-global-atmosphere', className].filter(Boolean).join(' ');
 
-  return <div className={names} aria-hidden="true">
+  useEffect(() => {
+    const root = rootRef.current;
+    const canRenderPointerGlow = interactive && !!root && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let frame = 0;
+    let pointerX = latestPointerPosition.x;
+    let pointerY = latestPointerPosition.y;
+    const applyPointer = () => {
+      frame = 0;
+      if (!canRenderPointerGlow || !root) return;
+      root.style.setProperty('--pointer-x', `${(pointerX * 100).toFixed(2)}%`);
+      root.style.setProperty('--pointer-y', `${(pointerY * 100).toFixed(2)}%`);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      pointerX = Math.max(0, Math.min(1, event.clientX / Math.max(window.innerWidth, 1)));
+      pointerY = Math.max(0, Math.min(1, event.clientY / Math.max(window.innerHeight, 1)));
+      latestPointerPosition = { x: pointerX, y: pointerY };
+      if (!canRenderPointerGlow) return;
+      if (!frame) frame = window.requestAnimationFrame(applyPointer);
+    };
+
+    applyPointer();
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [interactive]);
+
+  return <div ref={rootRef} className={names} aria-hidden="true">
     <motion.div className="cm-atmosphere-base" style={{ backgroundColor }}/>
     <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--copper" style={{ x: copperX }}/>
     <motion.div className="cm-atmosphere-glow cm-atmosphere-glow--blue" style={{ x: blueX }}/>
     <motion.div className="cm-atmosphere-band" style={{ x: bandX }}/>
-    <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, x: starsX, y: starsY }}>
+    <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, ...(progress ? { x: starsX } : {}) }}>
       <StarFieldCanvas/>
     </motion.div>
-    {progress ? <div className="cm-atmosphere-pointer"/> : null}
+    {progress || interactive ? <div className="cm-atmosphere-pointer"/> : null}
     <div className="cm-atmosphere-grain"/>
   </div>;
 }

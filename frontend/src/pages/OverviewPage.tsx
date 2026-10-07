@@ -5,8 +5,8 @@ import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
 import { ViewState } from '../components/ui/ViewState';
+import { OverviewSkeleton } from '../components/skeletons';
 import { BrandMark } from '../components/ui/BrandMark';
-import { PageHeader } from '../components/ui/PageHeader';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
   Brain, Crosshair, AlertTriangle, Minus
@@ -82,6 +82,7 @@ NumberTicker.displayName = 'NumberTicker';
 
 export const OverviewPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeOverviewSection, setActiveOverviewSection] = useState('price-forecast');
   const refreshInFlight = useRef(false);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
@@ -152,6 +153,37 @@ export const OverviewPage = () => {
     loadData(false);
   }, [loadData]);
 
+  // Keep the section rail in sync with the part of the workspace in view.
+  useEffect(() => {
+    if (isInitialLoad) return;
+    const ids = ['price-forecast', 'weekly-outlook', 'market-drivers', 'news-intelligence', 'market-map'];
+    const main = document.getElementById('main-content');
+    if (!main || typeof IntersectionObserver === 'undefined') return;
+    const observed = new Set<Element>();
+    const observer = new IntersectionObserver((entries) => {
+      const current = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (current?.target.id) setActiveOverviewSection(current.target.id);
+    }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.2, 0.5, 1] });
+    const observeSections = () => {
+      ids.forEach((id) => {
+        const section = document.getElementById(id);
+        if (section && !observed.has(section)) {
+          observed.add(section);
+          observer.observe(section);
+        }
+      });
+    };
+    observeSections();
+    const mutations = new MutationObserver(observeSections);
+    mutations.observe(main, { childList: true, subtree: true });
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+    };
+  }, [isInitialLoad]);
+
   // Silent refresh every 60s - no UI flash
   useEffect(() => {
     const interval = setInterval(() => loadData(true), 60000);
@@ -186,7 +218,7 @@ export const OverviewPage = () => {
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
-    return <div className="space-y-6" data-cm-dashboard-ready="false"><PageHeader eyebrow="01 / MARKET INTELLIGENCE" title="Market overview" description="Copper prices, context and quantitative forecasts."/><ViewState kind="loading" title="Opening your market view" description="Retrieving prices, market context and available forecasts."/></div>;
+    return <OverviewSkeleton />;
   }
 
   const tftReturn = tftAnalysis?.primary_forecast_return
@@ -227,96 +259,75 @@ export const OverviewPage = () => {
 
 
   return (
-    <div className="font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
+    <div className="cm-market-dashboard font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
+      <div className="cm-dashboard-page relative z-10 grid min-w-0 grid-cols-1">
 
-
-      <div className="relative z-10 grid min-w-0 grid-cols-1 gap-8">
-
-        {/* Header */}
-        <header className="cm-overview-header">
-          <div className="space-y-1">
-            <p className="cm-eyebrow" data-cm-route-reveal="copy">01 / MARKET INTELLIGENCE</p>
-            <h1
-              className="text-3xl sm:text-4xl font-medium text-white tracking-tight"
-              data-cm-route-reveal="copy"
-            >
-              Market overview
-            </h1>
-            <p className="text-slate-400 text-sm" data-cm-route-reveal="copy">Copper prices, context and quantitative forecasts.</p>
+        <header className="cm-dashboard-hero">
+          <div className="cm-dashboard-hero-copy">
+            <p className="cm-eyebrow cm-dashboard-hero-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
+            <h1 className="cm-dashboard-title" data-cm-route-reveal="copy">Copper<br/><span>market</span></h1>
+            <p className="cm-dashboard-hero-subtitle" data-cm-route-reveal="copy">COMEX futures · Price action, model outlook and market context.</p>
           </div>
 
-          <div className="cm-quote-strip">
-            <div className="cm-quote" data-cm-route-reveal="surface">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-md flex items-center justify-center shrink-0">
-                  <BrandMark size={34} variant="on-dark"/>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">
-                    Copper Futures
-                  </p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-900 text-xs text-white font-semibold tracking-wide">
-                      {COPPER_INSTRUMENT.canonicalSymbol}
-                    </span>
-                    <span className="text-xs text-slate-400">{livePrice != null ? 'Delayed quote' : latestHistoryPrice != null ? 'Last available close' : 'Awaiting quote'}</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-baseline gap-2 font-mono">
-                    <span className="text-3xl text-white leading-none">
-                      {quotePrice != null ? quotePrice.toFixed(4) : '--'}
-                    </span>
-                    <span className="text-sm text-slate-400">USD</span>
-                    {quoteChange && (
-                      <span className={clsx("text-xl leading-none", quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400")}>
-                        {formatQuoteDelta(quoteChange.delta)} {formatQuoteDelta(quoteChange.percent)}%
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {lastLiveUpdateAt
-                      ? `Last checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}`
-                      : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}
-                  </p>
-                  {quoteChange && <p className="text-xs text-slate-400 mt-1">Change vs last stored close</p>}
-                </div>
+          <div className="cm-dashboard-hero-data" data-cm-route-reveal="surface" role="group" aria-label="Copper market snapshot">
+            <div className="cm-dashboard-instrument">
+              <div>
+                <p className="cm-dashboard-instrument-name">{COPPER_INSTRUMENT.displayName}</p>
+                <span className="cm-dashboard-symbol">{COPPER_INSTRUMENT.canonicalSymbol}</span>
               </div>
+              <span className={clsx("cm-dashboard-quote-status", livePrice != null ? "cm-dashboard-quote-status--delayed" : "")}>
+                <i aria-hidden="true"/>{livePrice != null ? 'Delayed quote' : latestHistoryPrice != null ? 'Last available close' : 'Awaiting quote'}
+              </span>
             </div>
-            <div className="px-4 py-2 rounded-xl bg-midnight/50 flex flex-col items-end min-w-[120px]" data-cm-route-reveal="surface">
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">7D News Sentiment</span>
-              <div className={clsx("mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-semibold", newsSentimentMeta.chip)}>
-                <SentimentIcon size={12} />
+
+            <div className="cm-dashboard-price-row">
+              <span className="cm-dashboard-price">{quotePrice != null ? quotePrice.toFixed(4) : '--'}</span>
+              <span className="cm-dashboard-currency">USD</span>
+              {quoteChange && (
+                <span className={clsx("cm-dashboard-change", quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400")}>
+                  {formatQuoteDelta(quoteChange.delta)} <span>({formatQuoteDelta(quoteChange.percent)}%)</span>
+                </span>
+              )}
+            </div>
+
+            <div className="cm-dashboard-quote-meta">
+              <span>{lastLiveUpdateAt ? `Checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}` : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}</span>
+              {quoteChange && <span>Change vs last stored close</span>}
+            </div>
+
+            <div className="cm-dashboard-sentiment">
+              <div className="cm-dashboard-sentiment-copy"><span>NEWS SENTIMENT</span><small>Headline tone</small></div>
+              <div className={clsx("cm-sentiment-badge", newsSentimentMeta.chip)}>
+                <SentimentIcon size={14} aria-hidden="true" />
                 <span>{newsSentimentIndex == null ? (sentimentSummary.isLoading ? 'Loading' : 'Unavailable') : newsSentimentMeta.label}</span>
               </div>
-              <div className={clsx("mt-1 font-mono text-xs", newsSentimentMeta.tone)}>
+              <span className={clsx("cm-dashboard-sentiment-score", newsSentimentMeta.tone)}>
                 <NumberTicker value={newsSentimentIndex ?? NaN} format={(v: number) => Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(3)}` : '—'} />
-              </div>
+              </span>
             </div>
           </div>
         </header>
 
         <div className="cm-overview-tools" data-cm-route-reveal="surface">
-          <nav aria-label="Overview sections"><a href="#price-forecast">Price chart</a><a href="#news-intelligence">News</a><a href="#market-map">Market map</a></nav>
+          <nav aria-label="Market overview sections"><a href="#price-forecast" aria-current={activeOverviewSection === 'price-forecast' ? 'location' : undefined}>Price action</a><a href="#weekly-outlook" aria-current={activeOverviewSection === 'weekly-outlook' ? 'location' : undefined}>Weekly outlook</a><a href="#market-drivers" aria-current={activeOverviewSection === 'market-drivers' ? 'location' : undefined}>Drivers</a><a href="#news-intelligence" aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a><a href="#market-map" aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a></nav>
           <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
         </div>
         {Object.keys(loadErrors).length > 0 && (
-          <div className="flex flex-wrap gap-2" role="status" data-cm-route-reveal="surface">
-            {Object.keys(loadErrors).map((endpoint) => (
-              <span key={endpoint} className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200">
-                <AlertTriangle size={12} /> {endpoint} could not be refreshed; any visible values are from the previous response
-              </span>
-            ))}
+          <div className="cm-dashboard-alerts" role="status" aria-live="polite" data-cm-route-reveal="surface">
+            <AlertTriangle size={15} aria-hidden="true" />
+            <strong>Some data could not be refreshed</strong>
+            <span>{Object.keys(loadErrors).join(' · ')} · Visible values may be from the previous response.</span>
           </div>
         )}
 
-        {/* Dashboard Grid + persistent News sidebar (desktop).
-            On mobile/tablet the news panel stacks under the dashboard.
-            Width grows with the viewport so chips/filters have room to breathe. */}
-        <div className="cm-dashboard-columns grid gap-4 lg:gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
-        {/* Main dashboard column */}
+        <div className="cm-dashboard-content grid min-w-0 gap-4">
         <div className="cm-dashboard-primary-column grid grid-cols-12 gap-6" data-cm-route-reveal="surface">
 
-          {/* Primary weekly forecast; single-step diagnostics are grouped below. */}
-          <GlassCard title="Deep Learning Weekly Forecast" icon={Brain} colSpan={4} className={clsx("relative overflow-hidden", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
+          <GlassCard id="price-forecast" title={`Price action / ${COPPER_INSTRUMENT.canonicalSymbol}`} icon={Activity} colSpan={12} className="cm-price-action-section">
+            <PriceForecastChart history={history?.data ?? []} forecast={tftAnalysis} historyError={!!loadErrors['Price history']} forecastError={!!loadErrors['Deep-learning forecast']}/>
+          </GlassCard>
+
+          <GlassCard id="weekly-outlook" title="Weekly model outlook" icon={Brain} colSpan={6} className={clsx("cm-weekly-forecast-panel relative", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
             {tftDegraded ? (
               <div className="flex flex-col justify-center h-full py-10 gap-4">
                 <div className="flex items-center gap-2 text-amber-300">
@@ -399,7 +410,7 @@ export const OverviewPage = () => {
                     </div>
 
                     {/* Primary weekly interval */}
-                    <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
+                    <div className="cm-weekly-range">
                       <p className="text-xs text-slate-400 uppercase tracking-widest mb-1.5">
                         5D Range {calibrated ? '(calibrated)' : '(raw)'}
                       </p>
@@ -439,14 +450,14 @@ export const OverviewPage = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5">
+                    <div className="cm-diagnostic-metrics grid grid-cols-2 gap-2">
+                      <div>
                         <span className="block text-xs text-slate-400 uppercase tracking-wider">Direction Score</span>
                         <span className="font-mono text-xs text-gray-200">
                           {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
                         </span>
                       </div>
-                      <div className="rounded bg-white/[0.02] border border-white/5 px-2 py-1.5 text-right">
+                      <div className="text-right">
                         <span className="block text-xs text-slate-400 uppercase tracking-wider">Sharpe</span>
                         <span className="font-mono text-xs text-gray-200">
                           {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
@@ -469,14 +480,10 @@ export const OverviewPage = () => {
             )}
           </GlassCard>
 
-          <GlassCard id="price-forecast" title={`Price Forecast (${COPPER_INSTRUMENT.canonicalSymbol})`} icon={Activity} colSpan={8} className="min-h-[400px]">
-            <PriceForecastChart history={history?.data ?? []} forecast={tftAnalysis} historyError={!!loadErrors['Price history']} forecastError={!!loadErrors['Deep-learning forecast']}/>
-          </GlassCard>
-
           {/* Influencers Card — shows human-readable labels, category chips and
               technical ids on hover. Backend contract: Influencer has
               `label`, `description`, `category`, `time_horizon`. */}
-          <GlassCard title="Market Drivers" icon={BarChart3} colSpan={4}>
+          <GlassCard id="market-drivers" title="Market drivers" icon={BarChart3} colSpan={6}>
             <div className="space-y-4">
               {analysis?.top_influencers?.length ? (
                 analysis.top_influencers.slice(0, 5).map((inf: Influencer, i: number) => {
@@ -519,12 +526,12 @@ export const OverviewPage = () => {
           </GlassCard>
 
           {/* Model Health Card */}
-          <GlassCard title="Model Reliability" icon={Crosshair} colSpan={4}>
+          <GlassCard id="model-reliability" title="Model reliability" icon={Crosshair} colSpan={4}>
             <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']}/>
           </GlassCard>
 
           {/* AI Commentary Card */}
-          <GlassCard title="Neural Analysis" icon={Cpu} colSpan={4}>
+          <GlassCard id="neural-analysis" title="Neural analysis" icon={Cpu} colSpan={8}>
             <div className="flex items-center justify-between mb-3">
               {commentary?.generated_at && (
                 <span className="text-xs text-slate-400 font-mono">
@@ -555,11 +562,10 @@ export const OverviewPage = () => {
           </GlassCard>
 
         </div>
-        {/* Right sticky News Intelligence sidebar (desktop) / stacks under on mobile */}
-        <aside id="news-intelligence" className="cm-news-sidebar min-w-0" data-cm-route-reveal="surface">
+        <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0" data-cm-route-reveal="surface">
           <Suspense
             fallback={
-              <div className="glass-panel cm-news-loading h-full min-h-[480px] flex items-center justify-center gap-3" role="status">
+              <div className="cm-news-loading min-h-[280px] flex items-center justify-center gap-3" role="status">
                 <span className="cm-inline-loader" aria-hidden="true" />
                 <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
                   Loading news…
@@ -572,9 +578,7 @@ export const OverviewPage = () => {
         </aside>
         </div>
 
-        {/* The market map owns the full content width. News remains available
-            above without consuming horizontal heatmap space. */}
-        <div id="market-map" className="min-w-0 w-full" data-cm-route-reveal="surface">
+        <div id="market-map" className="cm-dashboard-market-map min-w-0 w-full" data-cm-route-reveal="surface">
           <Suspense fallback={<MapSkeleton />}>
             <HeatmapPanel />
           </Suspense>

@@ -21,7 +21,7 @@ it('contains keyboard focus, closes with Escape and returns focus to the selecte
   render(<Harness/>);
   const opener = screen.getByRole('button', { name: 'Open source story' });
   await user.click(opener);
-  const dialog = screen.getByRole('dialog', { name: 'News detail' });
+  const dialog = screen.getByRole('dialog', { name: /NEWS INTELLIGENCE/i });
   expect(dialog).toHaveFocus();
   expect(document.body.style.overflow).toBe('hidden');
   await user.tab({ shift: true });
