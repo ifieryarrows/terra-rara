@@ -3,6 +3,7 @@ Database connection and session management.
 SQLite with WAL mode for concurrent read/write support.
 """
 
+import importlib.util
 import logging
 from contextlib import contextmanager
 from typing import Generator
@@ -71,13 +72,86 @@ _engine = None
 _SessionLocal = None
 
 
+def normalize_database_url(raw_url: str) -> tuple[str, dict]:
+    """
+    Normalize database URL and determine any driver-specific connect_args.
+
+    Handles:
+    - postgres:// -> postgresql:// legacy scheme
+    - Driver selection:
+      * If URL doesn't specify a driver (postgresql://):
+        - If psycopg (v3) is available, use postgresql+psycopg://
+        - If psycopg is not available but psycopg2 is, use postgresql+psycopg2://
+      * If URL specifies postgresql+psycopg:// but psycopg is not installed and psycopg2 is,
+        fallback to postgresql+psycopg2://
+      * If URL specifies postgresql+psycopg2:// but psycopg2 is not installed and psycopg is,
+        fallback to postgresql+psycopg://
+    - Supabase / PgBouncer pooler support:
+      * When using psycopg (v3) with a pooler (e.g. port 6543 / pooler.supabase.com / pgbouncer),
+        prepared statements must be disabled via prepare_threshold=None to avoid
+        DuplicatePreparedStatement / InvalidSqlStatementName errors in transaction mode.
+    """
+    connect_args: dict = {}
+    if not raw_url:
+        return "", connect_args
+
+    url = raw_url
+
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+
+    if url.startswith("sqlite"):
+        return url, connect_args
+
+    has_psycopg = importlib.util.find_spec("psycopg") is not None
+    has_psycopg2 = importlib.util.find_spec("psycopg2") is not None
+
+    is_psycopg = False
+    if url.startswith("postgresql://"):
+        rest = url[len("postgresql://"):]
+        if has_psycopg:
+            url = "postgresql+psycopg://" + rest
+            is_psycopg = True
+        elif has_psycopg2:
+            url = "postgresql+psycopg2://" + rest
+    elif url.startswith("postgresql+psycopg://"):
+        rest = url[len("postgresql+psycopg://"):]
+        if not has_psycopg and has_psycopg2:
+            logger.warning(
+                "psycopg (v3) requested in DATABASE_URL but not installed; falling back to psycopg2"
+            )
+            url = "postgresql+psycopg2://" + rest
+        elif has_psycopg:
+            is_psycopg = True
+    elif url.startswith("postgresql+psycopg2://"):
+        rest = url[len("postgresql+psycopg2://"):]
+        if not has_psycopg2 and has_psycopg:
+            logger.warning(
+                "psycopg2 requested in DATABASE_URL but not installed; falling back to psycopg"
+            )
+            url = "postgresql+psycopg://" + rest
+            is_psycopg = True
+
+    if is_psycopg and (
+        ":6543" in url
+        or "pooler.supabase.com" in url
+        or "supabase.co" in url
+        or "supabase.com" in url
+        or "pgbouncer" in url.lower()
+    ):
+        connect_args["prepare_threshold"] = None
+
+    return url, connect_args
+
+
 def get_engine():
     """Get or create the database engine."""
     global _engine
     
     if _engine is None:
         settings = get_settings()
-        database_url = settings.database_url
+        raw_database_url = settings.database_url
+        database_url, extra_connect_args = normalize_database_url(raw_database_url)
         
         # Determine if SQLite
         is_sqlite = database_url.startswith("sqlite")
@@ -100,6 +174,8 @@ def get_engine():
             engine_kwargs["max_overflow"] = 10
             engine_kwargs["pool_timeout"] = 30
             engine_kwargs["pool_recycle"] = 300
+            if extra_connect_args:
+                engine_kwargs.setdefault("connect_args", {}).update(extra_connect_args)
         
         _engine = create_engine(database_url, **engine_kwargs)
         
@@ -424,10 +500,12 @@ def get_db_type() -> str:
     """Return the database type (sqlite, postgresql, etc.)."""
     settings = get_settings()
     url = settings.database_url
-    
+    if not url:
+        return "unknown"
+
     if url.startswith("sqlite"):
         return "sqlite"
-    elif url.startswith("postgresql"):
+    elif url.startswith("postgresql") or url.startswith("postgres"):
         return "postgresql"
     elif url.startswith("mysql"):
         return "mysql"

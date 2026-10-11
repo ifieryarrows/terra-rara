@@ -1,4 +1,4 @@
-﻿# CopperMind Modeling & Quality Gate Invariants
+# CopperMind Modeling & Quality Gate Invariants
 
 ## 1. Financial Metric Invariants & Lookahead/Autocorrelation Safeguards
 - **Annualization Consistency:** Always match the annualization factor in `sharpe_ratio` and `sortino_ratio` to the target horizon. Daily returns must use $\sqrt{252}$, while 5-day / weekly cumulative returns must use $\sqrt{52}$ (or $\sqrt{252 / \text{horizon}}$). Never annualize weekly series with $\sqrt{252}$.
@@ -17,3 +17,7 @@
 - **Primary vs. Diagnostic Separation:** Multi-horizon forecasting models must strictly separate primary horizon metrics (e.g. 5D cumulative weekly returns) from single-step diagnostics (e.g. T+1 daily path).
 - **UI Horizon Alignment:** Dashboards and summary views must never place daily risk-adjusted ratios (Daily Sharpe/Sortino) directly alongside weekly accuracy (Weekly DA) without explicit horizon labels and grouping.
 - **Promotion Gate Horizon Matching:** A model whose primary operational deliverable is a multi-day forecast must enforce risk-adjusted performance on that same primary horizon (weekly_sharpe_ratio), retaining single-step metrics purely as lower-bound sanity checks.
+
+## 5. Database & Connection Pooler Invariants
+- **Dialect Explicit Binding & Fallback:** Unspecified `postgresql://` URIs must normalize dynamically to the installed driver (`postgresql+psycopg://` or `postgresql+psycopg2://`) to guard against ORM dialect default shifts across major/minor upgrades (e.g. SQLAlchemy 2.1+).
+- **PgBouncer / Supabase Prepared Statement Safety:** When connecting to transaction-mode connection poolers (`:6543`, `pooler.supabase.com`, `supabase.co`, `pgbouncer`) with `psycopg` (v3), prepared statements must be disabled via `connect_args={"prepare_threshold": None}` to prevent `DuplicatePreparedStatement` / `InvalidSqlStatementName` collision errors.
