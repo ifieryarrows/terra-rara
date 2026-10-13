@@ -1922,7 +1922,7 @@ def aggregate_daily_sentiment_v2(
         existing = session.query(DailySentimentV2).filter(
             or_(
                 DailySentimentV2.market_date == row["market_date"],
-                func.date(DailySentimentV2.date) == row["market_date"].isoformat(),
+                DailySentimentV2.date == date_dt,
             )
         ).first()
         if existing:
