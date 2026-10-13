@@ -1,6 +1,6 @@
 # Terra Rara
 
-AI-powered copper futures price prediction platform combining XGBoost ML, TFT-ASRO deep learning, LLM-based sentiment analysis, and cross-asset market data.
+AI-powered copper futures price prediction platform combining XGBoost ML, TFT-ASRO deep learning, LLM-based sentiment analysis and cross-asset market data.
 
 [![Live Demo](https://img.shields.io/badge/demo-terra--rara.vercel.app-0969da)](https://terra-rara.vercel.app)
 [![API Docs](https://img.shields.io/badge/api-docs-10b981)](https://ifieryarrows-copper-mind.hf.space/api/docs)
@@ -29,13 +29,13 @@ AI-powered copper futures price prediction platform combining XGBoost ML, TFT-AS
 
 ## Overview
 
-Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates, and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3 Super as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA, and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily via an asynchronous Redis worker to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3 Super as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
 
 **XGBoost target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
 **TFT-ASRO target**: 5-day cumulative log-return (`target_5d_log_return`) primary forecast with 7-quantile probabilistic output (q0.02 through q0.98), accompanied by 1-day log-return auxiliary diagnostic.
 
-**Target users**: Traders, analysts, and developers building commodity forecasting tools.
+**Target users**: Traders, analysts and developers building commodity forecasting tools.
 
 **Non-goals**: This system does not provide trading signals or financial advice. Predictions are for informational purposes only.
 
@@ -50,11 +50,11 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 - Compute advanced sentiment features: momentum, surprise (Z-score), volume-weighted scores
 - Ingest LME warehouse stock data and futures curve signals for physical-market context
 - Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
-- Interactive S&P/Finviz-style Market Heatmap treemap with live quotes, sector grouping, logos, and sparklines
-- News Intelligence panel with drawer inspection, commodity relevance filtering, and LLM reasoning
+- Interactive S&P/Finviz-style Market Heatmap treemap with live quotes, sector grouping, logos and sparklines
+- News Intelligence panel with drawer inspection, commodity relevance filtering and LLM reasoning
 - Multi-page workspace (`/` Landing, `/dashboard` Overview, `/models` Models, `/validation` Backtesting, `/system` Status)
 - Enforce strict promotion Quality Gate (Weekly DA, Magnitude Ratio, Sharpe, Tail Capture, monotonic quantile guards)
-- Asynchronous Redis task worker (`arq`) with pipeline execution tracking via `pipeline_run_metrics` table
+- Pipeline execution tracking via `pipeline_run_metrics` table
 - Optimize TFT hyperparameters via Optuna TPE search with variance ratio penalty and deterministic replay
 - Dual storage model persistence with HuggingFace Hub checkpoints and atomic database artifacts
 
@@ -75,8 +75,8 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  BACKEND (HuggingFace Spaces - Docker with Supervisord)                 │
-│  FastAPI + Python 3.11 + Uvicorn + Redis 7 + arq Worker                 │
+│  BACKEND (HuggingFace Spaces - Docker)                                  │
+│  FastAPI + Python 3.11 + Uvicorn + Redis                                │
 │                                                                         │
 │  REST API                                                               │
 │  ├── GET /api/analysis          → XGBoost next-day return prediction    │
@@ -92,7 +92,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 │  ├── POST /api/pipeline/trigger → Enqueue background pipeline job       │
 │  └── GET /api/pipeline/runs/{id}→ Pipeline run status tracking          │
 │                                                                         │
-│  ML PIPELINE (Daily @ 23:00 UTC / 02:00 Istanbul via arq Worker)        │
+│  ML PIPELINE (Daily @ 23:00 UTC / 02:00 Istanbul)                       │
 │  ├── 8 strategic queries → Google News RSS ingestion                    │
 │  ├── Resilient multi-tier LLM sentiment scoring (batch size 12)         │
 │  ├── FinBERT CLS embedding extraction + PCA (768→8 dim)                 │
@@ -130,7 +130,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 │  │   ├── heatmap_cache              (market heatmap snapshots)          │
 │  │   ├── backtest_reports           (walk-forward validation runs)      │
 │  │   └── pipeline_run_metrics       (pipeline executions & monitoring)  │
-│  ├── Redis 7 (job queue for arq background pipeline worker)             │
+│  ├── Redis (pipeline job queue)                                         │
 │  ├── HuggingFace Hub (TFT checkpoint, calibration & PCA persistence)   │
 │  ├── yfinance (OHLCV price data & live quotes)                          │
 │  ├── Nasdaq Data Link (LME warehouse stocks, optional)                  │
@@ -141,7 +141,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 
 ## Symbol Sets
 
-The system separates symbol discovery, testing, and production into distinct phases.
+The system separates symbol discovery, testing and production into distinct phases.
 
 ### How Symbols Are Found
 
@@ -407,7 +407,7 @@ terra-rara/
 │   │   ├── db.py             # Database engine & driver normalization
 │   │   └── settings.py       # Pydantic settings & env management
 │   ├── adapters/             # Infrastructure adapters (Redis, Queue, Locks)
-│   ├── worker/               # arq asynchronous task worker
+│   ├── worker/               # Background task worker
 │   │   ├── runner.py         # Worker process entrypoint
 │   │   └── tasks.py          # Daily pipeline orchestration tasks
 │   ├── deep_learning/        # TFT-ASRO deep learning module
@@ -451,8 +451,7 @@ terra-rara/
 │   │   ├── deep_learning/    # TFT-ASRO unit tests (36 test files)
 │   │   ├── screener/         # Screener unit tests (9 test files)
 │   │   └── ...               # Core API & pipeline tests (23 test files)
-│   ├── Dockerfile            # Multi-process container (Supervisord)
-│   ├── supervisord.conf      # Redis + API + Worker supervision
+│   ├── Dockerfile            # Container configuration
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
@@ -583,7 +582,7 @@ Copy `env.example` to `backend/.env` and configure:
 | `DATABASE_URL`                      | Yes      | -                                       | PostgreSQL connection string                                   |
 | `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM sentiment and commentary            |
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
-| `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for arq background pipeline worker     |
+| `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for pipeline task queue                 |
 | `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (`active`, `champion`, `challenger`)   |
 | `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Primary fast sentiment scoring role                            |
 | `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`           | Reliable scoring & escalation repair role                      |
@@ -617,16 +616,16 @@ The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Genera
 
 Access the live dashboard at [terra-rara.vercel.app](https://terra-rara.vercel.app):
 
-1. **Cinematic Landing Page (`/`)**: Real-time copper market signal ticker, hero statistics, and interactive platform narrative
+1. **Cinematic Landing Page (`/`)**: Real-time copper market signal ticker, hero statistics and interactive platform narrative
 2. **Market Overview (`/dashboard`)**:
-   - **Consensus & Forecast Header**: Blended prediction, latest price quote, and AI market stance
+   - **Consensus & Forecast Header**: Blended prediction, latest price quote and AI market stance
    - **Price Forecast Chart**: 180 days of historical prices with T+1 prediction dot and Q10-Q90 quantile confidence bands
-   - **Market Heatmap Treemap**: S&P/Finviz-style interactive treemap across miners, metals ETFs, and commodities with company logos, sparklines, and news context
+   - **Market Heatmap Treemap**: S&P/Finviz-style interactive treemap across miners, metals ETFs and commodities with company logos, sparklines and news context
    - **Market Grid**: Real-time quotes for all 14 dashboard symbols
-3. **News Intelligence Drawer**: Slide-over drawer providing commodity relevance scores, sentiment polarity, and LLM reasoning for ingested articles
-4. **Model Intelligence (`/models`)**: XGBoost next-day point estimates, top feature importances, and TFT-ASRO multi-horizon quantile forecast paths
-5. **Walk-Forward Validation (`/validation`)**: Backtest metrics, empirical coverage tests, and deployment quality gate audits
-6. **System Status (`/system`)**: Asynchronous pipeline run history, worker health, database table statistics, and API latency monitoring
+3. **News Intelligence Drawer**: Slide-over drawer providing commodity relevance scores, sentiment polarity and LLM reasoning for ingested articles
+4. **Model Intelligence (`/models`)**: XGBoost next-day point estimates, top feature importances and TFT-ASRO multi-horizon quantile forecast paths
+5. **Walk-Forward Validation (`/validation`)**: Backtest metrics, empirical coverage tests and deployment quality gate audits
+6. **System Status (`/system`)**: Pipeline run history, database table statistics and API latency monitoring
 
 ### API Endpoints
 
@@ -696,28 +695,29 @@ Returns the blended model consensus forecast combining XGBoost and TFT-ASRO outp
 
 ```json
 {
-  "symbol": "HG=F",
-  "action": "BUY",
-  "confidence": 0.76,
-  "combined_return": 0.0028,
-  "xgboost_return": 0.0015,
+  "consensus_direction": "BULLISH",
+  "confidence": "HIGH",
+  "position_scale": 1.0,
+  "blended_return": 0.0028,
+  "xgb_return_raw": 0.0015,
+  "xgb_return_adjusted": 0.0005,
   "tft_return": 0.0035,
-  "agreement": true,
-  "generated_at": "2026-01-17T09:00:00Z"
+  "xgb_direction": 1,
+  "tft_direction": 1
 }
 ```
 
 ### GET /api/market-heatmap
 
-Returns the S&P/Finviz-style hierarchical market map with performance, sparklines, and market cap weightings. Cached for 15 minutes.
+Returns the S&P/Finviz-style hierarchical market map with performance, sparklines and market cap weightings. Cached for 15 minutes.
 
 ### GET /api/news
 
-Returns processed commodity market news items with relevance scores, sentiment polarity, event tags, and LLM reasoning.
+Returns processed commodity market news items with relevance scores, sentiment polarity, event tags and LLM reasoning.
 
 ### GET /api/models/tft/summary
 
-Returns active TFT-ASRO model parameters, deployment Quality Gate audit status (`quality_gate_passed: true`), and detailed backtest evaluation metrics.
+Returns active TFT-ASRO model parameters, deployment Quality Gate audit status (`quality_gate_passed: true`) and detailed backtest evaluation metrics.
 
 ### GET /api/commentary
 
@@ -788,7 +788,7 @@ Returns TFT-ASRO deep learning forecast with 7-quantile prediction paths and con
 
 ### POST /api/pipeline/trigger (Privileged)
 
-Enqueues an asynchronous ML pipeline job to the Redis queue for worker execution.
+Enqueues an asynchronous ML pipeline job to the Redis queue.
 
 **Authentication requirement**: This endpoint requires a valid `Authorization: Bearer <PIPELINE_TRIGGER_SECRET>` header. Requests without a valid token receive 401 Unauthorized.
 
@@ -856,7 +856,7 @@ The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily
 8. Generate TFT-ASRO inference from HF Hub checkpoint (quantile forecasts)
 9. Generate AI commentary via OpenRouter
 10. Cache prediction snapshots in database
-11. Record run duration, fallback counts, and `quality_state` to `pipeline_run_metrics` table
+11. Record run duration, fallback counts and `quality_state` to `pipeline_run_metrics` table
 
 TFT deep learning model retraining runs on a separate weekly workflow (Sundays at 22:00 UTC) with Optuna hyperparameter optimization and deployment Quality Gate validation.
 
@@ -890,7 +890,7 @@ Tracked metrics:
 
 ### Database connection refused / Driver mismatch
 
-**Symptom**: `psycopg2.OperationalError: could not connect to server`, `ModuleNotFoundError: No module named 'psycopg2'`, or `DuplicatePreparedStatement` on Supabase / PgBouncer.
+**Symptom**: `psycopg2.OperationalError: could not connect to server`, `ModuleNotFoundError: No module named 'psycopg2'` or `DuplicatePreparedStatement` on Supabase / PgBouncer.
 
 **Cause**:
 1. PostgreSQL is not running or `DATABASE_URL` is incorrect.
@@ -906,7 +906,7 @@ Tracked metrics:
 
 **Symptom**: Logs show `LLM sentiment failed, using FinBERT fallback`
 
-**Cause**: OpenRouter API key is missing, invalid, or rate-limited.
+**Cause**: OpenRouter API key is missing, invalid or rate-limited.
 
 **Fix**: Verify `OPENROUTER_API_KEY` is set correctly in `.env`. Check OpenRouter dashboard for rate limit status. The system will continue using FinBERT as a fallback.
 
@@ -982,7 +982,7 @@ The system masks sensitive credentials in logs:
 
 ### Privileged Endpoint: POST /api/pipeline/trigger
 
-This endpoint triggers the full ML pipeline, which fetches news, calls the LLM API for sentiment scoring, computes FinBERT embeddings, retrains the XGBoost model, runs TFT-ASRO inference, and generates AI commentary. Unauthenticated access to this endpoint creates the following risks:
+This endpoint triggers the full ML pipeline, which fetches news, calls the LLM API for sentiment scoring, computes FinBERT embeddings, retrains the XGBoost model, runs TFT-ASRO inference and generates AI commentary. Unauthenticated access to this endpoint creates the following risks:
 
 - **Request flooding**: Repeated triggers can degrade service availability.
 - **Quota and cost burn**: Each pipeline run consumes OpenRouter API quota. Uncontrolled access can exhaust free-tier limits or incur costs.
@@ -993,7 +993,7 @@ This endpoint triggers the full ML pipeline, which fetches news, calls the LLM A
 ### Configuration
 
 1. **Set `PIPELINE_TRIGGER_SECRET`** in your `.env` file. Use a random string of 32 or more characters. Store this as a secret in your deployment platform.
-2. **Rotate the secret immediately** if it is ever exposed in logs, commits, or third-party systems.
+2. **Rotate the secret immediately** if it is ever exposed in logs, commits or third-party systems.
 
 ### Abuse Prevention (Recommended Controls)
 
@@ -1001,8 +1001,8 @@ Even with authentication, apply additional safeguards:
 
 - **Rate limiting**: Limit to 5-10 requests per minute per IP or per token. Use a reverse proxy (nginx, Caddy) or middleware.
 - **Idempotency lock**: The endpoint already checks if the pipeline is running and returns 409 Conflict. Ensure this lock file mechanism is reliable across restarts.
-- **Network restriction**: If the endpoint is only used by internal automation (CI/CD, cron jobs), restrict access via IP allowlist, VPN, or deploy the backend on an internal network.
-- **Monitoring and alerting**: Log all calls to this endpoint. Alert on spikes in 401 responses, sudden trigger volume, or upstream API quota warnings.
+- **Network restriction**: If the endpoint is only used by internal automation (CI/CD, cron jobs), restrict access via IP allowlist, VPN or deploy the backend on an internal network.
+- **Monitoring and alerting**: Log all calls to this endpoint. Alert on spikes in 401 responses, sudden trigger volume or upstream API quota warnings.
 
 ### Secret Management
 
