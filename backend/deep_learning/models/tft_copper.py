@@ -829,51 +829,93 @@ def load_tft_model(
 # Interpretation helpers
 # ---------------------------------------------------------------------------
 
+def _named_weights(names, weights) -> list[Dict[str, Any]]:
+    """Zip variable names with a per-sample weight vector, validating the layout."""
+    if len(names) != len(weights):
+        raise ValueError(
+            f"interpretation names/weights mismatch: got {len(names)} names "
+            f"for {len(weights)} weights"
+        )
+    return [
+        {"feature": name, "weight": float(weight)}
+        for name, weight in zip(names, weights)
+    ]
+
+
+def interpret_batch(model, x: dict, attention_prediction_horizon: int = 0) -> dict:
+    """
+    Interpret a single TFT batch: VSN selection weights plus encoder attention.
+
+    Runs the raw forward pass under ``torch.no_grad()`` and reduces nothing
+    (``reduction="none"``), so every score stays per-sample; attention is
+    renormalized per sample and clipped to the encoder window
+    (``[: model.hparams.max_encoder_length]``). Group names come from
+    ``model.encoder_variables`` / ``decoder_variables`` / ``static_variables``;
+    a names/weights length mismatch raises ``ValueError``.
+    """
+    with torch.no_grad():
+        out = model(x)
+
+    interpretation = model.interpret_output(
+        out,
+        reduction="none",
+        attention_prediction_horizon=attention_prediction_horizon,
+    )
+
+    max_encoder_length = int(model.hparams.max_encoder_length)
+    attention = (
+        interpretation["attention"][0].detach().cpu().numpy()[:max_encoder_length].tolist()
+    )
+
+    return {
+        "encoder": _named_weights(
+            model.encoder_variables,
+            interpretation["encoder_variables"][0].detach().cpu().numpy(),
+        ),
+        "decoder": _named_weights(
+            model.decoder_variables,
+            interpretation["decoder_variables"][0].detach().cpu().numpy(),
+        ),
+        "static": _named_weights(
+            model.static_variables,
+            interpretation["static_variables"][0].detach().cpu().numpy(),
+        ),
+        "attention": attention,
+        "encoder_length": int(out["encoder_lengths"][0]),
+    }
+
+
 def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
     """
-    Extract learned variable importance from the TFT's Variable Selection Networks.
+    Average encoder VSN variable importance over ``val_dataloader`` batches.
 
-    Returns a dict mapping feature name -> normalised importance score.
-    val_dataloader must be passed explicitly (model.val_dataloader() only works
-    inside a Lightning Trainer context and raises an error otherwise).
+    Returns a dict mapping feature name -> importance, normalised to sum 1 and
+    sorted in descending order; an absent or empty loader yields ``{}``.
+    ``val_dataloader`` must be passed explicitly (``model.val_dataloader()``
+    only works inside a Lightning Trainer context and raises an error otherwise).
     """
     if val_dataloader is None:
         return {}
-    try:
-        interpretation = model.interpret_output(
-            model.predict(val_dataloader, return_x=True),
-            reduction="sum",
-        )
-        importance = interpretation.get("encoder_variables", {})
-        if not importance:
-            return {}
 
-        total = sum(importance.values())
-        if total == 0:
-            return importance
+    totals: Dict[str, float] = {}
+    n_batches = 0
+    for batch in val_dataloader:
+        sample = batch[0] if isinstance(batch, (tuple, list)) else batch
+        interpretation = interpret_batch(model, sample)
+        for entry in interpretation["encoder"]:
+            totals[entry["feature"]] = totals.get(entry["feature"], 0.0) + entry["weight"]
+        n_batches += 1
 
-        return {k: v / total for k, v in sorted(importance.items(), key=lambda x: -x[1])}
-    except Exception as exc:
-        logger.warning("Could not extract variable importance: %s", exc)
+    if n_batches == 0 or not totals:
         return {}
 
+    averaged = {name: total / n_batches for name, total in totals.items()}
+    total_weight = sum(averaged.values())
+    if total_weight <= 0.0:
+        return {}
 
-def get_attention_weights(model, dataloader) -> Optional[np.ndarray]:
-    """
-    Extract temporal self-attention weights for interpretability.
-
-    Returns array of shape (n_samples, n_heads, encoder_length, encoder_length)
-    or None if extraction fails.
-    """
-    try:
-        out = model.predict(dataloader, return_x=True, mode="raw")
-        attn = out.get("attention")
-        if attn is not None:
-            return attn.cpu().numpy()
-    except Exception as exc:
-        logger.warning("Could not extract attention weights: %s", exc)
-
-    return None
+    normalized = {name: weight / total_weight for name, weight in averaged.items()}
+    return dict(sorted(normalized.items(), key=lambda item: item[1], reverse=True))
 
 
 # ---------------------------------------------------------------------------
