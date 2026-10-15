@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, text
+import pytest
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.db as db_module
 from app.db import Base, _run_migrations
 from app.models import TFTPredictionSnapshot
 
@@ -120,5 +122,41 @@ def test_run_migrations_backfills_explain_json_on_legacy_table():
         with Session() as session:
             row = session.query(TFTPredictionSnapshot).one()
             assert row.explain_json == EXPLAIN_PAYLOAD
+    finally:
+        engine.dispose()
+
+
+def test_run_migrations_tolerates_missing_snapshot_table():
+    engine = _engine()
+    try:
+        Base.metadata.create_all(bind=engine)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE tft_prediction_snapshots"))
+            conn.execute(text("ALTER TABLE ai_commentaries DROP COLUMN fallback_reason"))
+
+        _run_migrations(engine)
+
+        assert not inspect(engine).has_table("tft_prediction_snapshots")
+        # Later migration blocks still ran after the tolerated skip.
+        assert "fallback_reason" in _columns(engine, "ai_commentaries")
+    finally:
+        engine.dispose()
+
+
+def test_run_migrations_reraises_non_missing_table_failures(monkeypatch):
+    engine = _engine()
+    try:
+        Base.metadata.create_all(bind=engine)
+        original_ensure_columns = db_module._ensure_columns
+
+        def _fail_for_snapshot(conn, table_name, columns, is_sqlite):
+            if table_name == "tft_prediction_snapshots":
+                raise RuntimeError("permission denied for relation tft_prediction_snapshots")
+            return original_ensure_columns(conn, table_name, columns, is_sqlite)
+
+        monkeypatch.setattr(db_module, "_ensure_columns", _fail_for_snapshot)
+
+        with pytest.raises(RuntimeError, match="permission denied"):
+            _run_migrations(engine)
     finally:
         engine.dispose()
