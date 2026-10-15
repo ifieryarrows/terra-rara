@@ -34,6 +34,10 @@ TFT_MODEL_METADATA_COLUMNS = (
     ("quality_gate_passed", "BOOLEAN", "BOOLEAN"),
 )
 
+TFT_PREDICTION_SNAPSHOT_COLUMNS = (
+    ("explain_json", "JSON", "JSON"),
+)
+
 PRODUCTION_FLOW_AI_COMMENTARY_COLUMNS = (
     ("generation_mode", "VARCHAR(32) DEFAULT 'unknown'", "VARCHAR(32) DEFAULT 'unknown'"),
     ("fallback_reason", "VARCHAR(64)", "VARCHAR(64)"),
@@ -449,6 +453,21 @@ def _run_migrations(engine):
             conn.rollback()
             logger.exception("Migration failed for TFT model promotion schema")
             raise
+
+        # A missing snapshot table is tolerated here: init_db creates it before
+        # migrations run, but ad-hoc migration passes must not fail on it.
+        try:
+            _ensure_columns(
+                conn,
+                "tft_prediction_snapshots",
+                TFT_PREDICTION_SNAPSHOT_COLUMNS,
+                is_sqlite,
+            )
+            conn.commit()
+            logger.info("Migration: Ensured TFT prediction snapshot explain schema exists")
+        except Exception as exc:
+            conn.rollback()
+            logger.debug(f"Migration check for TFT prediction snapshot explain column: {exc}")
 
         try:
             _ensure_production_flow_schema(conn, is_sqlite)

@@ -675,7 +675,7 @@ async def _execute_pipeline_stages_v2(
                 logger.warning(f"[run_id={run_id}] HF Hub download failed: {hub_exc}")
 
         if ckpt.exists():
-            tft_report = generate_tft_analysis(session, "HG=F")
+            tft_report = generate_tft_analysis(session, "HG=F", include_explain=True)
 
             if "error" not in tft_report:
                 try:
@@ -717,6 +717,12 @@ async def _execute_pipeline_stages_v2(
                 # can serve it without re-running inference. This is the
                 # canonical source the frontend reads from.
                 persisted = False
+                explain_payload = tft_report.pop("explain", None)
+                if isinstance(explain_payload, dict):
+                    explain_payload["run_id"] = (
+                        str(run_id) if run_id is not None else None
+                    )
+                result["tft_explain_generated"] = isinstance(explain_payload, dict)
                 try:
                     from app.models import TFTPredictionSnapshot
 
@@ -729,13 +735,15 @@ async def _execute_pipeline_stages_v2(
                         generated_at=datetime.now(timezone.utc),
                         reference_price_date=reference_price_date,
                         run_id=str(run_id) if run_id is not None else None,
+                        explain_json=explain_payload,
                     )
                     session.add(snapshot_row)
                     session.flush()
                     persisted = True
                     logger.info(
                         f"[run_id={run_id}] TFT prediction persisted "
-                        f"(reference_price_date={reference_price_date})"
+                        f"(reference_price_date={reference_price_date}, "
+                        f"explain={'yes' if isinstance(explain_payload, dict) else 'no'})"
                     )
                 except Exception as persist_exc:
                     logger.error(

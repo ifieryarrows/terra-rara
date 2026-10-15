@@ -688,6 +688,11 @@ class TFTPredictionSnapshot(Base):
     # Which run produced it; null on ad-hoc endpoint writes.
     run_id = Column(String(80), nullable=True, index=True)
 
+    # Per-forecast TFT-ASRO explanation (VSN weights + attention) built at
+    # inference time. NULL when explanations are disabled or unavailable;
+    # explanations are optional and must never block a snapshot write.
+    explain_json = Column(JSON, nullable=True)
+
     def __repr__(self):
         return (
             f"<TFTPredictionSnapshot(symbol={self.symbol}, "

@@ -327,7 +327,12 @@ class TFTPredictor:
                 self._pca = load_pca(pca_path)
         return self._pca
 
-    def predict(self, session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any]:
+    def predict(
+        self,
+        session,
+        symbol: str = TARGET_SYMBOL,
+        include_explain: bool = False,
+    ) -> Dict[str, Any]:
         """
         Generate a TFT-ASRO prediction for the given symbol.
 
@@ -335,6 +340,11 @@ class TFTPredictor:
         the target is older than the configured freshness threshold. This
         prevents the frontend from showing a forecast anchored to a stale
         close when the weekend scheduler hasn't run or failed to catch up.
+
+        When ``include_explain`` is true the result additionally carries an
+        ``explain`` key with the per-forecast VSN/attention payload for the
+        latest encoder window, or ``None`` when it cannot be built; building
+        an explanation is best-effort and never fails the prediction.
 
         Returns a dict with:
             - predicted_return_median, q10, q90
@@ -346,6 +356,7 @@ class TFTPredictor:
             - instrument:          {"symbol": "HG=F", "kind": "futures", "name": ...}
             - reference_price_date
             - baseline_staleness_days (int, 0 = fresh)
+            - explain (only when include_explain=True)
         """
         from deep_learning.data.feature_store import build_tft_dataframe
         from deep_learning.data.future_frame import build_future_decoder_rows
@@ -605,7 +616,53 @@ class TFTPredictor:
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["symbol"] = symbol
 
+        if include_explain:
+            result["explain"] = self._latest_window_explain(
+                session,
+                model,
+                dl,
+                history,
+                symbol,
+                reference_price_date,
+            )
+
         return result
+
+    def _latest_window_explain(
+        self,
+        session,
+        model,
+        dataloader,
+        history: pd.DataFrame,
+        symbol: str,
+        reference_price_date: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Best-effort VSN/attention explanation for the latest encoder window.
+
+        Returns ``None`` whenever extraction or payload building fails; an
+        optional explanation must never fail the prediction path.
+        """
+        try:
+            from app.tft_explain import try_build_explain_payload
+            from deep_learning.models.tft_copper import interpret_batch
+
+            model.eval()
+            x, _ = next(iter(dataloader))
+            return try_build_explain_payload(
+                interpretation=interpret_batch(model, x),
+                window_dates=[self._date_label(value) for value in history.index],
+                feature_frame=history,
+                reference_price_date=reference_price_date,
+                symbol=symbol,
+                checkpoint=str(self.cfg.training.best_model_path),
+                trained_at=(self.get_model_metadata(session) or {}).get("trained_at"),
+                generated_at=datetime.now(timezone.utc),
+            )
+        except Exception as exc:
+            logger.warning(
+                "TFT explain extraction failed; skipping explanation: %s", exc
+            )
+            return None
 
     @staticmethod
     def _degraded_retrain_required(message: str) -> Dict[str, Any]:
@@ -900,16 +957,23 @@ def get_tft_predictor(cfg: Optional[TFTASROConfig] = None) -> TFTPredictor:
     return _predictor
 
 
-def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any]:
+def generate_tft_analysis(
+    session,
+    symbol: str = TARGET_SYMBOL,
+    include_explain: bool = False,
+) -> Dict[str, Any]:
     """
     High-level API for generating a TFT-ASRO analysis report.
 
     Designed to mirror the interface of the existing
-    ``app.inference.generate_analysis_report``.
+    ``app.inference.generate_analysis_report``. When ``include_explain`` is
+    true the report carries an optional top-level ``explain`` payload (moved
+    out of the nested ``prediction`` block) for per-forecast XAI persistence;
+    it is absent whenever the explanation could not be built.
     """
     predictor = get_tft_predictor()
 
-    prediction = predictor.predict(session, symbol)
+    prediction = predictor.predict(session, symbol, include_explain=include_explain)
     if prediction.get("model_state") == "retrain_required":
         prediction["symbol"] = symbol
         return prediction
@@ -985,5 +1049,9 @@ def generate_tft_analysis(session, symbol: str = TARGET_SYMBOL) -> Dict[str, Any
         "model_metadata": metadata,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+
+    explain = prediction.pop("explain", None)
+    if explain is not None:
+        raw_result["explain"] = explain
+
     return _sanitize_floats(raw_result)
