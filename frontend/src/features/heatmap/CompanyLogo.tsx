@@ -10,6 +10,41 @@ interface Props {
   defer?: boolean;
 }
 
+let cachedObserverCtor: typeof IntersectionObserver | null = null;
+let sharedLogoObserver: IntersectionObserver | null = null;
+const logoObserverCallbacks = new WeakMap<Element, () => void>();
+
+function observeLogoVisibility(element: Element, onVisible: () => void): () => void {
+  if (typeof IntersectionObserver === 'undefined') {
+    onVisible();
+    return () => {};
+  }
+  if (cachedObserverCtor !== IntersectionObserver || !sharedLogoObserver) {
+    cachedObserverCtor = IntersectionObserver;
+    sharedLogoObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const callback = logoObserverCallbacks.get(entry.target);
+          if (callback) {
+            logoObserverCallbacks.delete(entry.target);
+            sharedLogoObserver?.unobserve(entry.target);
+            callback();
+          }
+        }
+      },
+      { rootMargin: '48px' },
+    );
+  }
+  const observer = sharedLogoObserver;
+  logoObserverCallbacks.set(element, onVisible);
+  observer.observe(element);
+  return () => {
+    logoObserverCallbacks.delete(element);
+    observer.unobserve(element);
+  };
+}
+
 export const CompanyLogo = memo(function CompanyLogo({
   ticker,
   label,
@@ -31,12 +66,7 @@ export const CompanyLogo = memo(function CompanyLogo({
       setVisible(true);
       return;
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => entry.isIntersecting && setVisible(true),
-      { rootMargin: '48px' },
-    );
-    observer.observe(holderRef.current);
-    return () => observer.disconnect();
+    return observeLogoVisibility(holderRef.current, () => setVisible(true));
   }, [defer, visible]);
 
   const initials = normalizeLogoTicker(ticker).replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?';
