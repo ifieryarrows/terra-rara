@@ -82,6 +82,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 │  ├── GET /api/analysis          → XGBoost next-day return prediction    │
 │  ├── GET /api/analysis/tft/{s}  → TFT-ASRO 5-day quantile forecast      │
 │  ├── GET /api/analysis/consensus→ Blended prediction (XGBoost + TFT)    │
+│  ├── GET /api/explain/{s}       → Stored TFT model-focus explanation    │
 │  ├── GET /api/history           → 180d historical price & sentiment     │
 │  ├── GET /api/market-heatmap    → Sector/category asset treemap (15m)   │
 │  ├── GET /api/market-prices     → Real-time quotes (14 symbols)         │
@@ -638,6 +639,9 @@ curl https://ifieryarrows-copper-mind.hf.space/api/analysis
 # Get TFT-ASRO deep learning forecast
 curl https://ifieryarrows-copper-mind.hf.space/api/analysis/tft/HG=F
 
+# Get stored TFT-ASRO model-focus explanation
+curl https://ifieryarrows-copper-mind.hf.space/api/explain/HG=F
+
 # Get AI commentary
 curl https://ifieryarrows-copper-mind.hf.space/api/commentary
 
@@ -785,6 +789,20 @@ Returns TFT-ASRO deep learning forecast with 7-quantile prediction paths and con
   }
 }
 ```
+
+### GET /api/explain/{symbol}
+
+Returns the per-forecast TFT-ASRO model-focus explanation stored with the latest TFT snapshot (`explain_json`, `schema_version: 1`). It is computed once by the pipeline worker at Stage 5.5. This endpoint is snapshot-only: unlike `/api/analysis/tft/{symbol}`, it never runs live inference.
+
+The payload holds the raw VSN variable-selection weights split into encoder, decoder and static groups (encoder entries sorted by weight, each with a label and category; the top five encoder features may also carry a `recent` block with the last value and its change over the last 5 sessions), the TFT attention distribution over the encoder window at the first forecast day (t+1), the reference price date, the model checkpoint identity (`checkpoint`, `trained_at`), encoder/decoder/static feature-layout hashes and a `notes` disclaimer.
+
+Returns `404` when:
+
+- No snapshot exists for the symbol yet.
+- The snapshot is stale under the same freshness rules as `/api/analysis/tft/{symbol}` (a quality-gate-passed model trained after the snapshot, or a missing/mismatched reference price date relative to the latest PriceBar). Where `/api/analysis/tft/{symbol}` falls back to live inference, this endpoint returns `404`.
+- The snapshot carries no explanation yet; retry after the next pipeline refresh.
+
+These are raw, pre-calibration model-focus signals for the 5-day cumulative log-return (primary) horizon, **not causality**. Explanations are optional and fail-open: if the payload cannot be built, the forecast and its snapshot are still persisted without it. The Overview dashboard surfaces this payload in the "Model focus (TFT-ASRO)" card.
 
 ### POST /api/pipeline/trigger (Privileged)
 
