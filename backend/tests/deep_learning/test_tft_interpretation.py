@@ -138,3 +138,16 @@ def test_get_variable_importance_empty_without_loader_or_batches():
     assert get_variable_importance(model) == {}
     assert get_variable_importance(model, val_dataloader=_BatchLoader([])) == {}
     assert model._batch_index == 0
+
+
+def test_get_variable_importance_returns_empty_when_interpretation_fails(monkeypatch):
+    # Importance is best-effort promotion metadata: an interpret_batch failure
+    # (e.g. on a real checkpoint never exercised offline) must never propagate.
+    def _raise(*args, **kwargs):
+        raise RuntimeError("interpretation exploded")
+
+    monkeypatch.setattr("deep_learning.models.tft_copper.interpret_batch", _raise)
+    model = _PerBatchWeightsModel(per_batch_weights=[(0.6, 0.9)])
+    loader = _BatchLoader([({"encoder_lengths": torch.tensor([3])}, None)])
+
+    assert get_variable_importance(model, val_dataloader=loader) == {}

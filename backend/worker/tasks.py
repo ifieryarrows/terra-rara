@@ -722,7 +722,6 @@ async def _execute_pipeline_stages_v2(
                     explain_payload["run_id"] = (
                         str(run_id) if run_id is not None else None
                     )
-                result["tft_explain_generated"] = isinstance(explain_payload, dict)
                 try:
                     from app.models import TFTPredictionSnapshot
 
@@ -754,6 +753,7 @@ async def _execute_pipeline_stages_v2(
                     session.rollback()
                     result["tft_persistence_error"] = str(persist_exc)
 
+                result["tft_explain_generated"] = bool(persisted and isinstance(explain_payload, dict))
                 is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))
                 result["tft_snapshot_generated"] = bool(is_forecast_healthy and persisted)
                 if is_forecast_healthy and persisted:

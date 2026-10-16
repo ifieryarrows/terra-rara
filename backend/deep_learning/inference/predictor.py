@@ -654,7 +654,7 @@ class TFTPredictor:
                 feature_frame=history,
                 reference_price_date=reference_price_date,
                 symbol=symbol,
-                checkpoint=str(self.cfg.training.best_model_path),
+                checkpoint=str(self._checkpoint_path),
                 trained_at=(self.get_model_metadata(session) or {}).get("trained_at"),
                 generated_at=datetime.now(timezone.utc),
             )

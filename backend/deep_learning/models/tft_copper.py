@@ -890,32 +890,41 @@ def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
     Average encoder VSN variable importance over ``val_dataloader`` batches.
 
     Returns a dict mapping feature name -> importance, normalised to sum 1 and
-    sorted in descending order; an absent or empty loader yields ``{}``.
+    sorted in descending order; an absent or empty loader yields ``{}``, and any
+    failure while extracting/averaging importance also yields ``{}``. This is
+    best-effort promotion metadata and must never raise.
     ``val_dataloader`` must be passed explicitly (``model.val_dataloader()``
     only works inside a Lightning Trainer context and raises an error otherwise).
     """
     if val_dataloader is None:
         return {}
 
-    totals: Dict[str, float] = {}
-    n_batches = 0
-    for batch in val_dataloader:
-        sample = batch[0] if isinstance(batch, (tuple, list)) else batch
-        interpretation = interpret_batch(model, sample)
-        for entry in interpretation["encoder"]:
-            totals[entry["feature"]] = totals.get(entry["feature"], 0.0) + entry["weight"]
-        n_batches += 1
+    try:
+        totals: Dict[str, float] = {}
+        n_batches = 0
+        for batch in val_dataloader:
+            sample = batch[0] if isinstance(batch, (tuple, list)) else batch
+            interpretation = interpret_batch(model, sample)
+            for entry in interpretation["encoder"]:
+                totals[entry["feature"]] = totals.get(entry["feature"], 0.0) + entry["weight"]
+            n_batches += 1
 
-    if n_batches == 0 or not totals:
+        if n_batches == 0 or not totals:
+            return {}
+
+        averaged = {name: total / n_batches for name, total in totals.items()}
+        total_weight = sum(averaged.values())
+        if total_weight <= 0.0:
+            return {}
+
+        normalized = {name: weight / total_weight for name, weight in averaged.items()}
+        return dict(sorted(normalized.items(), key=lambda item: item[1], reverse=True))
+    except Exception:
+        logger.warning(
+            "Variable importance extraction failed; returning empty importance",
+            exc_info=True,
+        )
         return {}
-
-    averaged = {name: total / n_batches for name, total in totals.items()}
-    total_weight = sum(averaged.values())
-    if total_weight <= 0.0:
-        return {}
-
-    normalized = {name: weight / total_weight for name, weight in averaged.items()}
-    return dict(sorted(normalized.items(), key=lambda item: item[1], reverse=True))
 
 
 # ---------------------------------------------------------------------------
