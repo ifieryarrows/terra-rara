@@ -647,6 +647,7 @@ class TFTModelMetadata(Base):
     symbol = Column(String(20), nullable=False, unique=True, index=True)
     config_json = Column(Text, nullable=True)
     metrics_json = Column(Text, nullable=True)
+    importance_json = Column(Text, nullable=True)
     checkpoint_path = Column(String(500), nullable=True)
     trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
     # NULL = legacy row persisted before this column was added (treat as unknown).

@@ -32,6 +32,7 @@ WEEKLY_DAILY_SENTIMENT_COLUMNS = (
 
 TFT_MODEL_METADATA_COLUMNS = (
     ("quality_gate_passed", "BOOLEAN", "BOOLEAN"),
+    ("importance_json", "TEXT", "TEXT"),
 )
 
 TFT_PREDICTION_SNAPSHOT_COLUMNS = (

@@ -1805,6 +1805,23 @@ async def get_tft_summary(
             out[k] = num
         return out
 
+    def _importance_entries(weights: dict) -> list[dict]:
+        from .features import describe_feature
+
+        entries = []
+        for feat, imp in weights.items():
+            meta_desc = describe_feature(feat)
+            entries.append({
+                "feature": feat,
+                "importance": float(imp),
+                "label": meta_desc["label"],
+                "description": meta_desc["description"],
+                "category": meta_desc["category"],
+                "time_horizon": meta_desc.get("time_horizon", ""),
+            })
+        entries.sort(key=lambda x: x["importance"], reverse=True)
+        return entries[:20]
+
     with SessionLocal() as session:
         # This endpoint describes the active/promoted model. Rejected candidate
         # metrics remain in the GitHub run artifact and must never replace the
@@ -1828,31 +1845,31 @@ async def get_tft_summary(
         metrics_raw = _safe_json_load(meta.metrics_json)
         metrics = _numeric_map(metrics_raw)
         
-        # Variable importance not directly in TFTModelMetadata yet, extract from latest artifacts if available
-        # But we can try to find it in the artifacts folder
+        # Prefer the VSN encoder importance persisted at promotion time; rows
+        # from before that change (or a malformed payload) fall back to the
+        # latest MRMR artifact.
         variable_importance = []
-        try:
-            import pathlib
-            from .features import describe_feature
+        persisted_importance = _safe_json_load(meta.importance_json)
+        encoder_importance = persisted_importance.get("encoder")
+        if isinstance(encoder_importance, dict) and encoder_importance:
+            try:
+                variable_importance = _importance_entries(encoder_importance)
+            except Exception as e:
+                logger.warning(f"Could not parse persisted TFT variable importance: {e}")
+                variable_importance = []
 
-            artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
-            mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
-            if mrmr_path.exists():
-                mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
-                for feat, imp in mrmr_data.get("scores", {}).items():
-                    meta_desc = describe_feature(feat)
-                    variable_importance.append({
-                        "feature": feat,
-                        "importance": float(imp),
-                        "label": meta_desc["label"],
-                        "description": meta_desc["description"],
-                        "category": meta_desc["category"],
-                        "time_horizon": meta_desc.get("time_horizon", ""),
-                    })
-                variable_importance.sort(key=lambda x: x["importance"], reverse=True)
-                variable_importance = variable_importance[:20]
-        except Exception as e:
-            logger.warning(f"Could not load variable importance: {e}")
+        if not variable_importance:
+            try:
+                import pathlib
+
+                artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
+                mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
+                if mrmr_path.exists():
+                    mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
+                    variable_importance = _importance_entries(mrmr_data.get("scores", {}))
+            except Exception as e:
+                logger.warning(f"Could not load variable importance: {e}")
+                variable_importance = []
 
         da = float(metrics.get("directional_accuracy", 0.5))
         sharpe = float(metrics.get("sharpe_ratio", 0.0))
