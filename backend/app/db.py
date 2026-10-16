@@ -8,7 +8,7 @@ import logging
 from contextlib import contextmanager
 from typing import Generator
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 from app.settings import get_settings
@@ -32,6 +32,11 @@ WEEKLY_DAILY_SENTIMENT_COLUMNS = (
 
 TFT_MODEL_METADATA_COLUMNS = (
     ("quality_gate_passed", "BOOLEAN", "BOOLEAN"),
+    ("importance_json", "TEXT", "TEXT"),
+)
+
+TFT_PREDICTION_SNAPSHOT_COLUMNS = (
+    ("explain_json", "JSON", "JSON"),
 )
 
 PRODUCTION_FLOW_AI_COMMENTARY_COLUMNS = (
@@ -448,6 +453,32 @@ def _run_migrations(engine):
         except Exception:
             conn.rollback()
             logger.exception("Migration failed for TFT model promotion schema")
+            raise
+
+        # Only a missing snapshot table is tolerated (init_db creates it before
+        # migrations run, but ad-hoc migration passes must not fail on it);
+        # any other failure is a real schema error and must surface loudly.
+        try:
+            if inspect(conn).has_table("tft_prediction_snapshots"):
+                _ensure_columns(
+                    conn,
+                    "tft_prediction_snapshots",
+                    TFT_PREDICTION_SNAPSHOT_COLUMNS,
+                    is_sqlite,
+                )
+                conn.commit()
+                logger.info(
+                    "Migration: Ensured TFT prediction snapshot explain schema exists"
+                )
+            else:
+                logger.debug(
+                    "Migration skipped: tft_prediction_snapshots table does not exist"
+                )
+        except Exception:
+            conn.rollback()
+            logger.exception(
+                "Migration failed for TFT prediction snapshot explain schema"
+            )
             raise
 
         try:

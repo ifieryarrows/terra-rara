@@ -17,6 +17,7 @@
 - **Primary vs. Diagnostic Separation:** Multi-horizon forecasting models must strictly separate primary horizon metrics (e.g. 5D cumulative weekly returns) from single-step diagnostics (e.g. T+1 daily path).
 - **UI Horizon Alignment:** Dashboards and summary views must never place daily risk-adjusted ratios (Daily Sharpe/Sortino) directly alongside weekly accuracy (Weekly DA) without explicit horizon labels and grouping.
 - **Promotion Gate Horizon Matching:** A model whose primary operational deliverable is a multi-day forecast must enforce risk-adjusted performance on that same primary horizon (weekly_sharpe_ratio), retaining single-step metrics purely as lower-bound sanity checks.
+- **Explainability Framing & Fail-Open Contract:** TFT-ASRO explanations (`explain_json`, served by `/api/explain/{symbol}`) are optional, fail-open artifacts computed once by the pipeline worker; their absence must never fail a run nor drop or invalidate a snapshot, and they must always be presented as raw, pre-calibration model focus (VSN weights + encoder-window attention) labeled to the 5-day primary horizon, never as causality.
 
 ## 5. Database & Connection Pooler Invariants
 - **Dialect Explicit Binding & Fallback:** Unspecified `postgresql://` URIs must normalize dynamically to the installed driver (`postgresql+psycopg://` or `postgresql+psycopg2://`) to guard against ORM dialect default shifts across major/minor upgrades (e.g. SQLAlchemy 2.1+).

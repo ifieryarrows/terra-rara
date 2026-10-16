@@ -19,6 +19,7 @@ import argparse
 import importlib.metadata
 import json
 import logging
+import math
 import os
 import platform
 import sys
@@ -1559,6 +1560,36 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     return replace(cfg, model=new_model, asro=new_asro, weekly_loss=new_weekly_loss, training=new_training)
 
 
+def _importance_metadata_payload(result: dict) -> str:
+    """Serialize VSN encoder importance for informational storage at promotion.
+
+    Never let metadata-only concerns block promotion: missing or malformed
+    importance degrades to an empty encoder map. Non-finite weights (exploding
+    checkpoints can emit NaN softmax weights) are dropped — ``json.dumps``
+    would otherwise emit ``NaN``/``Infinity`` literals, which are invalid JSON
+    and choke strict readers of the summary endpoint.
+    """
+    importance = result.get("variable_importance")
+    if not isinstance(importance, dict):
+        importance = {}
+    cleaned_importance = {}
+    for name, value in importance.items():
+        try:
+            weight = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(weight):
+            cleaned_importance[name] = weight
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "encoder": cleaned_importance,
+            "trained_at": result.get("trained_at"),
+            "checkpoint": result.get("checkpoint_path"),
+        }
+    )
+
+
 def persist_promoted_tft_metadata(symbol: str, result: dict) -> None:
     """Persist the active model only after gate and Hub promotion succeed.
 
@@ -1594,9 +1625,12 @@ def persist_promoted_tft_metadata(symbol: str, result: dict) -> None:
             TFTModelMetadata.symbol == symbol
         ).first()
 
+        importance_json = _importance_metadata_payload(result)
+
         if existing:
             existing.config_json = json.dumps(result.get("config", {}))
             existing.metrics_json = json.dumps(metrics)
+            existing.importance_json = importance_json
             existing.checkpoint_path = result.get("checkpoint_path", "")
             existing.trained_at = trained_at
             existing.quality_gate_passed = True
@@ -1606,6 +1640,7 @@ def persist_promoted_tft_metadata(symbol: str, result: dict) -> None:
                     symbol=symbol,
                     config_json=json.dumps(result.get("config", {})),
                     metrics_json=json.dumps(metrics),
+                    importance_json=importance_json,
                     checkpoint_path=result.get("checkpoint_path", ""),
                     trained_at=trained_at,
                     quality_gate_passed=True,

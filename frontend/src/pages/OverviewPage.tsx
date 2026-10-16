@@ -6,6 +6,7 @@ import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
 import { ViewState } from '../components/ui/ViewState';
 import { OverviewSkeleton } from '../components/skeletons';
+import { ModelFocusPanel } from '../components/ModelFocusPanel';
 import { BrandMark } from '../components/ui/BrandMark';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
@@ -13,18 +14,20 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { formatQuoteDelta, quoteComparison } from '../utils/quote';
+import { driverCategoryLabel, driverCategoryTone } from '../utils/driverCategories';
 
 import {
   fetchAnalysis,
   fetchHistory,
   fetchCommentary,
   fetchTFTAnalysis,
+  fetchExplain,
   fetchLivePrice,
 } from '../api';
 import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
   AnalysisReport, HistoryResponse, Influencer,
-  CommentaryResponse, TFTAnalysisResponse
+  CommentaryResponse, TFTAnalysisResponse, ExplainResponse
 } from '../types';
 import { useSentimentSummary } from '../hooks/useQueries';
 import '../App.css';
@@ -49,28 +52,6 @@ const MapSkeleton = () => (
   </div>
 );
 
-const driverCategoryTone: Record<string, string> = {
-  Momentum:   'bg-copper-500/15 text-copper-300',
-  Trend:      'bg-blue-500/15 text-blue-300',
-  Volatility: 'bg-amber-500/15 text-amber-300',
-  Sentiment:  'bg-violet-500/15 text-violet-300',
-  Macro:      'bg-emerald-500/15 text-emerald-300',
-  Sector:     'bg-rose-500/15 text-rose-300',
-  Embedding:  'bg-slate-500/15 text-slate-300',
-  Other:      'bg-white/5 text-gray-400',
-};
-
-const driverCategoryLabel: Record<string, string> = {
-  Momentum: 'Momentum signal',
-  Trend: 'Trend signal',
-  Volatility: 'Price volatility',
-  Sentiment: 'News sentiment',
-  Macro: 'Macro market',
-  Sector: 'Related market',
-  Embedding: 'News pattern',
-  Other: 'Other factor',
-};
-
 // --- Components ---
 
 const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), className = ''}: { value: number; format?: (v: number) => string; className?: string }) => (
@@ -87,6 +68,7 @@ export const OverviewPage = () => {
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
+  const [explain, setExplain] = useState<ExplainResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -100,10 +82,11 @@ export const OverviewPage = () => {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
     setIsRefreshing(true);
-    const [analysisResult, historyResult, tftResult] = await Promise.allSettled([
+    const [analysisResult, historyResult, tftResult, explainResult] = await Promise.allSettled([
         fetchAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
         fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
+        fetchExplain(DEFAULT_COPPER_SYMBOL),
     ]);
     const nextErrors: Record<string, string> = {};
     if (analysisResult.status === 'fulfilled') setAnalysis(analysisResult.value);
@@ -120,6 +103,11 @@ export const OverviewPage = () => {
     else {
       if (!silent) setTftAnalysis(null);
       nextErrors['Deep-learning forecast'] = String(tftResult.reason);
+    }
+    if (explainResult.status === 'fulfilled') setExplain(explainResult.value);
+    else {
+      if (!silent) setExplain(null);
+      nextErrors['Model focus'] = String(explainResult.reason);
     }
     setLoadErrors((previous) => ({
       ...(previous['AI commentary'] ? { 'AI commentary': previous['AI commentary'] } : {}),
@@ -568,6 +556,11 @@ export const OverviewPage = () => {
                 <span className="text-slate-400" role="status">{commentaryLoading ? 'Loading available commentary…' : loadErrors['AI commentary'] || commentary?.error ? 'AI commentary is temporarily unavailable.' : 'No commentary is available for this snapshot.'}</span>
               )}
             </div>
+          </GlassCard>
+
+          {/* TFT model focus — raw VSN/attention internals of the latest explanation. */}
+          <GlassCard id="tft-focus" title="Model focus (TFT-ASRO)" icon={Brain} colSpan={4}>
+            <ModelFocusPanel data={explain} error={loadErrors['Model focus']}/>
           </GlassCard>
 
         </div>

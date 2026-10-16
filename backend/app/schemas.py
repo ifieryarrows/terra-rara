@@ -270,6 +270,14 @@ class TFTModelSummaryResponse(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Model configuration parameters")
     metrics: Dict[str, float] = Field(default_factory=dict, description="Test metrics from training")
     variable_importance: List[VariableImportance] = Field(default_factory=list, description="Top feature importance scores")
+    variable_importance_method: Optional[str] = Field(
+        None,
+        description=(
+            "Source of `variable_importance`: `vsn_encoder` (TFT variable-selection "
+            "weights persisted at promotion) or `mrmr` (feature-selection scores from "
+            "the latest artifact); `null` when neither is available."
+        ),
+    )
     quality_gate: Optional[QualityGateResponse] = Field(None, description="Quality gate evaluation results")
 
 

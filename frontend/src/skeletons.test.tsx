@@ -41,6 +41,7 @@ vi.mock('./api', () => ({
   fetchCommentary: vi.fn(() => new Promise(() => {})),
   fetchTFTAnalysis: vi.fn(() => new Promise(() => {})),
   fetchLivePrice: vi.fn(() => new Promise(() => {})),
+  fetchExplain: vi.fn(() => new Promise(() => {})),
 }));
 
 beforeEach(() => {
@@ -94,6 +95,7 @@ describe('workspace skeleton loading views', () => {
       expect(status.querySelector('#model-reliability .pt-3')).not.toBeInTheDocument();
       expect(status.querySelector('#neural-analysis')).toBeInTheDocument();
       expect(status.querySelector('#neural-analysis .cm-commentary')).toBeInTheDocument();
+      expect(status.querySelector('#tft-focus')).toBeInTheDocument();
       expect(status.querySelector('#news-intelligence')).toBeInTheDocument();
       expect(status.querySelector('#news-intelligence .cm-news-panel')).toBeInTheDocument();
       expect(status.querySelector('#news-intelligence .cm-news-controls')).toBeInTheDocument();

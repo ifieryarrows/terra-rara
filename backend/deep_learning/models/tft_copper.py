@@ -11,6 +11,7 @@ Wraps pytorch_forecasting's TemporalFusionTransformer with:
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -829,51 +830,158 @@ def load_tft_model(
 # Interpretation helpers
 # ---------------------------------------------------------------------------
 
+def _named_weights(names, weights) -> list[Dict[str, Any]]:
+    """Zip variable names with a per-sample weight vector, validating the layout."""
+    if len(names) != len(weights):
+        raise ValueError(
+            f"interpretation names/weights mismatch: got {len(names)} names "
+            f"for {len(weights)} weights"
+        )
+    return [
+        {"feature": name, "weight": float(weight)}
+        for name, weight in zip(names, weights)
+    ]
+
+
+def _run_interpretation(model, x: dict, attention_prediction_horizon: int):
+    """Evaluate ``model`` on one batch and return ``(out, per-sample interpretation)``.
+
+    Placement and mode safety: tensors are moved to the model's device (an
+    inference model may legitimately live on GPU while the dataloader yields
+    CPU tensors — the same registration pytorch-forecasting's ``predict``
+    performs internally), eval mode is forced so dropout can never add noise
+    to the weights, and the original training mode is restored afterwards.
+    """
+    try:
+        device = next(model.parameters()).device
+    except (AttributeError, StopIteration):
+        device = None
+    moved = {
+        key: value.to(device) if (device is not None and torch.is_tensor(value)) else value
+        for key, value in x.items()
+    }
+    was_training = bool(getattr(model, "training", False))
+    if was_training and hasattr(model, "eval"):
+        model.eval()
+    try:
+        with torch.no_grad():
+            out = model(moved)
+    finally:
+        if was_training and hasattr(model, "train"):
+            model.train()
+
+    interpretation = model.interpret_output(
+        out,
+        reduction="none",
+        attention_prediction_horizon=attention_prediction_horizon,
+    )
+    return out, interpretation
+
+
+def interpret_batch(model, x: dict, attention_prediction_horizon: int = 0) -> dict:
+    """
+    Interpret a single TFT batch: VSN selection weights plus encoder attention.
+
+    Runs the raw forward pass under ``torch.no_grad()`` (batch moved to the
+    model's device, eval mode enforced so dropout adds no noise) and reduces
+    nothing (``reduction="none"``), so every score stays per-sample; attention
+    is renormalized per sample and clipped to the encoder window
+    (``[: model.hparams.max_encoder_length]``). Group names come from
+    ``model.encoder_variables`` / ``decoder_variables`` / ``static_variables``;
+    a names/weights length mismatch raises ``ValueError``.
+    """
+    out, interpretation = _run_interpretation(model, x, attention_prediction_horizon)
+
+    max_encoder_length = int(model.hparams.max_encoder_length)
+    attention = (
+        interpretation["attention"][0].detach().cpu().numpy()[:max_encoder_length].tolist()
+    )
+
+    return {
+        "encoder": _named_weights(
+            model.encoder_variables,
+            interpretation["encoder_variables"][0].detach().cpu().numpy(),
+        ),
+        "decoder": _named_weights(
+            model.decoder_variables,
+            interpretation["decoder_variables"][0].detach().cpu().numpy(),
+        ),
+        "static": _named_weights(
+            model.static_variables,
+            interpretation["static_variables"][0].detach().cpu().numpy(),
+        ),
+        "attention": attention,
+        "encoder_length": int(out["encoder_lengths"][0]),
+    }
+
+
 def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
     """
-    Extract learned variable importance from the TFT's Variable Selection Networks.
+    Mean encoder VSN variable importance over every validation sample.
 
-    Returns a dict mapping feature name -> normalised importance score.
-    val_dataloader must be passed explicitly (model.val_dataloader() only works
-    inside a Lightning Trainer context and raises an error otherwise).
+    ``interpret_output(reduction="none")`` returns per-sample selection weights
+    (shape ``(batch, num_variables)``); those are pooled over *all samples of
+    every batch*, per feature. Non-finite weights are dropped per sample so a
+    single NaN/Inf batch cannot poison the whole map (an exploding checkpoint's
+    softmax weights may be NaN). The result is normalised to sum 1 and sorted in
+    descending order; an absent or empty loader yields ``{}``, and any failure
+    while extracting/averaging importance also yields ``{}``. This is
+    best-effort promotion metadata and must never raise.
+    ``val_dataloader`` must be passed explicitly (``model.val_dataloader()``
+    only works inside a Lightning Trainer context and raises an error otherwise).
     """
     if val_dataloader is None:
         return {}
+
     try:
-        interpretation = model.interpret_output(
-            model.predict(val_dataloader, return_x=True),
-            reduction="sum",
-        )
-        importance = interpretation.get("encoder_variables", {})
-        if not importance:
+        weight_sums: Dict[str, float] = {}
+        sample_counts: Dict[str, int] = {}
+        n_samples = 0
+        for batch in val_dataloader:
+            sample = batch[0] if isinstance(batch, (tuple, list)) else batch
+            _, interpretation = _run_interpretation(model, sample, 0)
+            per_sample = interpretation["encoder_variables"].detach().cpu().numpy()
+            names = model.encoder_variables
+            if per_sample.ndim != 2 or len(names) != per_sample.shape[1]:
+                raise ValueError(
+                    f"interpretation names/weights mismatch: got {len(names)} names "
+                    f"for encoder variables of shape {per_sample.shape!r}"
+                )
+            for index, name in enumerate(names):
+                column = per_sample[:, index]
+                finite = column[np.isfinite(column)]
+                if finite.size == 0:
+                    continue
+                weight_sums[name] = weight_sums.get(name, 0.0) + float(finite.sum())
+                sample_counts[name] = sample_counts.get(name, 0) + int(finite.size)
+            n_samples += int(per_sample.shape[0])
+
+        if n_samples == 0 or not weight_sums:
             return {}
 
-        total = sum(importance.values())
-        if total == 0:
-            return importance
+        averaged: Dict[str, float] = {}
+        for name, total in weight_sums.items():
+            count = sample_counts.get(name, 0)
+            if count <= 0:
+                continue
+            average = total / count
+            if math.isfinite(average):
+                averaged[name] = average
+        if not averaged:
+            return {}
 
-        return {k: v / total for k, v in sorted(importance.items(), key=lambda x: -x[1])}
-    except Exception as exc:
-        logger.warning("Could not extract variable importance: %s", exc)
+        total_weight = sum(averaged.values())
+        if not math.isfinite(total_weight) or total_weight <= 0.0:
+            return {}
+
+        normalized = {name: weight / total_weight for name, weight in averaged.items()}
+        return dict(sorted(normalized.items(), key=lambda item: item[1], reverse=True))
+    except Exception:
+        logger.warning(
+            "Variable importance extraction failed; returning empty importance",
+            exc_info=True,
+        )
         return {}
-
-
-def get_attention_weights(model, dataloader) -> Optional[np.ndarray]:
-    """
-    Extract temporal self-attention weights for interpretability.
-
-    Returns array of shape (n_samples, n_heads, encoder_length, encoder_length)
-    or None if extraction fails.
-    """
-    try:
-        out = model.predict(dataloader, return_x=True, mode="raw")
-        attn = out.get("attention")
-        if attn is not None:
-            return attn.cpu().numpy()
-    except Exception as exc:
-        logger.warning("Could not extract attention weights: %s", exc)
-
-    return None
 
 
 # ---------------------------------------------------------------------------

@@ -204,6 +204,57 @@ export interface TFTAnalysisResponse {
   snapshot_generated_at?: string | null;
 }
 
+/** Five-session delta block attached to a top encoder feature (see backend `tft_explain.py`). */
+export interface ExplainRecent {
+  basis: string;
+  kind: 'pct' | 'abs';
+  last_value: number;
+  change: number;
+  change_pct: number | null;
+  as_of: string | null;
+}
+
+export interface ExplainFeatureEntry {
+  feature: string;
+  weight: number;
+  label: string;
+  description: string;
+  category: string;
+  time_horizon: string;
+  recent?: ExplainRecent;
+}
+
+export interface ExplainAttentionPoint {
+  date: string | null;
+  weight: number;
+}
+
+/** Payload of `GET /api/explain/{symbol}`; the endpoint 404s until a fresh snapshot carries one. */
+export interface ExplainResponse {
+  schema_version: number;
+  symbol: string | null;
+  reference_price_date: string | null;
+  generated_at: string | null;
+  run_id: string | null;
+  model: { checkpoint: string | null; trained_at: string | null };
+  horizon: { label: string; days: number };
+  layout_hash: { encoder: string; decoder: string; static: string };
+  variable_selection: {
+    method: string;
+    encoder: ExplainFeatureEntry[];
+    decoder: ExplainFeatureEntry[];
+    static: ExplainFeatureEntry[];
+  };
+  attention: {
+    method: string;
+    step: { kind: string; horizon_index: number };
+    window: { start: string | null; end: string | null; days: number };
+    top_days: ExplainAttentionPoint[];
+    series: ExplainAttentionPoint[];
+  };
+  notes: string;
+}
+
 export interface ConsensusSignal {
   consensus_direction: string;
   confidence: string;
@@ -230,6 +281,8 @@ export interface TFTModelSummaryResponse {
   config: Record<string, any>;
   metrics: Record<string, number>;
   variable_importance: Influencer[];
+  /** How `variable_importance` was derived: `"vsn_encoder"`, `"mrmr"` or `null` when unknown. */
+  variable_importance_method: string | null;
   quality_gate: QualityGateResponse | null;
 }
 

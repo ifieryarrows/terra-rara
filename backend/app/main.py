@@ -19,7 +19,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -1179,6 +1179,99 @@ def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
     return None
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Treat naive persisted timestamps as UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_ref_date(value: Optional[str]) -> Optional[date]:
+    """Parse a `YYYY-MM-DD` snapshot reference date, tolerating malformed values."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _tft_snapshot_invalid_reasons(
+    session,
+    symbol: str,
+    snapshot,
+    latest_price_date: Optional[date] = None,
+) -> list[str]:
+    """
+    Freshness reasons that make a TFT snapshot unsafe to serve.
+
+    Mirrors the snapshot-first contract of `/api/analysis/tft/{symbol}`: an
+    empty list means no currently-promoted (quality-gate-passed) model is
+    newer than the snapshot, and the snapshot is anchored to the latest
+    PriceBar. Note this does not verify that a gate-passed model row exists at
+    all — when the metadata table has no such row the test is vacuous by
+    design (there is nothing newer to compare against).
+    """
+    from app.models import TFTModelMetadata
+
+    reasons: list[str] = []
+    gen_at = _as_utc(snapshot.generated_at)
+
+    # Only a quality-gate-passed model should invalidate the snapshot. A
+    # failed model being newer must NOT force live inference, since that
+    # would serve a rejected checkpoint.
+    model_meta = (
+        session.query(TFTModelMetadata)
+        .filter(
+            TFTModelMetadata.symbol == symbol,
+            TFTModelMetadata.quality_gate_passed.is_(True),
+        )
+        .order_by(TFTModelMetadata.trained_at.desc())
+        .first()
+    )
+    trained_at = _as_utc(model_meta.trained_at) if model_meta else None
+    if trained_at and gen_at and trained_at > gen_at:
+        reasons.append(
+            "model trained after snapshot "
+            f"(trained_at={trained_at.isoformat()} > snapshot_at={gen_at.isoformat()})"
+        )
+
+    payload = snapshot.payload_json if isinstance(snapshot.payload_json, dict) else {}
+    prediction = (
+        payload.get("prediction")
+        if isinstance(payload.get("prediction"), dict)
+        else {}
+    )
+    reference_price_date = (
+        snapshot.reference_price_date
+        or prediction.get("reference_price_date")
+    )
+    ref_date = _parse_ref_date(reference_price_date)
+    if latest_price_date is None:
+        latest_price_date = _latest_price_bar_date(session, symbol)
+    if ref_date is None:
+        reasons.append("snapshot reference_price_date missing")
+    elif latest_price_date is not None and ref_date != latest_price_date:
+        reasons.append(
+            "snapshot is not anchored to latest PriceBar "
+            f"(snapshot={ref_date.isoformat()}, "
+            f"latest_price_bar={latest_price_date.isoformat()})"
+        )
+    elif latest_price_date is None:
+        # Defensive fallback for installations where PriceBar is temporarily
+        # unavailable. Normally the exact market-bar comparison above is
+        # authoritative and naturally handles weekends and exchange holidays.
+        staleness_days = (datetime.now(timezone.utc).date() - ref_date).days
+        if staleness_days >= 3:
+            reasons.append(
+                f"reference_price_date stale ({reference_price_date}, {staleness_days}d)"
+            )
+
+    return reasons
+
+
 @app.get(
     "/api/analysis/tft/{symbol}",
     summary="Get TFT-ASRO deep learning analysis",
@@ -1224,22 +1317,7 @@ async def get_tft_analysis(
     # --- 1. Try persisted snapshot ------------------------------------------
     if source == "snapshot":
         try:
-            from app.models import TFTPredictionSnapshot, TFTModelMetadata
-
-            def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
-                if dt is None:
-                    return None
-                if dt.tzinfo is None:
-                    return dt.replace(tzinfo=timezone.utc)
-                return dt
-
-            def _parse_ref_date(value: Optional[str]) -> Optional[date]:
-                if not value:
-                    return None
-                try:
-                    return datetime.strptime(value[:10], "%Y-%m-%d").date()
-                except Exception:
-                    return None
+            from app.models import TFTPredictionSnapshot
 
             with SessionLocal() as session:
                 latest_price_date = _latest_price_bar_date(session, symbol)
@@ -1251,70 +1329,24 @@ async def get_tft_analysis(
                 )
                 if latest is not None and isinstance(latest.payload_json, dict):
                     payload = dict(latest.payload_json)
-                    gen_at = latest.generated_at
-                    gen_at = _as_utc(gen_at)
-                    # Only a quality-gate-passed model should invalidate the
-                    # snapshot. A failed model being newer must NOT force live
-                    # inference, since that would serve a rejected checkpoint.
-                    model_meta = (
-                        session.query(TFTModelMetadata)
-                        .filter(
-                            TFTModelMetadata.symbol == symbol,
-                            TFTModelMetadata.quality_gate_passed.is_(True),
-                        )
-                        .order_by(TFTModelMetadata.trained_at.desc())
-                        .first()
+                    gen_at = _as_utc(latest.generated_at)
+                    fallback_reasons = _tft_snapshot_invalid_reasons(
+                        session, symbol, latest, latest_price_date=latest_price_date
                     )
-                    trained_at = _as_utc(model_meta.trained_at) if model_meta else None
 
-                    # Decide whether snapshot is still valid.
-                    should_fallback_live = False
-                    fallback_reasons: list[str] = []
-
-                    if trained_at and gen_at and trained_at > gen_at:
-                        should_fallback_live = True
-                        fallback_reasons.append(
-                            "model trained after snapshot "
-                            f"(trained_at={trained_at.isoformat()} > snapshot_at={gen_at.isoformat()})"
+                    if not fallback_reasons:
+                        prediction = (
+                            payload.get("prediction")
+                            if isinstance(payload.get("prediction"), dict)
+                            else {}
                         )
-
-                    prediction = payload.get("prediction") if isinstance(payload.get("prediction"), dict) else {}
-                    reference_price_date = (
-                        latest.reference_price_date
-                        or prediction.get("reference_price_date")
-                    )
-                    ref_date = _parse_ref_date(reference_price_date)
-                    if ref_date is None:
-                        should_fallback_live = True
-                        fallback_reasons.append("snapshot reference_price_date missing")
-                    elif latest_price_date is not None and ref_date != latest_price_date:
-                        should_fallback_live = True
-                        fallback_reasons.append(
-                            "snapshot is not anchored to latest PriceBar "
-                            f"(snapshot={ref_date.isoformat()}, "
-                            f"latest_price_bar={latest_price_date.isoformat()})"
-                        )
-                    elif latest_price_date is None:
-                        # Defensive fallback for installations where PriceBar is
-                        # temporarily unavailable. Normally the exact market-bar
-                        # comparison above is authoritative and naturally handles
-                        # weekends and exchange holidays.
-                        staleness_days = (datetime.now(timezone.utc).date() - ref_date).days
-                        if staleness_days >= 3:
-                            should_fallback_live = True
-                            fallback_reasons.append(
-                                f"reference_price_date stale ({reference_price_date}, {staleness_days}d)"
-                            )
-
-                    if not should_fallback_live:
-                        if isinstance(prediction, dict):
-                            payload.setdefault("primary_horizon", "5D")
-                            payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
-                            payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
-                            payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
-                            payload.setdefault("t1_return", prediction.get("predicted_return_median"))
-                            payload.setdefault("t1_impulse", payload.get("t1_impulse"))
-                            payload.setdefault("return_space", prediction.get("return_space"))
+                        payload.setdefault("primary_horizon", "5D")
+                        payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
+                        payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
+                        payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
+                        payload.setdefault("t1_return", prediction.get("predicted_return_median"))
+                        payload.setdefault("t1_impulse", payload.get("t1_impulse"))
+                        payload.setdefault("return_space", prediction.get("return_space"))
                         payload["source"] = "snapshot"
                         payload["snapshot_generated_at"] = (
                             gen_at.isoformat() if gen_at else None
@@ -1384,6 +1416,80 @@ async def get_tft_analysis(
     except Exception as exc:
         logger.error("TFT analysis failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get(
+    "/api/explain/{symbol}",
+    response_model=Dict[str, Any],
+    summary="Get stored TFT-ASRO model-focus explanation",
+    description=(
+        "Returns the per-forecast model focus (variable-selection weights and "
+        "temporal attention) stored with the latest TFT snapshot produced by "
+        "the pipeline worker. Snapshot-only: unlike /api/analysis/tft, it "
+        "never runs live inference. A missing or stale snapshot returns 404 "
+        "with a reason so the UI can render an explicit empty state."
+    ),
+    responses={
+        200: {"description": "Stored per-forecast explanation payload"},
+        404: {"description": "No fresh TFT snapshot explanation is available"},
+    },
+)
+def get_tft_explain(symbol: str = TARGET_SYMBOL):
+    """
+    Get the stored TFT-ASRO explanation for the given symbol.
+
+    Explanations are computed once by the pipeline worker and persisted with
+    the snapshot (`explain_json`). This endpoint is snapshot-only like the
+    documented contract: a missing, stale, or explanation-less snapshot is
+    404. Declared as a sync `def` handler so the framework runs it in the
+    threadpool — the freshness check touches three tables and must not block
+    the event loop.
+    """
+    from app.models import TFTPredictionSnapshot
+
+    try:
+        with SessionLocal() as session:
+            latest = (
+                session.query(TFTPredictionSnapshot)
+                .filter(TFTPredictionSnapshot.symbol == symbol)
+                .order_by(TFTPredictionSnapshot.generated_at.desc())
+                .first()
+            )
+            if latest is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"No TFT snapshot for {symbol}. Explanation will be "
+                        "available after the next pipeline refresh."
+                    ),
+                )
+
+            invalid_reasons = _tft_snapshot_invalid_reasons(session, symbol, latest)
+            if invalid_reasons:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"TFT snapshot is stale: {'; '.join(invalid_reasons)}",
+                )
+
+            explain_payload = latest.explain_json
+            if not isinstance(explain_payload, dict):
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Explanation not available for this snapshot. Try again "
+                        "after the next pipeline refresh."
+                    ),
+                )
+
+            return explain_payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("TFT explain lookup failed for %s: %s", symbol, exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Explanation lookup failed; retry shortly.",
+        )
 
 
 @app.get("/", include_in_schema=False)
@@ -1720,6 +1826,76 @@ async def get_tft_summary(
             out[k] = num
         return out
 
+    def _importance_entries(weights: dict) -> list[dict]:
+        from .features import describe_feature
+
+        entries = []
+        dropped: list[str] = []
+        for feat, imp in weights.items():
+            try:
+                importance_value = float(imp)
+                if not math.isfinite(importance_value):
+                    raise ValueError("non-finite importance")
+            except (TypeError, ValueError):
+                # One malformed entry must not discard the whole VSN map;
+                # record it and keep the rest.
+                dropped.append(str(feat))
+                continue
+            meta_desc = describe_feature(feat)
+            entries.append({
+                "feature": feat,
+                "importance": importance_value,
+                "label": meta_desc["label"],
+                "description": meta_desc["description"],
+                "category": meta_desc["category"],
+                "time_horizon": meta_desc.get("time_horizon", ""),
+            })
+        if dropped:
+            logger.warning(
+                "Dropped %d malformed TFT variable-importance weight(s): %s",
+                len(dropped),
+                ", ".join(dropped[:10]),
+            )
+        entries.sort(key=lambda x: x["importance"], reverse=True)
+        return entries[:20]
+
+    def _build_variable_importance(meta) -> tuple[list[dict], str | None]:
+        """Return (entries, method) — the source that actually produced the top list.
+
+        VSN encoder weights and MRMR scores are different quantities that share
+        one response field, so the method is reported explicitly
+        (``vsn_encoder`` / ``mrmr`` / ``None`` when unavailable).
+        """
+        # Prefer the VSN encoder importance persisted at promotion time; rows
+        # from before that change (or a malformed payload) fall back to the
+        # latest MRMR artifact.
+        persisted_importance = _safe_json_load(meta.importance_json)
+        encoder_importance = persisted_importance.get("encoder")
+        if isinstance(encoder_importance, dict) and encoder_importance:
+            try:
+                entries = _importance_entries(encoder_importance)
+                if entries:
+                    return entries, "vsn_encoder"
+            except Exception as e:
+                logger.warning(
+                    f"Could not parse persisted TFT variable importance: {e}"
+                )
+
+        variable_importance = []
+        try:
+            import pathlib
+
+            artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
+            mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
+            if mrmr_path.exists():
+                mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
+                variable_importance = _importance_entries(mrmr_data.get("scores", {}))
+        except Exception as e:
+            logger.warning(f"Could not load variable importance: {e}")
+            variable_importance = []
+        method = "mrmr" if variable_importance else None
+        return variable_importance, method
+
     with SessionLocal() as session:
         # This endpoint describes the active/promoted model. Rejected candidate
         # metrics remain in the GitHub run artifact and must never replace the
@@ -1742,32 +1918,8 @@ async def get_tft_summary(
         config = _safe_json_load(meta.config_json)
         metrics_raw = _safe_json_load(meta.metrics_json)
         metrics = _numeric_map(metrics_raw)
-        
-        # Variable importance not directly in TFTModelMetadata yet, extract from latest artifacts if available
-        # But we can try to find it in the artifacts folder
-        variable_importance = []
-        try:
-            import pathlib
-            from .features import describe_feature
 
-            artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
-            mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
-            if mrmr_path.exists():
-                mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
-                for feat, imp in mrmr_data.get("scores", {}).items():
-                    meta_desc = describe_feature(feat)
-                    variable_importance.append({
-                        "feature": feat,
-                        "importance": float(imp),
-                        "label": meta_desc["label"],
-                        "description": meta_desc["description"],
-                        "category": meta_desc["category"],
-                        "time_horizon": meta_desc.get("time_horizon", ""),
-                    })
-                variable_importance.sort(key=lambda x: x["importance"], reverse=True)
-                variable_importance = variable_importance[:20]
-        except Exception as e:
-            logger.warning(f"Could not load variable importance: {e}")
+        variable_importance, variable_importance_method = _build_variable_importance(meta)
 
         da = float(metrics.get("directional_accuracy", 0.5))
         sharpe = float(metrics.get("sharpe_ratio", 0.0))
@@ -1836,6 +1988,7 @@ async def get_tft_summary(
             "config": config,
             "metrics": metrics,
             "variable_importance": variable_importance,
+            "variable_importance_method": variable_importance_method,
             "quality_gate": {
                 "passed": passed,
                 "reasons": reasons,
