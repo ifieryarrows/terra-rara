@@ -293,6 +293,8 @@ class ModelArtifact(Base):
     sha256 = Column(String(64), nullable=False)
     features_json = Column(Text, nullable=False)
     metrics_json = Column(Text, nullable=False)
+    # Shape note: [{feature, importance}] list (ai_engine promotion) — see the
+    # differently-shaped TFTModelMetadata.importance_json in this file.
     importance_json = Column(Text, nullable=False)
     manifest_json = Column(Text, nullable=False)
     trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
@@ -647,6 +649,11 @@ class TFTModelMetadata(Base):
     symbol = Column(String(20), nullable=False, unique=True, index=True)
     config_json = Column(Text, nullable=True)
     metrics_json = Column(Text, nullable=True)
+    # NOTE: deliberately NOT the same shape as ModelArtifact.importance_json
+    # (models.py), despite the shared column name. That one holds a *list* of
+    # [{"feature", "importance"}] written by ai_engine promotion; this one is a
+    # JSON *object*: {"schema_version", "encoder": {feature: weight}, "trained_at",
+    # "checkpoint"} written by deep_learning.training.persist_promoted_tft_metadata.
     importance_json = Column(Text, nullable=True)
     checkpoint_path = Column(String(500), nullable=True)
     trained_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)

@@ -7,8 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app import main
+from app.models import TFTModelMetadata
 
 
 def _fake_session_for(meta):
@@ -106,6 +110,7 @@ def test_tft_summary_prefers_persisted_encoder_importance(monkeypatch, tmp_path)
     summary = asyncio.run(main.get_tft_summary("HG=F"))
 
     assert _feature_importance_pairs(summary) == [("b", 0.6), ("a", 0.4)]
+    assert summary["variable_importance_method"] == "vsn_encoder"
 
 
 def test_tft_summary_falls_back_to_mrmr_when_importance_malformed(
@@ -129,6 +134,7 @@ def test_tft_summary_falls_back_to_mrmr_when_importance_malformed(
         ("HG_F_lag_ret1", 0.8),
         ("HG_F_rsi14", 0.2),
     ]
+    assert summary["variable_importance_method"] == "mrmr"
 
 
 def test_tft_summary_returns_empty_importance_without_any_source(
@@ -143,4 +149,52 @@ def test_tft_summary_returns_empty_importance_without_any_source(
     summary = asyncio.run(main.get_tft_summary("HG=F"))
 
     assert summary["variable_importance"] == []
+    assert summary["variable_importance_method"] is None
+
+
+def test_tft_summary_never_serves_a_rejected_candidate_row(
+    monkeypatch, tmp_path
+):
+    # Real-session guard for the promotion contract: the endpoint query must
+    # keep `TFTModelMetadata.quality_gate_passed.is_(True)`, so a REJECTED row
+    # is never served, no matter how shiny its stored metrics look. The table
+    # keeps a single row per symbol (UNIQUE constraint; `_persist_tft_model_
+    # metadata` re-runs the gate and refuses to persist rejected candidates),
+    # so the realistic regression is dropping the filter and reporting whichever
+    # row happens to exist. The FakeSession-based tests above cannot catch that
+    # (their `filter()` swallows its arguments); a real DB engine can.
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    try:
+        TFTModelMetadata.__table__.create(bind=engine)
+        ServerSession = sessionmaker(bind=engine)
+        with ServerSession() as session:
+            session.add(
+                TFTModelMetadata(
+                    symbol="HG=F",
+                    trained_at=datetime(2026, 10, 10, tzinfo=timezone.utc),
+                    checkpoint_path="/artifacts/tft/rejected_candidate.ckpt",
+                    config_json=json.dumps(
+                        {"feature_store": {"artifact_dir": str(tmp_path)}}
+                    ),
+                    metrics_json=json.dumps({"directional_accuracy": 0.9}),
+                    importance_json=json.dumps(
+                        {"schema_version": 1, "encoder": {"rejected": 1.0}}
+                    ),
+                    quality_gate_passed=False,  # REJECTED
+                )
+            )
+            session.commit()
+        monkeypatch.setattr(main, "SessionLocal", ServerSession)
+
+        with pytest.raises(HTTPException) as excinfo:
+            asyncio.run(main.get_tft_summary("HG=F"))
+
+        assert excinfo.value.status_code == 404
+        assert "quality-gate-passed" in excinfo.value.detail
+    finally:
+        engine.dispose()
 

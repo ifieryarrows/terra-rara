@@ -11,6 +11,7 @@ Wraps pytorch_forecasting's TemporalFusionTransformer with:
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -842,25 +843,54 @@ def _named_weights(names, weights) -> list[Dict[str, Any]]:
     ]
 
 
-def interpret_batch(model, x: dict, attention_prediction_horizon: int = 0) -> dict:
-    """
-    Interpret a single TFT batch: VSN selection weights plus encoder attention.
+def _run_interpretation(model, x: dict, attention_prediction_horizon: int):
+    """Evaluate ``model`` on one batch and return ``(out, per-sample interpretation)``.
 
-    Runs the raw forward pass under ``torch.no_grad()`` and reduces nothing
-    (``reduction="none"``), so every score stays per-sample; attention is
-    renormalized per sample and clipped to the encoder window
-    (``[: model.hparams.max_encoder_length]``). Group names come from
-    ``model.encoder_variables`` / ``decoder_variables`` / ``static_variables``;
-    a names/weights length mismatch raises ``ValueError``.
+    Placement and mode safety: tensors are moved to the model's device (an
+    inference model may legitimately live on GPU while the dataloader yields
+    CPU tensors — the same registration pytorch-forecasting's ``predict``
+    performs internally), eval mode is forced so dropout can never add noise
+    to the weights, and the original training mode is restored afterwards.
     """
-    with torch.no_grad():
-        out = model(x)
+    try:
+        device = next(model.parameters()).device
+    except (AttributeError, StopIteration):
+        device = None
+    moved = {
+        key: value.to(device) if (device is not None and torch.is_tensor(value)) else value
+        for key, value in x.items()
+    }
+    was_training = bool(getattr(model, "training", False))
+    if was_training and hasattr(model, "eval"):
+        model.eval()
+    try:
+        with torch.no_grad():
+            out = model(moved)
+    finally:
+        if was_training and hasattr(model, "train"):
+            model.train()
 
     interpretation = model.interpret_output(
         out,
         reduction="none",
         attention_prediction_horizon=attention_prediction_horizon,
     )
+    return out, interpretation
+
+
+def interpret_batch(model, x: dict, attention_prediction_horizon: int = 0) -> dict:
+    """
+    Interpret a single TFT batch: VSN selection weights plus encoder attention.
+
+    Runs the raw forward pass under ``torch.no_grad()`` (batch moved to the
+    model's device, eval mode enforced so dropout adds no noise) and reduces
+    nothing (``reduction="none"``), so every score stays per-sample; attention
+    is renormalized per sample and clipped to the encoder window
+    (``[: model.hparams.max_encoder_length]``). Group names come from
+    ``model.encoder_variables`` / ``decoder_variables`` / ``static_variables``;
+    a names/weights length mismatch raises ``ValueError``.
+    """
+    out, interpretation = _run_interpretation(model, x, attention_prediction_horizon)
 
     max_encoder_length = int(model.hparams.max_encoder_length)
     attention = (
@@ -887,11 +917,15 @@ def interpret_batch(model, x: dict, attention_prediction_horizon: int = 0) -> di
 
 def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
     """
-    Average encoder VSN variable importance over ``val_dataloader`` batches.
+    Mean encoder VSN variable importance over every validation sample.
 
-    Returns a dict mapping feature name -> importance, normalised to sum 1 and
-    sorted in descending order; an absent or empty loader yields ``{}``, and any
-    failure while extracting/averaging importance also yields ``{}``. This is
+    ``interpret_output(reduction="none")`` returns per-sample selection weights
+    (shape ``(batch, num_variables)``); those are pooled over *all samples of
+    every batch*, per feature. Non-finite weights are dropped per sample so a
+    single NaN/Inf batch cannot poison the whole map (an exploding checkpoint's
+    softmax weights may be NaN). The result is normalised to sum 1 and sorted in
+    descending order; an absent or empty loader yields ``{}``, and any failure
+    while extracting/averaging importance also yields ``{}``. This is
     best-effort promotion metadata and must never raise.
     ``val_dataloader`` must be passed explicitly (``model.val_dataloader()``
     only works inside a Lightning Trainer context and raises an error otherwise).
@@ -900,21 +934,44 @@ def get_variable_importance(model, val_dataloader=None) -> Dict[str, float]:
         return {}
 
     try:
-        totals: Dict[str, float] = {}
-        n_batches = 0
+        weight_sums: Dict[str, float] = {}
+        sample_counts: Dict[str, int] = {}
+        n_samples = 0
         for batch in val_dataloader:
             sample = batch[0] if isinstance(batch, (tuple, list)) else batch
-            interpretation = interpret_batch(model, sample)
-            for entry in interpretation["encoder"]:
-                totals[entry["feature"]] = totals.get(entry["feature"], 0.0) + entry["weight"]
-            n_batches += 1
+            _, interpretation = _run_interpretation(model, sample, 0)
+            per_sample = interpretation["encoder_variables"].detach().cpu().numpy()
+            names = model.encoder_variables
+            if per_sample.ndim != 2 or len(names) != per_sample.shape[1]:
+                raise ValueError(
+                    f"interpretation names/weights mismatch: got {len(names)} names "
+                    f"for encoder variables of shape {per_sample.shape!r}"
+                )
+            for index, name in enumerate(names):
+                column = per_sample[:, index]
+                finite = column[np.isfinite(column)]
+                if finite.size == 0:
+                    continue
+                weight_sums[name] = weight_sums.get(name, 0.0) + float(finite.sum())
+                sample_counts[name] = sample_counts.get(name, 0) + int(finite.size)
+            n_samples += int(per_sample.shape[0])
 
-        if n_batches == 0 or not totals:
+        if n_samples == 0 or not weight_sums:
             return {}
 
-        averaged = {name: total / n_batches for name, total in totals.items()}
+        averaged: Dict[str, float] = {}
+        for name, total in weight_sums.items():
+            count = sample_counts.get(name, 0)
+            if count <= 0:
+                continue
+            average = total / count
+            if math.isfinite(average):
+                averaged[name] = average
+        if not averaged:
+            return {}
+
         total_weight = sum(averaged.values())
-        if total_weight <= 0.0:
+        if not math.isfinite(total_weight) or total_weight <= 0.0:
             return {}
 
         normalized = {name: weight / total_weight for name, weight in averaged.items()}

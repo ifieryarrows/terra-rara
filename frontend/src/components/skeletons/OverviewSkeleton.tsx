@@ -298,6 +298,24 @@ export function OverviewSkeleton() {
                 </div>
               </div>
             </section>
+
+            {/* TFT model focus skeleton */}
+            <section
+              id="tft-focus"
+              className="cm-panel cm-financial-panel"
+              style={{ '--cm-panel-span': 4 } as any}
+              aria-label="Model focus skeleton"
+            >
+              <h2 className="cm-panel-title">
+                <Brain size={18} aria-hidden="true" />
+                Model focus (TFT-ASRO)
+              </h2>
+              <div className="cm-panel-body space-y-3" aria-hidden="true">
+                <SkeletonBone className="w-11/12 h-4" />
+                <SkeletonBone className="w-4/5 h-4" />
+                <SkeletonBone className="w-3/4 h-4" />
+              </div>
+            </section>
           </div>
 
           {/* Aside News Intelligence skeleton */}

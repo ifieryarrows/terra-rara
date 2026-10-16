@@ -66,7 +66,7 @@ describe('ModelFocusPanel', () => {
     const footnote = screen.getByText(payload.notes);
     expect(footnote).toBeVisible();
     expect(footnote).toHaveTextContent('not causal');
-    expect(screen.getByText('Reference 2026-10-14')).toBeVisible();
+    expect(screen.getByText('Reference 2026-10-14 · predicts 5-day cumulative log return (primary)')).toBeVisible();
 
     const bars = screen.getAllByTestId('model-focus-attention');
     expect(bars).toHaveLength(60);
@@ -81,6 +81,15 @@ describe('ModelFocusPanel', () => {
 
     expect(screen.getByText('Model focus will appear after the next model refresh.')).toBeVisible();
     expect(screen.queryByTestId('model-focus-attention')).not.toBeInTheDocument();
+  });
+
+  it('shows the load error when the explanation request failed', () => {
+    render(<ModelFocusPanel data={null} error="AxiosError: timeout of 15000ms exceeded"/>);
+
+    expect(screen.getByText('Model focus could not be loaded.')).toBeVisible();
+    expect(screen.getByText('AxiosError: timeout of 15000ms exceeded')).toBeVisible();
+    expect(screen.queryByText('Model focus will appear after the next model refresh.')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
   });
 
   it('degrades to the empty state for an empty payload object without throwing', () => {
@@ -101,5 +110,28 @@ describe('ModelFocusPanel', () => {
     expect(screen.queryByText(/^Reference /)).not.toBeInTheDocument();
     expect(screen.queryByText(/forecast day 1/)).not.toBeInTheDocument();
     expect(screen.queryByTestId('model-focus-attention')).not.toBeInTheDocument();
+  });
+
+  it('derives the attention heading from the payload step horizon', () => {
+    const laterStep: ExplainResponse = {
+      ...payload,
+      attention: { ...payload.attention, step: { kind: 'first_forecast_day', horizon_index: 2 } },
+    };
+
+    render(<ModelFocusPanel data={laterStep}/>);
+
+    expect(screen.getByText('Attention · forecast day 3 (t+3)')).toBeVisible();
+  });
+
+  it('falls back to a horizon-less heading when the payload has no step metadata', () => {
+    const noStep: ExplainResponse = {
+      ...payload,
+      attention: { ...payload.attention, series: attentionSeries.slice(0, 3) } as ExplainResponse['attention'],
+    };
+    delete (noStep.attention as { step?: unknown }).step;
+
+    render(<ModelFocusPanel data={noStep}/>);
+
+    expect(screen.getByText('Attention', { exact: true })).toBeVisible();
   });
 });

@@ -76,7 +76,7 @@ def _explain_payload(reference_date: str = "2026-09-01") -> dict:
         "model": {"checkpoint": "best.ckpt", "trained_at": None},
         "horizon": {"label": "5-day cumulative log return (primary)", "days": 5},
         "variable_selection": {
-            "method": "variable_selection_network",
+            "method": "vsn",
             "encoder": [
                 {"feature": "HG=F_close", "weight": 0.7},
                 {"feature": "HG=F_sentiment_mean", "weight": 0.3},
@@ -85,7 +85,7 @@ def _explain_payload(reference_date: str = "2026-09-01") -> dict:
             "static": [],
         },
         "attention": {
-            "method": "temporal_fusion_transformer",
+            "method": "tft_attention",
             "step": {"kind": "first_forecast_day", "horizon_index": 0},
             "window": {"start": "2026-08-04", "end": reference_date, "days": 20},
             "top_days": [{"date": reference_date, "weight": 0.5}],
@@ -203,3 +203,77 @@ def test_missing_snapshot_returns_404(monkeypatch, tft_explain_session_factory):
         "No TFT snapshot for HG=F. Explanation will be available after "
         "the next pipeline refresh."
     )
+
+
+def _seed_model_metadata(Session, *, trained_at: str, gate_passed: bool, checkpoint: str):
+    """One TFTModelMetadata row mirroring `persist_promoted_tft_metadata` results."""
+    with Session() as session:
+        session.add(
+            TFTModelMetadata(
+                symbol="HG=F",
+                trained_at=datetime.fromisoformat(trained_at),
+                quality_gate_passed=gate_passed,
+                checkpoint_path=checkpoint,
+            )
+        )
+        session.commit()
+
+
+def test_newer_gate_passed_model_makes_snapshot_stale(
+    monkeypatch, tft_explain_session_factory
+):
+    # Snapshot written by run A; a NEWER quality-gate-passed model exists -> the
+    # explanation describes an outdated model/vintage and must 404.
+    Session = tft_explain_session_factory
+    _seed_snapshot_and_price(
+        Session,
+        snapshot_date="2026-09-01",
+        price_date="2026-09-01",
+        explain=_explain_payload(),
+    )
+    _seed_model_metadata(
+        Session,
+        trained_at="2026-09-02T06:00:00+00:00",
+        gate_passed=True,
+        checkpoint="newer.ckpt",
+    )
+    _forbid_live_inference(monkeypatch)
+
+    response = TestClient(main.app).get("/api/explain/HG=F")
+
+    assert response.status_code == 404
+    assert response.json()["detail"].startswith(
+        "TFT snapshot is stale: model trained after snapshot"
+    )
+
+
+def test_newer_rejected_model_does_not_invalidate_snapshot(
+    monkeypatch, tft_explain_session_factory
+):
+    # A candidate that FAILED the quality gate must never push a fresh snapshot
+    # to live inference nor 404 a valid stored explanation — only gate-passed
+    # models may invalidate staleness. The metadata table keeps one row per
+    # symbol (UNIQUE constraint; the trainer refuses to persist rejected
+    # candidates), so the defense-in-depth scenario modeled here is a rejected
+    # row landing in the table anyway while the promoted model's snapshot is
+    # still anchored to the latest PriceBar.
+    Session = tft_explain_session_factory
+    explain = _explain_payload()
+    _seed_snapshot_and_price(
+        Session,
+        snapshot_date="2026-09-01",
+        price_date="2026-09-01",
+        explain=explain,
+    )
+    _seed_model_metadata(
+        Session,
+        trained_at="2026-09-02T06:00:00+00:00",
+        gate_passed=False,
+        checkpoint="rejected.ckpt",
+    )
+    _forbid_live_inference(monkeypatch)
+
+    response = TestClient(main.app).get("/api/explain/HG=F")
+
+    assert response.status_code == 200
+    assert response.json() == explain

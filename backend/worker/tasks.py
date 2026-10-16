@@ -338,6 +338,52 @@ async def run_pipeline(
                 lock_connection.close()
 
 
+def _persist_tft_report_snapshot(session, tft_report: dict, run_id=None):
+    """Persist the (already enriched) TFT report as the latest snapshot row.
+
+    Moves the per-forecast ``explain`` payload out of ``tft_report`` and stores
+    it as ``explain_json`` (stamping it with the ``run_id`` so the stored
+    explanation is traceable to the run that produced it).
+
+    Returns ``(explain_payload, persisted, error)`` where ``persisted`` is
+    False on a write failure and ``error`` carries its message. Persistence
+    failures never fail the pipeline stage.
+    """
+    explain_payload = tft_report.pop("explain", None)
+    if isinstance(explain_payload, dict):
+        explain_payload["run_id"] = str(run_id) if run_id is not None else None
+    try:
+        from app.models import TFTPredictionSnapshot
+
+        prediction = tft_report.get("prediction") or {}
+        reference_price_date = prediction.get("reference_price_date")
+
+        snapshot_row = TFTPredictionSnapshot(
+            symbol="HG=F",
+            payload_json=tft_report,
+            generated_at=datetime.now(timezone.utc),
+            reference_price_date=reference_price_date,
+            run_id=str(run_id) if run_id is not None else None,
+            explain_json=explain_payload,
+        )
+        session.add(snapshot_row)
+        session.flush()
+        logger.info(
+            f"[run_id={run_id}] TFT prediction persisted "
+            f"(reference_price_date={reference_price_date}, "
+            f"explain={'yes' if isinstance(explain_payload, dict) else 'no'})"
+        )
+        return explain_payload, True, None
+    except Exception as persist_exc:
+        logger.error(
+            f"[run_id={run_id}] Failed to persist TFT snapshot: "
+            f"{persist_exc}",
+            exc_info=True,
+        )
+        session.rollback()
+        return explain_payload, False, str(persist_exc)
+
+
 async def _execute_pipeline_stages_v2(
     session: Session,
     run_id: str,
@@ -716,42 +762,11 @@ async def _execute_pipeline_stages_v2(
                 # Persist the full report so /api/analysis/tft/{symbol}
                 # can serve it without re-running inference. This is the
                 # canonical source the frontend reads from.
-                persisted = False
-                explain_payload = tft_report.pop("explain", None)
-                if isinstance(explain_payload, dict):
-                    explain_payload["run_id"] = (
-                        str(run_id) if run_id is not None else None
-                    )
-                try:
-                    from app.models import TFTPredictionSnapshot
-
-                    prediction = tft_report.get("prediction") or {}
-                    reference_price_date = prediction.get("reference_price_date")
-
-                    snapshot_row = TFTPredictionSnapshot(
-                        symbol="HG=F",
-                        payload_json=tft_report,
-                        generated_at=datetime.now(timezone.utc),
-                        reference_price_date=reference_price_date,
-                        run_id=str(run_id) if run_id is not None else None,
-                        explain_json=explain_payload,
-                    )
-                    session.add(snapshot_row)
-                    session.flush()
-                    persisted = True
-                    logger.info(
-                        f"[run_id={run_id}] TFT prediction persisted "
-                        f"(reference_price_date={reference_price_date}, "
-                        f"explain={'yes' if isinstance(explain_payload, dict) else 'no'})"
-                    )
-                except Exception as persist_exc:
-                    logger.error(
-                        f"[run_id={run_id}] Failed to persist TFT snapshot: "
-                        f"{persist_exc}",
-                        exc_info=True,
-                    )
-                    session.rollback()
-                    result["tft_persistence_error"] = str(persist_exc)
+                explain_payload, persisted, persist_error = _persist_tft_report_snapshot(
+                    session, tft_report, run_id
+                )
+                if persist_error is not None:
+                    result["tft_persistence_error"] = persist_error
 
                 result["tft_explain_generated"] = bool(persisted and isinstance(explain_payload, dict))
                 is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))

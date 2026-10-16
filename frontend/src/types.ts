@@ -281,6 +281,8 @@ export interface TFTModelSummaryResponse {
   config: Record<string, any>;
   metrics: Record<string, number>;
   variable_importance: Influencer[];
+  /** How `variable_importance` was derived: `"vsn_encoder"`, `"mrmr"` or `null` when unknown. */
+  variable_importance_method: string | null;
   quality_gate: QualityGateResponse | null;
 }
 

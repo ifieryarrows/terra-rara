@@ -19,6 +19,7 @@ import argparse
 import importlib.metadata
 import json
 import logging
+import math
 import os
 import platform
 import sys
@@ -1563,15 +1564,26 @@ def _importance_metadata_payload(result: dict) -> str:
     """Serialize VSN encoder importance for informational storage at promotion.
 
     Never let metadata-only concerns block promotion: missing or malformed
-    importance degrades to an empty encoder map.
+    importance degrades to an empty encoder map. Non-finite weights (exploding
+    checkpoints can emit NaN softmax weights) are dropped — ``json.dumps``
+    would otherwise emit ``NaN``/``Infinity`` literals, which are invalid JSON
+    and choke strict readers of the summary endpoint.
     """
     importance = result.get("variable_importance")
     if not isinstance(importance, dict):
         importance = {}
+    cleaned_importance = {}
+    for name, value in importance.items():
+        try:
+            weight = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(weight):
+            cleaned_importance[name] = weight
     return json.dumps(
         {
             "schema_version": 1,
-            "encoder": importance,
+            "encoder": cleaned_importance,
             "trained_at": result.get("trained_at"),
             "checkpoint": result.get("checkpoint_path"),
         }

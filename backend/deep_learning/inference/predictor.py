@@ -646,7 +646,8 @@ class TFTPredictor:
             from app.tft_explain import try_build_explain_payload
             from deep_learning.models.tft_copper import interpret_batch
 
-            model.eval()
+            # `_run_interpretation` (tft_copper) enforces eval mode for the
+            # forward pass and restores the original mode afterwards.
             x, _ = next(iter(dataloader))
             return try_build_explain_payload(
                 interpretation=interpret_batch(model, x),

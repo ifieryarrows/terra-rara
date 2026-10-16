@@ -12,6 +12,7 @@ import pytest
 from app.tft_explain import (
     EXPLAIN_SCHEMA_VERSION,
     RECENT_BASIS_SESSIONS,
+    TOP_ENCODER,
     TOP_RECENT,
     build_explain_payload,
     try_build_explain_payload,
@@ -71,6 +72,7 @@ def test_constants_match_interface():
     assert EXPLAIN_SCHEMA_VERSION == 1
     assert TOP_RECENT == 5
     assert RECENT_BASIS_SESSIONS == 5
+    assert TOP_ENCODER == 25
 
 
 def test_happy_path_groups_labels_attention_and_notes():
@@ -114,7 +116,7 @@ def test_happy_path_groups_labels_attention_and_notes():
 
     close_entry = selection["encoder"][0]
     assert close_entry["recent"]["kind"] == "pct"
-    assert close_entry["recent"]["basis"] == "5 sessions"
+    assert close_entry["recent"]["basis"] == "3 sessions"  # actual observed span
     assert close_entry["recent"]["last_value"] == 6.061
     assert close_entry["recent"]["change"] == pytest.approx(0.061)
     assert close_entry["recent"]["change_pct"] == pytest.approx(1.0166667, abs=1e-6)
@@ -202,7 +204,7 @@ def test_encoder_entry_without_frame_column_keeps_label_but_no_recent():
     assert "recent" not in entries[1]
     assert entries[1]["label"]  # describe_feature fallback still labels it
     assert entries[1]["category"]
-    assert entries[0]["recent"]["basis"] == "5 sessions"
+    assert entries[0]["recent"]["basis"] == "3 sessions"  # actual observed span
 
 
 def test_recent_is_attached_only_to_top_five_encoder_entries():
@@ -337,3 +339,39 @@ def test_layout_hash_is_deterministic_and_layout_sensitive():
     third = _build(interpretation=changed)
     assert third["layout_hash"]["encoder"] != first["layout_hash"]["encoder"]
     assert third["layout_hash"]["decoder"] == first["layout_hash"]["decoder"]
+
+
+def test_encoder_entries_are_capped_to_top_encoder():
+    n_features = 40
+    names = [f"HG=F_feat_{index:02d}" for index in range(n_features)]
+    frame = pd.DataFrame(
+        {name: [1.0, 2.0, 3.0] for name in names},
+        index=WINDOW_DATES,
+    )
+    interpretation = _happy_interpretation()
+    interpretation["encoder"] = [
+        {"feature": name, "weight": round(1.0 - index * 0.01, 6)}
+        for index, name in enumerate(names)
+    ]
+
+    payload = _build(interpretation=interpretation, feature_frame=frame)
+
+    entries = payload["variable_selection"]["encoder"]
+    assert len(entries) == TOP_ENCODER
+    assert n_features > TOP_ENCODER  # the cap actually binds in this fixture
+    # Sorted descending; the top five keep their recent blocks, the rest do not.
+    assert [entry["feature"] for entry in entries[:TOP_RECENT]] == names[:TOP_RECENT]
+    assert ["recent" in entry for entry in entries] == [True] * TOP_RECENT + [False] * (
+        TOP_ENCODER - TOP_RECENT
+    )
+    # layout_hash still fingerprints the full model layout, not the capped list.
+    assert regex.fullmatch(r"[0-9a-f]{12}", payload["layout_hash"]["encoder"])
+
+
+def test_attention_pred_horizon_is_reflected_in_step_metadata():
+    payload = _build(attention_pred_horizon=2)
+
+    assert payload["attention"]["step"] == {
+        "kind": "first_forecast_day",
+        "horizon_index": 2,
+    }

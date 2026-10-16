@@ -560,7 +560,7 @@ export const OverviewPage = () => {
 
           {/* TFT model focus — raw VSN/attention internals of the latest explanation. */}
           <GlassCard id="tft-focus" title="Model focus (TFT-ASRO)" icon={Brain} colSpan={4}>
-            <ModelFocusPanel data={explain}/>
+            <ModelFocusPanel data={explain} error={loadErrors['Model focus']}/>
           </GlassCard>
 
         </div>

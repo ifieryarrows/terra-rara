@@ -28,11 +28,17 @@ logger = logging.getLogger(__name__)
 EXPLAIN_SCHEMA_VERSION = 1
 TOP_RECENT = 5
 RECENT_BASIS_SESSIONS = 5
+# Hard cap on serialized encoder entries. A full VSN list (mrmr_top_k=80 real
+# features with label+description+category metadata) serializes to roughly
+# 20-40 KB per snapshot row per day — stored in Postgres, returned by every
+# /api/explain poll, and injected into the DOM via the "Raw JSON" details.
+# The panel renders only the top five rows, so 25 caps the stored artifact
+# while keeping meaningful context.
+TOP_ENCODER = 25
 
 _HORIZON_LABEL = "5-day cumulative log return (primary)"
 _HORIZON_DAYS = 5
 _TOP_DAYS = 5
-_RECENT_BASIS_LABEL = f"{RECENT_BASIS_SESSIONS} sessions"
 
 # Features whose five-session change reads naturally as a percentage.
 _LEVEL_TOKENS = frozenset(
@@ -134,7 +140,7 @@ def _recent_block(
         return None
 
     last_position, last_value = finite_values[-1]
-    _, first_value = finite_values[0]
+    first_position, first_value = finite_values[0]
     change = finite_number(last_value - first_value)
     if change is None:
         return None
@@ -148,8 +154,13 @@ def _recent_block(
             return None
         change_pct = round(change_pct, 6)
 
+    # Label the actual observed span, not the nominal window: when the tail rows
+    # contain missing values the comparison may span fewer sessions, and the UI
+    # prints this label verbatim.
+    basis = f"{last_position - first_position + 1} sessions"
+
     return {
-        "basis": _RECENT_BASIS_LABEL,
+        "basis": basis,
         "kind": kind,
         "last_value": round(last_value, 6),
         "change": round(change, 6),
@@ -199,14 +210,16 @@ def build_explain_payload(
     trained_at: Any = None,
     run_id: Any = None,
     generated_at: Any = None,
+    attention_pred_horizon: int = 0,
 ) -> dict:
     """Assemble the ``explain_json`` payload for one TFT-ASRO forecast.
 
     ``interpretation`` is an :func:`interpret_batch` result; ``window_dates`` must
     carry one date label per attention value and ``feature_frame`` must have the
     same number of rows (positional alignment). Encoder entries are sorted by
-    descending weight; decoder/static entries keep model order. Only the top
-    ``TOP_RECENT`` encoder entries receive a five-session ``recent`` block.
+    descending weight and capped at ``TOP_ENCODER``; decoder/static entries keep
+    model order. Only the top ``TOP_RECENT`` encoder entries receive a
+    five-session ``recent`` block.
 
     Raises ``ValueError`` on length mismatches; any other malformed input raises
     the underlying error. Callers on the prediction path should prefer
@@ -232,6 +245,9 @@ def build_explain_payload(
         recent = _recent_block(entry["feature"], entry["category"], feature_frame, dates)
         if recent is not None:
             entry["recent"] = recent
+    # Cap the emitted list only after the recent blocks are attached: they belong
+    # to the top five, which always survives the cap.
+    encoder_entries = encoder_entries[:TOP_ENCODER]
     decoder_entries = _group_entries(interpretation["decoder"])
     static_entries = _group_entries(interpretation["static"])
 
@@ -271,7 +287,10 @@ def build_explain_payload(
         },
         "attention": {
             "method": "tft_attention",
-            "step": {"kind": "first_forecast_day", "horizon_index": 0},
+            "step": {
+                "kind": "first_forecast_day",
+                "horizon_index": int(attention_pred_horizon),
+            },
             "window": {
                 "start": dates[0] if dates else None,
                 "end": dates[-1] if dates else None,

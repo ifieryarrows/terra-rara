@@ -721,7 +721,7 @@ Returns processed commodity market news items with relevance scores, sentiment p
 
 ### GET /api/models/tft/summary
 
-Returns active TFT-ASRO model parameters, deployment Quality Gate audit status (`quality_gate_passed: true`) and detailed backtest evaluation metrics.
+Returns active TFT-ASRO model parameters, deployment Quality Gate audit status (`quality_gate_passed: true`) and detailed backtest evaluation metrics. Only the quality-gate-passed metadata row is ever read — a rejected candidate can never surface here. `variable_importance` and `variable_importance_method` report where the entry list came from: `vsn_encoder` (TFT attention-derived weights stored by the trainer) or `mrmr` (MRMR scores recomputed from the training-analysis artifacts), or `null` with an empty list when neither source is available.
 
 ### GET /api/commentary
 
@@ -794,7 +794,7 @@ Returns TFT-ASRO deep learning forecast with 7-quantile prediction paths and con
 
 Returns the per-forecast TFT-ASRO model-focus explanation stored with the latest TFT snapshot (`explain_json`, `schema_version: 1`). It is computed once by the pipeline worker at Stage 5.5. This endpoint is snapshot-only: unlike `/api/analysis/tft/{symbol}`, it never runs live inference.
 
-The payload holds the raw VSN variable-selection weights split into encoder, decoder and static groups (encoder entries sorted by weight, each with a label and category; the top five encoder features may also carry a `recent` block with the last value and its change over the last 5 sessions), the TFT attention distribution over the encoder window at the first forecast day (t+1), the reference price date, the model checkpoint identity (`checkpoint`, `trained_at`), encoder/decoder/static feature-layout hashes and a `notes` disclaimer.
+The payload holds the raw VSN variable-selection weights split into encoder, decoder and static groups (encoder entries sorted by weight and capped at the top 25, each with a label and category; the top five encoder features may also carry a `recent` block with the last value and its change over the observed span — the `basis` label counts the sessions actually spanned, which is fewer than 5 when missing values shorten the window), the TFT attention distribution over the encoder window at the forecast day recorded in `attention.step.horizon_index` (pipeline default: t+1), the reference price date, the model checkpoint identity (`checkpoint`, `trained_at`), encoder/decoder/static feature-layout hashes and a `notes` disclaimer.
 
 Returns `404` when:
 

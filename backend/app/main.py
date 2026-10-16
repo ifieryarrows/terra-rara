@@ -1198,13 +1198,21 @@ def _parse_ref_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
-def _tft_snapshot_invalid_reasons(session, symbol: str, snapshot) -> list[str]:
+def _tft_snapshot_invalid_reasons(
+    session,
+    symbol: str,
+    snapshot,
+    latest_price_date: Optional[date] = None,
+) -> list[str]:
     """
     Freshness reasons that make a TFT snapshot unsafe to serve.
 
     Mirrors the snapshot-first contract of `/api/analysis/tft/{symbol}`: an
-    empty list means the snapshot was produced by the currently promoted
-    (quality-gate-passed) model and is anchored to the latest PriceBar.
+    empty list means no currently-promoted (quality-gate-passed) model is
+    newer than the snapshot, and the snapshot is anchored to the latest
+    PriceBar. Note this does not verify that a gate-passed model row exists at
+    all — when the metadata table has no such row the test is vacuous by
+    design (there is nothing newer to compare against).
     """
     from app.models import TFTModelMetadata
 
@@ -1241,7 +1249,8 @@ def _tft_snapshot_invalid_reasons(session, symbol: str, snapshot) -> list[str]:
         or prediction.get("reference_price_date")
     )
     ref_date = _parse_ref_date(reference_price_date)
-    latest_price_date = _latest_price_bar_date(session, symbol)
+    if latest_price_date is None:
+        latest_price_date = _latest_price_bar_date(session, symbol)
     if ref_date is None:
         reasons.append("snapshot reference_price_date missing")
     elif latest_price_date is not None and ref_date != latest_price_date:
@@ -1322,7 +1331,7 @@ async def get_tft_analysis(
                     payload = dict(latest.payload_json)
                     gen_at = _as_utc(latest.generated_at)
                     fallback_reasons = _tft_snapshot_invalid_reasons(
-                        session, symbol, latest
+                        session, symbol, latest, latest_price_date=latest_price_date
                     )
 
                     if not fallback_reasons:
@@ -1425,50 +1434,62 @@ async def get_tft_analysis(
         404: {"description": "No fresh TFT snapshot explanation is available"},
     },
 )
-async def get_tft_explain(symbol: str = TARGET_SYMBOL):
+def get_tft_explain(symbol: str = TARGET_SYMBOL):
     """
     Get the stored TFT-ASRO explanation for the given symbol.
 
     Explanations are computed once by the pipeline worker and persisted with
-    the snapshot (`explain_json`). This endpoint never runs live inference: a
-    missing, stale, or explanation-less snapshot returns 404.
+    the snapshot (`explain_json`). This endpoint is snapshot-only like the
+    documented contract: a missing, stale, or explanation-less snapshot is
+    404. Declared as a sync `def` handler so the framework runs it in the
+    threadpool — the freshness check touches three tables and must not block
+    the event loop.
     """
     from app.models import TFTPredictionSnapshot
 
-    with SessionLocal() as session:
-        latest = (
-            session.query(TFTPredictionSnapshot)
-            .filter(TFTPredictionSnapshot.symbol == symbol)
-            .order_by(TFTPredictionSnapshot.generated_at.desc())
-            .first()
+    try:
+        with SessionLocal() as session:
+            latest = (
+                session.query(TFTPredictionSnapshot)
+                .filter(TFTPredictionSnapshot.symbol == symbol)
+                .order_by(TFTPredictionSnapshot.generated_at.desc())
+                .first()
+            )
+            if latest is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"No TFT snapshot for {symbol}. Explanation will be "
+                        "available after the next pipeline refresh."
+                    ),
+                )
+
+            invalid_reasons = _tft_snapshot_invalid_reasons(session, symbol, latest)
+            if invalid_reasons:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"TFT snapshot is stale: {'; '.join(invalid_reasons)}",
+                )
+
+            explain_payload = latest.explain_json
+            if not isinstance(explain_payload, dict):
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Explanation not available for this snapshot. Try again "
+                        "after the next pipeline refresh."
+                    ),
+                )
+
+            return explain_payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("TFT explain lookup failed for %s: %s", symbol, exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Explanation lookup failed; retry shortly.",
         )
-        if latest is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"No TFT snapshot for {symbol}. Explanation will be "
-                    "available after the next pipeline refresh."
-                ),
-            )
-
-        invalid_reasons = _tft_snapshot_invalid_reasons(session, symbol, latest)
-        if invalid_reasons:
-            raise HTTPException(
-                status_code=404,
-                detail=f"TFT snapshot is stale: {'; '.join(invalid_reasons)}",
-            )
-
-        explain_payload = latest.explain_json
-        if not isinstance(explain_payload, dict):
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "Explanation not available for this snapshot. Try again "
-                    "after the next pipeline refresh."
-                ),
-            )
-
-        return explain_payload
 
 
 @app.get("/", include_in_schema=False)
@@ -1809,18 +1830,71 @@ async def get_tft_summary(
         from .features import describe_feature
 
         entries = []
+        dropped: list[str] = []
         for feat, imp in weights.items():
+            try:
+                importance_value = float(imp)
+                if not math.isfinite(importance_value):
+                    raise ValueError("non-finite importance")
+            except (TypeError, ValueError):
+                # One malformed entry must not discard the whole VSN map;
+                # record it and keep the rest.
+                dropped.append(str(feat))
+                continue
             meta_desc = describe_feature(feat)
             entries.append({
                 "feature": feat,
-                "importance": float(imp),
+                "importance": importance_value,
                 "label": meta_desc["label"],
                 "description": meta_desc["description"],
                 "category": meta_desc["category"],
                 "time_horizon": meta_desc.get("time_horizon", ""),
             })
+        if dropped:
+            logger.warning(
+                "Dropped %d malformed TFT variable-importance weight(s): %s",
+                len(dropped),
+                ", ".join(dropped[:10]),
+            )
         entries.sort(key=lambda x: x["importance"], reverse=True)
         return entries[:20]
+
+    def _build_variable_importance(meta) -> tuple[list[dict], str | None]:
+        """Return (entries, method) — the source that actually produced the top list.
+
+        VSN encoder weights and MRMR scores are different quantities that share
+        one response field, so the method is reported explicitly
+        (``vsn_encoder`` / ``mrmr`` / ``None`` when unavailable).
+        """
+        # Prefer the VSN encoder importance persisted at promotion time; rows
+        # from before that change (or a malformed payload) fall back to the
+        # latest MRMR artifact.
+        persisted_importance = _safe_json_load(meta.importance_json)
+        encoder_importance = persisted_importance.get("encoder")
+        if isinstance(encoder_importance, dict) and encoder_importance:
+            try:
+                entries = _importance_entries(encoder_importance)
+                if entries:
+                    return entries, "vsn_encoder"
+            except Exception as e:
+                logger.warning(
+                    f"Could not parse persisted TFT variable importance: {e}"
+                )
+
+        variable_importance = []
+        try:
+            import pathlib
+
+            artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
+            mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
+            if mrmr_path.exists():
+                mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
+                variable_importance = _importance_entries(mrmr_data.get("scores", {}))
+        except Exception as e:
+            logger.warning(f"Could not load variable importance: {e}")
+            variable_importance = []
+        method = "mrmr" if variable_importance else None
+        return variable_importance, method
 
     with SessionLocal() as session:
         # This endpoint describes the active/promoted model. Rejected candidate
@@ -1844,32 +1918,8 @@ async def get_tft_summary(
         config = _safe_json_load(meta.config_json)
         metrics_raw = _safe_json_load(meta.metrics_json)
         metrics = _numeric_map(metrics_raw)
-        
-        # Prefer the VSN encoder importance persisted at promotion time; rows
-        # from before that change (or a malformed payload) fall back to the
-        # latest MRMR artifact.
-        variable_importance = []
-        persisted_importance = _safe_json_load(meta.importance_json)
-        encoder_importance = persisted_importance.get("encoder")
-        if isinstance(encoder_importance, dict) and encoder_importance:
-            try:
-                variable_importance = _importance_entries(encoder_importance)
-            except Exception as e:
-                logger.warning(f"Could not parse persisted TFT variable importance: {e}")
-                variable_importance = []
 
-        if not variable_importance:
-            try:
-                import pathlib
-
-                artifact_dir = pathlib.Path(config.get("feature_store", {}).get("artifact_dir", "artifacts/feature_store"))
-                mrmr_path = artifact_dir / "latest" / "mrmr_results.json"
-                if mrmr_path.exists():
-                    mrmr_data = json.loads(mrmr_path.read_text(encoding="utf-8"))
-                    variable_importance = _importance_entries(mrmr_data.get("scores", {}))
-            except Exception as e:
-                logger.warning(f"Could not load variable importance: {e}")
-                variable_importance = []
+        variable_importance, variable_importance_method = _build_variable_importance(meta)
 
         da = float(metrics.get("directional_accuracy", 0.5))
         sharpe = float(metrics.get("sharpe_ratio", 0.0))
@@ -1938,6 +1988,7 @@ async def get_tft_summary(
             "config": config,
             "metrics": metrics,
             "variable_importance": variable_importance,
+            "variable_importance_method": variable_importance_method,
             "quality_gate": {
                 "passed": passed,
                 "reasons": reasons,

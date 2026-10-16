@@ -31,9 +31,10 @@ function recentLine(recent: ExplainRecent | undefined): string | null {
 /**
  * Raw TFT-ASRO model focus for the latest forecast: top VSN encoder features
  * with their recent five-session delta, the encoder-window attention profile
- * and the raw payload. `data === null` is the normal "not built yet" state.
+ * and the raw payload. `data === null` is the normal "not built yet" state;
+ * `error` carries the load failure when one occurred.
  */
-export function ModelFocusPanel({ data }: { data: ExplainResponse | null }) {
+export function ModelFocusPanel({ data, error }: { data: ExplainResponse | null; error?: string | null }) {
   const encoderEntries = Array.isArray(data?.variable_selection?.encoder)
     ? data.variable_selection.encoder.filter((entry) => entry && typeof entry === 'object')
     : [];
@@ -44,15 +45,24 @@ export function ModelFocusPanel({ data }: { data: ExplainResponse | null }) {
 
   if (!data || (topEncoder.length === 0 && attentionBars.length === 0)) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-center gap-2" role="status">
+      <div className="flex flex-col items-center justify-center py-8 text-center gap-2" role={error ? 'alert' : 'status'}>
         <Brain size={24} className="text-slate-400" aria-hidden="true" />
-        <p className="text-xs text-slate-400">{EMPTY_STATE_TEXT}</p>
+        <p className="text-xs text-slate-400">{error ? 'Model focus could not be loaded.' : EMPTY_STATE_TEXT}</p>
+        {error && <p className="text-xs text-slate-500 break-words max-w-full">{error}</p>}
       </div>
     );
   }
 
   const notes = typeof data.notes === 'string' ? data.notes : '';
   const referenceDate = typeof data.reference_price_date === 'string' ? data.reference_price_date : '';
+  const horizonLabel = typeof data.horizon?.label === 'string' ? data.horizon.label : '';
+  // The explain payload states which forecast day the attention series belongs
+  // to; older payloads without `step` fall back to a horizon-less heading.
+  const horizonIndex = finiteNumber(data.attention?.step?.horizon_index);
+  const attentionHeading =
+    Number.isInteger(horizonIndex) && (horizonIndex as number) >= 0
+      ? `Attention · forecast day ${(horizonIndex as number) + 1} (t+${(horizonIndex as number) + 1})`
+      : 'Attention';
 
   return (
     <div className="space-y-4">
@@ -93,7 +103,7 @@ export function ModelFocusPanel({ data }: { data: ExplainResponse | null }) {
 
       {attentionBars.length > 0 && (
         <div>
-          <p className="text-xs text-slate-400 uppercase tracking-widest mb-2">Attention · forecast day 1 (t+1)</p>
+          <p className="text-xs text-slate-400 uppercase tracking-widest mb-2">{attentionHeading}</p>
           <div className="cm-model-focus-attention">
             {attentionBars.map((point, index) => {
               const weight = finiteNumber(point?.weight) ?? 0;
@@ -111,7 +121,7 @@ export function ModelFocusPanel({ data }: { data: ExplainResponse | null }) {
         </div>
       )}
 
-      {referenceDate && <p className="cm-chart-note">Reference {referenceDate}</p>}
+      {referenceDate && <p className="cm-chart-note">{horizonLabel ? `Reference ${referenceDate} · predicts ${horizonLabel}` : `Reference ${referenceDate}`}</p>}
       {notes && <p className="cm-chart-note">{notes}</p>}
 
       <details className="cm-data-disclosure">
