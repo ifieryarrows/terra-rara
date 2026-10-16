@@ -22,15 +22,27 @@ class _StubModel:
         encoder_weights=(0.7, 0.3),
         attention=(0.2, 0.3, 0.5),
         encoder_length: int = 3,
+        training: bool = False,
     ):
         self._encoder_weights = list(encoder_weights)
         self._attention = list(attention)
         self._encoder_length = encoder_length
+        self.training = training
         self.interpret_calls = []
         self.grad_enabled_during_call = None
+        self.training_during_call = None
+
+    def eval(self):
+        self.training = False
+        return self
+
+    def train(self, mode: bool = True):
+        self.training = bool(mode)
+        return self
 
     def __call__(self, x):
         self.grad_enabled_during_call = torch.is_grad_enabled()
+        self.training_during_call = self.training
         return {
             "encoder_lengths": torch.tensor([self._encoder_length]),
             "decoder_lengths": torch.tensor([5]),
@@ -92,6 +104,16 @@ def test_interpret_batch_maps_group_names_attention_and_encoder_length():
     assert result["encoder_length"] == 3
     assert model.interpret_calls == [{"reduction": "none", "attention_prediction_horizon": 0}]
     assert model.grad_enabled_during_call is False
+    assert model.training_during_call is False
+
+
+def test_interpret_batch_forces_eval_mode_and_restores_training_state():
+    model = _StubModel(training=True)
+
+    interpret_batch(model, {"encoder_lengths": torch.tensor([3])})
+
+    assert model.training_during_call is False
+    assert model.training is True
 
 
 def test_interpret_batch_clips_attention_to_encoder_window_and_forwards_horizon():

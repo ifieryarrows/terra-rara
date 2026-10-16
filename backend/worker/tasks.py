@@ -345,6 +345,11 @@ def _persist_tft_report_snapshot(session, tft_report: dict, run_id=None):
     it as ``explain_json`` (stamping it with the ``run_id`` so the stored
     explanation is traceable to the run that produced it).
 
+    Fail-open contract: if persisting with ``explain_json`` fails, the failed
+    flush is rolled back and the snapshot write is retried once with
+    ``explain_json=None`` so an optional explanation failure can never drop the
+    forecast snapshot.
+
     Returns ``(explain_payload, persisted, error)`` where ``persisted`` is
     False on a write failure and ``error`` carries its message. Persistence
     failures never fail the pipeline stage.
@@ -352,22 +357,33 @@ def _persist_tft_report_snapshot(session, tft_report: dict, run_id=None):
     explain_payload = tft_report.pop("explain", None)
     if isinstance(explain_payload, dict):
         explain_payload["run_id"] = str(run_id) if run_id is not None else None
-    try:
-        from app.models import TFTPredictionSnapshot
+    elif explain_payload is not None:
+        logger.warning(
+            f"[run_id={run_id}] Dropping non-dict TFT explain payload of type "
+            f"{type(explain_payload).__name__}"
+        )
+        explain_payload = None
 
-        prediction = tft_report.get("prediction") or {}
-        reference_price_date = prediction.get("reference_price_date")
+    prediction = tft_report.get("prediction") or {}
+    reference_price_date = prediction.get("reference_price_date")
+    normalized_run_id = str(run_id) if run_id is not None else None
+
+    def _write_row(explain_value):
+        from app.models import TFTPredictionSnapshot
 
         snapshot_row = TFTPredictionSnapshot(
             symbol="HG=F",
             payload_json=tft_report,
             generated_at=datetime.now(timezone.utc),
             reference_price_date=reference_price_date,
-            run_id=str(run_id) if run_id is not None else None,
-            explain_json=explain_payload,
+            run_id=normalized_run_id,
+            explain_json=explain_value,
         )
         session.add(snapshot_row)
         session.flush()
+
+    try:
+        _write_row(explain_payload)
         logger.info(
             f"[run_id={run_id}] TFT prediction persisted "
             f"(reference_price_date={reference_price_date}, "
@@ -375,12 +391,28 @@ def _persist_tft_report_snapshot(session, tft_report: dict, run_id=None):
         )
         return explain_payload, True, None
     except Exception as persist_exc:
+        session.rollback()
+        if explain_payload is not None:
+            logger.warning(
+                f"[run_id={run_id}] Failed to persist TFT snapshot with explain_json "
+                f"({persist_exc}); retrying with explain_json=None"
+            )
+            try:
+                _write_row(None)
+                logger.info(
+                    f"[run_id={run_id}] TFT prediction persisted without explain_json "
+                    f"after downgrade (reference_price_date={reference_price_date})"
+                )
+                return None, True, None
+            except Exception as retry_exc:
+                persist_exc = retry_exc
+                session.rollback()
+
         logger.error(
             f"[run_id={run_id}] Failed to persist TFT snapshot: "
             f"{persist_exc}",
             exc_info=True,
         )
-        session.rollback()
         return explain_payload, False, str(persist_exc)
 
 

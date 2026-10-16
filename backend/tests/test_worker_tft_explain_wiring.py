@@ -77,7 +77,7 @@ def test_persist_without_explain_keeps_column_null():
         engine.dispose()
 
 
-def test_persist_failure_is_fail_open(monkeypatch, tmp_path):
+def test_persist_failure_is_fail_open(monkeypatch):
     engine = _engine()
     try:
         Session = sessionmaker(bind=engine)
@@ -109,6 +109,64 @@ def test_stage_55_still_requests_explanations():
     source = inspect.getsource(_execute_pipeline_stages_v2)
     assert "include_explain=True" in source
     assert "generate_tft_analysis(" in source
+
+
+def test_persist_retries_with_explain_none_when_explain_write_fails(caplog):
+    """An explain_json serialization/write failure must downgrade to explain_json=None
+    and still persist the forecast snapshot (fail-open contract).
+    """
+    import logging
+
+    engine = _engine()
+    try:
+        TFTPredictionSnapshot.__table__.create(bind=engine)
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            # A set inside explain_json causes SQLAlchemy's JSON column serializer
+            # to fail during the first session.flush(), exercising rollback + retry.
+            bad_explain = {"schema_version": 1, "unserializable": {1, 2, 3}}
+            with caplog.at_level(logging.WARNING, logger="worker.tasks"):
+                explain, persisted, error = _persist_tft_report_snapshot(
+                    session,
+                    _report(explain=bad_explain),
+                    "run-80",
+                )
+            session.commit()
+
+            assert (explain, persisted, error) == (None, True, None)
+            row = session.query(TFTPredictionSnapshot).one()
+            assert row.run_id == "run-80"
+            assert row.reference_price_date == "2026-10-15"
+            assert row.explain_json is None
+            assert "explain" not in row.payload_json
+            assert row.payload_json["is_forecast_healthy"] is True
+            assert any(
+                "retrying with explain_json=None" in record.getMessage()
+                for record in caplog.records
+            )
+    finally:
+        engine.dispose()
+
+
+def test_persist_drops_non_dict_explain_and_persists_snapshot():
+    engine = _engine()
+    try:
+        TFTPredictionSnapshot.__table__.create(bind=engine)
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            explain, persisted, error = _persist_tft_report_snapshot(
+                session,
+                _report(explain="unexpected-string-payload"),
+                "run-81",
+            )
+            session.commit()
+
+            assert (explain, persisted, error) == (None, True, None)
+            row = session.query(TFTPredictionSnapshot).one()
+            assert row.explain_json is None
+            assert "explain" not in row.payload_json
+    finally:
+        engine.dispose()
 
 
 def test_run_id_is_stamped_when_worker_run_is_none():

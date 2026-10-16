@@ -106,3 +106,26 @@ def test_latest_window_explain_is_fail_open(predictor_stub):
     )
 
     assert payload is None  # an explanation must never fail a prediction
+
+
+def test_latest_window_explain_accepts_bare_dict_batch(predictor_stub):
+    dates = ["2026-10-09", "2026-10-12", "2026-10-13"]
+    history = pd.DataFrame(
+        {
+            "HG=F_close": [6.0, 6.1, 6.06],
+            "HG=F_sentiment_mean": [0.1, 0.2, 0.15],
+        },
+        index=pd.Index(dates, name="date"),
+    )
+
+    payload = predictor_stub._latest_window_explain(
+        session=None,
+        model=_StubModel(),
+        dataloader=[{"encoder_lengths": torch.tensor([3])}],
+        history=history,
+        symbol="HG=F",
+        reference_price_date="2026-10-13",
+    )
+
+    assert payload is not None
+    assert [point["date"] for point in payload["attention"]["series"]] == dates

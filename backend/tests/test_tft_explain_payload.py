@@ -264,6 +264,21 @@ def test_recent_omitted_when_column_has_fewer_than_two_finite_values():
     _json_dump(payload)
 
 
+def test_pct_feature_with_zero_first_value_keeps_recent_with_null_change_pct():
+    frame = _happy_frame()
+    frame["HG=F_close"] = [0.0, 1.5, 2.5]
+
+    payload = _build(feature_frame=frame)
+
+    recent = payload["variable_selection"]["encoder"][0]["recent"]
+    assert recent["kind"] == "pct"
+    assert recent["last_value"] == 2.5
+    assert recent["change"] == 2.5
+    assert recent["change_pct"] is None
+    assert recent["basis"] == "3 sessions"
+    _json_dump(payload)
+
+
 def test_non_finite_attention_is_zeroed_and_zero_series_still_built():
     interpretation = _happy_interpretation()
     interpretation["attention"] = [0.2, float("nan"), float("inf")]

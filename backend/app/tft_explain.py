@@ -146,13 +146,11 @@ def _recent_block(
         return None
 
     change_pct: Optional[float] = None
-    if kind == "pct":
-        if first_value == 0.0:
+    if kind == "pct" and first_value != 0.0:
+        raw_pct = finite_number(change / abs(first_value) * 100.0)
+        if raw_pct is None:
             return None
-        change_pct = finite_number(change / abs(first_value) * 100.0)
-        if change_pct is None:
-            return None
-        change_pct = round(change_pct, 6)
+        change_pct = round(raw_pct, 6)
 
     # Label the actual observed span, not the nominal window: when the tail rows
     # contain missing values the comparison may span fewer sessions, and the UI

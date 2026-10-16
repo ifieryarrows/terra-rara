@@ -648,7 +648,8 @@ class TFTPredictor:
 
             # `_run_interpretation` (tft_copper) enforces eval mode for the
             # forward pass and restores the original mode afterwards.
-            x, _ = next(iter(dataloader))
+            batch = next(iter(dataloader))
+            x = batch[0] if isinstance(batch, (tuple, list)) else batch
             return try_build_explain_payload(
                 interpretation=interpret_batch(model, x),
                 window_dates=[self._date_label(value) for value in history.index],
