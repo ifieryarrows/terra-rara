@@ -75,6 +75,14 @@ export const NewsIntelligencePanel: React.FC = () => {
   const lastFlowFrameTimeRef = useRef<number | null>(null);
   const flowPositionRef = useRef(0);
   const scrollbarCacheRef = useRef({ overflow: '', thumbWidth: '', ariaValueNow: '' });
+  const startFlowAnimationRef = useRef<() => void>(() => {});
+  const compositorAnimRef = useRef<{
+    trackAnim: Animation;
+    thumbAnim: Animation | null;
+    cycleWidth: number;
+    duration: number;
+  } | null>(null);
+  const rampFrameRef = useRef<number | null>(null);
   const dragState = useRef<{ pointerId: number; startX: number; startScroll: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
   const suppressCardClick = useRef(false);
 
@@ -85,12 +93,155 @@ export const NewsIntelligencePanel: React.FC = () => {
   );
   const activeWindowHours = effectiveFilters.since_hours ?? 168;
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
-  const retargetNewsFlow = () => {
+
+  const syncFromCompositor = useCallback(() => {
+    const active = compositorAnimRef.current;
+    if (!active || active.cycleWidth <= 0 || active.duration <= 0) return;
+    const cur = typeof active.trackAnim.currentTime === 'number' ? active.trackAnim.currentTime : 0;
+    const norm = ((cur % active.duration) + active.duration) % active.duration;
+    flowPositionRef.current = (norm / active.duration) * active.cycleWidth;
+  }, []);
+
+  const stopCompositorFlow = useCallback(() => {
+    const active = compositorAnimRef.current;
+    if (!active) return;
+    if (rampFrameRef.current !== null) {
+      window.cancelAnimationFrame(rampFrameRef.current);
+      rampFrameRef.current = null;
+    }
+    syncFromCompositor();
+    if (newsTrackRef.current) {
+      newsTrackRef.current.style.transform = `translate3d(${-flowPositionRef.current}px, 0, 0)`;
+    }
+    compositorAnimRef.current = null;
+    active.trackAnim.cancel();
+    active.thumbAnim?.cancel();
+  }, [syncFromCompositor]);
+
+  const startCompositorFlow = useCallback((cycleWidth: number, railWidth: number): boolean => {
+    const track = newsTrackRef.current;
+    if (!track || typeof track.animate !== 'function' || cycleWidth <= railWidth || cycleWidth <= 0) {
+      return false;
+    }
+    stopCompositorFlow();
+    const duration = (cycleWidth / NEWS_FLOW_SPEED) * 1_000;
+    if (!Number.isFinite(duration) || duration <= 0) return false;
+    const position = ((flowPositionRef.current % cycleWidth) + cycleWidth) % cycleWidth;
+    flowPositionRef.current = position;
+    const startTimeMs = (position / cycleWidth) * duration;
+
+    const trackAnim = track.animate(
+      [
+        { transform: 'translate3d(0px, 0, 0)' },
+        { transform: `translate3d(${-cycleWidth}px, 0, 0)` },
+      ],
+      { duration, iterations: Infinity, easing: 'linear' },
+    );
+    trackAnim.currentTime = startTimeMs;
+
+    let thumbAnim: Animation | null = null;
+    const scrollbarTrack = newsScrollbarTrackRef.current;
+    const thumb = newsScrollbarThumbRef.current;
+    const trackWidth = scrollbarTrack?.clientWidth ?? 0;
+    if (scrollbarTrack && thumb && typeof thumb.animate === 'function' && trackWidth > 0) {
+      const thumbWidth = Math.min(trackWidth, Math.max(30, trackWidth * railWidth / cycleWidth));
+      const maxThumbOffset = Math.max(0, trackWidth - thumbWidth);
+      if (maxThumbOffset > 0) {
+        const thumbPosition = ((position % cycleWidth) + cycleWidth) % cycleWidth;
+        const thumbStartTimeMs = (thumbPosition / cycleWidth) * duration;
+        thumbAnim = thumb.animate(
+          [
+            { transform: 'translate3d(0px, 0, 0)' },
+            { transform: `translate3d(${maxThumbOffset}px, 0, 0)` },
+          ],
+          { duration, iterations: Infinity, easing: 'linear' },
+        );
+        thumbAnim.currentTime = thumbStartTimeMs;
+      }
+    }
+
+    if (flowPausedRef.current || flowHoveredRef.current) {
+      trackAnim.playbackRate = 0;
+      trackAnim.pause();
+      if (thumbAnim) {
+        thumbAnim.playbackRate = 0;
+        thumbAnim.pause();
+      }
+    }
+
+    compositorAnimRef.current = { trackAnim, thumbAnim, cycleWidth, duration };
+    return true;
+  }, [stopCompositorFlow]);
+
+  const retargetNewsFlow = useCallback(() => {
     const target = flowPausedRef.current || flowHoveredRef.current ? 0 : NEWS_FLOW_SPEED;
     const transition = flowTransitionRef.current;
     if (transition.target === target) return;
-    flowTransitionRef.current = { from: flowVelocityRef.current, target, startedAt: performance.now() };
-  };
+    const fromVelocity = flowVelocityRef.current;
+    flowTransitionRef.current = { from: fromVelocity, target, startedAt: performance.now() };
+
+    const active = compositorAnimRef.current;
+    if (active) {
+      if (rampFrameRef.current !== null) {
+        window.cancelAnimationFrame(rampFrameRef.current);
+        rampFrameRef.current = null;
+      }
+
+      if (target === 0) {
+        const start = performance.now();
+        const initialRate = active.trackAnim.playbackRate;
+        const rampDown = () => {
+          const now = performance.now();
+          const p = Math.min(1, Math.max(0, (now - start) / NEWS_FLOW_EASE_MS));
+          const rate = initialRate * (1 - p);
+          flowVelocityRef.current = rate * NEWS_FLOW_SPEED;
+          active.trackAnim.playbackRate = rate;
+          if (active.thumbAnim) active.thumbAnim.playbackRate = rate;
+          if (p < 1) {
+            rampFrameRef.current = window.requestAnimationFrame(rampDown);
+          } else {
+            active.trackAnim.pause();
+            if (active.thumbAnim) active.thumbAnim.pause();
+            rampFrameRef.current = null;
+            syncFromCompositor();
+          }
+        };
+        rampFrameRef.current = window.requestAnimationFrame(rampDown);
+      } else {
+        active.trackAnim.play();
+        if (active.thumbAnim) active.thumbAnim.play();
+        const start = performance.now();
+        const initialRate = active.trackAnim.playbackRate;
+        const rampUp = () => {
+          const now = performance.now();
+          const p = Math.min(1, Math.max(0, (now - start) / NEWS_FLOW_EASE_MS));
+          const easing = Math.pow(p, 3);
+          const rate = initialRate + (1 - initialRate) * easing;
+          flowVelocityRef.current = rate * NEWS_FLOW_SPEED;
+          active.trackAnim.playbackRate = rate;
+          if (active.thumbAnim) active.thumbAnim.playbackRate = rate;
+          if (p < 1) {
+            rampFrameRef.current = window.requestAnimationFrame(rampUp);
+          } else {
+            active.trackAnim.playbackRate = 1;
+            if (active.thumbAnim) active.thumbAnim.playbackRate = 1;
+            flowVelocityRef.current = NEWS_FLOW_SPEED;
+            rampFrameRef.current = null;
+          }
+        };
+        rampFrameRef.current = window.requestAnimationFrame(rampUp);
+      }
+      return;
+    }
+
+    if (target > 0) {
+      const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+      const railWidth = newsRailRef.current?.clientWidth ?? 0;
+      if (!startCompositorFlow(cycleWidth, railWidth)) {
+        startFlowAnimationRef.current();
+      }
+    }
+  }, [startCompositorFlow, syncFromCompositor]);
 
   const pauseNewsFlow = useCallback(() => {
     flowPausedRef.current = true;
@@ -102,19 +253,24 @@ export const NewsIntelligencePanel: React.FC = () => {
       const rail = newsRailRef.current;
       const track = newsTrackRef.current;
       const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+      const railWidth = rail?.clientWidth ?? 0;
       if (rail && track && rail.scrollLeft && cycleWidth > 0) {
+        stopCompositorFlow();
         flowPositionRef.current = (flowPositionRef.current + rail.scrollLeft) % cycleWidth;
         rail.scrollLeft = 0;
         track.style.transform = `translate3d(${-flowPositionRef.current}px, 0, 0)`;
+        startCompositorFlow(cycleWidth, railWidth);
       }
       retargetNewsFlow();
     }, 3_000);
-  }, []);
+  }, [retargetNewsFlow, startCompositorFlow, stopCompositorFlow]);
 
   useEffect(() => () => {
     if (flowResumeTimer.current !== undefined) window.clearTimeout(flowResumeTimer.current);
     if (flowFrameRef.current !== null) window.cancelAnimationFrame(flowFrameRef.current);
-  }, []);
+    if (rampFrameRef.current !== null) window.cancelAnimationFrame(rampFrameRef.current);
+    stopCompositorFlow();
+  }, [stopCompositorFlow]);
 
   const feed = useNewsFeed(effectiveFilters);
   const stats = useNewsStats(effectiveFilters);
@@ -176,6 +332,13 @@ export const NewsIntelligencePanel: React.FC = () => {
     const normalized = ((position % cycleWidth) + cycleWidth) % cycleWidth;
     flowPositionRef.current = normalized;
     track.style.transform = `translate3d(${-normalized}px, 0, 0)`;
+    const active = compositorAnimRef.current;
+    if (active && active.cycleWidth > 0 && active.duration > 0) {
+      active.trackAnim.currentTime = (normalized / active.cycleWidth) * active.duration;
+      if (active.thumbAnim) {
+        active.thumbAnim.currentTime = (normalized / active.cycleWidth) * active.duration;
+      }
+    }
     if (rail.scrollLeft) rail.scrollLeft = 0;
     syncNewsScrollbar();
   };
@@ -184,7 +347,18 @@ export const NewsIntelligencePanel: React.FC = () => {
     const rail = newsRailRef.current;
     const set = originalNewsSetRef.current;
     if (!rail) return undefined;
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncNewsScrollbar);
+    const onResize = () => {
+      const cycleWidth = set?.clientWidth ?? 0;
+      const railWidth = rail.clientWidth;
+      if (compositorAnimRef.current) {
+        stopCompositorFlow();
+        if (cycleWidth > railWidth) {
+          startCompositorFlow(cycleWidth, railWidth);
+        }
+      }
+      syncNewsScrollbar();
+    };
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
     resizeObserver?.observe(rail);
     if (set) resizeObserver?.observe(set);
     rail.addEventListener('scroll', syncNewsScrollbar, { passive: true });
@@ -193,23 +367,34 @@ export const NewsIntelligencePanel: React.FC = () => {
       resizeObserver?.disconnect();
       rail.removeEventListener('scroll', syncNewsScrollbar);
     };
-  }, [items.length, syncNewsScrollbar]);
+  }, [items.length, startCompositorFlow, stopCompositorFlow, syncNewsScrollbar]);
 
   useEffect(() => {
     const rail = newsRailRef.current;
     const set = originalNewsSetRef.current;
-    if (!rail || !set || items.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!rail || !set || items.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      startFlowAnimationRef.current = () => {};
+      stopCompositorFlow();
+      return undefined;
+    }
 
-    let width = set.getBoundingClientRect().width;
+    let cycleWidth = set.clientWidth || set.getBoundingClientRect().width;
     let railWidth = rail.clientWidth;
+
+    if (cycleWidth > railWidth && startCompositorFlow(cycleWidth, railWidth)) {
+      return () => {
+        stopCompositorFlow();
+      };
+    }
+
     const recenter = () => {
-      const nextWidth = set.getBoundingClientRect().width;
+      const nextWidth = set.clientWidth || set.getBoundingClientRect().width;
       const nextRailWidth = rail.clientWidth;
       if (nextWidth <= 0 && nextRailWidth <= 0) return;
-      if (nextWidth > 0) width = nextWidth;
+      if (nextWidth > 0) cycleWidth = nextWidth;
       if (nextRailWidth > 0) railWidth = nextRailWidth;
-      if (flowPositionRef.current >= width && width > 0) {
-        flowPositionRef.current %= width;
+      if (flowPositionRef.current >= cycleWidth && cycleWidth > 0) {
+        flowPositionRef.current %= cycleWidth;
         if (newsTrackRef.current) newsTrackRef.current.style.transform = `translate3d(${-flowPositionRef.current}px, 0, 0)`;
       }
       syncNewsScrollbar();
@@ -224,30 +409,37 @@ export const NewsIntelligencePanel: React.FC = () => {
       lastFlowFrameTimeRef.current = timestamp;
       const transition = flowTransitionRef.current;
       const progress = Math.min(1, Math.max(0, (timestamp - transition.startedAt) / NEWS_FLOW_EASE_MS));
-      // A linear velocity ramp gives a clean, finite braking distance instead
-      // of the long near-zero tail from exponential/ease-out curves. Restart
-      // with cubic ease-in so the rail gathers speed gently.
       const easing = transition.target === 0 ? progress : Math.pow(progress, 3);
       const previousVelocity = flowVelocityRef.current;
       const velocity = transition.from + (transition.target - transition.from) * easing;
       flowVelocityRef.current = velocity;
-      if (width > railWidth && width > 0 && velocity > 0) {
+      if (cycleWidth > railWidth && cycleWidth > 0 && velocity > 0) {
         const next = flowPositionRef.current + (previousVelocity + velocity) * 0.5 * elapsed / 1_000;
-        const position = next >= width ? next % width : next;
+        const position = next >= cycleWidth ? next % cycleWidth : next;
         flowPositionRef.current = position;
         if (newsTrackRef.current) newsTrackRef.current.style.transform = `translate3d(${-position}px, 0, 0)`;
         syncNewsScrollbar();
       }
       flowFrameRef.current = window.requestAnimationFrame(animate);
     };
-    flowFrameRef.current = window.requestAnimationFrame(animate);
+
+    const startFlowAnimation = () => {
+      if (flowFrameRef.current !== null) return;
+      lastFlowFrameTimeRef.current = null;
+      flowFrameRef.current = window.requestAnimationFrame(animate);
+    };
+    startFlowAnimationRef.current = startFlowAnimation;
+    startFlowAnimation();
+
     return () => {
+      startFlowAnimationRef.current = () => {};
       resizeObserver.disconnect();
       if (flowFrameRef.current !== null) window.cancelAnimationFrame(flowFrameRef.current);
       flowFrameRef.current = null;
       lastFlowFrameTimeRef.current = null;
+      stopCompositorFlow();
     };
-  }, [items.length, syncNewsScrollbar]);
+  }, [items.length, startCompositorFlow, stopCompositorFlow, syncNewsScrollbar]);
 
   const availableChannels = useMemo(() => {
     const dist = stats.data?.channel_distribution ?? {};
