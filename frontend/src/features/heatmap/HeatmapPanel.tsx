@@ -157,6 +157,9 @@ export const HeatmapPanel: React.FC = () => {
     }
   }, []);
 
+  const hoverStateRef = useRef({ hoveredAnchor, pinnedAnchor });
+  hoverStateRef.current = { hoveredAnchor, pinnedAnchor };
+
   const clearTimer = (ref: React.MutableRefObject<number | null>) => {
     if (ref.current !== null) window.clearTimeout(ref.current);
     ref.current = null;
@@ -171,7 +174,8 @@ export const HeatmapPanel: React.FC = () => {
     }, CLOSE_DELAY_MS);
   }, []);
   const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
-    if (pinnedAnchor) return;
+    const { hoveredAnchor: currentHovered, pinnedAnchor: currentPinned } = hoverStateRef.current;
+    if (currentPinned) return;
     if (!anchor) {
       // Finviz paints selection on a dedicated hover canvas. Mirror that
       // immediacy for the visual boundary while retaining the panel's close
@@ -183,13 +187,13 @@ export const HeatmapPanel: React.FC = () => {
     const pointerDriven = !!anchor.pointer;
     clearTimer(closeTimer);
     clearTimer(openTimer);
-    if (hoveredAnchor?.id === anchor.id) {
+    if (currentHovered?.id === anchor.id) {
       return;
     }
     openTimer.current = window.setTimeout(() => {
       setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
     }, OPEN_DELAY_MS);
-  }, [hoveredAnchor, pinnedAnchor, scheduleClose]);
+  }, [scheduleClose]);
 
   useEffect(() => () => {
     clearTimer(openTimer);
@@ -258,11 +262,11 @@ export const HeatmapPanel: React.FC = () => {
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
-    if (!pinnedAnchor) categoryPanelRef.current?.move(x, y);
-  }, [pinnedAnchor]);
+    if (!hoverStateRef.current.pinnedAnchor) categoryPanelRef.current?.move(x, y);
+  }, []);
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
-    if (!pinnedAnchor) setHoveredLeaf(leaf);
-  }, [pinnedAnchor]);
+    if (!hoverStateRef.current.pinnedAnchor) setHoveredLeaf(leaf);
+  }, []);
   const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);

@@ -932,9 +932,10 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   border-left-color: var(--cm-copper) !important;
   background: color-mix(in srgb, var(--cm-copper) 4%, transparent) !important;
 }
-.cm-market-dashboard .cm-news-feed { cursor: grab; touch-action: pan-x; }
-.cm-market-dashboard .cm-news-feed.is-dragging { cursor: grabbing; user-select: none; }
-.cm-market-dashboard .cm-news-feed.is-dragging .cm-news-card { cursor: grabbing; }
+.cm-market-dashboard :is(.cm-panel, .cm-heatmap, .cm-news-panel) { cursor: var(--cm-terra-cursor, auto); }
+.cm-market-dashboard .cm-news-feed { cursor: var(--cm-terra-cursor, grab); touch-action: pan-x; }
+.cm-market-dashboard .cm-news-feed.is-dragging { cursor: var(--cm-terra-cursor-pressed, grabbing); user-select: none; }
+.cm-market-dashboard .cm-news-feed.is-dragging .cm-news-card { cursor: var(--cm-terra-cursor-pressed, grabbing); }
 @media (max-width: 900px) {
   .cm-heatmap--terminal { grid-template-columns: 13rem minmax(0, 1fr); }
   .cm-heatmap-sidebar { padding-inline: .75rem; }

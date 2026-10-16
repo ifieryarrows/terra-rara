@@ -201,12 +201,27 @@ export function TerraCursor() {
       previousPoint = { x, y };
       if (moteCount) schedule();
     };
+    let pressedElement: Element | null = null;
+    const clearPressedCursor = () => {
+      if (pressedElement) {
+        pressedElement.removeAttribute('data-cm-cursor-pressed');
+        pressedElement = null;
+      }
+    };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch') return;
-      root.classList.add('cm-terra-cursor-pressed');
+      clearPressedCursor();
+      const element = target instanceof Element ? target : target.parentElement;
+      const host =
+        element?.closest(
+          'a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"], input, textarea, select, [contenteditable="true"]',
+        ) ?? element;
+      if (host && root.contains(host)) {
+        pressedElement = host;
+        host.setAttribute('data-cm-cursor-pressed', '');
+      }
     };
-    const clearPressedCursor = () => root.classList.remove('cm-terra-cursor-pressed');
     const onPointerLeave = () => resetTrailOrigin();
     const onBlur = () => {
       resetTrailOrigin();

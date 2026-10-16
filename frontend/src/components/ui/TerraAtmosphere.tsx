@@ -69,6 +69,7 @@ function StarFieldCanvas() {
 
 export function TerraAtmosphere({ progress, interactive = false, className = '' }: TerraAtmosphereProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef<HTMLDivElement>(null);
   const staticProgress = useMotionValue(1);
   const timeline = progress ?? staticProgress;
   const backgroundColor = useTransform(timeline, [0, .25, .5, .75, 1], ['#080e17', '#0b1218', '#0a101a', '#090f1b', '#0b1119']);
@@ -80,17 +81,18 @@ export function TerraAtmosphere({ progress, interactive = false, className = '' 
   const names = ['cm-global-atmosphere', className].filter(Boolean).join(' ');
 
   useEffect(() => {
-    const root = rootRef.current;
-    const canRenderPointerGlow = interactive && !!root && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const pointerLayer = pointerRef.current ?? rootRef.current;
+    const canRenderPointerGlow = interactive && !!pointerLayer && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     let frame = 0;
     let pointerX = latestPointerPosition.x;
     let pointerY = latestPointerPosition.y;
     const applyPointer = () => {
       frame = 0;
-      if (!canRenderPointerGlow || !root) return;
-      root.style.setProperty('--pointer-x', `${(pointerX * 100).toFixed(2)}%`);
-      root.style.setProperty('--pointer-y', `${(pointerY * 100).toFixed(2)}%`);
+      if (!canRenderPointerGlow || !pointerLayer) return;
+      const xPx = pointerX * window.innerWidth;
+      const yPx = pointerY * window.innerHeight;
+      pointerLayer.style.transform = `translate3d(${xPx.toFixed(1)}px, ${yPx.toFixed(1)}px, 0)`;
     };
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return;
@@ -117,7 +119,7 @@ export function TerraAtmosphere({ progress, interactive = false, className = '' 
     <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, ...(progress ? { x: starsX } : {}) }}>
       <StarFieldCanvas/>
     </motion.div>
-    {progress || interactive ? <div className="cm-atmosphere-pointer"/> : null}
+    {progress || interactive ? <div ref={pointerRef} className="cm-atmosphere-pointer"/> : null}
     <div className="cm-atmosphere-grain"/>
   </div>;
 }
