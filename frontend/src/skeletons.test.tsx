@@ -41,6 +41,7 @@ vi.mock('./api', () => ({
   fetchCommentary: vi.fn(() => new Promise(() => {})),
   fetchTFTAnalysis: vi.fn(() => new Promise(() => {})),
   fetchLivePrice: vi.fn(() => new Promise(() => {})),
+  fetchExplain: vi.fn(() => new Promise(() => {})),
 }));
 
 beforeEach(() => {

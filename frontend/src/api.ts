@@ -5,6 +5,7 @@ import type {
   HealthResponse,
   CommentaryResponse,
   TFTAnalysisResponse,
+  ExplainResponse,
   NewsFeedFilters,
   NewsItem,
   NewsListResponse,
@@ -122,6 +123,17 @@ export async function fetchMarketPrices(): Promise<MarketPricesResponse> {
 export async function fetchTFTAnalysis(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<TFTAnalysisResponse> {
   const response = await api.get<TFTAnalysisResponse>(`/analysis/tft/${symbol}`);
   return response.data;
+}
+
+/**
+ * Fetch the per-forecast TFT-ASRO model focus explanation.
+ * 404 means "no fresh snapshot/explanation yet" and resolves to `null` instead of an error.
+ */
+export async function fetchExplain(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<ExplainResponse | null> {
+  const response = await api.get<ExplainResponse | null>(`/explain/${symbol}`, {
+    validateStatus: (status) => status === 200 || status === 404,
+  });
+  return response.status === 404 ? null : response.data;
 }
 
 export default api;

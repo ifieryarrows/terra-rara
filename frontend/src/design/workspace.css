@@ -72,6 +72,8 @@
 .cm-reliability-row small { display: block; margin-top: .4rem; color: var(--cm-muted); font-size: .75rem; }
 .cm-reliability-row strong { font-family: var(--cm-font-family); font-variant-numeric: tabular-nums; }
 .cm-commentary { max-height: 22rem; overflow: auto; overflow-wrap: anywhere; }
+.cm-model-focus-attention { display: flex; align-items: flex-end; gap: 1px; height: 4rem; }
+.cm-model-focus-attention span { flex: 1; border-radius: .25rem .25rem 0 0; background: color-mix(in srgb, var(--cm-forecast) 60%, transparent); }
 .cm-news-sidebar { align-self: start; }
 .cm-news-panel { display: flex; flex-direction: column; max-height: 48rem; overflow: hidden; }
 .cm-news-header { flex: 0 0 auto; }
