@@ -29,7 +29,7 @@ AI-powered copper futures price prediction platform combining XGBoost ML, TFT-AS
 
 ## Overview
 
-Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3 Super as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3.5 Super VL as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
 
 **XGBoost target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
@@ -43,7 +43,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 
 - Predict next-day copper futures returns using XGBoost regression trained on 250+ features
 - Forecast 5-day returns with probabilistic confidence bands using TFT-ASRO deep learning
-- Score news sentiment using multi-tier LLM routing (NVIDIA Nemotron 3 Super / Liquid LFM 2.5) with FinBERT fallback
+- Score news sentiment using multi-tier LLM routing (NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5) with FinBERT fallback
 - Extract FinBERT CLS embeddings (768-dim → 8-dim PCA) for deep semantic encoding optimized for sample efficiency
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
@@ -585,14 +585,14 @@ Copy `env.example` to `backend/.env` and configure:
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for pipeline task queue                 |
 | `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (`active`, `champion`, `challenger`)   |
-| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Primary fast sentiment scoring role                            |
-| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`           | Reliable scoring & escalation repair role                      |
-| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Commentary generation role                                     |
-| `OPENROUTER_RPM`                    | No       | `12`                                  | Soft throttle target for OpenRouter calls                      |
-| `OPENROUTER_MAX_RETRIES`            | No       | `1`                                   | One bounded retry for 408/429/5xx/network errors               |
-| `OPENROUTER_CHAIN_DEADLINE_SECONDS` | No       | `120`                                 | Total sentiment batch deadline                                 |
-| `MAX_LLM_ARTICLES_PER_RUN`          | No       | `100`                                 | Per-run LLM scoring budget                                     |
-| `OPENROUTER_FALLBACK_MODELS`        | No       | `liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
+| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3.5-super-vl:free`     | Primary fast sentiment scoring role                            |
+| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`              | Reliable scoring & escalation repair role                      |
+| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3.5-super-vl:free`     | Commentary generation role                                     |
+| `OPENROUTER_RPM`                    | No       | `12`                                    | Soft throttle target for OpenRouter calls                      |
+| `OPENROUTER_MAX_RETRIES`            | No       | `1`                                     | One bounded retry for 408/429/5xx/network errors               |
+| `OPENROUTER_CHAIN_DEADLINE_SECONDS` | No       | `120`                                   | Total sentiment batch deadline                                 |
+| `MAX_LLM_ARTICLES_PER_RUN`          | No       | `100`                                   | Per-run LLM scoring budget                                     |
+| `OPENROUTER_FALLBACK_MODELS`        | No       | `liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
 | `XGB_ARTIFACT_SOURCE`               | No       | `auto`                                | Atomic DB artifact first, verified paired files during rollout |
 | `VITE_LOGO_DEV_PUBLISHABLE_KEY`     | No       | -                                       | Optional publishable key for Logo.dev company icons in heatmap |
 | `TWELVEDATA_API_KEY`                | No       | -                                       | Backup live price source                                       |

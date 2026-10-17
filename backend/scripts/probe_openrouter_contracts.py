@@ -106,9 +106,9 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str, batch_si
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe exact OpenRouter production contracts")
-    parser.add_argument("--fast", default="nvidia/nemotron-3-super-120b-a12b:free")
+    parser.add_argument("--fast", default="nvidia/nemotron-3.5-super-vl:free")
     parser.add_argument("--reliable", default="liquid/lfm-2.5-2.6b:free")
-    parser.add_argument("--commentary", default="nvidia/nemotron-3-super-120b-a12b:free")
+    parser.add_argument("--commentary", default="nvidia/nemotron-3.5-super-vl:free")
     parser.add_argument("--batch-size", type=int, default=12, help="Synthetic scoring items, up to the worker's 12-item chunk")
     args = parser.parse_args()
     result = asyncio.run(run_probe(fast=args.fast, reliable=args.reliable, commentary_model=args.commentary, batch_size=args.batch_size))
