@@ -85,6 +85,33 @@ export interface HealthResponse {
 
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
+export interface CommentarySections {
+  synthesis: string;
+  risks: string[];
+  opportunities: string[];
+  xai_brief?: string | null;
+  bias_warning?: string | null;
+}
+
+export interface CompanionXaiHighlights {
+  horizon_label?: string;
+  reference_price_date?: string | null;
+  top_signals?: ExplainFeatureEntry[];
+  memory_anchors?: ExplainAttentionPoint[];
+  window?: { start: string | null; end: string | null; days: number } | null;
+  notes?: string | null;
+}
+
+export interface CompanionState {
+  character: string;
+  mood: 'molten_bull' | 'patina_bear' | 'tempered_neutral' | string;
+  stance: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | string;
+  energy: 'calm' | 'charged' | 'volatile' | string;
+  confidence_band: 'high' | 'medium' | 'low' | string;
+  headline_quote: string;
+  xai_highlights?: CompanionXaiHighlights | null;
+}
+
 export interface CommentaryResponse {
   symbol: string;
   commentary: string | null;
@@ -94,6 +121,8 @@ export interface CommentaryResponse {
   generation_mode?: 'llm' | 'llm_repaired' | 'deterministic_fallback' | 'unavailable' | string;
   model_name?: string | null;
   fallback_reason?: string | null;
+  sections?: CommentarySections | null;
+  companion_state?: CompanionState | null;
 }
 
 export interface TFTDailyForecast {

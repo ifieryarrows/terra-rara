@@ -301,11 +301,13 @@ def _build_xai_brief(tft_digest: Optional[dict]) -> Optional[str]:
         feature = str(signal.get("feature") or "").strip()
         if not feature:
             continue
+        label = str(signal.get("label") or "").strip()
+        display_name = f"{label} ({feature})" if label and label != feature else feature
         weight_pct = signal.get("weight_pct")
         if isinstance(weight_pct, (int, float)):
-            signal_refs.append(f"{feature} ({float(weight_pct):.1f}% of encoder focus)")
+            signal_refs.append(f"{display_name} ({float(weight_pct):.1f}% of encoder focus)")
         else:
-            signal_refs.append(feature)
+            signal_refs.append(display_name)
         if len(signal_refs) >= 3:
             break
 
@@ -986,7 +988,7 @@ def _clean_section_lines(lines: list[str], limit: Optional[int] = None) -> list[
         line = (raw_line or "").strip()
         if not line or _DISCLAIMER_TEXT_RE.match(line.strip("*#_ ").strip()):
             continue
-        item = _BULLET_RE.sub("", line).strip().strip("*").strip()
+        item = _BULLET_RE.sub("", line).replace("`", "").strip().strip("*").strip()
         if item:
             cleaned.append(item)
     if limit is not None:

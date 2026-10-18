@@ -36,8 +36,8 @@ const HeatmapPanel = lazy(() => import('../features/heatmap/HeatmapPanel').then(
 const NewsIntelligencePanel = lazy(() =>
   import('../features/news/NewsIntelligencePanel').then(m => ({ default: m.NewsIntelligencePanel })),
 );
-const ModelFocusPanel = lazy(() =>
-  import('../components/ModelFocusPanel').then(m => ({ default: m.ModelFocusPanel })),
+const CuprumCompanionPanel = lazy(() =>
+  import('../components/CuprumCompanionPanel').then(m => ({ default: m.CuprumCompanionPanel })),
 );
 
 // --- Skeleton Components for perceived performance ---
@@ -534,40 +534,22 @@ export const OverviewPage = () => {
             <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']}/>
           </GlassCard>
 
-          {/* AI Commentary Card */}
-          <GlassCard id="neural-analysis" title="Neural analysis" icon={Cpu} colSpan={8}>
-            <div className="flex items-center justify-between mb-3">
-              {commentary?.generated_at && (
-                <span className="text-xs text-slate-400 font-mono">
-                  {new Date(commentary.generated_at).toLocaleTimeString()}
-                </span>
-              )}
-              {commentary?.generation_mode && (
-                <span
-                  className={clsx(
-                    "text-xs font-mono px-1.5 py-0.5 rounded-full border",
-                    commentary.generation_mode !== 'llm' && commentary.generation_mode !== 'llm_repaired'
-                      ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
-                      : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10",
-                  )}
-                >
-                  {commentary.generation_mode === 'deterministic_fallback' ? 'Local fallback' : commentary.generation_mode === 'llm' || commentary.generation_mode === 'llm_repaired' ? 'AI generated' : 'Unavailable'}
-                </span>
-              )}
-            </div>
-            <div className="cm-commentary text-sm text-gray-300 leading-relaxed">
-              {commentary?.commentary ? (
-                <p className="font-light whitespace-pre-wrap">{commentary.commentary || ''}</p>
-              ) : (
-                <span className="text-slate-400" role="status">{commentaryLoading ? 'Loading available commentary…' : loadErrors['AI commentary'] || commentary?.error ? 'AI commentary is temporarily unavailable.' : 'No commentary is available for this snapshot.'}</span>
-              )}
-            </div>
-          </GlassCard>
-
-          {/* TFT model focus — raw VSN/attention internals of the latest explanation. */}
-          <GlassCard id="tft-focus" title="Model focus (TFT-ASRO)" icon={Brain} colSpan={4}>
-            <Suspense fallback={<div className="py-8 text-center text-xs text-slate-400 font-mono" role="status">Loading model focus…</div>}>
-              <ModelFocusPanel data={explain} error={loadErrors['Model focus']}/>
+          {/* Unified Cuprum XAI & Neural Companion Stage (merges AI Commentary + TFT-ASRO Model Focus) */}
+          <GlassCard id="neural-analysis" title="Cuprum · Neural XAI companion" icon={Cpu} colSpan={8}>
+            <Suspense
+              fallback={
+                <div className="cm-commentary py-8 text-center text-xs text-slate-400 font-mono" role="status">
+                  Loading Cuprum companion…
+                </div>
+              }
+            >
+              <CuprumCompanionPanel
+                commentary={commentary}
+                explain={explain}
+                tftAnalysis={tftAnalysis}
+                loading={commentaryLoading}
+                error={loadErrors['AI commentary'] || loadErrors['Model focus']}
+              />
             </Suspense>
           </GlassCard>
 

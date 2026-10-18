@@ -192,10 +192,10 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
       {topEncoder.length > 0 && (
         <div className="space-y-2.5" onMouseLeave={() => setHoveredFeatureIdx(null)}>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-mono uppercase tracking-widest text-slate-400">
+            <span className="text-xs font-mono uppercase tracking-widest text-slate-400">
               VSN Encoder Selection
             </span>
-            <span className="text-[11px] font-mono text-slate-400">
+            <span className="text-xs font-mono text-slate-400">
               Top {topEncoder.length} inputs
             </span>
           </div>
@@ -251,7 +251,7 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
           <div className="space-y-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-slate-300 uppercase tracking-widest font-medium">{attentionHeading}</p>
-              <span className="text-[11px] font-mono text-copper-400">
+              <span className="text-xs font-mono text-copper-400">
                 {attentionBars.length}D memory → {stepDayNumber ? `T+${stepDayNumber} anchor` : '5D horizon'}
               </span>
             </div>
@@ -415,7 +415,7 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
           {/* Interactive Peak Memory Chips */}
           {peakSessions.length > 0 && (
             <div className="cm-focus-peak-strip" role="group" aria-label="Peak attention sessions">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mr-1">
+              <span className="text-xs font-mono uppercase tracking-wider text-slate-400 mr-1">
                 Peak sessions:
               </span>
               {peakSessions.map((peak, idx) => {

@@ -274,16 +274,16 @@ export function OverviewSkeleton() {
               </div>
             </section>
 
-            {/* Neural Analysis skeleton */}
+            {/* Unified Cuprum Neural XAI Companion skeleton */}
             <section
               id="neural-analysis"
               className="cm-panel cm-financial-panel"
               style={{ '--cm-panel-span': 8 } as any}
-              aria-label="Neural analysis skeleton"
+              aria-label="Cuprum neural XAI companion skeleton"
             >
               <h2 className="cm-panel-title">
                 <Cpu size={18} aria-hidden="true" />
-                Neural analysis
+                Cuprum · Neural XAI companion
               </h2>
               <div className="cm-panel-body space-y-3" aria-hidden="true">
                 <div className="flex justify-between items-center mb-3">
@@ -296,24 +296,6 @@ export function OverviewSkeleton() {
                   <SkeletonBone className="w-4/5 h-4" />
                   <SkeletonBone className="w-9/12 h-4" />
                 </div>
-              </div>
-            </section>
-
-            {/* TFT model focus skeleton */}
-            <section
-              id="tft-focus"
-              className="cm-panel cm-financial-panel"
-              style={{ '--cm-panel-span': 4 } as any}
-              aria-label="Model focus skeleton"
-            >
-              <h2 className="cm-panel-title">
-                <Brain size={18} aria-hidden="true" />
-                Model focus (TFT-ASRO)
-              </h2>
-              <div className="cm-panel-body space-y-3" aria-hidden="true">
-                <SkeletonBone className="w-11/12 h-4" />
-                <SkeletonBone className="w-4/5 h-4" />
-                <SkeletonBone className="w-3/4 h-4" />
               </div>
             </section>
           </div>
