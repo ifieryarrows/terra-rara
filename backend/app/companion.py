@@ -21,8 +21,11 @@ degrades to ``None`` and must never fail the companion contract.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["build_companion_state", "extract_commentary_sections"]
 
@@ -332,14 +335,29 @@ def extract_commentary_sections(
     Delegates to Order #1's ``parse_commentary_sections`` when available; the
     built-in parser below keeps this module working standalone so the two
     branches can land independently without either breaking the contract.
+
+    The companion contract is fail-open: a delegate that is absent (normal
+    while the branches run in parallel) degrades silently, and a delegate
+    that misbehaves at parse time degrades to the built-in parser with a
+    warning — it must never raise into ``build_companion_state`` or the
+    endpoint.
     """
     try:
         from app.commentary import parse_commentary_sections  # type: ignore
+    except ImportError:
+        # Expected while Order #1 is unmerged; stay quiet and self-sufficient.
+        return _parse_commentary_sections_fallback(commentary, explain_payload)
 
+    try:
         return parse_commentary_sections(
             commentary, tft_explain=explain_payload
         )
-    except ImportError:
+    except Exception as exc:
+        logger.warning(
+            "parse_commentary_sections delegate failed (%s); "
+            "degrading to built-in companion parser",
+            exc,
+        )
         return _parse_commentary_sections_fallback(commentary, explain_payload)
 
 

@@ -378,6 +378,30 @@ class TestExtractCommentarySections:
         )
         assert extract_commentary_sections("anything") == sentinel
 
+    def test_delegate_runtime_exception_degrades_to_fallback_parser(self, monkeypatch):
+        """A misbehaving Order #1 delegate must never break the companion.
+
+        The invariant is that enrichment can never fail /api/commentary: only
+        a missing parser (ImportError) is silent; any parse-time failure of
+        the delegate degrades to the built-in fallback parser.
+        """
+        import app.commentary as commentary_module
+
+        def broken_delegate(commentary, tft_explain=None):
+            raise RuntimeError("schema drift in delegate")
+
+        monkeypatch.setattr(
+            commentary_module,
+            "parse_commentary_sections",
+            broken_delegate,
+            raising=False,
+        )
+        sections = extract_commentary_sections(LLM_COMMENTARY)
+        # Built-in parser result, not the exception: LLM template parsed.
+        assert sections["synthesis"].startswith("Copper looks constructive")
+        assert len(sections["risks"]) == 3
+        assert sections["bias_warning"] is not None
+
 
 # =============================================================================
 # Task B: GET /api/commentary enrichment
