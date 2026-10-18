@@ -333,8 +333,8 @@ export function CuprumCompanionPanel({
     }, 380);
   };
 
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png`;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v2`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v2`;
 
   return (
     <div
