@@ -1125,10 +1125,51 @@ async def get_commentary(
     This endpoint simply returns the stored commentary without making new API calls.
     """
     from app.commentary import get_commentary_from_db
-    
+    from app.companion import build_companion_state, extract_commentary_sections
+    from app.models import TFTPredictionSnapshot
+
+    explain_payload: Optional[dict] = None
+    tft_payload: Optional[dict] = None
+
     with SessionLocal() as session:
         result = get_commentary_from_db(session, symbol)
-    
+
+        # Snapshot-first companion enrichment: NEVER run live TFT inference.
+        # The latest persisted snapshot contributes stance/energy/xai context
+        # only while it stays fresh (`_tft_snapshot_invalid_reasons`); when
+        # missing, stale, or unreadable, everything degrades to None and the
+        # endpoint must not fail.
+        try:
+            snapshot = (
+                session.query(TFTPredictionSnapshot)
+                .filter(TFTPredictionSnapshot.symbol == symbol)
+                .order_by(TFTPredictionSnapshot.generated_at.desc())
+                .first()
+            )
+            if snapshot is not None and not _tft_snapshot_invalid_reasons(
+                session, symbol, snapshot
+            ):
+                if isinstance(snapshot.explain_json, dict):
+                    explain_payload = snapshot.explain_json
+                if isinstance(snapshot.payload_json, dict):
+                    tft_payload = snapshot.payload_json
+        except Exception as exc:
+            logger.warning(
+                "TFT snapshot enrichment failed for %s; companion degrades without XAI: %s",
+                symbol,
+                exc,
+            )
+
+    sections = extract_commentary_sections(
+        result["commentary"] if result else None, explain_payload
+    )
+    companion_state = build_companion_state(
+        symbol=symbol,
+        commentary_record=result,
+        explain_payload=explain_payload,
+        tft_payload=tft_payload,
+    )
+
     if result:
         return {
             "symbol": symbol,
@@ -1139,6 +1180,8 @@ async def get_commentary(
             "generation_mode": result.get("generation_mode", "unknown"),
             "model_name": result.get("model_name"),
             "fallback_reason": result.get("fallback_reason"),
+            "sections": sections,
+            "companion_state": companion_state,
         }
     else:
         return {
@@ -1150,6 +1193,8 @@ async def get_commentary(
             "generation_mode": "unavailable",
             "model_name": None,
             "fallback_reason": "not_generated",
+            "sections": sections,
+            "companion_state": companion_state,
         }
 
 
