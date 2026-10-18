@@ -11,8 +11,7 @@
 #root.cm-terra-cursor-enabled :is(input, textarea, [contenteditable="true"]) { cursor: text !important; }
 #root.cm-terra-cursor-enabled select { cursor: auto !important; }
 
-#root.cm-terra-cursor-enabled[data-cm-cursor-pressed],
-#root.cm-terra-cursor-enabled [data-cm-cursor-pressed] {
+#root.cm-terra-cursor-enabled :is(a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"]):active {
   cursor: var(--cm-terra-cursor-pressed, var(--cm-terra-cursor, auto)) !important;
 }
 

@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { Brain } from 'lucide-react';
 import type { ExplainRecent, ExplainResponse } from '../types';
 import { driverCategoryLabel, driverCategoryTone } from '../utils/driverCategories';
@@ -34,7 +35,7 @@ function recentLine(recent: ExplainRecent | undefined): string | null {
  * and the raw payload. `data === null` is the normal "not built yet" state;
  * `error` carries the load failure when one occurred.
  */
-export function ModelFocusPanel({ data, error }: { data: ExplainResponse | null; error?: string | null }) {
+export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { data: ExplainResponse | null; error?: string | null }) {
   const encoderEntries = Array.isArray(data?.variable_selection?.encoder)
     ? data.variable_selection.encoder.filter((entry) => entry && typeof entry === 'object')
     : [];
@@ -42,6 +43,7 @@ export function ModelFocusPanel({ data, error }: { data: ExplainResponse | null;
   const attentionBars = (Array.isArray(data?.attention?.series) ? data.attention.series : []).slice(-ATTENTION_BAR_LIMIT);
   const maxEncoderWeight = topEncoder.reduce((max, entry) => Math.max(max, finiteNumber(entry.weight) ?? 0), 0);
   const maxAttentionWeight = attentionBars.reduce((max, point) => Math.max(max, finiteNumber(point?.weight) ?? 0), 0);
+  const rawJson = useMemo(() => (data ? JSON.stringify(data, null, 2) : ''), [data]);
 
   if (!data || (topEncoder.length === 0 && attentionBars.length === 0)) {
     return (
@@ -126,8 +128,9 @@ export function ModelFocusPanel({ data, error }: { data: ExplainResponse | null;
 
       <details className="cm-data-disclosure">
         <summary>Raw JSON</summary>
-        <pre>{JSON.stringify(data, null, 2)}</pre>
+        <pre>{rawJson}</pre>
       </details>
     </div>
   );
-}
+});
+

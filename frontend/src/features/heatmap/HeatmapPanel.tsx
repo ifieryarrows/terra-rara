@@ -225,11 +225,18 @@ export const HeatmapPanel: React.FC = () => {
   useEffect(() => setFocusedPath([]), [groupFilter]);
 
   const meta = ((rawData as HeatmapNode | undefined)?._meta || {}) as HeatmapMeta;
+  const rawChildren = (rawData as HeatmapNode | undefined)?.children;
+  const rawId = (rawData as HeatmapNode | undefined)?.id;
+  const rawName = (rawData as HeatmapNode | undefined)?.name;
+  const hasRawData = Boolean(rawData);
   const sourceTree = useMemo<HeatmapNode | null>(() => {
-    if (!rawData) return null;
-    const { _meta: _meta, ...tree } = rawData as HeatmapNode;
-    return transformTree(tree as HeatmapNode, groupFilter, sortFilter);
-  }, [groupFilter, rawData, sortFilter]);
+    if (!hasRawData) return null;
+    return transformTree(
+      { id: rawId, name: rawName || 'Market', children: rawChildren } as HeatmapNode,
+      groupFilter,
+      sortFilter,
+    );
+  }, [groupFilter, hasRawData, rawChildren, rawId, rawName, sortFilter]);
   const focusedTree = useMemo(() => {
     if (!sourceTree) return null;
     let current = sourceTree;
@@ -245,9 +252,9 @@ export const HeatmapPanel: React.FC = () => {
     [dimensions.height, dimensions.width, focusedTree],
   );
   const groups = useMemo<string[]>(() => {
-    const names = (rawData?.children || []).map((group: HeatmapNode) => String(group.name));
+    const names = (rawChildren || []).map((group: HeatmapNode) => String(group.name));
     return Array.from(new Set<string>(names)).sort();
-  }, [rawData]);
+  }, [rawChildren]);
   const categoryLeafIndex = useMemo(
     () => sourceTree ? indexCategoryLeaves(sourceTree) : new Map<string, HeatmapData[]>(),
     [sourceTree],

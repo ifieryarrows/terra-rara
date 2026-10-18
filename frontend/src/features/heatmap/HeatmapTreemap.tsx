@@ -8,6 +8,7 @@ import {
   type LayoutNode,
 } from './heatmap-layout';
 import { CategoryTiles, LeafTiles } from './HeatmapTiles';
+import { revealTierLogos } from './CompanyLogo';
 import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
@@ -47,7 +48,10 @@ function buildLodIndex(surface: HTMLElement): LodIndex {
 
 function applyLodVisibility(entry: LodEntry, scale: number) {
   const visibility = entry.minScale <= scale && scale < entry.maxScale ? 'visible' : 'hidden';
-  if (entry.element.style.visibility !== visibility) entry.element.style.visibility = visibility;
+  if (entry.element.style.visibility !== visibility) {
+    entry.element.style.visibility = visibility;
+    if (visibility === 'visible') revealTierLogos(entry.element);
+  }
 }
 
 function firstBoundaryAbove(boundaries: LodIndex['boundaries'], scale: number) {

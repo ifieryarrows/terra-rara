@@ -13,11 +13,35 @@ interface Props {
 let cachedObserverCtor: typeof IntersectionObserver | null = null;
 let sharedLogoObserver: IntersectionObserver | null = null;
 const logoObserverCallbacks = new WeakMap<Element, () => void>();
+const deferredTierCallbacks = new WeakMap<Element, Set<() => void>>();
+
+export function revealTierLogos(tierElement: Element): void {
+  const callbacks = deferredTierCallbacks.get(tierElement);
+  if (!callbacks) return;
+  deferredTierCallbacks.delete(tierElement);
+  for (const callback of callbacks) callback();
+}
+
+function triggerOrDeferByTier(element: Element, onVisible: () => void): () => void {
+  const tierEl = element.closest<HTMLElement>('[data-hm-tier]');
+  if (tierEl && tierEl.style.visibility === 'hidden') {
+    let set = deferredTierCallbacks.get(tierEl);
+    if (!set) {
+      set = new Set();
+      deferredTierCallbacks.set(tierEl, set);
+    }
+    set.add(onVisible);
+    return () => {
+      set?.delete(onVisible);
+    };
+  }
+  onVisible();
+  return () => {};
+}
 
 function observeLogoVisibility(element: Element, onVisible: () => void): () => void {
   if (typeof IntersectionObserver === 'undefined') {
-    onVisible();
-    return () => {};
+    return triggerOrDeferByTier(element, onVisible);
   }
   if (cachedObserverCtor !== IntersectionObserver || !sharedLogoObserver) {
     cachedObserverCtor = IntersectionObserver;
@@ -37,11 +61,15 @@ function observeLogoVisibility(element: Element, onVisible: () => void): () => v
     );
   }
   const observer = sharedLogoObserver;
-  logoObserverCallbacks.set(element, onVisible);
+  let cancelDeferred: (() => void) | null = null;
+  logoObserverCallbacks.set(element, () => {
+    cancelDeferred = triggerOrDeferByTier(element, onVisible);
+  });
   observer.observe(element);
   return () => {
     logoObserverCallbacks.delete(element);
     observer.unobserve(element);
+    cancelDeferred?.();
   };
 }
 
@@ -62,8 +90,8 @@ export const CompanyLogo = memo(function CompanyLogo({
   const failed = !src || failedSrc === src || hasFailedLogo(src);
 
   useEffect(() => {
-    if (!defer || visible || !holderRef.current || typeof IntersectionObserver === 'undefined') {
-      setVisible(true);
+    if (!defer || visible || !holderRef.current) {
+      if (!defer) setVisible(true);
       return;
     }
     return observeLogoVisibility(holderRef.current, () => setVisible(true));

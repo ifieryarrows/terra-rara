@@ -98,6 +98,33 @@ def _attempt(model: str, ordinal: int, category: str, status: Optional[int], ret
     return {"model": model, "attempt": ordinal, "category": category, "status_code": status, "retried": retried}
 
 
+def _extract_message_text(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts).strip()
+    return ""
+
+
+def _candidate_payload(base_payload: dict[str, Any], candidate: str) -> dict[str, Any]:
+    payload = {**base_payload, "model": candidate}
+    if candidate.lower().startswith("nvidia/nemotron") and "reasoning" not in payload:
+        payload["reasoning"] = {"effort": "none"}
+    return payload
+
+
 async def create_chat_completion(
     *,
     api_key: str,
@@ -151,7 +178,7 @@ async def create_chat_completion(
                 if time.monotonic() >= deadline:
                     raise OpenRouterError("OpenRouter model chain deadline exceeded", category="timeout", model=candidate, attempts=attempts)
                 await _throttle_request(rpm)
-                payload = {**base_payload, "model": candidate}
+                payload = _candidate_payload(base_payload, candidate)
                 response: Optional[httpx.Response] = None
                 try:
                     response = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
@@ -169,6 +196,8 @@ async def create_chat_completion(
                         else:
                             if not data.get("choices"):
                                 last_error = OpenRouterError("OpenRouter returned no completion choices", status_code=200, category="empty_response", model=candidate)
+                            elif not _extract_message_text(data):
+                                last_error = OpenRouterError("OpenRouter returned empty message content", status_code=200, category="empty_response", model=candidate)
                             else:
                                 attempts.append(_attempt(candidate, attempt_index + 1, "success", 200, attempt_index > 0))
                                 data["_coppermind"] = {"requested_model": candidate, "actual_model": data.get("model") or candidate, "attempts": attempts}

@@ -39,6 +39,7 @@ function getMaxScrollY(): number {
 
 export function getBoundedScrollY(): number {
   const rawScroll = Math.max(0, getScrollY());
+  if (rawScroll <= SCROLL_THRESHOLD) return rawScroll;
   const maxScrollY = getMaxScrollY();
   return maxScrollY !== Infinity ? Math.min(rawScroll, maxScrollY) : rawScroll;
 }

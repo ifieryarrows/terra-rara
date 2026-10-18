@@ -300,3 +300,46 @@ def test_rpm_throttle_waits_between_calls(monkeypatch):
 
     assert any(delay > 0 for delay in sleeps)
     assert len(calls) == 1
+
+
+def test_empty_message_content_on_200_advances_to_fallback_and_disables_nemotron_reasoning(monkeypatch):
+    responses = [
+        _make_response(
+            200,
+            json_body={
+                "model": "nvidia/nemotron-3.5-super-vl:free",
+                "choices": [{"finish_reason": "length", "message": {"role": "assistant", "content": None, "reasoning": "long thinking"}}],
+            },
+        ),
+        _make_response(
+            200,
+            json_body={
+                "model": "liquid/lfm-2.5-2.6b:free",
+                "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": '{"stance":"BULLISH"}'}}],
+            },
+        ),
+    ]
+    calls = []
+    monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
+    _patch_async_client(monkeypatch, responses, calls)
+
+    result = asyncio.run(
+        orc.create_chat_completion(
+            api_key="test-key",
+            model="nvidia/nemotron-3.5-super-vl:free",
+            fallback_models=["liquid/lfm-2.5-2.6b:free"],
+            messages=[{"role": "user", "content": "hello"}],
+            rpm=0,
+            max_retries=1,
+        )
+    )
+
+    assert [call["json"]["model"] for call in calls] == [
+        "nvidia/nemotron-3.5-super-vl:free",
+        "liquid/lfm-2.5-2.6b:free",
+    ]
+    assert calls[0]["json"]["reasoning"] == {"effort": "none"}
+    assert "reasoning" not in calls[1]["json"]
+    assert result["_coppermind"]["attempts"][0]["category"] == "empty_response"
+    assert result["_coppermind"]["actual_model"] == "liquid/lfm-2.5-2.6b:free"
+

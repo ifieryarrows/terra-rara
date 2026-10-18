@@ -375,7 +375,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
             },
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": 2500,
+        "max_tokens": 3500,
         "temperature": 0.0,
         "timeout_seconds": getattr(settings, "openrouter_timeout_seconds", 45.0),
         "max_retries": settings.openrouter_max_retries,
@@ -393,7 +393,13 @@ Write as a seasoned commodities strategist would for institutional clients—pre
         data = await create_chat_completion(**kwargs)
         content = _extract_chat_message_content(data)
         if not content:
-            raise ValueError("Empty OpenRouter response content")
+            raise OpenRouterError(
+                "Empty OpenRouter response content",
+                status_code=200,
+                category="empty_response",
+                model=data.get("model") or settings.resolved_commentary_model,
+                attempts=list((data.get("_coppermind") or {}).get("attempts") or []),
+            )
         return content, data
 
     async def _repair_commentary(malformed_content: str) -> tuple[str, dict]:
@@ -416,7 +422,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
                 },
                 {"role": "user", "content": repair_prompt},
             ],
-            max_tokens=2500,
+            max_tokens=3500,
             temperature=0.0,
             timeout_seconds=getattr(settings, "openrouter_timeout_seconds", 45.0),
             max_retries=settings.openrouter_max_retries,
@@ -431,11 +437,12 @@ Write as a seasoned commodities strategist would for institutional clients—pre
             raise ValueError("Empty commentary repair response")
         return repaired, repair_data
 
+    attempts: list[dict] = []
     try:
         content, response_data = await _request_commentary()
         response_meta = response_data.get("_coppermind", {})
         actual_model = response_meta.get("actual_model") or response_data.get("model") or settings.resolved_commentary_model
-        attempts = response_meta.get("attempts") or []
+        attempts = list(response_meta.get("attempts") or [])
 
         try:
             stance, commentary = _parse_commentary_payload(content)
@@ -462,7 +469,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
             "deterministic_fallback",
             None,
             getattr(exc, "category", "parse_invalid"),
-            getattr(exc, "attempts", []),
+            getattr(exc, "attempts", None) or attempts,
         )
 
 

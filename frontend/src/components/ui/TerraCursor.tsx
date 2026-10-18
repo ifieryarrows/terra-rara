@@ -201,31 +201,9 @@ export function TerraCursor() {
       previousPoint = { x, y };
       if (moteCount) schedule();
     };
-    let pressedElement: Element | null = null;
-    const clearPressedCursor = () => {
-      if (pressedElement) {
-        pressedElement.removeAttribute('data-cm-cursor-pressed');
-        pressedElement = null;
-      }
-    };
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch') return;
-      clearPressedCursor();
-      const element = target instanceof Element ? target : target.parentElement;
-      const host =
-        element?.closest(
-          'a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"], input, textarea, select, [contenteditable="true"]',
-        ) ?? element;
-      if (host && root.contains(host)) {
-        pressedElement = host;
-        host.setAttribute('data-cm-cursor-pressed', '');
-      }
-    };
     const onPointerLeave = () => resetTrailOrigin();
     const onBlur = () => {
       resetTrailOrigin();
-      clearPressedCursor();
       particles.length = 0;
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
@@ -239,22 +217,15 @@ export function TerraCursor() {
     root.classList.add('cm-terra-cursor-enabled');
     window.addEventListener('resize', resize, { passive: true });
     window.addEventListener('pointermove', onPointerMove, { passive: true });
-    window.addEventListener('pointerdown', onPointerDown, { passive: true });
-    window.addEventListener('pointerup', clearPressedCursor, { passive: true });
-    window.addEventListener('pointercancel', clearPressedCursor, { passive: true });
     window.addEventListener('blur', onBlur);
     root.addEventListener('pointerleave', onPointerLeave, { passive: true });
     return () => {
       root.classList.remove('cm-terra-cursor-enabled');
-      clearPressedCursor();
       root.style.removeProperty('--cm-terra-cursor');
       root.style.removeProperty('--cm-terra-cursor-interactive');
       root.style.removeProperty('--cm-terra-cursor-pressed');
       window.removeEventListener('resize', resize);
       window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointerup', clearPressedCursor);
-      window.removeEventListener('pointercancel', clearPressedCursor);
       window.removeEventListener('blur', onBlur);
       root.removeEventListener('pointerleave', onPointerLeave);
       if (frame) window.cancelAnimationFrame(frame);

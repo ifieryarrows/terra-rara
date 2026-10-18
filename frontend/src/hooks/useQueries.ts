@@ -55,9 +55,10 @@ export function useMarketHeatmap(view: 'market' | 'themes' = 'market') {
       const data: any = query.state.data;
       const meta = data?._meta;
       const count = meta?.payload_count ?? (data?.children?.length ? -1 : 0);
-      if (meta?.refresh_in_progress) return 5_000;
+      if (meta?.refresh_in_progress) return count > 0 ? 15_000 : 5_000;
+      const minDelay = count > 0 ? 30_000 : 1_000;
       const nextDelay = meta?.next_refresh_at
-        ? Math.max(1_000, new Date(meta.next_refresh_at).getTime() - Date.now())
+        ? Math.max(minDelay, new Date(meta.next_refresh_at).getTime() - Date.now())
         : null;
       if (count <= 0) return nextDelay ?? 3_000;
       return nextDelay ?? 900_000;
