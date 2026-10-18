@@ -294,22 +294,15 @@ export function CuprumCompanionPanel({
   useEffect(() => {
     if (isAlerting) return;
 
-    if (isOpen && hasAnyContent) {
-      // Talking animation rhythm (gentle mouth movement during briefing)
-      animIntervalRef.current = window.setInterval(() => {
-        setExpression((prev) => (prev === 'talk' ? 'idle-1' : 'talk'));
-      }, 340);
-    } else {
-      // Idle floating / breathing rhythm between frame 1 and frame 2
-      animIntervalRef.current = window.setInterval(() => {
-        setExpression((prev) => (prev === 'idle-2' ? 'idle-1' : 'idle-2'));
-      }, 760);
-    }
+    // Continuous 2-frame fire particle floating animation
+    animIntervalRef.current = window.setInterval(() => {
+      setExpression((prev) => (prev === 'idle-2' ? 'idle-1' : 'idle-2'));
+    }, 600);
 
     return () => {
       if (animIntervalRef.current) clearInterval(animIntervalRef.current);
     };
-  }, [isOpen, hasAnyContent, isAlerting]);
+  }, [isAlerting]);
 
   // Periodic Blink every 3.8s
   useEffect(() => {
@@ -318,7 +311,7 @@ export function CuprumCompanionPanel({
         setExpression('blink');
         setTimeout(() => {
           setExpression('idle-1');
-        }, 150);
+        }, 160);
       }
       blinkTimerRef.current = window.setTimeout(triggerBlink, 3400 + Math.random() * 1200);
     };
@@ -336,7 +329,7 @@ export function CuprumCompanionPanel({
     setIsOpen((prev) => !prev);
     setTimeout(() => {
       setIsAlerting(false);
-      setExpression(isOpen ? 'idle-1' : 'talk');
+      setExpression('idle-1');
     }, 380);
   };
 
@@ -425,8 +418,6 @@ export function CuprumCompanionPanel({
               style={{
                 width: 140,
                 height: 140,
-                transition: 'all 200ms ease',
-                transform: expression === 'idle-2' ? 'translateY(-3px)' : 'translateY(0)',
               }}
             >
               <picture>
