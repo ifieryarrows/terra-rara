@@ -862,7 +862,7 @@ ruff check .
 
 ### Daily Pipeline
 
-The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily-pipeline.yml`) at 23:00 UTC (02:00 Istanbul). Local scheduler mode (`SCHEDULER_ENABLED=true`) is deprecated and reserved for standalone offline development:
+The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily-pipeline.yml`) at 00:10 UTC (03:10 Istanbul), right after OpenRouter's 00:00 UTC daily quota reset and after Sunday's 22:00 UTC weekly TFT-ASRO training workflow completes. Local scheduler mode (`SCHEDULER_ENABLED=true`) is deprecated and reserved for standalone offline development:
 
 1. Fetch news from 8 strategic Google News RSS queries
 2. Process news through reproducible pipeline (`news_raw` → `news_processed`)

@@ -69,6 +69,14 @@ def _classify_status(status: int, body: str) -> str:
     return "unsupported_contract"
 
 
+def _is_free_tier_daily_quota_exhausted(status: int, body: str, model: str) -> bool:
+    """Return True when a 429 indicates the account-wide :free daily quota is exhausted."""
+    if status != 429 or not str(model or "").lower().endswith(":free"):
+        return False
+    lowered = (body or "").lower()
+    return "openrouter_free_tier_daily" in lowered or "free-models-per-day" in lowered
+
+
 def _log_rate_limit_headers(response: httpx.Response, model: str) -> None:
     remaining = response.headers.get("X-Ratelimit-Remaining") or response.headers.get("x-ratelimit-remaining")
     limit = response.headers.get("X-Ratelimit-Limit") or response.headers.get("x-ratelimit-limit")
@@ -176,10 +184,14 @@ async def create_chat_completion(
     attempts: list[dict[str, Any]] = []
     deadline = time.monotonic() + max(float(chain_deadline_seconds), 1.0)
     last_error: Optional[OpenRouterError] = None
+    first_rate_limit_error: Optional[OpenRouterRateLimitError] = None
+    free_tier_daily_exhausted = False
     retryable_categories = {"rate_limit", "timeout", "network", "provider_5xx"}
 
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         for candidate in models:
+            if free_tier_daily_exhausted and candidate.lower().endswith(":free"):
+                continue
             for attempt_index in range(max(0, int(max_retries)) + 1):
                 if time.monotonic() >= deadline:
                     raise OpenRouterError("OpenRouter model chain deadline exceeded", category="timeout", model=candidate, attempts=attempts)
@@ -220,6 +232,10 @@ async def create_chat_completion(
                         category = _classify_status(response.status_code, body)
                         error_cls = OpenRouterRateLimitError if category == "rate_limit" else OpenRouterError
                         last_error = error_cls(f"OpenRouter {category}: HTTP {response.status_code} - {body[:500]}", status_code=response.status_code, category=category, model=candidate)
+                        if isinstance(last_error, OpenRouterRateLimitError) and first_rate_limit_error is None:
+                            first_rate_limit_error = last_error
+                        if _is_free_tier_daily_quota_exhausted(response.status_code, body, candidate):
+                            free_tier_daily_exhausted = True
 
                 status = response.status_code if response is not None else None
                 retryable = last_error is not None and last_error.category in retryable_categories
@@ -230,7 +246,12 @@ async def create_chat_completion(
                     and last_error.category == "timeout"
                     and len(models) > 1
                 )
-                will_retry = retryable and not skip_same_model_timeout_retry and attempt_index < max(0, int(max_retries))
+                will_retry = (
+                    retryable
+                    and not skip_same_model_timeout_retry
+                    and not free_tier_daily_exhausted
+                    and attempt_index < max(0, int(max_retries))
+                )
                 attempts.append(_attempt(candidate, attempt_index + 1, last_error.category if last_error else "network", status, will_retry))
                 if last_error and last_error.category == "auth":
                     last_error.attempts = attempts
@@ -244,8 +265,13 @@ async def create_chat_completion(
                     await asyncio.sleep(delay)
                     continue
                 break
-            logger.warning("OpenRouter model failed; advancing chain model=%s category=%s", candidate, last_error.category if last_error else "unknown")
+            if free_tier_daily_exhausted:
+                logger.warning("OpenRouter daily free-tier quota exhausted on model=%s; skipping remaining :free candidates", candidate)
+            else:
+                logger.warning("OpenRouter model failed; advancing chain model=%s category=%s", candidate, last_error.category if last_error else "unknown")
 
+    if first_rate_limit_error is not None and not isinstance(last_error, OpenRouterRateLimitError):
+        last_error = first_rate_limit_error
     if last_error is None:
         last_error = OpenRouterError("OpenRouter request unexpectedly terminated", category="network")
     last_error.attempts = attempts

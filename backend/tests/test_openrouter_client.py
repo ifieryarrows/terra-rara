@@ -398,3 +398,65 @@ def test_timeout_skips_same_model_retry_when_fallbacks_exist(monkeypatch):
     assert result["_coppermind"]["attempts"][0]["retried"] is False
     assert result["_coppermind"]["actual_model"] == "liquid/lfm-2.5-2.6b:free"
 
+
+def test_free_tier_daily_quota_429_skips_retries_and_other_free_models(monkeypatch):
+    daily_quota_body = (
+        '{"error":{"message":"Rate limit exceeded: free-models-per-day.",'
+        '"code":429,"metadata":{"limit_source":"openrouter_free_tier_daily"}}}'
+    )
+    responses = [
+        _make_response(429, text_body=daily_quota_body),
+    ]
+    calls = []
+
+    async def fake_sleep(_delay):
+        raise AssertionError("Account-wide daily free quota exhaustion must not sleep/retry")
+
+    monkeypatch.setattr(orc.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
+    _patch_async_client(monkeypatch, responses, calls)
+
+    with pytest.raises(orc.OpenRouterRateLimitError) as exc_info:
+        asyncio.run(
+            orc.create_chat_completion(
+                api_key="test-key",
+                model="nvidia/nemotron-3-super-120b-a12b:free",
+                fallback_models=[
+                    "liquid/lfm-2.5-2.6b:free",
+                    "google/gemma-4-31b-it:free",
+                ],
+                messages=[{"role": "user", "content": "hello"}],
+                rpm=0,
+                max_retries=2,
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["json"]["model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert exc_info.value.attempts[0]["retried"] is False
+
+
+def test_rate_limit_preserved_when_trailing_fallback_returns_404(monkeypatch):
+    responses = [
+        _make_response(429, text_body="upstream provider rate limit"),
+        _make_response(404, text_body="model unavailable"),
+    ]
+    calls = []
+    monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
+    _patch_async_client(monkeypatch, responses, calls)
+
+    with pytest.raises(orc.OpenRouterRateLimitError) as exc_info:
+        asyncio.run(
+            orc.create_chat_completion(
+                api_key="test-key",
+                model="nvidia/nemotron-3-super-120b-a12b:free",
+                fallback_models=["retired/fallback-model:free"],
+                messages=[{"role": "user", "content": "hello"}],
+                rpm=0,
+                max_retries=0,
+            )
+        )
+
+    assert len(calls) == 2
+    assert len(exc_info.value.attempts) == 2
+

@@ -2,10 +2,12 @@ name: Daily Pipeline Trigger
 
 on:
     schedule:
-        # Preserve the established 23:00 UTC runtime while making the weekly
-        # training decision depend on the triggered schedule, not runner delay.
-        - cron: "0 23 * * 1-6"
-        - cron: "0 23 * * 0"
+        # Run at 00:10 UTC (03:10 Istanbul) so the daily pipeline always starts
+        # with a freshly reset OpenRouter daily quota (00:00 UTC) and, on Monday
+        # 00:10 UTC (Sunday night), after the Sunday 22:00 UTC tft-training
+        # workflow has finished uploading the weekly TFT checkpoint to HF Hub.
+        - cron: "10 0 * * 0,2-6"
+        - cron: "10 0 * * 1"
 
     workflow_dispatch:
         inputs:
@@ -27,7 +29,7 @@ jobs:
               run: |
                   if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
                     TRAIN_MODEL="${{ github.event.inputs.train_model || 'false' }}"
-                  elif [ "${{ github.event.schedule }}" == "0 23 * * 0" ]; then
+                  elif [ "${{ github.event.schedule }}" == "10 0 * * 1" ]; then
                     TRAIN_MODEL="true"
                     echo "Weekly cron triggered — enabling XGBoost retraining"
                   else

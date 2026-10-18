@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     # Scheduler (DEPRECATED in API - external scheduler only)
     # These are kept for backward compatibility but scheduler no longer runs in API
-    schedule_time: str = "02:00"
+    schedule_time: str = "03:10"
     tz: str = "Europe/Istanbul"
     scheduler_enabled: bool = False  # Default to False - scheduler is external now
     
