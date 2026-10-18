@@ -153,8 +153,7 @@ export function CuprumCompanionPanel({
   const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
   const [selectedDateIdx, setSelectedDateIdx] = useState<number | null>(null);
   const [expression, setExpression] = useState<SpriteExpression>('idle-1');
-  const [isAlerting, setIsAlerting] = useState(false);
-
+  const alertTimerRef = useRef<number | null>(null);
   const blinkTimerRef = useRef<number | null>(null);
   const animIntervalRef = useRef<number | null>(null);
 
@@ -292,7 +291,19 @@ export function CuprumCompanionPanel({
 
   // --- Dynamic Retro Pixel Animation State Machine ---
   useEffect(() => {
-    if (isAlerting) return;
+    // Inject floating hover keyframes dynamically to bypass Vite CSS bundle extraction
+    const styleId = 'cuprum-float-style';
+    if (typeof document !== 'undefined' && !document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        @keyframes cuprumPetFloat {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-5px); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
 
     // Continuous 2-frame fire particle floating animation
     animIntervalRef.current = window.setInterval(() => {
@@ -302,39 +313,37 @@ export function CuprumCompanionPanel({
     return () => {
       if (animIntervalRef.current) clearInterval(animIntervalRef.current);
     };
-  }, [isAlerting]);
+  }, []);
 
   // Periodic Blink every 3.8s
   useEffect(() => {
     const triggerBlink = () => {
-      if (!isAlerting) {
-        setExpression('blink');
-        setTimeout(() => {
-          setExpression('idle-1');
-        }, 160);
-      }
+      setExpression((prev) => (prev.startsWith('idle') ? 'blink' : prev));
+      window.setTimeout(() => {
+        setExpression((prev) => (prev === 'blink' ? 'idle-1' : prev));
+      }, 160);
       blinkTimerRef.current = window.setTimeout(triggerBlink, 3400 + Math.random() * 1200);
     };
 
     blinkTimerRef.current = window.setTimeout(triggerBlink, 2800);
     return () => {
       if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
+      if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
     };
-  }, [isAlerting]);
+  }, []);
 
   // Handle clicking the Pet Mascot (Interactive Summon / Dismiss)
   const handlePetClick = () => {
-    setIsAlerting(true);
-    setExpression('alert');
     setIsOpen((prev) => !prev);
-    setTimeout(() => {
-      setIsAlerting(false);
+    setExpression('alert');
+    if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
+    alertTimerRef.current = window.setTimeout(() => {
       setExpression('idle-1');
-    }, 380);
+    }, 280);
   };
 
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v2`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v2`;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v3`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v3`;
 
   return (
     <div
@@ -418,6 +427,7 @@ export function CuprumCompanionPanel({
               style={{
                 width: 140,
                 height: 140,
+                animation: 'cuprumPetFloat 3s cubic-bezier(0.42, 0, 0.58, 1) infinite',
               }}
             >
               <picture>
