@@ -137,4 +137,26 @@ describe('CuprumCompanionPanel', () => {
       screen.getByText('Model focus will appear after the next model refresh.'),
     ).toBeInTheDocument();
   });
+
+  it('toggles tactical console open and closed when clicking the pet mascot', () => {
+    render(
+      <CuprumCompanionPanel
+        commentary={COMMENTARY_FIXTURE}
+        explain={EXPLAIN_FIXTURE}
+      />,
+    );
+
+    const petButton = screen.getByRole('button', { name: /Cuprum companion/i });
+    expect(screen.getByText('Close console')).toBeInTheDocument();
+
+    // Click to close
+    fireEvent.click(petButton);
+    expect(screen.getByText('Open console')).toBeInTheDocument();
+    expect(screen.getByText(/CUPRUM DIALOGUE \/\/ MINIMIZED/i)).toBeInTheDocument();
+
+    // Click to reopen
+    fireEvent.click(petButton);
+    expect(screen.getByText('Close console')).toBeInTheDocument();
+    expect(screen.getByText(/CUPRUM EXECUTIVE THESIS/i)).toBeInTheDocument();
+  });
 });
