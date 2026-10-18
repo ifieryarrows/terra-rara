@@ -120,8 +120,14 @@ def _extract_message_text(data: dict[str, Any]) -> str:
 
 def _candidate_payload(base_payload: dict[str, Any], candidate: str) -> dict[str, Any]:
     payload = {**base_payload, "model": candidate}
-    if candidate.lower().startswith("nvidia/nemotron") and "reasoning" not in payload:
-        payload["reasoning"] = {"effort": "none"}
+    existing_reasoning = payload.get("reasoning")
+    if candidate.lower().startswith("nvidia/nemotron"):
+        if isinstance(existing_reasoning, dict) and "effort" in existing_reasoning:
+            payload["reasoning"] = {"effort": existing_reasoning["effort"]}
+        else:
+            payload["reasoning"] = {"effort": "low"}
+    elif isinstance(existing_reasoning, dict) and set(existing_reasoning.keys()) == {"effort"}:
+        payload.pop("reasoning", None)
     return payload
 
 
@@ -178,12 +184,19 @@ async def create_chat_completion(
                 if time.monotonic() >= deadline:
                     raise OpenRouterError("OpenRouter model chain deadline exceeded", category="timeout", model=candidate, attempts=attempts)
                 await _throttle_request(rpm)
+                remaining_before_call = deadline - time.monotonic()
+                if remaining_before_call <= 0:
+                    raise OpenRouterError("OpenRouter model chain deadline exceeded", category="timeout", model=candidate, attempts=attempts)
+                attempt_timeout = min(float(timeout_seconds), max(remaining_before_call, 0.1))
                 payload = _candidate_payload(base_payload, candidate)
                 response: Optional[httpx.Response] = None
                 try:
-                    response = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-                except httpx.TimeoutException as exc:
-                    last_error = OpenRouterError(str(exc), category="timeout", model=candidate)
+                    response = await asyncio.wait_for(
+                        client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload),
+                        timeout=attempt_timeout,
+                    )
+                except (httpx.TimeoutException, asyncio.TimeoutError, TimeoutError) as exc:
+                    last_error = OpenRouterError(str(exc) or "OpenRouter request timed out", category="timeout", model=candidate)
                 except httpx.RequestError as exc:
                     last_error = OpenRouterError(str(exc), category="network", model=candidate)
                 else:
@@ -210,7 +223,14 @@ async def create_chat_completion(
 
                 status = response.status_code if response is not None else None
                 retryable = last_error is not None and last_error.category in retryable_categories
-                will_retry = retryable and attempt_index < max(0, int(max_retries))
+                # When fallback models exist, advance immediately on a timeout instead of
+                # burning a second 45s window on the same unresponsive upstream model.
+                skip_same_model_timeout_retry = (
+                    last_error is not None
+                    and last_error.category == "timeout"
+                    and len(models) > 1
+                )
+                will_retry = retryable and not skip_same_model_timeout_retry and attempt_index < max(0, int(max_retries))
                 attempts.append(_attempt(candidate, attempt_index + 1, last_error.category if last_error else "network", status, will_retry))
                 if last_error and last_error.category == "auth":
                     last_error.attempts = attempts

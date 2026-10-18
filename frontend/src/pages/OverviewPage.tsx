@@ -6,7 +6,6 @@ import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
 import { ViewState } from '../components/ui/ViewState';
 import { OverviewSkeleton } from '../components/skeletons';
-import { ModelFocusPanel } from '../components/ModelFocusPanel';
 import { BrandMark } from '../components/ui/BrandMark';
 import {
   Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
@@ -36,6 +35,9 @@ import '../App.css';
 const HeatmapPanel = lazy(() => import('../features/heatmap/HeatmapPanel').then(m => ({ default: m.HeatmapPanel })));
 const NewsIntelligencePanel = lazy(() =>
   import('../features/news/NewsIntelligencePanel').then(m => ({ default: m.NewsIntelligencePanel })),
+);
+const ModelFocusPanel = lazy(() =>
+  import('../components/ModelFocusPanel').then(m => ({ default: m.ModelFocusPanel })),
 );
 
 // --- Skeleton Components for perceived performance ---
@@ -487,7 +489,7 @@ export const OverviewPage = () => {
                   const maxImp = analysis.top_influencers[0]?.importance || 1;
                   const label = inf.label || inf.description || inf.feature;
                   return (
-                    <div key={inf.feature} className="group" title={inf.feature}>
+                    <div key={inf.feature} className="group">
                       <div className="flex justify-between items-start mb-1 gap-3">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
                           {inf.category && (
@@ -499,7 +501,12 @@ export const OverviewPage = () => {
                             {label}
                           </span>
                         </div>
-                        <span className="text-xs font-mono text-slate-400 shrink-0">{(inf.importance * 100).toFixed(1)}%</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <code className="hidden group-hover:inline-block text-[10px] font-mono text-copper-300/80 bg-copper-500/10 border border-copper-400/20 px-1.5 py-0.5 rounded">
+                            {inf.feature}
+                          </code>
+                          <span className="text-xs font-mono text-slate-400">{(inf.importance * 100).toFixed(1)}%</span>
+                        </div>
                       </div>
                       <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
                         <motion.div
@@ -543,7 +550,6 @@ export const OverviewPage = () => {
                       ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
                       : "text-emerald-300 border-emerald-400/30 bg-emerald-500/10",
                   )}
-                  title={commentary.fallback_reason || commentary.model_name || undefined}
                 >
                   {commentary.generation_mode === 'deterministic_fallback' ? 'Local fallback' : commentary.generation_mode === 'llm' || commentary.generation_mode === 'llm_repaired' ? 'AI generated' : 'Unavailable'}
                 </span>
@@ -560,7 +566,9 @@ export const OverviewPage = () => {
 
           {/* TFT model focus — raw VSN/attention internals of the latest explanation. */}
           <GlassCard id="tft-focus" title="Model focus (TFT-ASRO)" icon={Brain} colSpan={4}>
-            <ModelFocusPanel data={explain} error={loadErrors['Model focus']}/>
+            <Suspense fallback={<div className="py-8 text-center text-xs text-slate-400 font-mono" role="status">Loading model focus…</div>}>
+              <ModelFocusPanel data={explain} error={loadErrors['Model focus']}/>
+            </Suspense>
           </GlassCard>
 
         </div>

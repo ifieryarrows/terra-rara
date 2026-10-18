@@ -585,14 +585,14 @@ Copy `env.example` to `backend/.env` and configure:
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for pipeline task queue                 |
 | `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (`active`, `champion`, `challenger`)   |
-| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3.5-super-vl:free`     | Primary fast sentiment scoring role                            |
+| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Primary fast sentiment scoring role                            |
 | `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`              | Reliable scoring & escalation repair role                      |
-| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3.5-super-vl:free`     | Commentary generation role                                     |
+| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Commentary generation role                                     |
 | `OPENROUTER_RPM`                    | No       | `12`                                    | Soft throttle target for OpenRouter calls                      |
 | `OPENROUTER_MAX_RETRIES`            | No       | `1`                                     | One bounded retry for 408/429/5xx/network errors               |
 | `OPENROUTER_CHAIN_DEADLINE_SECONDS` | No       | `120`                                   | Total sentiment batch deadline                                 |
 | `MAX_LLM_ARTICLES_PER_RUN`          | No       | `100`                                   | Per-run LLM scoring budget                                     |
-| `OPENROUTER_FALLBACK_MODELS`        | No       | `liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
+| `OPENROUTER_FALLBACK_MODELS`        | No       | `liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
 | `XGB_ARTIFACT_SOURCE`               | No       | `auto`                                | Atomic DB artifact first, verified paired files during rollout |
 | `VITE_LOGO_DEV_PUBLISHABLE_KEY`     | No       | -                                       | Optional publishable key for Logo.dev company icons in heatmap |
 | `TWELVEDATA_API_KEY`                | No       | -                                       | Backup live price source                                       |

@@ -383,6 +383,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
         "fallback_models": settings.openrouter_fallback_models_list,
         "chain_deadline_seconds": getattr(settings, "openrouter_chain_deadline_seconds", 120.0),
         "provider": {"require_parameters": True},
+        "extra_payload": {"reasoning": {"effort": "medium"}},
         "referer": "https://copper-mind.vercel.app",
         "title": "CopperMind Commentary",
     }

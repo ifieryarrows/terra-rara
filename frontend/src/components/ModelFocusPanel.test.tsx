@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ExplainAttentionPoint, ExplainResponse } from '../types';
@@ -52,7 +52,7 @@ const payload: ExplainResponse = {
 afterEach(cleanup);
 
 describe('ModelFocusPanel', () => {
-  it('renders encoder drivers, attention bars, reference meta, notes and raw JSON from the explain payload', () => {
+  it('renders encoder drivers, resonance attention stage, custom template cards, reference meta, notes and raw JSON from the explain payload', () => {
     render(<ModelFocusPanel data={payload}/>);
 
     expect(screen.getByText('Copper close price')).toBeVisible();
@@ -70,7 +70,22 @@ describe('ModelFocusPanel', () => {
 
     const bars = screen.getAllByTestId('model-focus-attention');
     expect(bars).toHaveLength(60);
-    expect(bars[0]).toHaveAttribute('title', `${attentionSeries[0].date}: 1.7%`);
+    expect(bars[0]).toHaveAttribute('aria-label', `${attentionSeries[0].date}: 1.7%`);
+    expect(bars[0]).not.toHaveAttribute('title');
+
+    // Custom attention template card renders by default for the peak session and updates on hover
+    const attentionCard = screen.getByTestId('model-focus-attention-card');
+    expect(attentionCard).toBeVisible();
+    fireEvent.mouseEnter(bars[5]);
+    expect(attentionCard).toHaveTextContent(attentionSeries[5].date!);
+
+    // Custom VSN feature template card opens on hover without native browser title tooltip
+    const firstRow = screen.getByText('Copper close price').closest('.cm-focus-vsn-row')!;
+    expect(firstRow).not.toHaveAttribute('title');
+    fireEvent.mouseEnter(firstRow);
+    const featureCard = screen.getByTestId('model-focus-feature-card');
+    expect(featureCard).toBeVisible();
+    expect(featureCard).toHaveTextContent('HG_F_close');
 
     const details = screen.getByText('Raw JSON').closest('details');
     expect(details?.querySelector('pre')?.textContent).toBe(JSON.stringify(payload, null, 2));
