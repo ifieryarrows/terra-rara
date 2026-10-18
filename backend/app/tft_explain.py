@@ -312,3 +312,155 @@ def try_build_explain_payload(**kwargs: Any) -> Optional[dict]:
     except Exception as exc:
         logger.warning("TFT explain payload build failed; skipping explanation: %s", exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Commentary digest
+# ---------------------------------------------------------------------------
+
+# Prompt-budget caps for :func:`summarize_explain_for_commentary`: the top five
+# VSN encoder signals (reusing ``TOP_RECENT``, the same five entries that carry
+# recent deltas) and the top three attention memory anchors.
+TOP_COMMENTARY_SIGNALS = TOP_RECENT
+TOP_COMMENTARY_ANCHORS = 3
+
+
+def _commentary_weight_pct(value: Any) -> Optional[float]:
+    """A finite model weight as a percentage rounded to one decimal, else ``None``."""
+    weight = finite_number(value)
+    if weight is None:
+        return None
+    return round(weight * 100.0, 1)
+
+
+def _commentary_recent_summary(recent: Any) -> Optional[str]:
+    """Human-readable recent delta (``"+2.10% over 5 sessions"``) or ``None``."""
+    if not isinstance(recent, dict):
+        return None
+    basis = recent.get("basis")
+    basis = str(basis).strip() if basis is not None else ""
+    if not basis:
+        return None
+    if recent.get("kind") == "pct":
+        change_pct = finite_number(recent.get("change_pct"))
+        if change_pct is None:
+            return None
+        return f"{change_pct:+.2f}% over {basis}"
+    if recent.get("kind") == "abs":
+        change = finite_number(recent.get("change"))
+        if change is None:
+            return None
+        return f"{change:+.3f} over {basis}"
+    return None
+
+
+def _commentary_encoder_signals(encoder: Any) -> list[dict]:
+    """Top encoder VSN signals reduced to prompt-safe primitives."""
+    if not isinstance(encoder, (list, tuple)):
+        return []
+    signals: list[dict] = []
+    for item in encoder:
+        if not isinstance(item, dict):
+            continue
+        feature = item.get("feature")
+        feature = "" if feature is None else str(feature)
+        if not feature:
+            continue
+        weight_pct = _commentary_weight_pct(item.get("weight"))
+        if weight_pct is None:
+            continue
+        label = item.get("label")
+        category = item.get("category")
+        signals.append(
+            {
+                "feature": feature,
+                "label": str(label) if label else feature,
+                "category": str(category) if category else "Other",
+                "weight_pct": weight_pct,
+                "recent_summary": _commentary_recent_summary(item.get("recent")),
+            }
+        )
+        if len(signals) >= TOP_COMMENTARY_SIGNALS:
+            break
+    return signals
+
+
+def _commentary_memory_anchors(top_days: Any) -> list[dict]:
+    """Top attention anchor dates reduced to ``{date, weight_pct}``."""
+    if not isinstance(top_days, (list, tuple)):
+        return []
+    anchors: list[dict] = []
+    for item in top_days:
+        if not isinstance(item, dict):
+            continue
+        date_value = item.get("date")
+        weight_pct = _commentary_weight_pct(item.get("weight"))
+        if date_value is None or weight_pct is None:
+            continue
+        anchors.append({"date": str(date_value), "weight_pct": weight_pct})
+        if len(anchors) >= TOP_COMMENTARY_ANCHORS:
+            break
+    return anchors
+
+
+def _commentary_window_span(window: Any) -> Optional[dict]:
+    """``{start, end, days}`` encoder-window span, or ``None`` when unavailable."""
+    if not isinstance(window, dict):
+        return None
+    days = window.get("days")
+    if isinstance(days, bool) or not isinstance(days, (int, float)):
+        days = None
+    else:
+        days = int(days)
+    start = window.get("start")
+    end = window.get("end")
+    return {
+        "start": None if start is None else str(start),
+        "end": None if end is None else str(end),
+        "days": days,
+    }
+
+
+def summarize_explain_for_commentary(explain_payload: Optional[dict]) -> Optional[dict]:
+    """Compact, prompt-safe digest of an ``explain_json`` payload for commentary.
+
+    Reduces a :func:`build_explain_payload` result to what the commentary prompt
+    and the UI companion surface need: the horizon label, the reference price
+    date, the top five VSN encoder signals (weight percentage plus recent
+    five-session delta), the top three attention memory anchors, and the encoder
+    window span.
+
+    Fail-open by contract: a non-dict payload yields ``None`` and malformed
+    sub-structures degrade to empty fields, never an exception, so commentary
+    generation can always proceed without an explanation.
+    """
+    if not isinstance(explain_payload, dict):
+        return None
+    try:
+        horizon_label = _HORIZON_LABEL
+        horizon = explain_payload.get("horizon")
+        if isinstance(horizon, dict):
+            label = horizon.get("label")
+            if isinstance(label, str) and label.strip():
+                horizon_label = label.strip()
+
+        variable_selection = explain_payload.get("variable_selection")
+        encoder = (
+            variable_selection.get("encoder")
+            if isinstance(variable_selection, dict)
+            else None
+        )
+        attention = explain_payload.get("attention")
+        top_days = attention.get("top_days") if isinstance(attention, dict) else None
+        window = attention.get("window") if isinstance(attention, dict) else None
+
+        return {
+            "horizon_label": horizon_label,
+            "reference_price_date": _json_date(explain_payload.get("reference_price_date")),
+            "top_encoder_signals": _commentary_encoder_signals(encoder),
+            "memory_anchors": _commentary_memory_anchors(top_days),
+            "window_span": _commentary_window_span(window),
+        }
+    except Exception as exc:  # fail-open: an explanation is never mandatory
+        logger.warning("TFT explain commentary summary failed; skipping XAI context: %s", exc)
+        return None

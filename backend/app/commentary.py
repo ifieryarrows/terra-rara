@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from .openrouter_client import OpenRouterError, create_chat_completion
 from .settings import get_settings
+from .tft_explain import summarize_explain_for_commentary
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,248 @@ def _deterministic_stance_from_inputs(predicted_return: float, sentiment_index: 
     return "NEUTRAL"
 
 
+# ---------------------------------------------------------------------------
+# TFT-ASRO XAI context (pre-calibration focus signals, never causal)
+# ---------------------------------------------------------------------------
+
+TFT_XAI_BLOCK_HEADER = (
+    "TFT-ASRO 5-DAY PRIMARY HORIZON & XAI FOCUS (PRE-CALIBRATION, NON-CAUSAL):"
+)
+XAI_FOCUS_PREFIX = "XAI Focus:"
+
+_TFT_FRAMEWORK_INSTRUCTIONS = (
+    "6. TFT-ASRO 5-Day Primary Horizon & XAI Focus (Pre-Calibration, Non-Causal):\n"
+    "   - Weave the TFT-ASRO 5-day primary outlook, the VSN encoder focus signals, and the "
+    "historical attention memory anchor dates into RISKS, OPPORTUNITIES, and SYNTHESIS\n"
+    "   - Frame VSN weights and attention dates strictly as model focus (\"where the network "
+    "looked\"): pre-calibration and non-causal, never causal proof or a guarantee\n"
+    "   - Keep the TFT-ASRO 5-day cumulative log-return horizon separate from the XGBoost "
+    "T+1 next-day simple-return horizon in every statement"
+)
+
+
+def _format_finite_number(value: Any, digits: int = 4) -> str:
+    """Signed fixed-point rendering of a finite number, or ``"unavailable"``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "unavailable"
+    if not math.isfinite(number):
+        return "unavailable"
+    return f"{number:+.{digits}f}"
+
+
+def _build_tft_xai_prompt_block(
+    tft_summary: Optional[dict],
+    tft_digest: Optional[dict],
+) -> str:
+    """DATA-INPUTS block for the TFT primary horizon and non-causal XAI focus.
+
+    Returns ``""`` when neither input is available so existing callers keep the
+    exact historical prompt.
+    """
+    if not isinstance(tft_summary, dict) and not isinstance(tft_digest, dict):
+        return ""
+
+    lines = [
+        TFT_XAI_BLOCK_HEADER,
+        (
+            "- Horizon separation rule: the XGBoost inputs above describe the T+1 next-day "
+            "simple-return horizon; the TFT-ASRO signals below describe the primary 5-day "
+            "cumulative log-return horizon. Never merge, conflate, or re-label the two horizons."
+        ),
+    ]
+
+    if isinstance(tft_digest, dict):
+        horizon_label = (
+            tft_digest.get("horizon_label") or "5-day cumulative log return (primary)"
+        )
+        lines.append(f"- TFT-ASRO 5-day primary horizon: {horizon_label}.")
+        reference_price_date = tft_digest.get("reference_price_date")
+        if reference_price_date:
+            lines.append(f"- 5-day reference price date: {reference_price_date}.")
+        window = tft_digest.get("window_span")
+        if isinstance(window, dict) and window.get("start") and window.get("end"):
+            lines.append(
+                f"- Encoder window: {window['start']} to {window['end']} "
+                f"({window.get('days')} sessions)."
+            )
+
+    if isinstance(tft_summary, dict):
+        primary_return = tft_summary.get("primary_forecast_return")
+        return_pct = ""
+        try:
+            raw_return = float(primary_return)
+        except (TypeError, ValueError, OverflowError):
+            raw_return = None
+        if raw_return is not None and math.isfinite(raw_return):
+            return_pct = f" (approximately {raw_return * 100:+.2f}%)"
+        direction = tft_summary.get("direction") or "unavailable"
+        risk_level = tft_summary.get("risk_level") or "unavailable"
+        lines.append(
+            "- 5-day primary forecast (cumulative log return): "
+            f"{_format_finite_number(primary_return)}{return_pct}; "
+            f"q10 {_format_finite_number(tft_summary.get('primary_forecast_q10'))}; "
+            f"q90 {_format_finite_number(tft_summary.get('primary_forecast_q90'))}; "
+            f"direction {direction}; risk level {risk_level}."
+        )
+
+    signals = tft_digest.get("top_encoder_signals") if isinstance(tft_digest, dict) else None
+    if signals:
+        lines.append(
+            "- Model focus — top VSN encoder signals (where the network looked; "
+            "pre-calibration, non-causal, never causal proof):"
+        )
+        for index, signal in enumerate(signals, start=1):
+            if not isinstance(signal, dict):
+                continue
+            descriptor = signal.get("label") or signal.get("feature") or "unknown"
+            category = signal.get("category") or "Other"
+            weight_pct = signal.get("weight_pct")
+            weight_text = (
+                f"{float(weight_pct):.1f}% of encoder focus"
+                if isinstance(weight_pct, (int, float))
+                else "weight unavailable"
+            )
+            recent = signal.get("recent_summary")
+            recent_text = f"; recent: {recent}" if recent else ""
+            lines.append(
+                f"  {index}. {signal.get('feature')} ({descriptor}, {category}) — "
+                f"{weight_text}{recent_text}"
+            )
+
+    anchors = tft_digest.get("memory_anchors") if isinstance(tft_digest, dict) else None
+    if anchors:
+        lines.append(
+            "- Historical attention memory anchors (dates with the strongest encoder "
+            "attention; non-causal):"
+        )
+        for index, anchor in enumerate(anchors, start=1):
+            if not isinstance(anchor, dict):
+                continue
+            weight_pct = anchor.get("weight_pct")
+            weight_text = (
+                f"{float(weight_pct):.1f}%"
+                if isinstance(weight_pct, (int, float))
+                else "n/a"
+            )
+            lines.append(f"  {index}. {anchor.get('date')} — {weight_text}")
+
+    return "\n".join(lines)
+
+
+def _build_xai_focus_line(tft_digest: Optional[dict]) -> Optional[str]:
+    """One-line non-causal XAI summary for the deterministic fallback."""
+    if not isinstance(tft_digest, dict):
+        return None
+
+    signal_refs: list[str] = []
+    for signal in tft_digest.get("top_encoder_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        feature = str(signal.get("feature") or "").strip()
+        if not feature:
+            continue
+        details: list[str] = []
+        label = signal.get("label")
+        if isinstance(label, str) and label.strip() and label.strip() != feature:
+            details.append(label.strip())
+        weight_pct = signal.get("weight_pct")
+        if isinstance(weight_pct, (int, float)):
+            details.append(f"{float(weight_pct):.1f}% of encoder focus")
+        recent = signal.get("recent_summary")
+        if isinstance(recent, str) and recent:
+            details.append(f"recent: {recent}")
+        ref = f"`{feature}`"
+        if details:
+            ref += f" ({'; '.join(details)})"
+        signal_refs.append(ref)
+        if len(signal_refs) >= 2:
+            break
+
+    anchor_refs: list[str] = []
+    for anchor in tft_digest.get("memory_anchors") or []:
+        if not isinstance(anchor, dict):
+            continue
+        date_value = anchor.get("date")
+        if not date_value:
+            continue
+        weight_pct = anchor.get("weight_pct")
+        ref = str(date_value)
+        if isinstance(weight_pct, (int, float)):
+            ref += f" ({float(weight_pct):.1f}%)"
+        anchor_refs.append(ref)
+        break
+
+    if not signal_refs and not anchor_refs:
+        return None
+
+    clauses: list[str] = []
+    if signal_refs:
+        clauses.append(
+            "model focus (pre-calibration, non-causal) leaned on " + " and ".join(signal_refs)
+        )
+    if anchor_refs:
+        clauses.append(
+            "its strongest historical attention anchor was " + ", ".join(anchor_refs)
+        )
+    return (
+        f"{XAI_FOCUS_PREFIX} TFT-ASRO "
+        + "; ".join(clauses)
+        + ". Focus signals only, not causal drivers."
+    )
+
+
+def _build_xai_brief(tft_digest: Optional[dict]) -> Optional[str]:
+    """1-2 sentence non-causal XAI summary for the UI companion surfaces."""
+    if not isinstance(tft_digest, dict):
+        return None
+
+    signal_refs: list[str] = []
+    for signal in tft_digest.get("top_encoder_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        feature = str(signal.get("feature") or "").strip()
+        if not feature:
+            continue
+        weight_pct = signal.get("weight_pct")
+        if isinstance(weight_pct, (int, float)):
+            signal_refs.append(f"{feature} ({float(weight_pct):.1f}% of encoder focus)")
+        else:
+            signal_refs.append(feature)
+        if len(signal_refs) >= 3:
+            break
+
+    anchor_refs: list[str] = []
+    for anchor in tft_digest.get("memory_anchors") or []:
+        if not isinstance(anchor, dict):
+            continue
+        date_value = anchor.get("date")
+        if not date_value:
+            continue
+        weight_pct = anchor.get("weight_pct")
+        if isinstance(weight_pct, (int, float)):
+            anchor_refs.append(f"{date_value} ({float(weight_pct):.1f}%)")
+        else:
+            anchor_refs.append(str(date_value))
+        if len(anchor_refs) >= 3:
+            break
+
+    if not signal_refs and not anchor_refs:
+        return None
+
+    clauses: list[str] = []
+    if signal_refs:
+        clauses.append("top VSN encoder signals " + ", ".join(signal_refs))
+    if anchor_refs:
+        clauses.append("historical attention memory anchors " + ", ".join(anchor_refs))
+    return (
+        "Model focus (pre-calibration, non-causal): "
+        + "; ".join(clauses)
+        + ". These are focus signals from the network, not causal drivers."
+    )
+
+
 def _build_commentary_template_fallback(
     current_price: Optional[float],
     baseline_price: Optional[float],
@@ -104,6 +349,8 @@ def _build_commentary_template_fallback(
     top_influencers: list[dict],
     news_count: int,
     model_status_note: str | None = None,
+    tft_explain: Optional[dict] = None,
+    tft_summary: Optional[dict] = None,
 ) -> str:
     """Deterministic fallback commentary used when LLM is unavailable."""
     direction = "upside" if predicted_return >= 0 else "downside"
@@ -135,6 +382,9 @@ def _build_commentary_template_fallback(
     ]
     if model_status_note:
         lines.append(f"Model status note: {model_status_note}")
+    xai_focus_line = _build_xai_focus_line(summarize_explain_for_commentary(tft_explain))
+    if xai_focus_line:
+        lines.append(xai_focus_line)
     lines.append("This is NOT financial advice.")
     return "\n".join(lines)
 
@@ -231,9 +481,12 @@ async def _generate_commentary_and_stance(
     baseline_price_date: Optional[str] = None,
     price_basis: Optional[str] = None,
     model_status_note: str | None = None,
+    tft_explain: Optional[dict] = None,
+    tft_summary: Optional[dict] = None,
 ) -> CommentaryGenerationResult:
     settings = get_settings()
     deterministic_stance = _deterministic_stance_from_inputs(predicted_return, sentiment_index)
+    tft_digest = summarize_explain_for_commentary(tft_explain)
     fallback_commentary = _build_commentary_template_fallback(
         current_price=current_price,
         baseline_price=baseline_price,
@@ -244,6 +497,8 @@ async def _generate_commentary_and_stance(
         top_influencers=top_influencers,
         news_count=news_count,
         model_status_note=model_status_note,
+        tft_explain=tft_explain,
+        tft_summary=tft_summary,
     )
 
     if not settings.openrouter_api_key:
@@ -267,6 +522,9 @@ async def _generate_commentary_and_stance(
         if current_price not in (None, 0) and predicted_price is not None
         else "unavailable"
     )
+    tft_block = _build_tft_xai_prompt_block(tft_summary, tft_digest)
+    tft_data_section = f"{tft_block}\n\n" if tft_block else ""
+    framework_tft_item = f"{_TFT_FRAMEWORK_INSTRUCTIONS}\n\n" if tft_block else ""
     user_prompt = f"""You are now executing your analytical mandate. Based exclusively on the data provided below, produce a professional-grade market commentary and directional stance on copper.
 
 DATA INPUTS:
@@ -284,7 +542,7 @@ DATA INPUTS:
 - Top Influencers & Their Signals:
 {influencers_text}
 
-ANALYTICAL FRAMEWORK:
+{tft_data_section}ANALYTICAL FRAMEWORK:
 
 1. Primary Signal Interpretation:
    - Evaluate predicted return magnitude and direction relative to the model baseline
@@ -311,7 +569,7 @@ ANALYTICAL FRAMEWORK:
    - Distinguish between short-term tactical signals and medium-to-long-term structural trends
    - Flag when immediate momentum conflicts with broader fundamental outlook
 
-OUTPUT REQUIREMENTS:
+{framework_tft_item}OUTPUT REQUIREMENTS:
 
 Return valid JSON with exactly two keys: "stance" and "commentary"
 
@@ -486,6 +744,8 @@ async def generate_commentary(
     baseline_price_date: Optional[str] = None,
     price_basis: Optional[str] = None,
     model_status_note: str | None = None,
+    tft_explain: Optional[dict] = None,
+    tft_summary: Optional[dict] = None,
 ) -> Optional[str]:
     """
     Generate AI commentary text.
@@ -502,6 +762,8 @@ async def generate_commentary(
         baseline_price_date=baseline_price_date,
         price_basis=price_basis,
         model_status_note=model_status_note,
+        tft_explain=tft_explain,
+        tft_summary=tft_summary,
     )
     return result.commentary
 
@@ -603,6 +865,8 @@ async def generate_and_save_commentary(
     baseline_price_date: Optional[str] = None,
     price_basis: Optional[str] = None,
     model_status_note: str | None = None,
+    tft_explain: Optional[dict] = None,
+    tft_summary: Optional[dict] = None,
 ) -> Optional[str]:
     """
     Generate commentary and save to database.
@@ -620,6 +884,8 @@ async def generate_and_save_commentary(
         baseline_price_date=baseline_price_date,
         price_basis=price_basis,
         model_status_note=model_status_note,
+        tft_explain=tft_explain,
+        tft_summary=tft_summary,
     )
 
     if result.commentary:
@@ -639,3 +905,134 @@ async def generate_and_save_commentary(
         )
 
     return result.commentary
+
+
+# ---------------------------------------------------------------------------
+# Structured section parsing (UI companion contract)
+# ---------------------------------------------------------------------------
+
+_BULLET_RE = re.compile(
+    r"^\s*(?:[\u2022\u00b7\u25aa\u25e6\u2023]|[-*\u2013\u2014]|\d{1,2}[.)])\s*"
+)
+_SECTION_LEAD_RE = re.compile(
+    r"^(?P<kind>risks|opportunities|synthesis|summary|bias\s+acknowledgment|bias\s+warning|disclaimer)\b"
+    r"(?P<rest>.*)$",
+    re.IGNORECASE,
+)
+_MODEL_NOTE_LEAD_RE = re.compile(r"^model\s+status\s+note\b", re.IGNORECASE)
+_DISCLAIMER_TEXT_RE = re.compile(r"^this\s+is\s+not\s+financial\s+advice\.?$", re.IGNORECASE)
+
+
+def _classify_commentary_line(line: str) -> Optional[tuple[str, str]]:
+    """Map a line to ``(section_kind, inline_text)`` or ``None`` for body copy.
+
+    Recognizes both the LLM section headers (``RISKS (3 factors):``,
+    ``SYNTHESIS:``, ``BIAS ACKNOWLEDGMENT:``) and the deterministic fallback
+    headers (``Risks:``, ``Summary: text``, ``Bias warning: text``) so the same
+    parser serves both commentary formats.
+    """
+    candidate = (line or "").strip()
+    if not candidate or _BULLET_RE.match(candidate):
+        return None
+    stripped = candidate.strip("*#_ ").strip()
+    if _DISCLAIMER_TEXT_RE.match(stripped):
+        return ("disclaimer", "")
+    if stripped.startswith(XAI_FOCUS_PREFIX):
+        return ("xai", "")
+    if _MODEL_NOTE_LEAD_RE.match(stripped):
+        return ("note", "")
+    match = _SECTION_LEAD_RE.match(stripped)
+    if match is None:
+        return None
+    kind = match.group("kind").lower()
+    rest = match.group("rest").strip()
+    if rest.startswith("("):
+        close = rest.find(")")
+        if close != -1:
+            rest = rest[close + 1 :].strip()
+    if rest.startswith(":"):
+        rest = rest[1:].strip()
+    elif rest:
+        # Prose that merely begins with a section word ("Risks are elevated").
+        return None
+    if kind.startswith("bias"):
+        kind = "bias"
+    elif kind == "summary":
+        kind = "synthesis"
+    return (kind, rest)
+
+
+def _extract_commentary_segments(commentary: str) -> dict[str, list[str]]:
+    """Split commentary text into ``{section_kind: [raw lines]}`` segments."""
+    segments: dict[str, list[str]] = {}
+    current: Optional[str] = None
+    for raw_line in commentary.splitlines():
+        classified = _classify_commentary_line(raw_line)
+        if classified is not None:
+            current, inline = classified
+            segments.setdefault(current, [])
+            if inline:
+                segments[current].append(inline)
+            continue
+        if current is not None:
+            segments[current].append(raw_line)
+    return segments
+
+
+def _clean_section_lines(lines: list[str], limit: Optional[int] = None) -> list[str]:
+    """Drop bullet markers/empties and (optionally) cap the item count."""
+    cleaned: list[str] = []
+    for raw_line in lines:
+        line = (raw_line or "").strip()
+        if not line or _DISCLAIMER_TEXT_RE.match(line.strip("*#_ ").strip()):
+            continue
+        item = _BULLET_RE.sub("", line).strip().strip("*").strip()
+        if item:
+            cleaned.append(item)
+    if limit is not None:
+        cleaned = cleaned[:limit]
+    return cleaned
+
+
+def _first_paragraph(commentary: str) -> str:
+    """First non-empty body line of the commentary, headers and bullets excluded."""
+    for raw_line in commentary.splitlines():
+        line = raw_line.strip()
+        if not line or _classify_commentary_line(raw_line) is not None:
+            continue
+        item = _BULLET_RE.sub("", line).strip().strip("*").strip()
+        if item:
+            return item
+    return ""
+
+
+def parse_commentary_sections(
+    commentary: Optional[str],
+    tft_explain: Optional[dict] = None,
+) -> dict:
+    """Parse generated or fallback commentary into the UI companion contract.
+
+    Returns ``synthesis`` (``SYNTHESIS:``/``Summary:`` section, or the first
+    non-empty paragraph), up to three clean ``risks`` and ``opportunities``
+    bullets, a non-causal ``xai_brief`` built from ``tft_explain`` (``None``
+    when unavailable), and the ``bias_warning`` (``BIAS ACKNOWLEDGMENT:`` /
+    ``Bias warning:``). Never raises: malformed input degrades to empty fields.
+    """
+    text = commentary if isinstance(commentary, str) else ""
+    segments = _extract_commentary_segments(text)
+
+    risks = _clean_section_lines(segments.get("risks") or [], limit=3)
+    opportunities = _clean_section_lines(segments.get("opportunities") or [], limit=3)
+    synthesis = " ".join(_clean_section_lines(segments.get("synthesis") or [])).strip()
+    if not synthesis:
+        synthesis = _first_paragraph(text)
+    bias_warning = " ".join(_clean_section_lines(segments.get("bias") or [])).strip() or None
+    xai_brief = _build_xai_brief(summarize_explain_for_commentary(tft_explain))
+
+    return {
+        "synthesis": synthesis,
+        "risks": risks,
+        "opportunities": opportunities,
+        "xai_brief": xai_brief,
+        "bias_warning": bias_warning,
+    }

@@ -674,6 +674,10 @@ async def _execute_pipeline_stages_v2(
     logger.info(f"[run_id={run_id}] Stage 5: Generate snapshot")
     snapshot_report = None  # Will be used by Stage 6
     tft_commentary_note = None
+    # XAI context forwarded to Stage 6 commentary (both stay None unless the
+    # Stage 5.5 snapshot was healthy, persisted, and carried an explanation).
+    tft_explain_payload = None
+    tft_commentary_summary = None
     try:
         from app.inference import generate_analysis_report, save_analysis_snapshot
         
@@ -804,6 +808,21 @@ async def _execute_pipeline_stages_v2(
                 is_forecast_healthy = bool(tft_report.get("is_forecast_healthy", True))
                 result["tft_snapshot_generated"] = bool(is_forecast_healthy and persisted)
                 if is_forecast_healthy and persisted:
+                    if isinstance(explain_payload, dict):
+                        tft_explain_payload = explain_payload
+                    prediction_block = tft_report.get("prediction")
+                    tft_commentary_summary = {
+                        "primary_forecast_return": tft_report.get("primary_forecast_return"),
+                        "primary_forecast_q10": tft_report.get("primary_forecast_q10"),
+                        "primary_forecast_q90": tft_report.get("primary_forecast_q90"),
+                        "direction": tft_report.get("direction"),
+                        "risk_level": tft_report.get("risk_level"),
+                        "reference_price_date": (
+                            prediction_block.get("reference_price_date")
+                            if isinstance(prediction_block, dict)
+                            else None
+                        ),
+                    }
                     update_run_metrics(session, run_id, tft_snapshot_generated=True)
                     session.commit()
                     logger.info(f"[run_id={run_id}] TFT-ASRO snapshot generated")
@@ -930,6 +949,8 @@ async def _execute_pipeline_stages_v2(
                 top_influencers=top_influencers,
                 news_count=news_count,
                 model_status_note=model_status_note,
+                tft_explain=tft_explain_payload,
+                tft_summary=tft_commentary_summary,
             )
             session.commit()
 
