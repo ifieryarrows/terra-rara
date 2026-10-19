@@ -511,7 +511,7 @@ export function CuprumCompanionPanel({
         </div>
 
         {/* Right: Game-Like 3 Tactical Runes & Content Console */}
-        <div className="flex-1 min-w-0 w-full">
+        <div className="flex-1 w-full" style={{ minWidth: 220 }}>
           {/* The 3 Game Action Runes (Tabs) */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3 mb-3">
             <div
