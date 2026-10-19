@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CuprumCompanionPanel } from './CuprumCompanionPanel';
 import type { CommentaryResponse, ExplainResponse } from '../types';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 const EXPLAIN_FIXTURE: ExplainResponse = {
   schema_version: 1,
@@ -158,5 +162,56 @@ describe('CuprumCompanionPanel', () => {
     fireEvent.click(petButton);
     expect(screen.getByText('Close console')).toBeInTheDocument();
     expect(screen.getByText(/CUPRUM EXECUTIVE THESIS/i)).toBeInTheDocument();
+  });
+
+  it('keeps the up-down bob metronome and plays transient frames in full', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const { container } = render(<CuprumCompanionPanel commentary={null} explain={null} />);
+    const image = container.querySelector('[data-testid="cuprum-companion-stage"] img');
+    expect(image).not.toBeNull();
+    const frameOf = () =>
+      image?.getAttribute('src')?.match(/-(idle-1|idle-2|blink|talk|alert)\./)?.[1] ?? '';
+
+    const pet = screen.getByRole('button', { name: /Cuprum companion/i });
+    const transitions: Array<{ t: number; frame: string }> = [{ t: 0, frame: frameOf() }];
+    let last = frameOf();
+
+    for (let t = 0; t <= 7000; t += 10) {
+      if (t === 500) fireEvent.click(pet);
+      const clicked = frameOf();
+      if (clicked !== last) {
+        transitions.push({ t, frame: clicked });
+        last = clicked;
+      }
+      if (t === 7000) break;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      const current = frameOf();
+      if (current !== last) {
+        transitions.push({ t: t + 10, frame: current });
+        last = current;
+      }
+    }
+
+    const runs: Array<{ frame: string; duration: number }> = [];
+    for (let i = 0; i < transitions.length - 1; i += 1) {
+      runs.push({
+        frame: transitions[i].frame,
+        duration: transitions[i + 1].t - transitions[i].t,
+      });
+    }
+    const durations = (frame: string) =>
+      runs.filter((run) => run.frame === frame).map((run) => run.duration);
+
+    // The click reaction always plays its full 280ms window.
+    expect(durations('alert')).toEqual([280]);
+    // Every raised (idle-2) phase runs in full; the blink rides inside the
+    // landed phase (160ms blink + 440ms tail) without cutting the metronome.
+    expect(durations('idle-2')).toEqual([600, 600, 600, 600, 600]);
+    expect(durations('idle-1')).toEqual([500, 600, 600, 440, 600, 600]);
+    expect(durations('blink')).toEqual([160]);
   });
 });

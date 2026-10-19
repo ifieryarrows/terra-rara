@@ -9,6 +9,15 @@ import {
   TFTAnalysisResponse,
 } from '../types';
 import { driverCategoryLabel, driverCategoryTone } from '../utils/driverCategories';
+import {
+  INITIAL_CUPRUM_SPRITE_STATE,
+  advanceCuprumSprite,
+  cuprumBlinkGapMs,
+  cuprumSpriteFrame,
+  CuprumSpriteEvent,
+  CuprumSpriteFrame,
+  CuprumSpriteState,
+} from '../utils/cuprumSpriteMachine';
 
 interface Props {
   commentary: CommentaryResponse | null;
@@ -19,7 +28,6 @@ interface Props {
 }
 
 type BriefingTab = 'synthesis' | 'tactical' | 'xai';
-type SpriteExpression = 'idle-1' | 'idle-2' | 'blink' | 'talk' | 'alert';
 
 function formatRecent(entry: ExplainFeatureEntry): string | null {
   const r = entry.recent;
@@ -152,10 +160,10 @@ export function CuprumCompanionPanel({
   const [activeTab, setActiveTab] = useState<BriefingTab>('synthesis');
   const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
   const [selectedDateIdx, setSelectedDateIdx] = useState<number | null>(null);
-  const [expression, setExpression] = useState<SpriteExpression>('idle-1');
-  const alertTimerRef = useRef<number | null>(null);
-  const blinkTimerRef = useRef<number | null>(null);
-  const animIntervalRef = useRef<number | null>(null);
+  const [frame, setFrame] = useState<CuprumSpriteFrame>(() =>
+    cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
+  );
+  const dispatchSpriteRef = useRef<(event: CuprumSpriteEvent) => void>(() => {});
 
   const companion = commentary?.companion_state;
   const stance = (
@@ -289,47 +297,71 @@ export function CuprumCompanionPanel({
       memoryAnchors.length > 0,
   );
 
-  // --- Dynamic Retro Pixel Animation State Machine ---
+  // --- Retro pixel sprite machine: clean up-down bob + transient expressions ---
   useEffect(() => {
-    // Continuous 2-frame pure retro pixel stepped animation
-    animIntervalRef.current = window.setInterval(() => {
-      setExpression((prev) => (prev === 'idle-2' ? 'idle-1' : 'idle-2'));
-    }, 600);
-
-    return () => {
-      if (animIntervalRef.current) clearInterval(animIntervalRef.current);
+    let machine: CuprumSpriteState = INITIAL_CUPRUM_SPRITE_STATE;
+    const timers: Record<'tick' | 'blinkEnd' | 'alertEnd' | 'blinkRequest', number> = {
+      tick: 0,
+      blinkEnd: 0,
+      alertEnd: 0,
+      blinkRequest: 0,
     };
-  }, []);
-
-  // Periodic Blink every 3.8s
-  useEffect(() => {
-    const triggerBlink = () => {
-      setExpression((prev) => (prev.startsWith('idle') ? 'blink' : prev));
-      window.setTimeout(() => {
-        setExpression((prev) => (prev === 'blink' ? 'idle-1' : prev));
-      }, 160);
-      blinkTimerRef.current = window.setTimeout(triggerBlink, 3400 + Math.random() * 1200);
+    const clearTimer = (key: keyof typeof timers) => {
+      if (timers[key]) {
+        window.clearTimeout(timers[key]);
+        timers[key] = 0;
+      }
     };
-
-    blinkTimerRef.current = window.setTimeout(triggerBlink, 2800);
+    const dispatch = (event: CuprumSpriteEvent) => {
+      const { state, schedule } = advanceCuprumSprite(machine, event);
+      machine = state;
+      setFrame(cuprumSpriteFrame(state));
+      for (const item of schedule) {
+        switch (item.kind) {
+          case 'tick':
+            clearTimer('tick');
+            timers.tick = window.setTimeout(() => dispatch('bob-tick'), item.delayMs);
+            break;
+          case 'blink-end':
+            clearTimer('blinkEnd');
+            timers.blinkEnd = window.setTimeout(() => dispatch('blink-end'), item.delayMs);
+            break;
+          case 'alert-end':
+            clearTimer('alertEnd');
+            timers.alertEnd = window.setTimeout(() => dispatch('alert-end'), item.delayMs);
+            break;
+          case 'blink-request':
+            clearTimer('blinkRequest');
+            timers.blinkRequest = window.setTimeout(
+              () => dispatch('blink-request'),
+              item.delayMs ?? cuprumBlinkGapMs(),
+            );
+            break;
+          case 'cancel-tick':
+            clearTimer('tick');
+            break;
+        }
+      }
+    };
+    dispatchSpriteRef.current = dispatch;
+    dispatch('mounted');
     return () => {
-      if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
-      if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
+      dispatchSpriteRef.current = () => {};
+      clearTimer('tick');
+      clearTimer('blinkEnd');
+      clearTimer('alertEnd');
+      clearTimer('blinkRequest');
     };
   }, []);
 
   // Handle clicking the Pet Mascot (Interactive Summon / Dismiss)
   const handlePetClick = () => {
     setIsOpen((prev) => !prev);
-    setExpression('alert');
-    if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
-    alertTimerRef.current = window.setTimeout(() => {
-      setExpression('idle-1');
-    }, 280);
+    dispatchSpriteRef.current('alert-start');
   };
 
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v4`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v4`;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${frame}.webp?v=retro-outline-v4`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${frame}.png?v=retro-outline-v4`;
 
   return (
     <div
