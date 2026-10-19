@@ -19,13 +19,13 @@ try {
     page.on('request', r => { if (new URL(r.url()).pathname.startsWith('/api/')) requests.push(r.url()); });
     await interceptDashboard(page);
     await page.goto(base + '/dashboard');
-    await page.getByRole('button', { name: '30 closes', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Last 30 daily closes', exact: true }).waitFor();
     await page.locator('#price-forecast .recharts-surface').waitFor();
     await page.getByRole('button', { name: 'News filters', exact: true }).waitFor();
     await page.waitForTimeout(600);
     const chartRequests = requests.filter(url => /\/api\/(history|analysis)/.test(url)).length;
-    await page.getByRole('button', { name: '90 closes', exact: true }).click();
-    await page.getByRole('button', { name: '180 closes', exact: true }).click();
+    await page.getByRole('button', { name: 'Last 90 daily closes', exact: true }).click();
+    await page.getByRole('button', { name: 'Last 180 daily closes', exact: true }).click();
     const summary = page.locator('#price-forecast summary');
     await summary.focus();
     await page.keyboard.press('Enter');
@@ -44,7 +44,7 @@ try {
     await page.getByRole('button', { name: 'Forecast median', exact: true }).click();
     await page.getByRole('button', { name: 'Q10–Q90 range', exact: true }).click();
     await page.getByRole('button', { name: 'Q10–Q90 range', exact: true }).click();
-    await page.getByRole('button', { name: '30 closes', exact: true }).click();
+    await page.getByRole('button', { name: 'Last 30 daily closes', exact: true }).click();
     assert.equal(requests.filter(url => /\/api\/(history|analysis)/.test(url)).length, chartRequests, 'Chart controls must not fetch new data');
     await page.locator('#price-forecast .recharts-surface').focus();
     await page.keyboard.press('ArrowRight');
@@ -59,7 +59,7 @@ try {
     await page.getByRole('button', { name: 'Show all headlines', exact: true }).click();
     const newsCard = page.getByRole('button', { name: /QA fixture: copper market update 1/ });
     await newsCard.click();
-    const dialog = page.getByRole('dialog', { name: 'News detail' });
+    const dialog = page.getByRole('dialog', { name: /NEWS INTELLIGENCE/i });
     await dialog.waitFor();
     assert.equal(await page.evaluate(() => document.body.style.overflow), 'hidden');
     await page.keyboard.press('Escape');
@@ -68,19 +68,32 @@ try {
     assert.notEqual(await page.evaluate(() => document.body.style.overflow), 'hidden');
     await page.getByRole('button', { name: 'News filters', exact: true }).click();
 
-    await page.getByRole('combobox', { name: 'Filter top-level category' }).selectOption('Technology');
-    await page.getByRole('combobox', { name: 'Cell sizing' }).selectOption('Performance');
-    await page.getByRole('button', { name: 'Reset map filters' }).click();
-    assert.equal(await page.getByRole('combobox', { name: 'Filter top-level category' }).inputValue(), 'ALL');
-    await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Reset map zoom' }).innerText(), '150%');
-    await page.getByRole('button', { name: 'Reset map zoom' }).click();
-    assert.equal(await page.getByRole('button', { name: 'Zoom out', exact: true }).isDisabled(), true);
-    await page.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+    // The filter controls are button groups now (aria-pressed chips), not selects.
+    await page.getByRole('button', { name: 'Technology', exact: true }).click();
+    await page.getByRole('button', { name: 'Change', exact: true }).click();
+    await page.getByRole('button', { name: 'All categories', exact: true }).click();
+    await page.getByRole('button', { name: 'Weight', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'All categories', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.getByRole('button', { name: 'Weight', exact: true }).getAttribute('aria-pressed'), 'true');
+    // Wheel zoom is the current zoom mechanism; the map mirrors it in data-zoomed.
+    const map = page.locator('.cm-heatmap-map');
+    await map.scrollIntoViewIfNeeded();
+    const mapBox = await map.boundingBox();
+    assert.ok(mapBox, 'Market map must be visible');
+    const zoomX = mapBox.x + mapBox.width / 2;
+    const zoomY = mapBox.y + mapBox.height / 2;
+    const zoomPointInsideMap = await page.evaluate(([x, y]) => document.querySelector('.cm-heatmap-map')?.contains(document.elementFromPoint(x, y)), [zoomX, zoomY]);
+    assert.ok(zoomPointInsideMap, 'Zoom point must land inside the map');
+    await page.mouse.move(zoomX, zoomY);
+    await page.mouse.wheel(0, -240);
+    await page.waitForFunction(() => document.querySelector('.cm-heatmap-map')?.dataset.zoomed === 'true');
+    await page.mouse.wheel(0, 240);
+    await page.waitForFunction(() => document.querySelector('.cm-heatmap-map')?.dataset.zoomed === 'false');
+    await page.getByRole('button', { name: 'Open fullscreen', exact: true }).click();
     const fullscreen = page.getByRole('dialog', { name: 'Fullscreen market map' });
     await fullscreen.waitFor();
     assert.equal(await page.evaluate(() => document.body.style.overflow), 'hidden');
-    const lastControl = fullscreen.getByRole('link', { name: 'Logos provided by Logo.dev' });
+    const lastControl = fullscreen.getByRole('link', { name: 'Logos by Logo.dev' });
     await lastControl.focus();
     await page.keyboard.press('Tab');
     assert.equal(await fullscreen.evaluate(el => el.contains(document.activeElement)), true, 'Fullscreen focus containment');
@@ -92,7 +105,7 @@ try {
     await page.keyboard.press('Escape');
     if (await fullscreen.isVisible()) await page.keyboard.press('Escape');
     await fullscreen.waitFor({ state: 'hidden' });
-    assert.equal(await page.getByRole('button', { name: 'Fullscreen', exact: true }).evaluate(el => document.activeElement === el), true);
+    assert.equal(await page.getByRole('button', { name: 'Open fullscreen', exact: true }).evaluate(el => document.activeElement === el), true);
     assert.notEqual(await page.evaluate(() => document.body.style.overflow), 'hidden');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 1, `Page overflow ${width}: ${overflow}`);
@@ -117,14 +130,23 @@ try {
     await page.getByRole('button', { name: 'Refresh overview' }).waitFor();
     if (state === 'stale' || state === 'degraded') {
       assert.equal(await page.getByRole('button', { name: 'Forecast median', exact: true }).isDisabled(), true);
-      assert.ok(await page.locator('#price-forecast').innerText().then(t => t.includes(state === 'stale' ? 'Waiting for a forecast based on the latest close' : 'Forecast is degraded')));
+      const outlook = await page.locator('#weekly-outlook').innerText();
+      if (state === 'stale') {
+        // The chart drops a forecast whose baseline close is not aligned with the history;
+        // the weekly card surfaces the stale baseline date rather than bridging it.
+        assert.ok(outlook.includes('CLOSE DATE') && outlook.includes('2026-01-01'), `Stale baseline date must be visible: ${outlook.slice(0, 200)}`);
+      } else {
+        assert.ok(outlook.includes('FORECAST DEGRADED'), `Degraded notice must be visible: ${outlook.slice(0, 200)}`);
+        assert.ok(outlook.includes('TFT weekly forecast is unavailable until the weekly model artifacts are refreshed.'));
+      }
     } else if (state === 'empty') await page.getByRole('heading', { name: 'No chart data available', exact: true }).waitFor();
     else if (state === 'failure') await page.getByRole('heading', { name: 'Price history could not be loaded' }).waitFor();
     else {
       fail = true;
       await page.getByRole('button', { name: 'Refresh overview' }).click();
-      await page.getByText('Price history could not be refreshed; any visible values are from the previous response', { exact: true }).waitFor();
-      assert.equal(await page.getByRole('button', { name: '30 closes' }).isVisible(), true);
+      await page.getByText('Some data could not be refreshed', { exact: true }).waitFor();
+      assert.ok(await page.locator('.cm-dashboard-alerts').innerText().then(t => t.includes('previous response')));
+      assert.equal(await page.getByRole('button', { name: 'Last 30 daily closes' }).isVisible(), true);
     }
     results.push({ state, passed: true });
     await page.close();
