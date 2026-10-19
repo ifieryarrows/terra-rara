@@ -8,7 +8,7 @@ import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
 import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
-import { createCinematicWheelDampener } from './cinematic-scroll';
+import { createCinematicSceneStepper } from './cinematic-scroll';
 import { useCinematicEntryReveal } from './cinematic-entry';
 import './cinematic.css';
 
@@ -152,16 +152,25 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
       schedule();
     };
     const onPointerLeave = () => { x = 72; y = 46; schedule(); };
-    const wheelDampener = createCinematicWheelDampener();
-    const onWheel = (event: WheelEvent) => { wheelDampener.handleWheel(event); };
+    const sceneStepper = createCinematicSceneStepper({
+      // Progress mapping matches useScroll(offset: start start → end end).
+      getGeometry: () => {
+        const rect = scene.getBoundingClientRect();
+        return { top: rect.top + window.scrollY, length: Math.max(0, rect.height - window.innerHeight) };
+      },
+    });
+    const onWheel = (event: WheelEvent) => { sceneStepper.handleWheel(event); };
+    const onKeyDown = (event: KeyboardEvent) => { sceneStepper.handleKeyDown(event); };
     scene.addEventListener('pointermove', onPointerMove, { passive: true });
     scene.addEventListener('pointerleave', onPointerLeave, { passive: true });
     scene.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       scene.removeEventListener('pointermove', onPointerMove);
       scene.removeEventListener('pointerleave', onPointerLeave);
       scene.removeEventListener('wheel', onWheel);
-      wheelDampener.dispose();
+      window.removeEventListener('keydown', onKeyDown);
+      sceneStepper.dispose();
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, []);

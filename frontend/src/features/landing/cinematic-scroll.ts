@@ -1,35 +1,129 @@
-export const CINEMATIC_SCROLL_SENSITIVITY = .5;
-const CINEMATIC_SCROLL_TARGET_RESET_MS = 450;
-
 /**
- * Splits vertical wheel input into two native-scroll movements while keeping
- * the browser's smooth scroll interpolation for the storytelling timeline.
+ * Gesture scene stepper for the pinned cinematic story.
+ *
+ * One wheel gesture or key press advances at most one narrative rest point, so
+ * fast input can no longer skip a scene. Each step uses the browser's native
+ * smooth scroll; input that arrives while a step is gliding — or that is part
+ * of the same momentum burst — is swallowed, never queued. At the story bounds
+ * the stepper releases input back to native scrolling, and zoom gestures,
+ * horizontal scrolls, modified keys and focused controls always pass through.
+ * There is no rAF loop; the lock ends on `scrollend` with a timeout fallback.
  */
-export function createCinematicWheelDampener() {
-  let targetScrollY: number | null = null;
-  let resetTimer: number | null = null;
-  const resetTarget = () => { targetScrollY = null; resetTimer = null; };
-  const scheduleTargetReset = () => {
-    if (resetTimer !== null) window.clearTimeout(resetTimer);
-    resetTimer = window.setTimeout(resetTarget, CINEMATIC_SCROLL_TARGET_RESET_MS);
+
+export const CINEMATIC_STEP_LOCK_MS = 900;
+const WHEEL_GESTURE_GAP_MS = 260;
+
+/** Reading rest points as story progress (0 = hero rest, 1 = story end). */
+export const CINEMATIC_RESTS = [0, .24, .45, .66, .97] as const;
+
+export type CinematicSceneGeometry = {
+  /** Story section top in document coordinates. */
+  top: number;
+  /** Scrollable length: section height minus viewport height. */
+  length: number;
+};
+
+export type CinematicSceneStepper = {
+  /** Returns true when the event was consumed by the story pacing. */
+  handleWheel(event: WheelEvent): boolean;
+  handleKeyDown(event: KeyboardEvent): boolean;
+  dispose(): void;
+};
+
+function maxScrollTop(): number {
+  const scrollable = document.scrollingElement ?? document.documentElement;
+  return Math.max(0, scrollable.scrollHeight - window.innerHeight);
+}
+
+const STEP_KEY_DIRECTION: Record<string, 1 | -1 | undefined> = {
+  ArrowDown: 1, PageDown: 1, ' ': 1,
+  ArrowUp: -1, PageUp: -1,
+};
+
+export function createCinematicSceneStepper(options: {
+  getGeometry: () => CinematicSceneGeometry | null;
+  scrollTo?: (top: number) => void;
+  lockTimeoutMs?: number;
+}): CinematicSceneStepper {
+  const scrollTo = options.scrollTo ?? ((top: number) => window.scrollTo({ top, behavior: 'smooth' }));
+  const lockTimeoutMs = options.lockTimeoutMs ?? CINEMATIC_STEP_LOCK_MS;
+  let locked = false;
+  let releaseTimer = 0;
+  let burstOwned = false;
+  let lastWheelAt = 0;
+
+  const release = () => {
+    locked = false;
+    if (releaseTimer) { window.clearTimeout(releaseTimer); releaseTimer = 0; }
   };
-  const handleWheel = (event: WheelEvent) => {
-    if (!event.cancelable || event.defaultPrevented || event.ctrlKey || event.deltaY === 0 || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return false;
-    event.preventDefault();
-    const currentScrollY = window.scrollY;
-    if (targetScrollY === null || Math.abs(currentScrollY - targetScrollY) < 1) targetScrollY = currentScrollY;
-    const maxScrollY = Math.max(0, (document.scrollingElement ?? document.documentElement).scrollHeight - window.innerHeight);
-    targetScrollY = Math.max(0, Math.min(maxScrollY, targetScrollY + event.deltaY * CINEMATIC_SCROLL_SENSITIVITY));
-    window.scrollTo({ top: targetScrollY, behavior: 'smooth' });
-    scheduleTargetReset();
+  window.addEventListener('scrollend', release);
+
+  const findTarget = (direction: 1 | -1): number | null => {
+    const geometry = options.getGeometry();
+    if (!geometry) return null;
+    const bound = maxScrollTop();
+    const current = window.scrollY;
+    const positions = CINEMATIC_RESTS.map(progress => Math.min(bound, Math.max(0, geometry.top + progress * geometry.length)));
+    if (direction > 0) return positions.find(position => position > current + 1) ?? null;
+    for (let index = positions.length - 1; index >= 0; index -= 1) {
+      if (positions[index] < current - 1) return positions[index];
+    }
+    return null;
+  };
+
+  const step = (direction: 1 | -1): boolean => {
+    const target = findTarget(direction);
+    if (target === null) return false;
+    locked = true;
+    if (releaseTimer) window.clearTimeout(releaseTimer);
+    releaseTimer = window.setTimeout(release, lockTimeoutMs);
+    scrollTo(target);
     return true;
   };
+
+  const handleWheel = (event: WheelEvent): boolean => {
+    if (!event.cancelable || event.defaultPrevented || event.ctrlKey) return false;
+    if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    if (locked) { event.preventDefault(); return true; }
+    const direction: 1 | -1 = event.deltaY > 0 ? 1 : -1;
+    const now = Date.now();
+    if (burstOwned && now - lastWheelAt < WHEEL_GESTURE_GAP_MS && findTarget(direction) !== null) {
+      lastWheelAt = now;
+      event.preventDefault();
+      return true;
+    }
+    if (!step(direction)) { burstOwned = false; return false; }
+    burstOwned = true;
+    lastWheelAt = now;
+    event.preventDefault();
+    return true;
+  };
+
+  const handleKeyDown = (event: KeyboardEvent): boolean => {
+    if (!event.cancelable || event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey) return false;
+    if (event.shiftKey && event.key.startsWith('Arrow')) return false; // keep native selection shortcuts
+    let direction = STEP_KEY_DIRECTION[event.key];
+    if (event.key === ' ' && event.shiftKey) direction = -1;
+    if (!direction) return false;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && (focused.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A|SUMMARY)$/.test(focused.tagName))) return false;
+    if ((locked || event.repeat) && findTarget(direction) !== null) {
+      event.preventDefault();
+      return true;
+    }
+    if (!step(direction)) return false;
+    event.preventDefault();
+    return true;
+  };
+
   return {
     handleWheel,
+    handleKeyDown,
     dispose() {
-      if (resetTimer !== null) window.clearTimeout(resetTimer);
-      targetScrollY = null;
-      resetTimer = null;
+      window.removeEventListener('scrollend', release);
+      if (releaseTimer) window.clearTimeout(releaseTimer);
+      releaseTimer = 0;
+      locked = false;
     },
   };
 }
