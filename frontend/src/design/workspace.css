@@ -919,6 +919,22 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   max-width: 100%;
   box-sizing: border-box;
 }
+/* Hold the deferred sections at their loaded heights so mounting the news
+   panel or the map does not shift everything below it (dashboard CLS). */
+.cm-market-dashboard .cm-dashboard-news-section {
+  min-height: 540px;
+}
+.cm-market-dashboard .cm-news-loading {
+  min-height: 540px;
+}
+.cm-market-dashboard .cm-map-skeleton {
+  height: 705px;
+}
+@media (max-width: 639px) {
+  .cm-market-dashboard .cm-map-skeleton {
+    height: 812px;
+  }
+}
 .cm-market-dashboard .cm-dashboard-market-map > .cm-heatmap {
   width: 100%;
   min-width: 0;

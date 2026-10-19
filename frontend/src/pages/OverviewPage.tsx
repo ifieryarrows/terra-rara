@@ -42,7 +42,7 @@ const CuprumCompanionPanel = lazy(() =>
 
 // --- Skeleton Components for perceived performance ---
 const MapSkeleton = () => (
-  <div className="cm-map-skeleton h-[705px] max-sm:h-[812px] w-full flex items-center justify-center bg-midnight/50 rounded-xl" role="status" aria-label="Loading intelligence map">
+  <div className="cm-map-skeleton w-full flex items-center justify-center bg-midnight/50 rounded-xl" role="status" aria-label="Loading intelligence map">
     <div className="flex flex-col items-center gap-3">
       <div className="cm-map-skeleton__visual" aria-hidden="true">
         <span className="cm-map-skeleton__orbit" />
@@ -317,7 +317,7 @@ export const OverviewPage = () => {
     </div>
   );
   const newsFallback = (
-    <div className="cm-news-loading min-h-[540px] flex items-center justify-center gap-3" role="status">
+    <div className="cm-news-loading flex items-center justify-center gap-3" role="status">
       <span className="cm-inline-loader" aria-hidden="true" />
       <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
         Loading news…
@@ -673,7 +673,7 @@ export const OverviewPage = () => {
           </GlassCard>
 
         </div>
-        <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0 min-h-[540px]" data-cm-route-reveal="surface">
+        <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0" data-cm-route-reveal="surface">
           {deferredPanels.news ? (
             <Suspense fallback={newsFallback}>
               <NewsIntelligencePanel />
