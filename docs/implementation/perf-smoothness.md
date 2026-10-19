@@ -9,10 +9,11 @@ Branch: `perf/smoothness`. Basis: three-part read-only audit (interaction jank, 
 ## Workstreams
 
 ### L — Landing scene pacing (replaces wheel dampener)
-- [x] L1 Replaced `createCinematicWheelDampener` (`frontend/src/features/landing/cinematic-scroll.ts`) with a gesture **scene stepper**: one wheel/keyboard gesture advances at most one narrative rest point (`REST = 0 / .24 / .45 / .66 / .97` of the pinned story); native `scrollTo({behavior:'smooth'})` per step; further input during the glide or within the same momentum burst is swallowed (no queueing) until `scrollend`/timeout; at bounds (before hero rest / after CTA rest) input is released to native scrolling. Ctrl-zoom, horizontal-dominant deltas, edits and modified keys pass through. No rAF loop.
+- [x] L1 Replaced `createCinematicWheelDampener` (`frontend/src/features/landing/cinematic-scroll.ts`) with a gesture **scene stepper**: one wheel/keyboard gesture advances at most one narrative rest point (initially `0 / .24 / .45 / .66 / .97`, expanded by L5); native `scrollTo({behavior:'smooth'})` per step; further input during the glide or within the same momentum burst is swallowed (no queueing) until `scrollend`/timeout; at bounds (before hero rest / after CTA rest) input is released to native scrolling. Ctrl-zoom, horizontal-dominant deltas, edits and modified keys pass through. No rAF loop.
 - [x] L2 Wired in `CinematicLanding.tsx` (wheel on the scene, keydown on window; guarded by editable focus, shift+arrow selection, bounds, dispose on unmount).
 - [x] L3 Rewrote `cinematic-scroll.test.ts` for the new contract (one-step guarantee, swallow during glide, pass-through cases, lock release) — 9/9.
-- [x] L4 Verified: `check-experience.mjs` green (programmatic scroll cases untouched); wheel probe (tmp/, not shipped): old dampener sent one burst of three flicks 0 → 2700 (story end, every scene skipped); stepper lands 648 → 1215 → 1782 (exact rests). Rest values derive from the copy windows; screenshots at rests skipped (probe values match the same plateaus check-experience already samples).
+- [x] L4 Verified: `check-experience.mjs` green (programmatic scroll cases untouched); wheel probe (tmp/, not shipped): old dampener sent one burst of three flicks 0 → 2700 (story end, every scene skipped); stepper lands 648 → 1215 → 1782 (exact rests). The original rest values derived from the copy windows; L5 expanded them after the stage-readability measurements.
+- [x] L5 Stage readability: the 5-rest set landed on the *entry* of each preview's scroll-linked stage, so the panels' intermediate transitions (market tiles settling, the four news sequence layers, the forecast range band) existed only mid-glide and were unreadable at every stop. Rest set now carries one stop per readable stage: `0 / .24 / .34 / .43 / .48 / .52 / .57 / .66 / .69 / .97` — market grip `.24 → .34`, news `.43` headline / `.48` entities / `.52` signal read / `.57` two reads, forecast draw `.66 → .69` range band (`.70` rejected: the surface's exit `clip-path` already cuts the right 20% of the panel). Stage values picked from the layer windows and sub-animation completions (e.g. `.48` waits for the second entity clip at np .43; `.57` for `scoreOpacity` at np .89). Stepper logic and tests unchanged (rests are index-based).
 
 ### O — Overview entry latency (charts show up sooner)
 - [x] O1 Decoupled chart from slowest endpoint: skeleton and `data-cm-dashboard-ready` gate on `history + analysis`; TFT/explain hydrate in the background; separate in-flight guards; core polls 60 s, enrichment 300 s (weekly cadence). Probe with a 9 s-delayed TFT fixture: dashboard-ready 9.71 s → **1.76 s**, chart 9.92 s → **1.87 s**.
@@ -28,7 +29,7 @@ Branch: `perf/smoothness`. Basis: three-part read-only audit (interaction jank, 
 
 ### M — Mount & polling discipline
 - [x] M1 Defer below-fold panels (Heatmap/News/Companion) until the section approaches the viewport (`OverviewPage.tsx`, IntersectionObserver, 600 px margin, first-Tab fallback for keyboard-only walkthroughs). The loading placeholders hold the loaded heights (news 540, map 705/812 mobile) via `workspace.css` — dashboard-only rules stay out of the landing-critical global sheet, and the CLS the deferral briefly introduced (0.14–0.25) is gone (0.0098).
-- [ ] M2 Heatmap: mount only the visible tier layer per leaf (`HeatmapTiles.tsx`) — ~500 fewer nodes.
+- [~] M2 Heatmap: mount only the visible tier layer per leaf (`HeatmapTiles.tsx`) — ~500 fewer nodes. Dropped by decision (2026-10-20): the map payload is only ~0.5 MB and the app is already fast there; per-leaf deferral isn't worth the complexity.
 - [x] M3 Pause core/enrichment intervals while `document.hidden`; memoize last-history-price.
 
 ### B — Backend latency & memory
@@ -37,9 +38,13 @@ Branch: `perf/smoothness`. Basis: three-part read-only audit (interaction jank, 
 - [x] B3 Caches bounded: `_tft_cache` gets a 128-entry cap with oldest-first eviction on top of the per-symbol live-key purge; `_news_stats_cache` bounded like the list cache (128, oldest first).
 - [x] B4 One FinBERT per process: `deep_learning/data/embeddings.py` exposes the shared classifier loader (`load_finbert_classifier`), the embedding encoder is its base-model view (same checkpoint weights, no head copy) and `app/ai_engine.py` builds the sentiment pipeline on the same instance — roughly one ~440 MB model copy reclaimed in the worker. Structural equivalence is covered by the offline suite (mocked models); no numeric embedding run was possible locally (no transformers in the offline env).
 
+### Queued & observed (recorded 2026-10-20, not implemented)
+- **TerraAtmosphere dashboard freeze** (user-listed, later): in the dashboard instance only (`cm-terra-atmosphere--workspace`) stop the infinite `cm-star-breathe` loop and hold the `::before`/`::after` star layers at fixed opacities (0.78 / 0.86) — removes the `backdrop-filter` re-blur every frame with no intended visual diff. Landing instance stays untouched; nebulas, StarFieldCanvas, grain and pointer light unchanged.
+- **Beat copy vs flow slots** (observed while fixing L5; pre-exists on `main`, not touched): news and forecast copy windows lead their scroll slots — at `.48` the news copy is ~.85 opacity but only its title reaches the viewport's bottom edge (block y 789); the forecast copy fades out (.75) before its slot enters the viewport (at `.66` block y 1210). Market beat is aligned.
+
 ## Verification (before/after)
 - [x] V1 Baselines (4× CPU where applicable): landing profile captured on the pre-change build; wheel + TFT-gate probes captured on `main` build. Note: `profile-dashboard.mjs` was stale (waited for a "Market Heatmap" heading that no longer exists) — fixed to `#market-map h2` before any run.
-- [ ] V2b Landing rest screenshots at each stepper plateau (probe values match the copy-window plateaus; visual capture deferred).
+- [x] V2b Landing rest-state probe + screenshots at every stepper plateau (all 10 rests, 1440×900). Each rest now shows exactly one settled stage instead of a crossfade mid-frame; details in the 2026-10-20 log.
 - [x] V2 After-change runs on the same lab/build: TFT-gate probe 9.71 s → 1.01 s; dashboard CLS back to baseline (0.0052 → 0.0098) with heap and long-task counts unchanged; landing profile unchanged (programmatic-scroll workload identical by design). Numbers in the log below.
 - [x] V3 `npm test`, `npm run lint`, `npm run build`, `npm run check:budgets`, `node scripts/check-experience.mjs`, `node scripts/check-dashboard.mjs` — all green on the final build (136/136 tests; budgets 13,968/14,000 CSS, 279,153/280,000 dashboard JS).
 - [x] V4 Backend: `py -3 -m pytest tests/ -m "not online"` → 681 passed. (Run with `--basetemp` here: `%TEMP%\pytest-of-<user>` was permission-locked on this box — environmental, unrelated to the suite.)
@@ -68,6 +73,13 @@ Branch: `perf/smoothness`. Basis: three-part read-only audit (interaction jank, 
 - Budgets: initial JS 126,975/190,000; initial CSS **13,968/14,000**; dashboard JS 279,153/280,000.
 - `npm run lint` clean; `npx vitest run` 136/136; `check-experience` green (7 landing + 3 adaptive + 6 workspace); `check-dashboard` 10/10.
 - Backend: 681 offline tests pass. `market-prices` and `live-price` run in the threadpool (market-prices behind a 60 s single-flight TTL cache); the TFT live path is threadpooled behind a single-flight lock with a 128-entry cache cap; the news stats cache is capped like the list cache; FinBERT loads once per process (the embedding encoder is the sentiment classifier's base-model view).
+
+### 2026-10-20 — landing rest readability (L5)
+- Root cause: rests were derived from the copy plateaus, but each preview's stage sequence runs 0→1 across its own surface window — a stop at the plateau entry showed stage ≈ 30 % and the rest of the sequence (news dial / two-reads, forecast range band) was never observable at rest.
+- Rest-state probe before (old rests): `.45` → news layers `headline 0 / entities .33 / dial 0 / branch 0` (literal crossfade mid-frame; entity marks clipped mid-animation); `.66` → forecast range band `.16`; `.24` → market tiles `[.73 .59 .46 .32 .25 .25]`.
+- After (new rests): `.34` → tiles `[1 1 1 1 .87 .73]` with the copy still on screen; `.43/.48/.52/.57` → exactly one news layer at `1.0` each (headline → entities → signal read → two reads); `.66 → .69` → range band `.16 → .59`, panel still full-opacity and unclipped at `.69`. Screenshots read back at all 10 plateaus — settled frames, no mid-crossfade.
+- Wheel probe still one-step-per-gesture: burst-of-three → `648`, then `918`, `1161` after deliberate pauses (no scene skipping).
+- Gates: `npm run lint` clean; `npx vitest run` 136/136 (stepper tests are index-based, unchanged); `npm run build` + prerender; budgets initial JS 126,973/190,000, CSS 13,968/14,000, dashboard JS 279,143/280,000; `check-experience` green (7 landing + 3 adaptive + 6 workspace, no page errors).
 
 ### Lab note
 - Any plain static server (incl. `vite preview`) must answer 404 for missing files; its HTML fallback turns `/_vercel/speed-insights/script.js` into a page error ("Unexpected token '<'") that QA scripts correctly flag. The tmp QA server (`tmp/qa-server.mjs`, untracked) mirrors production routing (`/` → landing shell, deep links → workspace shell, missing files → 404).

@@ -13,8 +13,16 @@
 export const CINEMATIC_STEP_LOCK_MS = 900;
 const WHEEL_GESTURE_GAP_MS = 260;
 
-/** Reading rest points as story progress (0 = hero rest, 1 = story end). */
-export const CINEMATIC_RESTS = [0, .24, .45, .66, .97] as const;
+/**
+ * Reading rest points as story progress (0 = hero rest, 1 = story end).
+ *
+ * Every scroll-linked stage meant to be read gets its own stop, so one gesture
+ * lands on a settled state instead of a mid-transition frame: the market frame
+ * assembling (.24 → .34), the four news sequence layers (.43 headline,
+ * .48 entities, .52 signal read, .57 two reads), the forecast draw and its
+ * range band (.66 → .69), and the outro (.97).
+ */
+export const CINEMATIC_RESTS = [0, .24, .34, .43, .48, .52, .57, .66, .69, .97] as const;
 
 export type CinematicSceneGeometry = {
   /** Story section top in document coordinates. */
