@@ -9,6 +9,7 @@ Endpoints:
 
 import logging
 import json
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, BackgroundTasks, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy import func, desc
@@ -604,6 +606,16 @@ async def health_check():
     )
 
 
+# ---------------------------------------------------------------------------
+# Market price snapshot cache.
+# yfinance is fully synchronous; keep it off the event loop and reuse a
+# recent payload so concurrent dashboard mounts trigger one upstream sweep.
+# ---------------------------------------------------------------------------
+_market_prices_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+_MARKET_PRICES_TTL_S = 60.0
+_market_prices_refresh_lock = threading.Lock()
+
+
 @app.get(
     "/api/market-prices",
     summary="Get live market prices for all symbols",
@@ -612,51 +624,69 @@ async def health_check():
 async def get_market_prices():
     """
     Get live prices and daily changes for all tracked symbols.
-    
-    Uses yfinance for real-time data (15-minute delayed).
-    Used by the Market Intelligence Map component.
+
+    Uses yfinance for real-time data (15-minute delayed). yfinance is blocking,
+    so the sweep runs in the threadpool behind a short TTL cache; the event
+    loop never waits on it.
     """
-    import yfinance as yf
-    
-    settings = get_settings()
-    symbols = settings.symbols_list
-    
-    result = {}
-    
-    try:
-        # Fetch all tickers at once for efficiency
-        tickers = yf.Tickers(' '.join(symbols))
-        
-        for symbol in symbols:
-            try:
-                ticker = tickers.tickers.get(symbol)
-                if not ticker:
+    cached = _market_prices_cache["payload"]
+    if cached is not None and (time.monotonic() - _market_prices_cache["ts"]) < _MARKET_PRICES_TTL_S:
+        return cached
+
+    def _fetch_market_prices() -> dict:
+        import yfinance as yf
+
+        settings = get_settings()
+        symbols = settings.symbols_list
+        result = {}
+
+        try:
+            # Fetch all tickers at once for efficiency
+            tickers = yf.Tickers(' '.join(symbols))
+
+            for symbol in symbols:
+                try:
+                    ticker = tickers.tickers.get(symbol)
+                    if not ticker:
+                        result[symbol] = {"price": None, "change": None}
+                        continue
+
+                    info = ticker.info
+
+                    # Get current price and change
+                    current_price = info.get('regularMarketPrice') or info.get('currentPrice')
+                    change_pct = info.get('regularMarketChangePercent')
+
+                    if current_price is not None:
+                        result[symbol] = {
+                            "price": round(current_price, 4),
+                            "change": round(change_pct, 2) if change_pct else 0,
+                        }
+                    else:
+                        result[symbol] = {"price": None, "change": None}
+
+                except Exception as e:
+                    logger.debug(f"Error fetching {symbol}: {e}")
                     result[symbol] = {"price": None, "change": None}
-                    continue
-                    
-                info = ticker.info
-                
-                # Get current price and change
-                current_price = info.get('regularMarketPrice') or info.get('currentPrice')
-                change_pct = info.get('regularMarketChangePercent')
-                
-                if current_price is not None:
-                    result[symbol] = {
-                        "price": round(current_price, 4),
-                        "change": round(change_pct, 2) if change_pct else 0,
-                    }
-                else:
-                    result[symbol] = {"price": None, "change": None}
-                    
-            except Exception as e:
-                logger.debug(f"Error fetching {symbol}: {e}")
-                result[symbol] = {"price": None, "change": None}
-                
-    except Exception as e:
-        logger.error(f"Error fetching market prices: {e}")
-        return {"error": str(e), "symbols": {}}
-    
-    return {"symbols": result}
+
+        except Exception as e:
+            logger.error(f"Error fetching market prices: {e}")
+            return {"error": str(e), "symbols": {}}
+
+        payload = {"symbols": result}
+        _market_prices_cache["payload"] = payload
+        _market_prices_cache["ts"] = time.monotonic()
+        return payload
+
+    def _refresh_market_prices() -> dict:
+        # Single-flight: parallel cache misses wait for one upstream sweep.
+        with _market_prices_refresh_lock:
+            fresh = _market_prices_cache["payload"]
+            if fresh is not None and (time.monotonic() - _market_prices_cache["ts"]) < _MARKET_PRICES_TTL_S:
+                return fresh
+            return _fetch_market_prices()
+
+    return await run_in_threadpool(_refresh_market_prices)
 
 
 # =============================================================================
@@ -1204,6 +1234,41 @@ async def get_commentary(
 
 _tft_cache: dict = {}
 _TFT_CACHE_TTL_S = 300  # 5 minutes
+_TFT_CACHE_MAX_ENTRIES = 128  # hard cap; live keys are also pruned per symbol
+_tft_live_lock = threading.Lock()  # single-flight guard for live TFT inference
+
+
+def _tft_entry_age_seconds(entry: dict, now: datetime) -> float:
+    """Age of a TFT cache entry in seconds, tolerating naive/legacy timestamps."""
+    ts = entry.get("ts")
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts).total_seconds()
+    try:
+        return now.timestamp() - float(ts)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _tft_entry_sort_key(entry: dict) -> float:
+    """Oldest-first sort key; unparsable timestamps sort first (evicted first)."""
+    ts = entry.get("ts")
+    if isinstance(ts, datetime):
+        return ts.timestamp()
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _remember_tft_entry(cache_key: str, data: dict) -> None:
+    """Store a TFT response and evict the oldest entries beyond the cap."""
+    _tft_cache[cache_key] = {"data": data, "ts": datetime.now(timezone.utc)}
+    overflow = len(_tft_cache) - _TFT_CACHE_MAX_ENTRIES
+    if overflow > 0:
+        for stale_key, _ in sorted(_tft_cache.items(), key=lambda item: _tft_entry_sort_key(item[1]))[:overflow]:
+            _tft_cache.pop(stale_key, None)
 
 
 def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
@@ -1427,24 +1492,32 @@ async def get_tft_analysis(
         if stale_key.startswith(cache_prefix) and stale_key != cache_key:
             _tft_cache.pop(stale_key, None)
     cached = _tft_cache.get(cache_key)
-    if cached:
-        age = (now - cached["ts"]).total_seconds()
-        if age < _TFT_CACHE_TTL_S:
-            return cached["data"]
+    if cached and _tft_entry_age_seconds(cached, now) < _TFT_CACHE_TTL_S:
+        return cached["data"]
+
+    def _generate_live_tft() -> dict:
+        # Single-flight: concurrent cache misses queue here instead of running
+        # the model several times and multiplying its memory footprint.
+        with _tft_live_lock:
+            recheck = _tft_cache.get(cache_key)
+            if recheck and _tft_entry_age_seconds(recheck, datetime.now(timezone.utc)) < _TFT_CACHE_TTL_S:
+                return recheck["data"]
+
+            from deep_learning.inference.predictor import generate_tft_analysis
+
+            with SessionLocal() as session:
+                generated = generate_tft_analysis(session, symbol)
+
+            if "error" in generated:
+                raise HTTPException(status_code=500, detail=generated["error"])
+
+            generated = dict(generated)
+            generated["source"] = "live"
+            _remember_tft_entry(cache_key, generated)
+            return generated
 
     try:
-        from deep_learning.inference.predictor import generate_tft_analysis
-
-        with SessionLocal() as session:
-            result = generate_tft_analysis(session, symbol)
-
-        if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
-
-        result = dict(result)
-        result["source"] = "live"
-        _tft_cache[cache_key] = {"data": result, "ts": now}
-        return result
+        return await run_in_threadpool(_generate_live_tft)
 
     except FileNotFoundError:
         raise HTTPException(
@@ -2727,6 +2800,11 @@ async def get_news_stats(
 
     payload = response.model_dump()
     _news_stats_cache[cache_key] = (now_ts, payload)
+    # Bound the filter-combination cache like the news list cache above.
+    if len(_news_stats_cache) > 128:
+        overflow = len(_news_stats_cache) - 128
+        for stale_key, _ in sorted(_news_stats_cache.items(), key=lambda kv: kv[1][0])[:overflow]:
+            _news_stats_cache.pop(stale_key, None)
     return payload
 
 

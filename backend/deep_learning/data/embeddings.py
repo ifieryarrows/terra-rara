@@ -31,20 +31,34 @@ _EMBEDDING_DIM = 768
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
-def _load_finbert_encoder():
-    """Load ProsusAI/finbert as a bare encoder (no classification head)."""
+def load_finbert_classifier():
+    """
+    Load ProsusAI/finbert once per process.
+
+    Shared by the sentiment pipeline (`app.ai_engine`) and the embedding
+    extractor below so a process that needs both keeps a single ~440 MB model
+    copy; the embedding path uses the base-model view of this classifier.
+    """
     import os
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     model_name = "ProsusAI/finbert"
-    logger.info("Loading FinBERT encoder: %s", model_name)
+    logger.info("Loading FinBERT classifier: %s", model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
-    model.eval()
-    logger.info("FinBERT encoder loaded (%d parameters)", sum(p.numel() for p in model.parameters()))
+    model = AutoModelForSequenceClassification.from_pretrained(model_name)
+    if hasattr(model, "eval"):
+        model.eval()
+    logger.info("FinBERT classifier loaded")
     return tokenizer, model
+
+
+@lru_cache(maxsize=1)
+def _load_finbert_encoder():
+    """Bare encoder view of the shared FinBERT classifier (no second copy)."""
+    tokenizer, classifier = load_finbert_classifier()
+    return tokenizer, classifier.base_model
 
 
 # ---------------------------------------------------------------------------

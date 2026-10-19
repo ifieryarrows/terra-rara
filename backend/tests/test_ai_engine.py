@@ -918,8 +918,10 @@ class TestHybridFormula:
 class TestFinbertPipelineCaching:
     def test_get_finbert_pipeline_is_cached(self, monkeypatch):
         from app import ai_engine
+        from deep_learning.data.embeddings import load_finbert_classifier
 
         ai_engine.get_finbert_pipeline.cache_clear()
+        load_finbert_classifier.cache_clear()
         calls = {"tokenizer": 0, "model": 0, "pipeline": 0}
 
         class FakeTokenizer:
