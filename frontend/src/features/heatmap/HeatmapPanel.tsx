@@ -274,6 +274,16 @@ export const HeatmapPanel: React.FC = () => {
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
     if (!hoverStateRef.current.pinnedAnchor) setHoveredLeaf(leaf);
   }, []);
+  // A page scroll invalidates the pointer anchor: close the hover card at once
+  // instead of leaving it floating over unrelated sections. A pinned card is a
+  // deliberate, dismissible state and stays put.
+  const handleHoverInvalidated = useCallback(() => {
+    if (hoverStateRef.current.pinnedAnchor) return;
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    setHoveredAnchor(null);
+    setHoveredLeaf(null);
+  }, []);
   const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
     setPinnedAnchor(null);
     setHoveredAnchor(null);
@@ -380,6 +390,7 @@ export const HeatmapPanel: React.FC = () => {
                   onCategoryHover={handleCategoryHover}
                   onCategoryPointerMove={moveCategoryPanel}
                   onLeafHover={handleLeafHover}
+                  onHoverInvalidated={handleHoverInvalidated}
                   onCategoryDrillDown={handleCategoryDrillDown}
                   onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
                   onCategoryClick={handleCategoryClick}
