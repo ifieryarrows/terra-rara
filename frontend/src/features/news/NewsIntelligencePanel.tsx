@@ -118,6 +118,13 @@ export const NewsIntelligencePanel: React.FC = () => {
     active.thumbAnim?.cancel();
   }, [syncFromCompositor]);
 
+  const parkNewsFlow = useCallback(() => {
+    // The loading/empty/error states render inside the marquee track, so a leftover
+    // offset from a previous run would shift and clip them against the rail.
+    flowPositionRef.current = 0;
+    if (newsTrackRef.current) newsTrackRef.current.style.transform = 'translate3d(0px, 0px, 0px)';
+  }, []);
+
   const startCompositorFlow = useCallback((cycleWidth: number, railWidth: number): boolean => {
     const track = newsTrackRef.current;
     if (!track || typeof track.animate !== 'function' || cycleWidth <= railWidth || cycleWidth <= 0) {
@@ -375,6 +382,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     if (!rail || !set || items.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       startFlowAnimationRef.current = () => {};
       stopCompositorFlow();
+      parkNewsFlow();
       return undefined;
     }
 
@@ -386,6 +394,10 @@ export const NewsIntelligencePanel: React.FC = () => {
         stopCompositorFlow();
       };
     }
+
+    // Nothing drives the marquee here (the set fits the rail, or the compositor is
+    // unavailable): park the track rather than inherit a previous run's offset.
+    parkNewsFlow();
 
     const recenter = () => {
       const nextWidth = set.clientWidth || set.getBoundingClientRect().width;
@@ -439,7 +451,7 @@ export const NewsIntelligencePanel: React.FC = () => {
       lastFlowFrameTimeRef.current = null;
       stopCompositorFlow();
     };
-  }, [items.length, startCompositorFlow, stopCompositorFlow, syncNewsScrollbar]);
+  }, [items.length, parkNewsFlow, startCompositorFlow, stopCompositorFlow, syncNewsScrollbar]);
 
   const availableChannels = useMemo(() => {
     const dist = stats.data?.channel_distribution ?? {};
@@ -466,7 +478,11 @@ export const NewsIntelligencePanel: React.FC = () => {
     pauseNewsFlow();
     if (event.pointerType === 'touch' || event.button !== 0) return;
     const rail = event.currentTarget;
-    const card = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('.cm-news-card') : null;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const card = target?.closest<HTMLElement>('.cm-news-card') ?? null;
+    // Controls rendered inside the rail (retry/reset in transient states) rely on the
+    // native click: capturing the pointer on the rail would retarget it away from them.
+    if (!card && target?.closest('button, a, input, select, textarea, [role="button"]')) return;
     const captureTarget = card ?? rail;
     dragState.current = {
       pointerId: event.pointerId,
