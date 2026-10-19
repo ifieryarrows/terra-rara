@@ -1,18 +1,19 @@
 .cm-terra-cursor-dust { position: fixed; z-index: 9998; inset: 0; display: block; width: 100vw; height: 100vh; pointer-events: none; }
 
 #root.cm-terra-cursor-enabled {
-  cursor: var(--cm-terra-cursor, auto) !important;
+  cursor: var(--cm-terra-cursor) !important;
 }
 
 #root.cm-terra-cursor-enabled :is(a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"]) {
-  cursor: var(--cm-terra-cursor-interactive, pointer) !important;
+  cursor: var(--cm-terra-cursor-interactive) !important;
 }
 
-#root.cm-terra-cursor-enabled :is(input, textarea, [contenteditable="true"]) { cursor: text !important; }
+/* Prose keeps the I-beam so selecting text reads as an editing gesture. */
+#root.cm-terra-cursor-enabled :is(input, textarea, [contenteditable="true"], p, h1, h2, h3, li, td, th) { cursor: text !important; }
 #root.cm-terra-cursor-enabled select { cursor: auto !important; }
 
 #root.cm-terra-cursor-enabled :is(a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"]):active {
-  cursor: var(--cm-terra-cursor-pressed, var(--cm-terra-cursor, auto)) !important;
+  cursor: var(--cm-terra-cursor-pressed) !important;
 }
 
 @media (prefers-reduced-motion: reduce), (pointer: coarse) {
