@@ -110,6 +110,11 @@
   transition-duration: 300ms, 900ms;
 }
 
+.cm-logo-transition--reveal {
+  /* The reveal phase is visually transparent: let the workspace be touched. */
+  pointer-events: none;
+}
+
 .cm-logo-transition--reveal .cm-logo-transition__backdrop {
   animation: none;
   opacity: 0;

@@ -81,6 +81,9 @@ export const OverviewPage = () => {
   const coreInFlight = useRef(false);
   const enrichInFlight = useRef(false);
   const busyCount = useRef(0);
+  // Below-fold panels mount as the reader approaches them (or on the first Tab),
+  // keeping entry work proportional to what is actually on screen.
+  const [deferredPanels, setDeferredPanels] = useState<Record<'companion' | 'news' | 'map', boolean>>({ companion: false, news: false, map: false });
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
@@ -216,13 +219,62 @@ export const OverviewPage = () => {
 
   // Silent refresh: core every minute; TFT/explain on the weekly-model cadence.
   useEffect(() => {
-    const coreInterval = window.setInterval(() => void loadCore(true), 60000);
-    const enrichmentInterval = window.setInterval(() => void loadEnrichment(true), 300000);
+    const coreInterval = window.setInterval(() => {
+      if (!document.hidden) void loadCore(true);
+    }, 60000);
+    const enrichmentInterval = window.setInterval(() => {
+      if (!document.hidden) void loadEnrichment(true);
+    }, 300000);
     return () => {
       window.clearInterval(coreInterval);
       window.clearInterval(enrichmentInterval);
     };
   }, [loadCore, loadEnrichment]);
+
+  // Mount the below-fold panels once their section approaches the viewport.
+  // Re-armed when the entry skeleton is replaced by the real layout.
+  useEffect(() => {
+    const panels: Array<[keyof typeof deferredPanels, string]> = [
+      ['companion', 'neural-analysis'],
+      ['news', 'news-intelligence'],
+      ['map', 'market-map'],
+    ];
+    const revealAll = () => setDeferredPanels({ companion: true, news: true, map: true });
+    if (typeof IntersectionObserver === 'undefined') {
+      revealAll();
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      setDeferredPanels((previous) => {
+        let next = previous;
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const key = panels.find(([, id]) => id === (entry.target as HTMLElement).id)?.[0];
+          if (!key || next[key]) continue;
+          if (next === previous) next = { ...previous };
+          next[key] = true;
+          observer.unobserve(entry.target);
+        }
+        return next;
+      });
+    }, { rootMargin: '600px 0px' });
+    for (const [, id] of panels) {
+      const node = document.getElementById(id);
+      if (node) observer.observe(node);
+    }
+    // Keyboard users tab through the document without scrolling; mount everything
+    // on the first Tab so focus never reaches an empty section.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      document.removeEventListener('keydown', onKeyDown);
+      revealAll();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isInitialLoad]);
 
   // Live price snapshot polling (TradingView/websocket removed).
   useEffect(() => {
@@ -258,6 +310,20 @@ export const OverviewPage = () => {
     }
     return null;
   }, [history]);
+
+  const companionFallback = (
+    <div className="cm-commentary py-8 text-center text-xs text-slate-400 font-mono" role="status">
+      Loading Cuprum companion…
+    </div>
+  );
+  const newsFallback = (
+    <div className="cm-news-loading min-h-[280px] flex items-center justify-center gap-3" role="status">
+      <span className="cm-inline-loader" aria-hidden="true" />
+      <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
+        Loading news…
+      </span>
+    </div>
+  );
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
@@ -593,44 +659,35 @@ export const OverviewPage = () => {
 
           {/* Unified Cuprum XAI & Neural Companion Stage (merges AI Commentary + TFT-ASRO Model Focus) */}
           <GlassCard id="neural-analysis" title="Cuprum · Neural XAI companion" icon={Cpu} colSpan={8}>
-            <Suspense
-              fallback={
-                <div className="cm-commentary py-8 text-center text-xs text-slate-400 font-mono" role="status">
-                  Loading Cuprum companion…
-                </div>
-              }
-            >
-              <CuprumCompanionPanel
-                commentary={commentary}
-                explain={explain}
-                tftAnalysis={tftAnalysis}
-                loading={commentaryLoading}
-                error={loadErrors['AI commentary'] || loadErrors['Model focus']}
-              />
-            </Suspense>
+            {deferredPanels.companion ? (
+              <Suspense fallback={companionFallback}>
+                <CuprumCompanionPanel
+                  commentary={commentary}
+                  explain={explain}
+                  tftAnalysis={tftAnalysis}
+                  loading={commentaryLoading}
+                  error={loadErrors['AI commentary'] || loadErrors['Model focus']}
+                />
+              </Suspense>
+            ) : companionFallback}
           </GlassCard>
 
         </div>
         <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0" data-cm-route-reveal="surface">
-          <Suspense
-            fallback={
-              <div className="cm-news-loading min-h-[280px] flex items-center justify-center gap-3" role="status">
-                <span className="cm-inline-loader" aria-hidden="true" />
-                <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
-                  Loading news…
-                </span>
-              </div>
-            }
-          >
-            <NewsIntelligencePanel />
-          </Suspense>
+          {deferredPanels.news ? (
+            <Suspense fallback={newsFallback}>
+              <NewsIntelligencePanel />
+            </Suspense>
+          ) : newsFallback}
         </aside>
         </div>
 
         <div id="market-map" className="cm-dashboard-market-map min-w-0 w-full" data-cm-route-reveal="surface">
-          <Suspense fallback={<MapSkeleton />}>
-            <HeatmapPanel />
-          </Suspense>
+          {deferredPanels.map ? (
+            <Suspense fallback={<MapSkeleton />}>
+              <HeatmapPanel />
+            </Suspense>
+          ) : <MapSkeleton />}
         </div>
       </div>
     </div>

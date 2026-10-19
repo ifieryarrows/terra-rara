@@ -21,7 +21,10 @@ try {
     await page.goto(base + '/dashboard');
     await page.getByRole('button', { name: 'Last 30 daily closes', exact: true }).waitFor();
     await page.locator('#price-forecast .recharts-surface').waitFor();
+    // Below-fold panels mount on approach: visit the news section before asserting it.
+    await page.locator('#news-intelligence').scrollIntoViewIfNeeded();
     await page.getByRole('button', { name: 'News filters', exact: true }).waitFor();
+    await page.locator('#price-forecast').scrollIntoViewIfNeeded();
     await page.waitForTimeout(600);
     const chartRequests = requests.filter(url => /\/api\/(history|analysis)/.test(url)).length;
     await page.getByRole('button', { name: 'Last 90 daily closes', exact: true }).click();
@@ -75,6 +78,8 @@ try {
     await page.getByRole('button', { name: 'Weight', exact: true }).click();
     assert.equal(await page.getByRole('button', { name: 'All categories', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.getByRole('button', { name: 'Weight', exact: true }).getAttribute('aria-pressed'), 'true');
+    // The map panel mounts on approach; scroll its section into view first.
+    await page.locator('#market-map').scrollIntoViewIfNeeded();
     // Wheel zoom is the current zoom mechanism; the map mirrors it in data-zoomed.
     const map = page.locator('.cm-heatmap-map');
     await map.scrollIntoViewIfNeeded();
