@@ -135,3 +135,19 @@ it('still captures the pointer when a drag starts on a headline card', async () 
   fireEvent.pointerDown(card, { pointerId: 9, button: 0, pointerType: 'mouse' });
   expect(capture).toHaveBeenCalledWith(9);
 });
+
+// The refresh status must sit inside the headline count row: as a separate block above it,
+// appearing and disappearing shoved the marquee (and every card below it) down mid-refresh.
+it('renders the refresh status inside the headline count row', () => {
+  stubFlowEnvironment();
+  state.feed.mockReturnValue({ ...feedWith(cardItems(4)), isFetching: true });
+  render(<NewsIntelligencePanel/>);
+  const status = screen.getByRole('status');
+  expect(status).toHaveTextContent('Updating headlines');
+  const row = document.querySelector('.cm-news-rail-tools');
+  if (!row) throw new Error('headline count row not rendered');
+  expect(row).toContainElement(status);
+  const count = row.querySelector('p');
+  if (!count) throw new Error('headline count line not rendered');
+  expect(count.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+});

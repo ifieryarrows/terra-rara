@@ -673,9 +673,9 @@ export const NewsIntelligencePanel: React.FC = () => {
         </div>
       </div>
       {/* Feed list */}
-      {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
       {items.length > 0 && <div className="cm-news-rail-tools">
         <p><span>{items.length}{feed.data ? ` / ${totalMatching}` : ''}</span> headlines <small>· scroll sideways to browse</small></p>
+        {isRefreshing && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
         <div className="cm-news-rail-controls" aria-label="Browse headlines">
           <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(-1)} aria-label="Previous headlines" aria-controls={`${filterId}-headlines`}><ArrowLeft size={15} aria-hidden="true"/></button>
           <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(1)} aria-label="Next headlines" aria-controls={`${filterId}-headlines`}><ArrowRight size={15} aria-hidden="true"/></button>
