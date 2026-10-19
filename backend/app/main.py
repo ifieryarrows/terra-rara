@@ -951,11 +951,15 @@ async def get_live_price(
     The helper enforces exact-instrument lookup: HG=F uses yfinance first and
     falls back to the latest DB close. Spot XCU/USD is no longer used by the UI.
     """
-    try:
+    def _load_price() -> Optional[float]:
+        # yfinance is blocking; keep it off the event loop.
         from app.inference import get_current_price
 
         with SessionLocal() as session:
-            price = get_current_price(session, symbol)
+            return get_current_price(session, symbol)
+
+    try:
+        price = await run_in_threadpool(_load_price)
         return {
             "symbol": symbol,
             "price": round(float(price), 4) if price is not None else None,
