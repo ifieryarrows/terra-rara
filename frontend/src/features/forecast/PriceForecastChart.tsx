@@ -1,4 +1,4 @@
-import { memo, useId, useMemo, useState } from 'react';
+import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useReducedMotion } from 'framer-motion';
 import type { HistoryDataPoint, TFTAnalysisResponse } from '../../types';
@@ -30,6 +30,18 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
   const [rangeVisible, setRangeVisible] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
   const chart = useMemo(() => preparePriceChart(history, forecast, count), [history, forecast, count]);
+  const [animateSeries, setAnimateSeries] = useState(true);
+  const lastRowsRef = useRef<PriceChartRow[] | null>(null);
+  const hadForecastRef = useRef(false);
+  // Draw the entry animation once — including the moment the forecast lands —
+  // then let refreshes redraw in place instead of replaying the 1.5s path draw.
+  useLayoutEffect(() => {
+    const hadRows = lastRowsRef.current !== null;
+    const forecastArrived = chart.hasForecast && !hadForecastRef.current;
+    lastRowsRef.current = chart.rows;
+    hadForecastRef.current = chart.hasForecast;
+    if (hadRows && !forecastArrived && animateSeries) setAnimateSeries(false);
+  }, [chart.rows, chart.hasForecast, animateSeries]);
   if (!chart.rows.length) return <ViewState kind={historyError ? 'error' : 'empty'} title={historyError ? 'Price history could not be loaded' : 'No chart data available'} description="Historical closes are needed to anchor the daily forecast. Use Refresh overview to check again." compact/>;
   return <div className="cm-price-chart">
     <div className="cm-chart-toolbar">
@@ -52,11 +64,11 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
           <XAxis dataKey="date" tick={{ fill: theme.text, fontSize: 12 }} tickFormatter={value => formatChartDate(value, true)} axisLine={false} tickLine={false} minTickGap={28} interval="preserveStartEnd"/>
           <YAxis orientation="right" domain={chart.domain} tick={{ fill: theme.text, fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={value => `$${value.toFixed(2)}`} width={58}/>
           <Tooltip content={<PriceTooltip/>} isAnimationActive={false} wrapperStyle={{ zIndex: 2, pointerEvents: 'none' }}/>
-          <Area isAnimationActive={!reducedMotion} type="linear" dataKey="price" stroke={theme.copper} fill={theme.copper} fillOpacity={.08} strokeWidth={2} connectNulls={false}/>
+          <Area isAnimationActive={!reducedMotion && animateSeries} type="linear" dataKey="price" stroke={theme.copper} fill={theme.copper} fillOpacity={.08} strokeWidth={2} connectNulls={false}/>
           {rangeVisible && <Area isAnimationActive={false} type="linear" dataKey="priceRange" stroke="none" fill={theme.forecast} fillOpacity={.12} connectNulls={false} tooltipType="none"/>}
           {rangeVisible && <Line isAnimationActive={false} type="linear" dataKey="priceQ10" stroke={theme.forecast} strokeWidth={1} strokeDasharray="2 4" strokeOpacity={.7} dot={false} connectNulls={false}/>}
           {rangeVisible && <Line isAnimationActive={false} type="linear" dataKey="priceQ90" stroke={theme.forecast} strokeWidth={1} strokeDasharray="2 4" strokeOpacity={.7} dot={false} connectNulls={false}/>}
-          {medianVisible && <Line isAnimationActive={!reducedMotion} type="linear" dataKey="priceMedian" stroke={theme.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} connectNulls={false}/>}
+          {medianVisible && <Line isAnimationActive={!reducedMotion && animateSeries} type="linear" dataKey="priceMedian" stroke={theme.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} connectNulls={false}/>}
           {chart.hasForecast && <ReferenceLine x={chart.lastDate} stroke={theme.text} strokeDasharray="3 3" label={{ value: 'Last close', position: 'insideTopLeft', fill: theme.text, fontSize: 12 }}/ >}
         </ComposedChart>
       </ResponsiveContainer>

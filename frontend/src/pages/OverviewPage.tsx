@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, Suspense, lazy, memo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense, lazy, memo } from 'react';
 import { motion } from 'framer-motion';
 import { FinancialPanel as GlassCard } from '../components/ui/FinancialPanel';
 import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
@@ -63,10 +63,24 @@ NumberTicker.displayName = 'NumberTicker';
 
 // --- Main App ---
 
+// Polls frequently return byte-identical payloads; keeping the previous object
+// identity in state skips every downstream memo and render.
+function isSamePayload(previous: unknown, next: unknown): boolean {
+  if (previous === next) return true;
+  if (previous == null || next == null) return false;
+  try {
+    return JSON.stringify(previous) === JSON.stringify(next);
+  } catch {
+    return false;
+  }
+}
+
 export const OverviewPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeOverviewSection, setActiveOverviewSection] = useState('price-forecast');
-  const refreshInFlight = useRef(false);
+  const coreInFlight = useRef(false);
+  const enrichInFlight = useRef(false);
+  const busyCount = useRef(0);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
@@ -79,46 +93,78 @@ export const OverviewPage = () => {
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
   const sentimentSummary = useSentimentSummary(7, 6);
 
-  // Silent refresh - no loading state flash after initial load
-  const loadData = useCallback(async (silent = false) => {
-    if (refreshInFlight.current) return;
-    refreshInFlight.current = true;
-    setIsRefreshing(true);
-    const [analysisResult, historyResult, tftResult, explainResult] = await Promise.allSettled([
+  const setBusy = useCallback((delta: 1 | -1) => {
+    busyCount.current = Math.max(0, busyCount.current + delta);
+    setIsRefreshing(busyCount.current > 0);
+  }, []);
+
+  // Core snapshot (analysis + history) gates the skeleton and dashboard-ready.
+  const loadCore = useCallback(async (silent = false) => {
+    if (coreInFlight.current) return;
+    coreInFlight.current = true;
+    setBusy(1);
+    try {
+      const [analysisResult, historyResult] = await Promise.allSettled([
         fetchAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
+      ]);
+      const nextErrors: Record<string, string> = {};
+      if (analysisResult.status === 'fulfilled') setAnalysis(previous => isSamePayload(previous, analysisResult.value) ? previous : analysisResult.value);
+      else {
+        if (!silent) setAnalysis(null);
+        nextErrors['Price forecast'] = String(analysisResult.reason);
+      }
+      if (historyResult.status === 'fulfilled') setHistory(previous => isSamePayload(previous, historyResult.value) ? previous : historyResult.value);
+      else {
+        if (!silent) setHistory(null);
+        nextErrors['Price history'] = String(historyResult.reason);
+      }
+      setLoadErrors((previous) => {
+        const next = { ...previous };
+        delete next['Price forecast'];
+        delete next['Price history'];
+        return { ...next, ...nextErrors };
+      });
+      setIsInitialLoad(false);
+    } finally {
+      setBusy(-1);
+      coreInFlight.current = false;
+    }
+  }, [setBusy]);
+
+  // Weekly-model enrichment (TFT + model focus) hydrates in the background so a
+  // slow live-inference fallback can never hold the chart hostage.
+  const loadEnrichment = useCallback(async (silent = false) => {
+    if (enrichInFlight.current) return;
+    enrichInFlight.current = true;
+    setBusy(1);
+    try {
+      const [tftResult, explainResult] = await Promise.allSettled([
         fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchExplain(DEFAULT_COPPER_SYMBOL),
-    ]);
-    const nextErrors: Record<string, string> = {};
-    if (analysisResult.status === 'fulfilled') setAnalysis(analysisResult.value);
-    else {
-      if (!silent) setAnalysis(null);
-      nextErrors['Price forecast'] = String(analysisResult.reason);
+      ]);
+      const nextErrors: Record<string, string> = {};
+      if (tftResult.status === 'fulfilled') setTftAnalysis(previous => isSamePayload(previous, tftResult.value) ? previous : tftResult.value);
+      else {
+        if (!silent) setTftAnalysis(null);
+        nextErrors['Deep-learning forecast'] = String(tftResult.reason);
+      }
+      if (explainResult.status === 'fulfilled') setExplain(previous => isSamePayload(previous, explainResult.value) ? previous : explainResult.value);
+      else {
+        if (!silent) setExplain(null);
+        nextErrors['Model focus'] = String(explainResult.reason);
+      }
+      setLoadErrors((previous) => {
+        const next = { ...previous };
+        delete next['Deep-learning forecast'];
+        delete next['Model focus'];
+        return { ...next, ...nextErrors };
+      });
+    } finally {
+      setBusy(-1);
+      enrichInFlight.current = false;
     }
-    if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
-    else {
-      if (!silent) setHistory(null);
-      nextErrors['Price history'] = String(historyResult.reason);
-    }
-    if (tftResult.status === 'fulfilled') setTftAnalysis(tftResult.value);
-    else {
-      if (!silent) setTftAnalysis(null);
-      nextErrors['Deep-learning forecast'] = String(tftResult.reason);
-    }
-    if (explainResult.status === 'fulfilled') setExplain(explainResult.value);
-    else {
-      if (!silent) setExplain(null);
-      nextErrors['Model focus'] = String(explainResult.reason);
-    }
-    setLoadErrors((previous) => ({
-      ...(previous['AI commentary'] ? { 'AI commentary': previous['AI commentary'] } : {}),
-      ...nextErrors,
-    }));
-    setIsInitialLoad(false);
-    setIsRefreshing(false);
-    refreshInFlight.current = false;
-  }, []);
+  }, [setBusy]);
 
   const loadCommentary = useCallback(async () => {
     setCommentaryLoading(true);
@@ -138,10 +184,11 @@ export const OverviewPage = () => {
     }
   }, []);
 
-  // Initial load
+  // Initial load: the core snapshot gates the skeleton; enrichment hydrates in the background.
   useEffect(() => {
-    loadData(false);
-  }, [loadData]);
+    void loadCore(false);
+    void loadEnrichment(false);
+  }, [loadCore, loadEnrichment]);
 
   // Keep the section rail in sync with the part of the workspace in view.
   useEffect(() => {
@@ -167,11 +214,15 @@ export const OverviewPage = () => {
     };
   }, [isInitialLoad]);
 
-  // Silent refresh every 60s - no UI flash
+  // Silent refresh: core every minute; TFT/explain on the weekly-model cadence.
   useEffect(() => {
-    const interval = setInterval(() => loadData(true), 60000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+    const coreInterval = window.setInterval(() => void loadCore(true), 60000);
+    const enrichmentInterval = window.setInterval(() => void loadEnrichment(true), 300000);
+    return () => {
+      window.clearInterval(coreInterval);
+      window.clearInterval(enrichmentInterval);
+    };
+  }, [loadCore, loadEnrichment]);
 
   // Live price snapshot polling (TradingView/websocket removed).
   useEffect(() => {
@@ -198,6 +249,15 @@ export const OverviewPage = () => {
   useEffect(() => {
     if (analysis) loadCommentary();
   }, [analysis, loadCommentary]);
+
+  const latestHistoryPrice = useMemo(() => {
+    const rows = history?.data;
+    if (!rows?.length) return null;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      if (rows[index].price != null) return rows[index].price;
+    }
+    return null;
+  }, [history]);
 
   // Only show full loading on initial load
   if (isInitialLoad && !analysis) {
@@ -234,9 +294,6 @@ export const OverviewPage = () => {
       ? { tone: 'text-rose-300', chip: 'bg-rose-500/15 text-rose-300 border-rose-400/30', icon: TrendingDown, label: 'Negative' }
       : { tone: 'text-amber-300', chip: 'bg-amber-500/15 text-amber-300 border-amber-400/30', icon: Minus, label: 'Balanced' };
   const SentimentIcon = newsSentimentMeta.icon;
-  const latestHistoryPrice = [...(history?.data || [])]
-    .reverse()
-    .find((p) => p.price != null)?.price ?? null;
   const quotePrice = livePrice ?? latestHistoryPrice;
   const quoteChange = quoteComparison(livePrice, latestHistoryPrice);
 
@@ -309,7 +366,7 @@ export const OverviewPage = () => {
             <a href="#news-intelligence" onClick={(e) => handleSectionNav(e, 'news-intelligence')} aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a>
             <a href="#market-map" onClick={(e) => handleSectionNav(e, 'market-map')} aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a>
           </nav>
-          <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadData(true); }}/>
+          <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadCore(true); void loadEnrichment(true); }}/>
         </div>
         {Object.keys(loadErrors).length > 0 && (
           <div className="cm-dashboard-alerts" role="status" aria-live="polite" data-cm-route-reveal="surface">
