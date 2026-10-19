@@ -291,21 +291,7 @@ export function CuprumCompanionPanel({
 
   // --- Dynamic Retro Pixel Animation State Machine ---
   useEffect(() => {
-    // Inject floating hover keyframes dynamically to bypass Vite CSS bundle extraction
-    const styleId = 'cuprum-float-style';
-    if (typeof document !== 'undefined' && !document.getElementById(styleId)) {
-      const style = document.createElement('style');
-      style.id = styleId;
-      style.textContent = `
-        @keyframes cuprumPetFloat {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-5px); }
-        }
-      `;
-      document.head.appendChild(style);
-    }
-
-    // Continuous 2-frame fire particle floating animation
+    // Continuous 2-frame pure retro pixel stepped animation
     animIntervalRef.current = window.setInterval(() => {
       setExpression((prev) => (prev === 'idle-2' ? 'idle-1' : 'idle-2'));
     }, 600);
@@ -342,8 +328,8 @@ export function CuprumCompanionPanel({
     }, 280);
   };
 
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v3`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v3`;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${expression}.webp?v=retro-outline-v4`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${expression}.png?v=retro-outline-v4`;
 
   return (
     <div
@@ -427,7 +413,6 @@ export function CuprumCompanionPanel({
               style={{
                 width: 140,
                 height: 140,
-                animation: 'cuprumPetFloat 3s cubic-bezier(0.42, 0, 0.58, 1) infinite',
               }}
             >
               <picture>
