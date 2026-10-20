@@ -57,7 +57,7 @@ try {
       assert.equal(await page.locator('.cm-cinematic-surface').count(), 3, 'Dashboard fragments stay inside the shared world');
       assert.equal(await page.locator('.cm-atmosphere-stars').count(), 1, 'Global atmosphere keeps one shared star field');
       if (height > 650) {
-        assert.ok(story.height >= height * 3.9 && story.height <= height * 4.2, `Pinned story tail is too long or short: ${story.height}`);
+        assert.ok(story.height >= height * 4.9 && story.height <= height * 5.2, `Pinned story tail is too long or short: ${story.height}`);
       }
       // The forecast now exits before the particle ingot tail, so sample its
       // settled state before the negative-space handoff begins.
