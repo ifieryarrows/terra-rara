@@ -414,7 +414,7 @@ export const OverviewPage = () => {
 
             <div className="cm-dashboard-quote-meta">
               <span>{lastLiveUpdateAt ? `Checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}` : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}</span>
-              <span aria-hidden={!quoteChange} className={quoteChange ? undefined : 'cm-dashboard-meta--placeholder'} />
+              <span aria-hidden={!quoteChange} className={quoteChange ? undefined : 'cm-dashboard-meta--placeholder'}>{quoteChange ? 'Change vs last stored close' : null}</span>
             </div>
 
             <div className="cm-dashboard-sentiment">

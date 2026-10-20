@@ -386,6 +386,11 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   user-select: none;
 }
 .cm-dashboard-quote-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .35rem 1rem; padding-bottom: 1.1rem; border-bottom: 1px solid var(--cm-dashboard-rule-soft); color: var(--cm-muted); font-size: .67rem; line-height: 1.5; }
+@media (max-width: 27rem) {
+  /* Two fixed rows keep the metas from collapsing to one line when the live
+     "Checked…" text replaces the longer historical-close sentence. */
+  .cm-market-dashboard .cm-dashboard-quote-meta { display: grid; grid-template-columns: minmax(0, 1fr); gap: .35rem; }
+}
 .cm-dashboard-sentiment { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .8rem; padding-top: 1rem; }
 .cm-dashboard-sentiment-copy { display: grid; gap: .3rem; }
 .cm-dashboard-sentiment-copy > span { color: var(--cm-text); font-size: .66rem; font-weight: 600; letter-spacing: .1em; }
