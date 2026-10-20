@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { Outlet, NavLink, Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Brain, CheckCircle, Server } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -14,6 +14,29 @@ const navigation = [
   { to: '/validation', icon: CheckCircle, label: 'Validation' },
   { to: '/system', icon: Server, label: 'System' },
 ];
+
+// Keep the route chunks warm while the current page is idle. Without this the
+// first switch to each workspace page replaces the shell with the top-level
+// route loader for a frame — the dark "Opening your workspace" flash.
+const routePrefetch: Record<string, () => Promise<unknown>> = {
+  '/dashboard': () => import('../pages/OverviewPage'),
+  '/models': () => import('../pages/ModelsPage'),
+  '/validation': () => import('../pages/ValidationPage'),
+  '/system': () => import('../pages/SystemPage'),
+};
+
+function prefetchWorkspaceRoutes() {
+  for (const load of Object.values(routePrefetch)) void load();
+}
+
+function WorkspacePageSkeleton() {
+  return (
+    <div className="cm-workspace-page-skeleton" role="status" aria-busy="true" aria-label="Loading page">
+      <span className="sr-only">Loading page.</span>
+      <div className="cm-state-skeleton" aria-hidden="true"><span /><span /><span /></div>
+    </div>
+  );
+}
 
 function getScrollY(): number {
   if (typeof window === 'undefined') return 0;
@@ -103,6 +126,17 @@ export function AppShell() {
     };
   }, []);
 
+  useEffect(() => {
+    const idle = 'requestIdleCallback' in window
+      ? window.requestIdleCallback(prefetchWorkspaceRoutes, { timeout: 2500 })
+      : undefined;
+    const timer = idle === undefined ? window.setTimeout(prefetchWorkspaceRoutes, 1600) : undefined;
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback(idle);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
   const isHidden = !isVisible && !isFocused;
 
   return (
@@ -124,7 +158,14 @@ export function AppShell() {
           <Brand />
           <nav className="cm-workspace-nav" aria-label="Workspace">
             {navigation.map(({ to, icon: Icon, label }) => (
-              <NavLink to={to} key={to} end className="cm-nav-link">
+              <NavLink
+                to={to}
+                key={to}
+                end
+                className="cm-nav-link"
+                onMouseEnter={() => { void routePrefetch[to]?.(); }}
+                onFocus={() => { void routePrefetch[to]?.(); }}
+              >
                 <Icon size={17} aria-hidden="true" />
                 {label}
               </NavLink>
@@ -133,7 +174,9 @@ export function AppShell() {
         </div>
       </header>
       <main id="main-content" tabIndex={-1} className="cm-workspace-main">
-        <Outlet />
+        <Suspense fallback={<WorkspacePageSkeleton />}>
+          <Outlet />
+        </Suspense>
       </main>
       <footer className="cm-workspace-footer">
         <span>CopperMind / Terra Rara · Research workspace</span>

@@ -70,7 +70,7 @@ function LandingEntry() {
   if (new URLSearchParams(search).has('symbol')) return <Navigate replace to={'/dashboard' + search + hash}/>;
   return <LandingPage/>;
 }
-function RouteLoading() { return <div className="cm-route-loading" role="status"><BrandMark size={24} variant="small"/><span>Opening your workspace…</span></div>; }
+function RouteLoading() { return <div className="cm-route-loading" role="status" aria-label="Loading workspace" aria-busy="true"><BrandMark size={24} variant="small"/><span className="sr-only">Loading workspace…</span></div>; }
 
 function OverviewAlias() {
   const { search, hash } = useLocation();

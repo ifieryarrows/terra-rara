@@ -41,7 +41,10 @@
 }
 
 html { background: var(--cm-bg); scroll-padding-top: 7rem; scroll-behavior: smooth; }
-html[data-cm-route-transition] { scrollbar-gutter: stable; }
+/* Reserve the scrollbar track on every page. Without this, the skeleton and
+   the real workspace disagree by one scrollbar width when the page grows past
+   the viewport, shifting the centred layout sideways after data arrives. */
+html { scrollbar-gutter: stable; }
 /* Preserve the outgoing page's scroll range only during the logo transition. */
 body { margin: 0; min-width: 20rem; min-height: max(100vh, var(--cm-route-transition-min-height, 0px)); font-family: var(--cm-font-family); }
 

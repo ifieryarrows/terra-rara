@@ -53,6 +53,8 @@
 @media (prefers-reduced-motion: reduce) {
   .cm-skeleton-bone,
   .cm-state-skeleton span,
+  .cm-dashboard-price--skeleton,
+  .cm-dashboard-change--skeleton,
   .cm-map-skeleton__globe,
   .cm-map-skeleton__orbit,
   .cm-map-skeleton__orbit--reverse {

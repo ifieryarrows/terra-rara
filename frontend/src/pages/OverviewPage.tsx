@@ -399,16 +399,22 @@ export const OverviewPage = () => {
             <div className="cm-dashboard-price-row">
               <span className="cm-dashboard-price">{quotePrice != null ? quotePrice.toFixed(4) : '--'}</span>
               <span className="cm-dashboard-currency">USD</span>
-              {quoteChange && (
-                <span className={clsx("cm-dashboard-change", quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400")}>
-                  {formatQuoteDelta(quoteChange.delta)} <span>({formatQuoteDelta(quoteChange.percent)}%)</span>
-                </span>
-              )}
+              <span
+                aria-hidden={!quoteChange}
+                className={clsx(
+                  "cm-dashboard-change",
+                  quoteChange
+                    ? quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400"
+                    : "cm-dashboard-change--placeholder"
+                )}
+              >
+                {quoteChange ? <>{formatQuoteDelta(quoteChange.delta)} <span>({formatQuoteDelta(quoteChange.percent)}%)</span></> : null}
+              </span>
             </div>
 
             <div className="cm-dashboard-quote-meta">
               <span>{lastLiveUpdateAt ? `Checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}` : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}</span>
-              {quoteChange && <span>Change vs last stored close</span>}
+              <span aria-hidden={!quoteChange} className={quoteChange ? undefined : 'cm-dashboard-meta--placeholder'} />
             </div>
 
             <div className="cm-dashboard-sentiment">

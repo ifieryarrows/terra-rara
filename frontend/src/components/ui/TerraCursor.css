@@ -8,8 +8,9 @@
   cursor: var(--cm-terra-cursor-interactive) !important;
 }
 
-/* Prose keeps the I-beam so selecting text reads as an editing gesture. */
-#root.cm-terra-cursor-enabled :is(input, textarea, [contenteditable="true"], p, h1, h2, h3, li, td, th) { cursor: text !important; }
+/* Keep the I-beam only where typing is possible; prose keeps the copper
+   cursor so the pointer never disappears while reading. */
+#root.cm-terra-cursor-enabled :is(input, textarea, [contenteditable="true"]) { cursor: text !important; }
 #root.cm-terra-cursor-enabled select { cursor: auto !important; }
 
 #root.cm-terra-cursor-enabled :is(a, button, [role="button"], [role="tab"], summary, [data-cursor="interactive"]):active {

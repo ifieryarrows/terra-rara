@@ -5,16 +5,16 @@ import { getCinematicParticleProgress } from './cinematic-entry';
 export type ParticleQuality = 'high' | 'balanced';
 
 const MAX_PARTICLES = 640;
-const PARTICLE_RESPONSE_MS = 150;
+// The field trails the scene instead of snapping with it. The stepper glides a
+// scene in ~0.9 s, so a 220 ms follow still settles before the next gesture
+// while the copper shapes read as drifting matter rather than a hard cut.
+const PARTICLE_RESPONSE_MS = 220;
 const SCROLL_IMPULSE_DAMPING = 0.965;
 const SCROLL_IMPULSE_GAIN = 0.48;
 const QUALITY = {
   high: { count: MAX_PARTICLES, dpr: 1.5, pointSize: 13, canvasAlpha: .92, largeRadius: 2.35, radius: 1.3 },
   balanced: { count: 420, dpr: 1, pointSize: 12, canvasAlpha: .88, largeRadius: 2.15, radius: 1.18 },
 } as const;
-
-const EVIDENCE_RING_PARTICLES = Math.round(MAX_PARTICLES * .62);
-const EVIDENCE_TRACE_PARTICLES = MAX_PARTICLES - EVIDENCE_RING_PARTICLES;
 
 function noise(index: number, salt: number) {
   const value = Math.sin((index + 1) * (12.9898 + salt * 17.17)) * 43758.5453;
@@ -92,21 +92,6 @@ const forecastPath = makeShape(index => {
   return [.44 + amount * .53, .66 - amount * .32 + Math.sin(amount * Math.PI * 4.2) * .04 + uncertainty];
 });
 
-const evidenceMark = makeShape(index => {
-  if (index < EVIDENCE_RING_PARTICLES) {
-    const angle = index / EVIDENCE_RING_PARTICLES * Math.PI * 2;
-    const radius = .205 + (noise(index, 12) - .5) * .025;
-    return [.75 + Math.cos(angle) * radius, .49 + Math.sin(angle) * radius];
-  }
-  const amount = (index - EVIDENCE_RING_PARTICLES) / Math.max(1, EVIDENCE_TRACE_PARTICLES - 1);
-  if (amount < .43) {
-    const local = amount / .43;
-    return [.65 + local * .075, .5 + local * .075];
-  }
-  const local = (amount - .43) / .57;
-  return [.725 + local * .15, .575 - local * .21];
-});
-
 // A compact, slightly faceted bar gives the final CTA a tangible destination
 // before the field releases back into the open research space.
 const copperIngot = makeShape(index => {
@@ -137,9 +122,10 @@ const sourceKeyframes = [
   { at: 0, points: copperForm }, { at: .16, points: copperForm },
   { at: .27, points: dispersedField }, { at: .39, points: marketField },
   { at: .56, points: intelligenceNetwork }, { at: .70, points: forecastPath },
-  // The forecast surface has cleared by this point; the evidence mark and
-  // ingot therefore resolve in the intentional negative-space tail.
-  { at: .74, points: evidenceMark }, { at: .84, points: copperIngot },
+  // The forecast surface clears as the story steps to the ingot. One long
+  // convergence replaces the old evidence-mark stop, so the field keeps
+  // drifting through the negative-space tail instead of snapping into a tick.
+  { at: .86, points: copperIngot },
   { at: .93, points: copperIngot }, { at: 1, points: researchSpreadField },
 ];
 
