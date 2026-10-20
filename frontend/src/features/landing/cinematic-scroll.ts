@@ -20,9 +20,10 @@ const WHEEL_GESTURE_GAP_MS = 260;
  * lands on a settled state instead of a mid-transition frame: the market frame
  * assembling (.24 → .30, where the last tile lands), the four news sequence
  * layers (.43 headline, .48 entities, .52 signal read, .57 two reads), the
- * forecast draw and its range band (.66 → .69), and the outro (.97).
+ * forecast draw and its range band (.66 → .69), the ingot's quiet
+ * negative-space stage (.86, held from .84 to .93), and the outro (.97).
  */
-export const CINEMATIC_RESTS = [0, .24, .30, .43, .48, .52, .57, .66, .69, .97] as const;
+export const CINEMATIC_RESTS = [0, .24, .30, .43, .48, .52, .57, .66, .69, .86, .97] as const;
 
 export type CinematicSceneGeometry = {
   /** Story section top in document coordinates. */

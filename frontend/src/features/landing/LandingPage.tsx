@@ -6,7 +6,7 @@ import { BrandMark } from '../../components/ui/BrandMark';
 import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
-import { CINEMATIC_ENTRY_TRIGGER } from './cinematic-entry';
+import { CINEMATIC_ENTRY_FADE_FROM, CINEMATIC_ENTRY_TRIGGER, getCinematicEntryOpacity } from './cinematic-entry';
 import './landing.css';
 
 const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
@@ -51,9 +51,9 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
 }
 
 function CinematicEntryCTA({ progress, revealProgress }: { progress: MotionValue<number>; revealProgress: MotionValue<number> }) {
-  const opacity = useTransform(revealProgress, [0, .1], [0, 1]);
+  const opacity = useTransform(progress, getCinematicEntryOpacity);
   const y = useTransform(revealProgress, [0, .1], [28, 0]);
-  const visibility = useTransform(revealProgress, value => value > .001 ? 'visible' : 'hidden');
+  const visibility = useTransform(progress, value => value > CINEMATIC_ENTRY_FADE_FROM ? 'visible' : 'hidden');
   const pointerEvents = useTransform(progress, value => value >= CINEMATIC_ENTRY_TRIGGER ? 'auto' : 'none');
   return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
