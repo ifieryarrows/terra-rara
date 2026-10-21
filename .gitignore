@@ -65,9 +65,14 @@ yarn-error.log*
 .gemini/
 .cursor/
 .agents/
+.opencode/
+/AGENTS.md
 *.swp
 *.swo
 *~
+
+# Local QA scratch (probes, layout-shift dumps, screenshots)
+/tmp/
 
 # OS
 .DS_Store

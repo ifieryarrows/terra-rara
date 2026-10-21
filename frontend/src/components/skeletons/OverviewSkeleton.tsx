@@ -70,8 +70,8 @@ export function OverviewSkeleton() {
             </div>
 
             <div className="cm-dashboard-quote-meta">
-              <SkeletonBone className="w-44 h-4" />
-              <SkeletonBone className="w-32 h-4" />
+              <span className="cm-dashboard-meta--skeleton" aria-hidden="true" />
+              <span className="cm-dashboard-meta--skeleton cm-dashboard-meta--skeleton-delta" aria-hidden="true" />
             </div>
 
             <div className="cm-dashboard-sentiment">

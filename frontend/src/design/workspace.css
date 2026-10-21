@@ -375,9 +375,12 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-dashboard-change--placeholder::before,
 .cm-dashboard-change--skeleton::before { content: '+0.0000 (+00.00%)'; }
 .cm-dashboard-price--skeleton::before { content: '4.7800'; }
-.cm-dashboard-meta--placeholder::before { content: 'Change vs last stored close'; }
+.cm-dashboard-meta--skeleton::before { content: 'Showing the last available historical close'; }
+.cm-dashboard-meta--placeholder::before,
+.cm-dashboard-meta--skeleton-delta::before { content: 'Change vs last stored close'; }
 .cm-dashboard-price--skeleton,
-.cm-dashboard-change--skeleton {
+.cm-dashboard-change--skeleton,
+.cm-dashboard-meta--skeleton {
   color: transparent;
   border-radius: .35rem;
   background: linear-gradient(90deg, var(--cm-surface-raised) 0%, color-mix(in srgb, var(--cm-surface-raised) 65%, var(--cm-copper) 14%) 50%, var(--cm-surface-raised) 100%);
