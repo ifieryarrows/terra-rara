@@ -79,7 +79,7 @@ function OverviewAlias() {
 
 export function AppRoutes() {
   const { pathname } = useLocation();
-  return <MotionConfig reducedMotion="user" transition={{ duration: motionTokens.ui, ease: motionTokens.ease }}><RouteLifecycle/><RouteBoundary key={pathname}><Suspense fallback={<RouteLoading/>}><Routes>
+  return <MotionConfig reducedMotion="user" transition={{ duration: motionTokens.ui, ease: motionTokens.ease }}><RouteLifecycle/><RouteBoundary resetKey={pathname}><Suspense fallback={<RouteLoading/>}><Routes>
     <Route path="/" element={<LandingEntry/>}/>
     <Route element={<AppShell/>}>
       <Route path="dashboard" element={<OverviewPage/>}/>

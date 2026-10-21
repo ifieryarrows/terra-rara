@@ -14,6 +14,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || 'msedge' });
 const results = [];
 const workspaceResults = [];
+const workspaceSwitchResults = [];
 const adaptiveResults = [];
 try {
   for (const [width, height, reducedMotion] of [[1536, 900, 'no-preference'], [1280, 600, 'no-preference'], [1024, 650, 'no-preference'], [768, 800, 'no-preference'], [320, 650, 'no-preference'], [390, 844, 'no-preference'], [1280, 720, 'reduce']]) {
@@ -176,10 +177,43 @@ try {
       await page.screenshot({ path: join(output, `fixture-${path.slice(1)}-${width}.png`), fullPage: true });
       workspaceResults.push({ path, width, overflow, fixture: true });
     }
+    // The shell must never blink when moving between workspace pages. Keep
+    // sampling through the switch: the header has to remain the same node and
+    // stay at full opacity instead of replaying the logo-ceremony reveal.
+    await page.goto(new URL('/models', base).href);
+    await page.locator('.cm-workspace-header').waitFor();
+    const headerSwitch = await page.evaluate(async () => {
+      const header = document.querySelector('.cm-workspace-header');
+      const target = [...document.querySelectorAll('.cm-nav-link')].find(link => link.textContent?.trim() === 'Validation');
+      if (!header || !target) throw new Error('Workspace navigation unavailable');
+      const samples = [];
+      let running = true;
+      const sample = () => {
+        const current = document.querySelector('.cm-workspace-header');
+        const style = current ? getComputedStyle(current) : null;
+        samples.push({ opacity: style ? Number(style.opacity) : 0, y: current?.getBoundingClientRect().y ?? 0 });
+        if (running) requestAnimationFrame(sample);
+      };
+      sample();
+      target.click();
+      await new Promise(resolve => setTimeout(resolve, 700));
+      running = false;
+      return {
+        sameHeader: document.querySelector('.cm-workspace-header') === header,
+        path: location.pathname,
+        minOpacity: Math.min(...samples.map(entry => entry.opacity)),
+        maxShift: Math.max(...samples.map(entry => Math.abs(entry.y))),
+      };
+    });
+    assert.equal(headerSwitch.path, '/validation', `Workspace switch landed on ${headerSwitch.path}`);
+    assert.equal(headerSwitch.sameHeader, true, 'Workspace header must persist across route changes');
+    assert.ok(headerSwitch.minOpacity >= 0.99, `Workspace header opacity dipped to ${headerSwitch.minOpacity}`);
+    assert.ok(headerSwitch.maxShift <= 1, `Workspace header shifted ${headerSwitch.maxShift}px during route change`);
+    workspaceSwitchResults.push({ width, ...headerSwitch });
     assert.deepEqual(cinematicAssets, [], 'Direct workspace routes must not load landing cinematic assets');
     assert.deepEqual(errors, []);
     await page.close();
   }
-  await writeFile(join(output, 'results.json'), JSON.stringify({ base, checkedAt: new Date().toISOString(), results, adaptiveResults, workspaceResults }, null, 2));
-  console.log(JSON.stringify({ landingPassed: results.length, adaptivePassed: adaptiveResults.length, workspacePassed: workspaceResults.length, output, results, adaptiveResults, workspaceResults }, null, 2));
+  await writeFile(join(output, 'results.json'), JSON.stringify({ base, checkedAt: new Date().toISOString(), results, adaptiveResults, workspaceResults, workspaceSwitchResults }, null, 2));
+  console.log(JSON.stringify({ landingPassed: results.length, adaptivePassed: adaptiveResults.length, workspacePassed: workspaceResults.length, workspaceSwitchPassed: workspaceSwitchResults.length, output, results, adaptiveResults, workspaceResults, workspaceSwitchResults }, null, 2));
 } finally { await browser.close(); }

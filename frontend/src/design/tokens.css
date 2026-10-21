@@ -84,11 +84,13 @@ html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"]:is([da
   pointer-events: none;
 }
 
-html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-header {
+/* The shell stays put when switching workspace pages. This reveal belongs to
+   the landing <-> dashboard logo ceremony, where the shell was hidden first. */
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-header {
   animation: cm-route-shell-reveal 400ms var(--cm-ease) both;
 }
 
-html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-footer {
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm-workspace-footer {
   animation: cm-route-shell-reveal 420ms var(--cm-ease) both;
   animation-delay: 460ms;
 }
@@ -98,7 +100,7 @@ html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] .cm
   html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing > main, .cm-route-loading) {
     animation: none !important;
   }
-  html[data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] :is(.cm-workspace-header, .cm-workspace-footer) {
+  html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"][data-cm-transition-phase="reveal"] :is(.cm-workspace-header, .cm-workspace-footer) {
     animation: none !important;
   }
 }
