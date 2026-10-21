@@ -14,18 +14,18 @@ export type CuprumDirection = 'warming' | 'cooling' | 'steady' | 'unknown';
 export type CuprumFreshness = 'fresh' | 'stale' | 'unknown';
 
 export interface CuprumDriverBriefing {
+  /** A plain-language name for the input the model focused on. */
+  label: string;
   /** Safe imagery used in speech, e.g. "the paper weather". */
   phrase: string;
+  /** Recent movement of the input feature, not the forecast direction. */
   direction: CuprumDirection;
-  /** A safe, non-numeric character note derived from the XAI description. */
-  trait: string;
   horizon: string | null;
 }
 
 export interface CuprumMemoryBriefing {
   /** Month name only. The exact date never reaches the speech layer. */
   month: string;
-  phrase: string;
 }
 
 export interface CuprumBriefing {
@@ -51,6 +51,7 @@ export interface CuprumBriefing {
 export interface CuprumVoiceContext {
   mood: CuprumMood;
   energy: CuprumEnergy;
+  /** API context completeness, not confidence in the forecast. */
   confidence: CuprumConfidence;
   dataState: CuprumDataState;
   riskCount: number;
@@ -95,24 +96,18 @@ const MONTHS = [
 
 const SPARK_BASE: Record<CuprumMood, string> = {
   molten_bull:
-    "Loud. The whole board is warm, and I've been practicing my roar in the reflection of your coffee.",
+    "Bright. I've got an ambitious idea for this board, and I want to see if it can keep up.",
   patina_bear:
-    "Low and green. I'm keeping my edges soft until the weather makes up its mind.",
+    "Thin. The board has already made me sigh twice. Let's keep this short and honest.",
   tempered_neutral:
-    "Steady. I've been listening to the space between prices. It has a nice hum.",
+    "Steady. I'm listening for the small clue under the loud ones.",
 };
 
-const DIRECTION_WORDS: Record<Exclude<CuprumDirection, 'unknown'>, string> = {
-  warming: 'leaning in',
-  cooling: 'easing back',
-  steady: 'holding still',
-};
-
-const DIRECTION_SENTENCES: Record<CuprumDirection, string> = {
-  warming: 'It is leaning in',
-  cooling: 'It is easing back',
-  steady: 'It is holding still',
-  unknown: 'It is humming',
+const RECENT_MOVEMENT: Record<CuprumDirection, string> = {
+  warming: 'has moved up lately',
+  cooling: 'has moved down lately',
+  steady: 'has barely moved lately',
+  unknown: 'has no clear recent move I can name',
 };
 
 /** Below this percent move a signal counts as steady rather than leaning. */
@@ -161,26 +156,28 @@ export function buildCuprumBriefing(
   return {
     driver: driverPhrase
       ? {
+          label: topSignal
+            ? accessibleSignalName(topSignal)
+            : 'the focus note in this snapshot',
           phrase: driverPhrase,
           direction: directionFromChange(topSignal?.recent),
-          trait: safeTrait(topSignal?.description ?? xaiBrief),
           horizon:
             topSignal?.time_horizon ?? highlights?.horizon_label ?? explain?.horizon?.label ?? null,
         }
       : null,
     secondary: secondarySignal
       ? {
+          label: accessibleSignalName(secondarySignal),
           phrase: signalPhrase(
             secondarySignal.label,
             secondarySignal.category,
             secondarySignal.feature,
           ),
           direction: directionFromChange(secondarySignal.recent),
-          trait: safeTrait(secondarySignal.description),
           horizon: secondarySignal.time_horizon ?? horizon,
         }
       : null,
-    memory: month ? { month, phrase: `a ${month} session` } : null,
+    memory: month ? { month } : null,
     memories,
     risks,
     opportunities,
@@ -199,7 +196,7 @@ export function composeCuprumReply(
   ctx: CuprumVoiceContext,
   runtime: CuprumVoiceRuntime,
 ): string {
-  if (ctx.dataState !== 'ready') return dataStateReply(intent, ctx.dataState);
+  if (ctx.dataState !== 'ready') return dataStateReply(intent, ctx.dataState, ctx.mood);
 
   const briefing = ctx.briefing;
   const phrase = briefing.driver?.phrase ?? 'the hum';
@@ -208,49 +205,56 @@ export function composeCuprumReply(
     case 'spark': {
       const base = SPARK_BASE[ctx.mood];
       if (!briefing.driver) return base;
-      const direction =
-        DIRECTION_WORDS[briefing.driver.direction as Exclude<CuprumDirection, 'unknown'>] ??
-        'humming';
-      return `${base} ${capitalize(phrase)} is ${direction}.`;
+      return `${base} The clearest signal in this snapshot is ${briefing.driver.label}; it ${RECENT_MOVEMENT[briefing.driver.direction]}.`;
     }
     case 'sense': {
       const opening =
         ctx.mood === 'molten_bull'
-          ? `There's a current in ${phrase}. It's warm. I'd bite it if I had more teeth.`
+          ? `There's a current in ${phrase}. I want to chase it, after I check where it bends.`
           : ctx.mood === 'patina_bear'
-            ? `${capitalize(phrase)} is breathing slow. That's either patience or a trap.`
+            ? `${capitalize(phrase)} is dragging its feet. So am I. Let's keep the question small.`
             : `I keep hearing ${phrase}. Not loud. Just... persistent.`;
       const balance = balanceSentence(ctx, briefing);
       return balance ? `${opening} ${balance}` : opening;
     }
     case 'sense-more': {
-      let speech = `I keep looking at ${phrase}. ${DIRECTION_SENTENCES[briefing.driver?.direction ?? 'unknown']}.`;
-      if (briefing.driver) speech += ` ${capitalize(briefing.driver.trait)}.`;
-      if (briefing.memory) speech += ` It rhymes with ${briefing.memory.phrase}.`;
+      let speech = briefing.driver
+        ? `The strongest signal in this explanation is ${briefing.driver.label}. I call it ${briefing.driver.phrase}.`
+        : 'I do not have a clear signal to show you in this snapshot.';
+      if (briefing.driver) {
+        speech += ` That input ${RECENT_MOVEMENT[briefing.driver.direction]}.`;
+      }
+      if (briefing.secondary) {
+        speech += ` A second signal in the explanation is ${briefing.secondary.label}.`;
+      }
+      if (briefing.memory) {
+        speech += ` It also looked closely at older data from ${briefing.memory.month}. That is where its attention went, not a promise that the same story will repeat.`;
+      }
       if (briefing.horizonPhrase) {
-        speech += ` Everything I am listening to is about ${briefing.horizonPhrase}.`;
+        speech += ` The outlook covers ${briefing.horizonPhrase}.`;
       }
       if (briefing.biasWarning) {
-        speech += " There's a footnote in the air. I don't like footnotes.";
+        speech += ' There is also a bias note attached, so this view deserves an extra careful read.';
       }
+      speech += ` ${moodFocusCaveat(ctx.mood)}`;
       return speech;
     }
     case 'sense-worry': {
       const knot = briefing.risks[0] ? ` ${capitalize(briefing.risks[0])}.` : '';
       if (ctx.confidence === 'high') {
-        let speech = `I'd say it out loud: the metal is leaning, not promising. Leaning is not a promise.${knot}`;
+        let speech = `I can say this out loud because I have commentary and a model explanation to work from; that still does not make the forecast certain. The metal is leaning, not promising.${knot}`;
         if (briefing.anomaly) speech += ' One of the gauges is blinking out of rhythm.';
-        if (briefing.biasWarning) speech += " And there's a footnote in the air.";
+        if (briefing.biasWarning) speech += ' There is a bias note attached, too.';
         return speech;
       }
       if (ctx.confidence === 'low') {
         const stale =
           briefing.freshness === 'stale'
-            ? ' The wires are a little stale, so I am holding this loosely.'
+            ? ' The data behind this view is also a little old.'
             : '';
-        return `I'd whisper it. The wires are still deciding, and I don't like to interrupt.${stale}`;
+        return `I'd whisper it: I only have a thin snapshot, so I won't guess at what comes next.${stale}`;
       }
-      return `I'd say it with one eye open. The metal is leaning. It hasn't picked a direction to fall.${knot}`;
+      return `I'd say it with one eye open: I have some detail, but not a complete picture. The metal is leaning, not promising.${knot}`;
     }
     case 'weight': {
       if (briefing.driver?.phrase === 'the paper weather') {
@@ -270,67 +274,98 @@ export function composeCuprumReply(
     }
     case 'weight-change': {
       if (ctx.confidence === 'low') {
-        return "Ask me again after the next whisper. I don't want to guess before the wires settle.";
+        return "This snapshot is thin. I'd need a fuller one before I could name what would change my view.";
       }
-      return `A quieter ${phrase} would help. Or a louder one. I'm not picky. I just want it to stop pretending it isn't there.`;
+      if (ctx.mood === 'molten_bull') {
+        return `A fresh clue that pushes against ${phrase} would make me slow down. I like a bold idea, but it still has to earn its place.`;
+      }
+      if (ctx.mood === 'patina_bear') {
+        return `A clear update in ${phrase} might wake me up. Until then, I'm not chasing every flicker.`;
+      }
+      return `A clear new reading on ${phrase} would make me listen again. One update is a reason to look, not a reason to be certain.`;
     }
     case 'change': {
       if (runtime.freshData) {
-        let speech = `The wind changed since you last looked. My attention slid to ${phrase}.`;
+        let speech = briefing.driver
+          ? `A new snapshot arrived since you last looked. The wind changed in my little room; my clearest signal is ${briefing.driver.label}. That update alone does not mean the market moved.`
+          : "A new snapshot arrived since you last looked. The wind changed in my little room, but I don't have a clear signal to point to yet.";
         if (briefing.anomaly) speech += ' One gauge is blinking out of rhythm.';
         if (briefing.freshness === 'stale') {
-          speech += ' The wires are a little stale, so I am holding this loosely.';
+          speech += ' The data behind this view is a little old, so I am holding it loosely.';
         }
-        return `${speech} I don't trust a mood that changes its shoes that quickly.`;
+        const moodLine = ctx.mood === 'molten_bull'
+          ? 'A new clue gives me something to chase, not a reason to declare victory.'
+          : ctx.mood === 'patina_bear'
+            ? "I'm too tired to chase every update; I'll wait for a clearer one."
+            : 'A new snapshot is a new reading, not a guarantee.';
+        return `${speech} ${moodLine}`;
       }
       if (briefing.freshness === 'stale') {
-        return "The wires are a little stale. Nothing has changed since you last looked, and I won't dress that up as a prophecy.";
+        return "The data behind this view is a little old. I can't tell you what has changed since you last looked, and I won't dress that up as a prophecy.";
       }
-      return `Nothing new on the wires yet. I'm still holding ${phrase} in my teeth.`;
+      return `No newer snapshot has arrived yet. I'm still holding ${briefing.driver?.label ?? phrase} in my teeth.`;
     }
     case 'driver-detail': {
-      let speech = `${capitalize(phrase)} is the loudest thing I hear. ${capitalize(
-        briefing.driver?.trait ?? 'it has a long memory',
-      )}.`;
+      if (!briefing.driver) {
+        return "I don't have a clear model clue in this snapshot, so I won't invent one.";
+      }
+      const focus = briefing.driver.label;
+      let speech = `The strongest input signal in this snapshot's explanation is ${focus}.`;
       if (briefing.driver) {
-        speech += ` ${DIRECTION_SENTENCES[briefing.driver.direction]}.`;
+        speech += ` I call it ${briefing.driver.phrase}.`;
+        speech += ` That input ${RECENT_MOVEMENT[briefing.driver.direction]}.`;
       }
       if (briefing.secondary) {
-        const direction =
-          DIRECTION_WORDS[
-            briefing.secondary.direction as Exclude<CuprumDirection, 'unknown'>
-          ] ?? 'humming';
-        speech += ` Behind it, ${briefing.secondary.phrase} is ${direction} too.`;
+        speech += ` A second signal in the explanation is ${briefing.secondary.label}.`;
       }
       if (briefing.risks[0]) {
-        speech += ` The nearest knot: ${briefing.risks[0]}.`;
+        speech += ` One risk note in the same briefing: ${briefing.risks[0]}.`;
       }
-      return `${speech} I don't need it to be right; I need it to be honest.`;
+      if (briefing.horizonPhrase) speech += ` This outlook covers ${briefing.horizonPhrase}.`;
+      return `${speech} ${moodFocusCaveat(ctx.mood)}`;
     }
     case 'memory-why': {
       if (!briefing.memory) {
-        return "I don't have an old day to point at yet. The board is still making memories.";
+        return "I don't have a clear past date to point to in this snapshot. I won't invent a memory for the board.";
       }
-      let speech = `${capitalize(
-        briefing.memory.phrase,
-      )} keeps rhyming with today. I don't know if it's memory or a warning.`;
+      let speech = `The model's attention was strongest around ${briefing.memory.month} in the earlier data. That tells us where it looked, not that the same story will happen again.`;
       const older = briefing.memories[1];
       if (older) {
-        speech += ` So does ${article(older)} ${older} session.`;
+        speech += ` It also looked toward ${older}.`;
       }
-      return `${speech} The board remembers in patterns, not in numbers.`;
+      if (briefing.horizonPhrase) speech += ` It used those clues for an outlook covering ${briefing.horizonPhrase}.`;
+      return `${speech} ${memoryMoodLine(ctx.mood)}`;
     }
     case 'risk': {
-      const knot = briefing.risks[0] ?? 'a loose thread I cannot name yet';
-      return `Here is the knot I keep touching: ${knot}. I don't call it a warning. I call it a knot with a good grip.`;
+      if (!briefing.risks[0]) {
+        return "I don't have a specific risk note in this snapshot. No point making up a knot.";
+      }
+      const knot = briefing.risks[0];
+      const voice = ctx.mood === 'molten_bull'
+        ? 'I would rather spot it early than let my enthusiasm hide it.'
+        : ctx.mood === 'patina_bear'
+          ? 'That is the part making my edges feel heavier.'
+          : 'It is something to keep in view, not a promise that it will happen.';
+      return `${capitalize(knot)} That's one risk the snapshot flags. ${voice}`;
     }
     case 'opportunity': {
-      const door = briefing.opportunities[0] ?? 'a small door is still open';
-      return `Here is the door I keep seeing: ${door}. I'm not going to shove you through it.`;
+      if (!briefing.opportunities[0]) {
+        return "I don't have a specific hopeful note in this snapshot. I won't paint an opening onto a closed door.";
+      }
+      const door = briefing.opportunities[0];
+      const voice = ctx.mood === 'molten_bull'
+        ? 'I like the opening. I still want to know what could close it.'
+        : ctx.mood === 'patina_bear'
+          ? 'A possible bright spot. I will try not to sigh at it.'
+          : 'A possible opening, not a guarantee.';
+      return `${capitalize(door)} That's one possible bright spot in the snapshot. ${voice}`;
     }
     case 'board-read': {
-      const reading = briefing.synthesis ?? 'the board is humming, and it wants me to listen';
-      return `The board reads like this: ${reading}. I never see the numbers it used to get there. I only get the shape of it.`;
+      if (!briefing.synthesis) {
+        return "I don't have a summary for this snapshot yet. I can still show you the feature signal I have.";
+      }
+      const reading = briefing.synthesis;
+      return `The board reads like this: ${reading}. The model's explanation also shows which clues stood out; it does not prove what caused a future move.`;
     }
     default:
       return "I'm here. Listening.";
@@ -365,9 +400,70 @@ export function signalPhrase(
   return byCategory[category ?? ''] ?? 'the hum';
 }
 
-function dataStateReply(intent: CuprumIntent, dataState: CuprumDataState): string {
+function accessibleSignalName(signal: ExplainFeatureEntry): string {
+  const source = `${signal.label ?? ''} ${signal.category ?? ''} ${signal.feature ?? ''}`.toLowerCase();
+  if (/dollar|dxy|usd|euro|currency|yen|yuan|\bfx\b/.test(source)) return "the dollar's strength";
+  if (/china|gxc|shfe|pmi|hang seng/.test(source)) return 'activity in China';
+  if (/inventor|warehouse|stock|supply|draw|backwardation|contango/.test(source)) {
+    return 'copper stored in warehouses';
+  }
+  if (/oil|energy|gas|power|electric|grid/.test(source)) return 'energy costs and supply';
+  if (/yield|rate|fed|treasury|bond|inflation/.test(source)) return 'borrowing costs and inflation';
+  if (/vol|vix|risk|uncertain/.test(source)) return 'how jumpy the market feels';
+  if (/sentiment|emotion/.test(source)) return "the market's mood";
+  if (/momentum|trend|return|price|close|moving average/.test(source)) {
+    return 'recent copper price movement';
+  }
+
+  const categoryNames: Record<string, string> = {
+    Macro: 'wider economic conditions',
+    Momentum: 'recent copper price movement',
+    Trend: 'the direction copper has been heading',
+    Volatility: 'how jumpy the market feels',
+    Sentiment: "the market's mood",
+    Sector: 'activity in nearby industries',
+    Embedding: 'a less familiar pattern in the data',
+  };
+  const byCategory = categoryNames[signal.category ?? ''];
+  if (byCategory) return byCategory;
+
+  const cleaned = (signal.label ?? signal.feature ?? '')
+    .replace(/^[A-Z0-9=.:-]+[_:]/i, '')
+    .replace(/[_/]+/g, ' ')
+    .replace(/\b(?:sma|ema)\b/gi, 'moving average')
+    .replace(/\bvolume\b/gi, 'trading activity')
+    .replace(/\b(?:close|closing)\b/gi, 'copper price')
+    .replace(/\b\d+(?:d|day)?\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'another market signal';
+}
+
+function moodFocusCaveat(mood: CuprumMood): string {
+  if (mood === 'molten_bull') {
+    return "I like a bold clue, but a model signal is not proof that it caused the forecast.";
+  }
+  if (mood === 'patina_bear') {
+    return "That's enough to notice. A model signal is not proof of cause, however tired I am of the guesswork.";
+  }
+  return "A model signal shows what stood out in the explanation, not what caused the forecast.";
+}
+
+function memoryMoodLine(mood: CuprumMood): string {
+  if (mood === 'molten_bull') return 'Patterns tempt me to run ahead; a past day is still no promise.';
+  if (mood === 'patina_bear') return "I'm not calling it a rerun. Markets repeat just enough to be annoying.";
+  return 'A historical focus is context, not a prediction that history will repeat.';
+}
+
+function dataStateReply(
+  intent: CuprumIntent,
+  dataState: CuprumDataState,
+  mood: CuprumMood,
+): string {
   if (dataState === 'loading') {
     if (intent === 'spark') {
+      if (mood === 'molten_bull') return 'Still warming up. I have a plan ready; the wires are taking their time.';
+      if (mood === 'patina_bear') return "Still warming up. Wake me when the snapshot is ready; the wires can wait.";
       return 'Still warming up. The wires are full of half-finished thoughts.';
     }
     if (intent === 'weight') return "The wires are quiet. I'm listening to the quiet.";
@@ -375,7 +471,11 @@ function dataStateReply(intent: CuprumIntent, dataState: CuprumDataState): strin
     return "The wires are still warm. I can hear something moving, but it hasn't decided what it is yet.";
   }
   if (dataState === 'error') {
-    if (intent === 'spark') return 'A little thin. Something in the wires went quiet.';
+    if (intent === 'spark') {
+      if (mood === 'molten_bull') return 'A little thin. The wires went quiet, but I have not lost my ambition.';
+      if (mood === 'patina_bear') return 'A little thin. The wires went quiet, and honestly, so did I.';
+      return 'A little thin. Something in the wires went quiet.';
+    }
     if (intent === 'change') return "I lost the thread for a moment. I'm listening to the quiet.";
     return "The wires went quiet. I'm listening to the quiet.";
   }
@@ -432,7 +532,7 @@ function riskClause(text: string): string {
     return 'the paper weather is pulling at the seams';
   }
   if (/spread|backwardation|contango/.test(haystack)) {
-    return 'the tight spreads are pulling both ways';
+    return 'nearby copper supply may be getting tighter';
   }
   if (/china|gxc|shfe|pmi|hang seng|equit/.test(haystack)) {
     return 'the far side of the world is restless';
@@ -454,7 +554,7 @@ function riskClause(text: string): string {
 function opportunityClause(text: string): string {
   const haystack = text.toLowerCase();
   if (/spread|backwardation|contango/.test(haystack)) {
-    return 'the tight spreads are holding a door open';
+    return 'nearby copper supply looks tight';
   }
   if (/dollar|dxy|usd|euro|currency|yen|yuan|fx/.test(haystack)) {
     return 'the paper weather is easing';
@@ -474,27 +574,11 @@ function opportunityClause(text: string): string {
   return 'a small door is still open';
 }
 
-function safeTrait(description: string | null | undefined): string {
-  const haystack = (description ?? '').toLowerCase();
-  if (/cap.*upside|stronger dollar|capp/.test(haystack)) {
-    return 'it has a history of pulling the roof down';
-  }
-  if (/spread|tight/.test(haystack)) return 'it hums like a held breath';
-  if (/demand|equity|momentum/.test(haystack)) {
-    return 'it carries a little push from somewhere else';
-  }
-  if (/restock|inventory|supply|warehouse/.test(haystack)) {
-    return 'it keeps moving the furniture';
-  }
-  if (/volatil|risk|uncertain/.test(haystack)) return 'it does not sit still';
-  return 'it has a long memory';
-}
-
 /** The console narrative, told without its numbers. */
 function synthesisClause(text: string): string {
   const haystack = text.toLowerCase();
   if (/spread|backwardation|contango/.test(haystack)) {
-    return 'the spreads are holding their breath';
+    return 'nearby copper supply looks tight';
   }
   if (/dollar|dxy|usd|euro|currency|yen|yuan|fx/.test(haystack)) {
     return 'the paper weather is doing most of the talking';
@@ -526,10 +610,6 @@ function horizonPhrase(label: string | null): string | null {
   if (/five|5d/.test(haystack)) return 'the next five sessions';
   if (/day|1d|daily|tomorrow/.test(haystack)) return 'the next session';
   return null;
-}
-
-function article(month: string): string {
-  return /^[aeiou]/i.test(month) ? 'an' : 'a';
 }
 
 function uniqueClauses(clauses: string[]): string[] {

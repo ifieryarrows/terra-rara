@@ -18,6 +18,7 @@ const IDLE_MAX_MS = 9000;
 export interface CuprumSpeechBubbleProps {
   mode: 'idle' | 'dialogue';
   speech: string;
+  turnKey?: string;
   action?: string | null;
   choices?: CuprumChoice[];
   accent: string;
@@ -32,6 +33,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     {
       mode,
       speech,
+      turnKey,
       action,
       choices,
       accent,
@@ -43,21 +45,28 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     ref,
   ) {
     const text = speech.trim();
+    const animationKey = turnKey ?? text;
     const reducedMotion = usePrefersReducedMotion();
     const [visibleCount, setVisibleCount] = useState(() =>
       getPrefersReducedMotion() ? text.length : 0,
     );
     const [typing, setTyping] = useState(() => !getPrefersReducedMotion() && text.length > 0);
+    const [animatedKey, setAnimatedKey] = useState(animationKey);
     const [paused, setPaused] = useState(false);
     const typingCallbackRef = useRef(onTypingChange);
+    const typingIntervalRef = useRef<number | null>(null);
+    const choiceHandledRef = useRef(false);
+    const revealedKeyRef = useRef<string | null>(null);
+    const typingForText = typing || (animatedKey !== animationKey && text.length > 0);
+    const visibleCountForText = animatedKey === animationKey ? visibleCount : 0;
 
     useEffect(() => {
       typingCallbackRef.current = onTypingChange;
     }, [onTypingChange]);
 
     useEffect(() => {
-      typingCallbackRef.current?.(typing);
-    }, [typing]);
+      typingCallbackRef.current?.(typingForText);
+    }, [typingForText]);
 
     useEffect(
       () => () => {
@@ -67,7 +76,9 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     );
 
     useEffect(() => {
-      if (reducedMotion || text.length === 0) {
+      setAnimatedKey(animationKey);
+      choiceHandledRef.current = false;
+      if (reducedMotion || text.length === 0 || revealedKeyRef.current === animationKey) {
         setVisibleCount(text.length);
         setTyping(false);
         return;
@@ -76,19 +87,25 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       setVisibleCount(0);
       setTyping(true);
       let index = 0;
-      const interval = window.setInterval(() => {
+      typingIntervalRef.current = window.setInterval(() => {
         index += 1;
         setVisibleCount(index);
         if (index >= text.length) {
-          window.clearInterval(interval);
+          if (typingIntervalRef.current !== null) {
+            window.clearInterval(typingIntervalRef.current);
+            typingIntervalRef.current = null;
+          }
           setTyping(false);
         }
       }, TYPE_INTERVAL_MS);
 
       return () => {
-        window.clearInterval(interval);
+        if (typingIntervalRef.current !== null) {
+          window.clearInterval(typingIntervalRef.current);
+          typingIntervalRef.current = null;
+        }
       };
-    }, [text, reducedMotion]);
+    }, [text, reducedMotion, animationKey]);
 
     useEffect(() => {
       if (mode !== 'idle' || typing || paused) return;
@@ -97,20 +114,35 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       return () => {
         window.clearTimeout(timer);
       };
-    }, [mode, typing, paused, text.length, onClose]);
+    }, [mode, typingForText, paused, text.length, onClose]);
 
     const revealAll = useCallback(() => {
+      if (typingIntervalRef.current !== null) {
+        window.clearInterval(typingIntervalRef.current);
+        typingIntervalRef.current = null;
+      }
+      revealedKeyRef.current = animationKey;
+      setAnimatedKey(animationKey);
       setVisibleCount(text.length);
       setTyping(false);
-    }, [text.length]);
+    }, [text, animationKey]);
 
     const handleClick = useCallback(() => {
-      if (typing) {
+      if (typingForText) {
         revealAll();
         return;
       }
       if (mode === 'idle') onClose();
-    }, [typing, revealAll, mode, onClose]);
+    }, [typingForText, revealAll, mode, onClose]);
+
+    const choose = useCallback(
+      (choice: CuprumChoice) => {
+        if (typingForText || choiceHandledRef.current) return;
+        choiceHandledRef.current = true;
+        onChoose?.(choice);
+      },
+      [typingForText, onChoose],
+    );
 
     const handleKeyDown = useCallback(
       (event: KeyboardEvent<HTMLDivElement>) => {
@@ -121,17 +153,17 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         }
         if (mode !== 'dialogue' || !/^[1-3]$/.test(event.key)) return;
         event.preventDefault();
-        if (typing) {
+        if (typingForText) {
           revealAll();
           return;
         }
         const choice = choices?.[Number(event.key) - 1];
-        if (choice) onChoose?.(choice);
+        if (choice) choose(choice);
       },
-      [mode, typing, revealAll, choices, onChoose, onClose],
+      [mode, typingForText, revealAll, choices, choose, onClose],
     );
 
-    const visibleText = text.slice(0, visibleCount);
+    const visibleText = text.slice(0, visibleCountForText);
     const spokenText = action ? `${action} ${text}` : text;
 
     return (
@@ -192,7 +224,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
 
             <p className="cm-cuprum-speech" aria-hidden="true">
               {visibleText}
-              {typing && <span className="cm-cuprum-caret" aria-hidden="true" />}
+              {typingForText && <span className="cm-cuprum-caret" aria-hidden="true" />}
             </p>
           </div>
           <p className="sr-only" aria-live="polite" data-testid="cuprum-spoken-text">
@@ -206,12 +238,14 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
                   key={choice.id}
                   type="button"
                   className="cm-cuprum-choice"
+                  disabled={typingForText || choiceHandledRef.current}
+                  title={typingForText ? 'Wait until Cuprum finishes speaking' : undefined}
                   style={
                     reducedMotion ? undefined : { animationDelay: `${60 + index * 55}ms` }
                   }
                   onClick={(event) => {
                     event.stopPropagation();
-                    onChoose?.(choice);
+                    choose(choice);
                   }}
                   aria-keyshortcuts={`${index + 1}`}
                 >

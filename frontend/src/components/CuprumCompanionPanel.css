@@ -228,6 +228,12 @@
   color: #fff7ef;
 }
 
+.cm-cuprum-choice:disabled {
+  color: #9c8b7d;
+  cursor: wait;
+  opacity: 0.58;
+}
+
 .cm-cuprum-choice-index {
   display: grid;
   place-items: center;
