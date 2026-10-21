@@ -272,8 +272,11 @@ export function CuprumCompanionPanel({
     modeRef.current = 'dialogue';
     setIdleLine(null);
     setActiveNodeId(ROOT_NODE_ID);
-    setRuntime((previous) => ({ ...previous, freshData: freshDataRef.current }));
+    // Read the flag before clearing it: the state updater below can run later,
+    // during render, and would otherwise see an already-cleared ref.
+    const fresh = freshDataRef.current;
     freshDataRef.current = false;
+    setRuntime((previous) => ({ ...previous, freshData: fresh }));
     setMode('dialogue');
     dispatchSpriteRef.current('alert-start');
   }, []);

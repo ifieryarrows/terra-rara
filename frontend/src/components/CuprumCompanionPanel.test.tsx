@@ -205,6 +205,30 @@ describe('CuprumCompanionPanel', () => {
     });
   });
 
+  it('still reports a fresh snapshot after the reader already picked a reply', () => {
+    const { rerender } = render(
+      <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />,
+    );
+
+    // A new pipeline snapshot lands while the card is on screen.
+    rerender(
+      <CuprumCompanionPanel
+        commentary={{ ...COMMENTARY_FIXTURE, generated_at: '2026-10-17T21:05:00Z' }}
+        explain={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
+
+    fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
+    fireEvent.click(screen.getByRole('button', { name: "What's the loose thread?" }));
+    fireEvent.click(screen.getByRole('button', { name: 'What worries you?' }));
+    fireEvent.click(screen.getByRole('button', { name: 'What changed?' }));
+
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
+  });
+
   it('keeps the reply choices outside the scrolling copy so all three stay reachable', () => {
     render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));

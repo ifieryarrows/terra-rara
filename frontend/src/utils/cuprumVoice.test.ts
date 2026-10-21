@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { CommentaryResponse, ExplainResponse, TFTAnalysisResponse } from '../types';
+import type {
+  CommentaryResponse,
+  ExplainFeatureEntry,
+  ExplainResponse,
+  TFTAnalysisResponse,
+} from '../types';
 import {
   buildCuprumBriefing,
   composeCuprumReply,
+  signalPhrase,
   type CuprumIntent,
   type CuprumVoiceContext,
   type CuprumVoiceRuntime,
@@ -82,7 +88,6 @@ function makeContext(overrides: Partial<CuprumVoiceContext> = {}): CuprumVoiceCo
     dataState: 'ready',
     riskCount: 2,
     opportunityCount: 1,
-    hasBiasWarning: true,
     briefing: buildCuprumBriefing(COMMENTARY, null, TFT),
     ...overrides,
   };
@@ -133,7 +138,8 @@ describe('cuprumVoice', () => {
     expect(briefing.driver?.phrase).toBe('the paper weather');
   });
 
-  it('falls back to the explain payload when companion highlights are absent', () => {    const explain = {
+  it('falls back to the explain payload when companion highlights are absent', () => {
+    const explain = {
       variable_selection: {
         encoder: [
           {
@@ -167,6 +173,75 @@ describe('cuprumVoice', () => {
     expect(briefing.driver?.phrase).toBe('the warehouses');
     expect(briefing.memory?.month).toBe('August');
     expect(briefing.horizon).toBe('five-day');
+  });
+
+  it('reads the driver direction from a relative move, not from raw units', () => {
+    const withRecent = (recent: NonNullable<ExplainFeatureEntry['recent']>) =>
+      buildCuprumBriefing(
+        {
+          ...COMMENTARY,
+          companion_state: {
+            ...COMMENTARY.companion_state!,
+            xai_highlights: {
+              ...COMMENTARY.companion_state!.xai_highlights!,
+              top_signals: [
+                {
+                  ...COMMENTARY.companion_state!.xai_highlights!.top_signals![0],
+                  recent,
+                },
+              ],
+            },
+          },
+        },
+        null,
+        null,
+      );
+
+    // 0.0002 on a base of 100 is 0.0002%: that is not a move worth calling.
+    expect(
+      withRecent({
+        basis: '5-session',
+        kind: 'abs',
+        last_value: 100,
+        change: 0.0002,
+        change_pct: null,
+        as_of: '2026-10-16',
+      }).driver?.direction,
+    ).toBe('steady');
+
+    // 0.05 on a base of 0.45 is a double-digit percent move.
+    expect(
+      withRecent({
+        basis: '5-session',
+        kind: 'abs',
+        last_value: 0.45,
+        change: 0.05,
+        change_pct: null,
+        as_of: '2026-10-16',
+      }).driver?.direction,
+    ).toBe('warming');
+
+    // A zero base cannot be turned into a percentage.
+    expect(
+      withRecent({
+        basis: '5-session',
+        kind: 'pct',
+        last_value: 0,
+        change: 0.4,
+        change_pct: null,
+        as_of: '2026-10-16',
+      }).driver?.direction,
+    ).toBe('unknown');
+  });
+
+  it('maps signal labels to concrete, non-numeric imagery', () => {
+    expect(signalPhrase('Dollar index', 'Macro')).toBe('the paper weather');
+    expect(signalPhrase('China PMI', 'Macro')).toBe('the far side of the world');
+    expect(signalPhrase(null, 'Momentum')).toBe('the current');
+    expect(signalPhrase(null, null)).toBe('the hum');
+    expect(signalPhrase('Warehouse draws', 'Sector', 'Warehouse_draw')).toBe(
+      'the warehouses',
+    );
   });
 
   it('grounds a market answer in the briefing without leaking raw numbers', () => {

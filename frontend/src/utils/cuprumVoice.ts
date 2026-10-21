@@ -1,6 +1,7 @@
 import type {
   CommentaryResponse,
   ExplainFeatureEntry,
+  ExplainRecent,
   ExplainResponse,
   TFTAnalysisResponse,
 } from '../types';
@@ -46,7 +47,6 @@ export interface CuprumVoiceContext {
   dataState: CuprumDataState;
   riskCount: number;
   opportunityCount: number;
-  hasBiasWarning: boolean;
   briefing: CuprumBriefing;
 }
 
@@ -106,6 +106,9 @@ const DIRECTION_SENTENCES: Record<CuprumDirection, string> = {
   unknown: 'It is humming',
 };
 
+/** Below this percent move a signal counts as steady rather than leaning. */
+const DIRECTION_EPSILON_PERCENT = 0.1;
+
 export function buildCuprumBriefing(
   commentary: CommentaryResponse | null,
   explain: ExplainResponse | null,
@@ -139,7 +142,7 @@ export function buildCuprumBriefing(
     driver: driverPhrase
       ? {
           phrase: driverPhrase,
-          direction: directionFromChange(topSignal?.recent?.change),
+          direction: directionFromChange(topSignal?.recent),
           trait: safeTrait(topSignal?.description ?? xaiBrief),
           horizon:
             topSignal?.time_horizon ??
@@ -349,11 +352,27 @@ function balanceSentence(ctx: CuprumVoiceContext, briefing: CuprumBriefing): str
   return 'A balanced knot. Those are the ones that bite.';
 }
 
-function directionFromChange(change: number | null | undefined): CuprumDirection {
-  if (typeof change !== 'number' || Number.isNaN(change)) return 'unknown';
-  if (change > 0.0001) return 'warming';
-  if (change < -0.0001) return 'cooling';
+function directionFromChange(recent: ExplainRecent | null | undefined): CuprumDirection {
+  const percent = relativeChangePercent(recent);
+  if (percent === null) return 'unknown';
+  if (percent > DIRECTION_EPSILON_PERCENT) return 'warming';
+  if (percent < -DIRECTION_EPSILON_PERCENT) return 'cooling';
   return 'steady';
+}
+
+/**
+ * The backend always reports `change` as an absolute delta and `change_pct` as
+ * the percent move, so the direction is decided on a percentage. A signal
+ * without a usable base cannot be turned into one and stays unknown.
+ */
+function relativeChangePercent(recent: ExplainRecent | null | undefined): number | null {
+  if (!recent) return null;
+  if (typeof recent.change_pct === 'number' && !Number.isNaN(recent.change_pct)) {
+    return recent.change_pct;
+  }
+  if (typeof recent.change !== 'number' || Number.isNaN(recent.change)) return null;
+  if (typeof recent.last_value !== 'number' || recent.last_value === 0) return null;
+  return (recent.change / Math.abs(recent.last_value)) * 100;
 }
 
 function monthFromDate(date: string | null | undefined): string | null {

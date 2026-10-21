@@ -9,7 +9,6 @@ import {
   pickIdleLine,
   resolveCuprumNode,
   ROOT_NODE_ID,
-  signalImagery,
   type CuprumChoice,
   type CuprumContext,
   type CuprumNode,
@@ -69,6 +68,14 @@ const BASE_CONTEXT: CuprumContext = {
   briefing: buildCuprumBriefing(COMMENTARY, null, null),
 };
 
+/** A payload shape with no driver and no memory anchor: the sparse end of the range. */
+const SPARSE_CONTEXT: CuprumContext = {
+  ...BASE_CONTEXT,
+  briefing: buildCuprumBriefing(null, null, null),
+};
+
+const CONTEXTS = [BASE_CONTEXT, SPARSE_CONTEXT];
+
 function choicesFor(
   node: CuprumNode,
   ctx: CuprumContext = BASE_CONTEXT,
@@ -83,32 +90,43 @@ describe('cuprumDialogue', () => {
     expect(root).not.toBeNull();
     expect(root?.choices).toHaveLength(3);
 
-    for (const node of Object.values(CUPRUM_NODES)) {
-      expect(choicesFor(node)).toHaveLength(3);
+    for (const ctx of CONTEXTS) {
+      for (const node of Object.values(CUPRUM_NODES)) {
+        expect(choicesFor(node, ctx), `${node.id} @ ${ctx.dataState}`).toHaveLength(3);
+      }
     }
   });
 
   it('keeps every dialogue link inside the tree and reachable from the root', () => {
-    for (const node of Object.values(CUPRUM_NODES)) {
-      for (const choice of choicesFor(node)) {
-        if (choice.close) {
-          expect(choice.next).toBeUndefined();
-        } else {
-          expect(choice.next).toBeTruthy();
-          expect(CUPRUM_NODES[choice.next as string]).toBeDefined();
+    for (const ctx of CONTEXTS) {
+      for (const node of Object.values(CUPRUM_NODES)) {
+        for (const choice of choicesFor(node, ctx)) {
+          if (choice.close) {
+            expect(choice.next).toBeUndefined();
+          } else {
+            expect(choice.next).toBeTruthy();
+            expect(CUPRUM_NODES[choice.next as string]).toBeDefined();
+          }
         }
       }
     }
 
-    const reachable = new Set<string>([ROOT_NODE_ID]);
-    const queue = [ROOT_NODE_ID];
-    while (queue.length > 0) {
-      const id = queue.shift() as string;
-      const node = CUPRUM_NODES[id];
-      for (const choice of choicesFor(node)) {
-        if (choice.next && !reachable.has(choice.next)) {
+    // Data-dependent choices can hide a branch, so reachability is the union
+    // over every payload shape we support.
+    const reachable = new Set<string>();
+    for (const ctx of CONTEXTS) {
+      const queue = [ROOT_NODE_ID];
+      const seen = new Set<string>([ROOT_NODE_ID]);
+      while (queue.length > 0) {
+        const id = queue.shift() as string;
+        const node = CUPRUM_NODES[id];
+        for (const choice of choicesFor(node, ctx)) {
+          if (!choice.next) continue;
           reachable.add(choice.next);
-          queue.push(choice.next);
+          if (!seen.has(choice.next)) {
+            seen.add(choice.next);
+            queue.push(choice.next);
+          }
         }
       }
     }
@@ -293,6 +311,47 @@ describe('cuprumDialogue', () => {
     expect(memory?.speech).toContain('September');
   });
 
+  it('uses the fresh-snapshot greeting only at the start of a conversation', () => {
+    const fresh = createCuprumRuntime({ freshData: true });
+
+    expect(resolveCuprumNode(ROOT_NODE_ID, BASE_CONTEXT, fresh)?.speech).toContain(
+      'wind changed',
+    );
+
+    const later = applyCuprumChoice(fresh, {
+      id: 'ask-again',
+      label: 'Ask me something else.',
+      next: ROOT_NODE_ID,
+    });
+    expect(resolveCuprumNode(ROOT_NODE_ID, BASE_CONTEXT, later)?.speech).not.toContain(
+      'wind changed',
+    );
+  });
+
+  it('keeps the fresh-snapshot flag alive so "what changed" can still answer', () => {
+    const fresh = createCuprumRuntime({ freshData: true });
+    const afterChoice = applyCuprumChoice(fresh, {
+      id: 'root-sense',
+      label: 'What do you sense out there?',
+      next: 'sense',
+    });
+
+    expect(afterChoice.freshData).toBe(true);
+    expect(resolveCuprumNode('change', BASE_CONTEXT, afterChoice)?.speech).toContain(
+      'wind changed',
+    );
+  });
+
+  it('does not offer data questions while the snapshot is still loading', () => {
+    const loading: CuprumContext = { ...BASE_CONTEXT, dataState: 'loading' };
+    const labels = resolveCuprumNode('sense', loading, createCuprumRuntime())?.choices.map(
+      (choice) => choice.label,
+    );
+
+    expect(labels).not.toContain("What's the loose thread?");
+    expect(labels).toContain('Ask me something else.');
+  });
+
   it('keeps every spoken node free of raw numbers and advice', () => {
     const runtime = createCuprumRuntime();
     for (const node of Object.values(CUPRUM_NODES)) {
@@ -300,18 +359,5 @@ describe('cuprumDialogue', () => {
       expect(resolved?.speech, node.id).not.toMatch(/\d|[$%]/);
       expect(resolved?.speech, node.id).not.toMatch(/\b(buy|sell|target|advice)\b/i);
     }
-  });
-
-  it('maps signal labels to concrete, non-numeric imagery', () => {
-    expect(signalImagery(BASE_CONTEXT)).toBe('the paper weather');
-    expect(
-      signalImagery({ ...BASE_CONTEXT, signalLabel: 'China PMI', signalCategory: 'Macro' }),
-    ).toBe('the far side of the world');
-    expect(
-      signalImagery({ ...BASE_CONTEXT, signalLabel: null, signalCategory: 'Momentum' }),
-    ).toBe('the current');
-    expect(
-      signalImagery({ ...BASE_CONTEXT, signalLabel: null, signalCategory: null }),
-    ).toBe('the hum');
   });
 });

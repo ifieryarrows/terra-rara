@@ -6,7 +6,6 @@ import type {
 import {
   buildCuprumBriefing,
   composeCuprumReply,
-  signalPhrase,
   type CuprumConfidence,
   type CuprumDataState,
   type CuprumEnergy,
@@ -25,6 +24,8 @@ export interface CuprumContext extends CuprumVoiceContext {
   stance: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   signalCategory: string | null;
   signalLabel: string | null;
+  /** Kept on the dialogue context for callers; the voice reads briefing.biasWarning. */
+  hasBiasWarning: boolean;
   updatedAt: string | null;
 }
 
@@ -283,7 +284,9 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       if (ctx.dataState === 'loading') return "The wires are still warm. Give me a moment.";
       if (ctx.dataState === 'error') return 'I lost the thread for a moment. Sit with me anyway.';
       if (ctx.dataState === 'empty') return "The board is quiet. I'm still here.";
-      if (runtime.freshData) return "The wind changed since you last looked. I'm still deciding what it means.";
+      if (runtime.freshData && runtime.turn === 0) {
+        return "The wind changed since you last looked. I'm still deciding what it means.";
+      }
       if (runtime.bond >= 5) return BOND_GREETINGS[ctx.mood];
       return GREETINGS[ctx.mood];
     },
@@ -393,7 +396,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     choices: (ctx) => [
       { id: 'sense-more', label: 'Tell me more.', next: 'sense-more', effect: 'curious' },
       { id: 'sense-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
-      ctx.briefing.driver
+      ctx.dataState === 'ready' && ctx.briefing.driver
         ? { id: 'sense-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' }
         : askAgainChoice(),
     ],
@@ -402,9 +405,11 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     id: 'sense-more',
     speech: (ctx, runtime) => composeCuprumReply('sense-more', ctx, runtime),
     choices: (ctx) => [
-      ctx.briefing.memory
-        ? { id: 'more-memory', label: 'Why that old day?', next: 'memory-why', effect: 'curious' }
-        : { id: 'more-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' },
+      ctx.dataState !== 'ready'
+        ? askAgainChoice()
+        : ctx.briefing.memory
+          ? { id: 'more-memory', label: 'Why that old day?', next: 'memory-why', effect: 'curious' }
+          : { id: 'more-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' },
       { id: 'more-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
       leaveChoice(),
     ],
@@ -548,7 +553,9 @@ export function applyCuprumChoice(
   const next: CuprumRuntime = {
     ...runtime,
     turn: runtime.turn + 1,
-    freshData: false,
+    // freshData stays sticky for the whole conversation: the root greeting and
+    // the "what changed" node must both see the same fresh snapshot. It is reset
+    // per conversation when the panel opens the next one.
   };
   if (choice.effect) {
     next.bond = Math.min(MAX_BOND, next.bond + 1);
@@ -624,10 +631,6 @@ export function buildCuprumContext(
           : 'ready',
     updatedAt: commentary?.generated_at ?? null,
   };
-}
-
-export function signalImagery(ctx: CuprumContext): string {
-  return signalPhrase(ctx.signalLabel, ctx.signalCategory);
 }
 
 function pickFromPool(
