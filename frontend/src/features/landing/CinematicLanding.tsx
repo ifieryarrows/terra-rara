@@ -8,7 +8,7 @@ import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
 import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
-import { createCinematicWheelDampener } from './cinematic-scroll';
+import { createCinematicSceneStepper } from './cinematic-scroll';
 import { useCinematicEntryReveal } from './cinematic-entry';
 import './cinematic.css';
 
@@ -52,7 +52,7 @@ function SceneSurface({ progress, range, persist = false, children }: { progress
 }
 
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
-  const marketProgress = useTransform(progress, [.17, .39], [0, 1]);
+  const marketProgress = useTransform(progress, [.17, .30], [0, 1]);
   const newsProgress = useTransform(progress, [.39, .59], [0, 1]);
   // Let the forecast clear before the final particle morph so the ingot has a
   // quiet, readable negative-space stage of its own.
@@ -93,7 +93,7 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
   const detailOpacity = useTransform(progress, [start + .025, reveal + .045], [0, 1]);
   const detailY = useTransform(progress, [start + .025, reveal + .045], [26, 0]);
-  const blur = useTransform(progress, [start, reveal, end], ['blur(9px)', 'blur(0px)', 'blur(5px)']);
+  const blur = useTransform(progress, [start, reveal, end - .035, end], ['blur(9px)', 'blur(0px)', 'blur(0px)', 'blur(5px)']);
   return <article id={beat.id} className="cm-cinematic-beat" aria-labelledby={`${beat.id}-title`}>
     <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur }}>
       <p className="cm-eyebrow"><span>{beat.number}</span> / {beat.label}</p>
@@ -152,16 +152,25 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
       schedule();
     };
     const onPointerLeave = () => { x = 72; y = 46; schedule(); };
-    const wheelDampener = createCinematicWheelDampener();
-    const onWheel = (event: WheelEvent) => { wheelDampener.handleWheel(event); };
+    const sceneStepper = createCinematicSceneStepper({
+      // Progress mapping matches useScroll(offset: start start → end end).
+      getGeometry: () => {
+        const rect = scene.getBoundingClientRect();
+        return { top: rect.top + window.scrollY, length: Math.max(0, rect.height - window.innerHeight) };
+      },
+    });
+    const onWheel = (event: WheelEvent) => { sceneStepper.handleWheel(event); };
+    const onKeyDown = (event: KeyboardEvent) => { sceneStepper.handleKeyDown(event); };
     scene.addEventListener('pointermove', onPointerMove, { passive: true });
     scene.addEventListener('pointerleave', onPointerLeave, { passive: true });
     scene.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       scene.removeEventListener('pointermove', onPointerMove);
       scene.removeEventListener('pointerleave', onPointerLeave);
       scene.removeEventListener('wheel', onWheel);
-      wheelDampener.dispose();
+      window.removeEventListener('keydown', onKeyDown);
+      sceneStepper.dispose();
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, []);
@@ -170,6 +179,10 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     <div className="cm-cinematic-copy">
       <HeroCopy progress={scrollYProgress}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }
+      {/* Quiet closing slot: keeps the three story beats centred at .25/.5/.75
+          (hero + 3 beats + outro = 5 slots, scroll length 4 slots) and gives the
+          research/CTA stage room after the forecast copy. */}
+      <div aria-hidden="true" style={{ minHeight: '100svh' }}/>
     </div>
     {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress, entryRevealProgress)}</div> : null}
   </section>;

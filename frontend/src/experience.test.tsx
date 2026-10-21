@@ -17,7 +17,12 @@ beforeEach(() => {
   window.scrollTo = vi.fn();
   window.history.replaceState({}, '', '/');
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: 0 });
+  Object.defineProperty(document.documentElement, 'scrollTop', { configurable: true, writable: true, value: 0 });
+});
 
 describe('product introduction and workspace routes', () => {
   it('keeps the introduction useful in reduced motion and identifies sample data', () => {
@@ -39,7 +44,7 @@ describe('product introduction and workspace routes', () => {
     const user = userEvent.setup();
     render(<App/>);
     await user.click(screen.getAllByRole('link', { name: 'Enter CopperMind' })[0]);
-    expect(await screen.findByRole('heading', { name: 'Market overview' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Market overview' }, { timeout: 5000 })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus());
     expect(screen.getByRole('navigation', { name: 'Workspace' })).toBeInTheDocument();
@@ -57,6 +62,20 @@ describe('product introduction and workspace routes', () => {
     expect(await screen.findByRole('heading', { name: 'Market overview' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     expect(window.location.search).toBe('?symbol=HG%3DF');
+  });
+  it('keeps the workspace shell mounted and visible when navigating from a scrolled page', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, '', '/dashboard');
+    Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: 350 });
+    render(<App/>);
+
+    const header = await screen.findByRole('banner');
+    expect(header).toHaveClass('cm-workspace-header--hidden');
+
+    await user.click(screen.getByRole('link', { name: 'Models' }));
+    expect(await screen.findByRole('heading', { name: 'Model intelligence' })).toBeInTheDocument();
+    await waitFor(() => expect(header).not.toHaveClass('cm-workspace-header--hidden'));
+    expect(screen.getByRole('banner')).toBe(header);
   });
   it('provides a way out of an unknown URL', () => {
     window.history.replaceState({}, '', '/unknown-view');

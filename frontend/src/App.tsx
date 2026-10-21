@@ -70,7 +70,7 @@ function LandingEntry() {
   if (new URLSearchParams(search).has('symbol')) return <Navigate replace to={'/dashboard' + search + hash}/>;
   return <LandingPage/>;
 }
-function RouteLoading() { return <div className="cm-route-loading" role="status"><BrandMark size={24} variant="small"/><span>Opening your workspace…</span></div>; }
+function RouteLoading() { return <div className="cm-route-loading" role="status" aria-label="Loading workspace" aria-busy="true"><BrandMark size={24} variant="small"/><span className="sr-only">Loading workspace…</span></div>; }
 
 function OverviewAlias() {
   const { search, hash } = useLocation();
@@ -79,7 +79,7 @@ function OverviewAlias() {
 
 export function AppRoutes() {
   const { pathname } = useLocation();
-  return <MotionConfig reducedMotion="user" transition={{ duration: motionTokens.ui, ease: motionTokens.ease }}><RouteLifecycle/><RouteBoundary key={pathname}><Suspense fallback={<RouteLoading/>}><Routes>
+  return <MotionConfig reducedMotion="user" transition={{ duration: motionTokens.ui, ease: motionTokens.ease }}><RouteLifecycle/><RouteBoundary resetKey={pathname}><Suspense fallback={<RouteLoading/>}><Routes>
     <Route path="/" element={<LandingEntry/>}/>
     <Route element={<AppShell/>}>
       <Route path="dashboard" element={<OverviewPage/>}/>

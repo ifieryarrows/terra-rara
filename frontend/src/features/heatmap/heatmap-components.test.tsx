@@ -469,6 +469,52 @@ describe('heatmap interaction primitives', () => {
     expect(within(panel).getAllByText('AMD')).toHaveLength(1);
   });
 
+  it('dismisses the hover card on page scroll and ignores scroll-born hover events', async () => {
+    vi.useFakeTimers();
+    render(<HeatmapPanel />);
+    await vi.advanceTimersByTimeAsync(20);
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    map.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560,
+      toJSON: () => ({}),
+    });
+    const stock = screen.getByRole('button', { name: /^NVDA,/i });
+    fireEvent.pointerOver(stock, { clientX: 160, clientY: 160 });
+    await vi.advanceTimersByTimeAsync(90);
+    expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
+
+    // A scrollbar or keyboard scroll moves the map while the pointer stays put.
+    fireEvent.scroll(window);
+    expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
+
+    // Boundary events fired by the scroll itself must not re-open the card.
+    fireEvent.pointerOver(stock, { clientX: 160, clientY: 160 });
+    await vi.advanceTimersByTimeAsync(90);
+    expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
+
+    // Once the scroll settles, a genuine pointer move opens the card again,
+    // even when the pointer never left the tile it stopped on.
+    await vi.advanceTimersByTimeAsync(150);
+    fireEvent.pointerMove(stock, { clientX: 160, clientY: 160 });
+    await vi.advanceTimersByTimeAsync(90);
+    expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
+  });
+
+  it('keeps a pinned category card through page scrolls', async () => {
+    vi.useFakeTimers();
+    render(<HeatmapPanel />);
+    await vi.advanceTimersByTimeAsync(20);
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    map.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560,
+      toJSON: () => ({}),
+    });
+    fireEvent.click(map.querySelector<HTMLElement>('[data-hm-category-id="industry"]')!);
+    expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
+    fireEvent.scroll(window);
+    expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
+  });
+
   it('virtualizes a long peer list while keeping the selected stock fixed', () => {
     const selected = {
       id: 's0', name: 'S0', shortName: 'Selected company', weight: 100, price: 101, changePercent: 1,

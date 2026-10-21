@@ -238,6 +238,8 @@ def get_finbert_pipeline():
     """
     Load FinBERT model pipeline.
     Lazy loading to avoid import overhead when not needed.
+    Reuses the shared FinBERT classifier so a process that also builds
+    embeddings keeps a single model instance in memory.
     """
     settings = get_settings()
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -245,15 +247,12 @@ def get_finbert_pipeline():
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", settings.tokenizers_parallelism)
 
-    from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
-    
-    model_name = "ProsusAI/finbert"
-    
-    logger.info(f"Loading FinBERT model: {model_name}")
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name)
-    
+    from transformers import pipeline
+
+    from deep_learning.data.embeddings import load_finbert_classifier
+
+    tokenizer, model = load_finbert_classifier()
+
     pipe = pipeline(
         "sentiment-analysis",
         model=model,
@@ -262,7 +261,7 @@ def get_finbert_pipeline():
         max_length=512,
         truncation=True
     )
-    
+
     logger.info("FinBERT model loaded")
     return pipe
 

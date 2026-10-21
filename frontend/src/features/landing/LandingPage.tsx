@@ -6,7 +6,7 @@ import { BrandMark } from '../../components/ui/BrandMark';
 import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
 import { ResearchStory } from './ResearchStory';
 import { useExperiencePolicy } from './useExperiencePolicy';
-import { CINEMATIC_ENTRY_TRIGGER } from './cinematic-entry';
+import { CINEMATIC_ENTRY_FADE_FROM, CINEMATIC_ENTRY_TRIGGER, getCinematicEntryOpacity } from './cinematic-entry';
 import './landing.css';
 
 const CinematicLanding = lazy(() => import('./CinematicLanding').then(module => ({ default: module.CinematicLanding })));
@@ -51,9 +51,9 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
 }
 
 function CinematicEntryCTA({ progress, revealProgress }: { progress: MotionValue<number>; revealProgress: MotionValue<number> }) {
-  const opacity = useTransform(revealProgress, [0, .1], [0, 1]);
+  const opacity = useTransform(progress, getCinematicEntryOpacity);
   const y = useTransform(revealProgress, [0, .1], [28, 0]);
-  const visibility = useTransform(revealProgress, value => value > .001 ? 'visible' : 'hidden');
+  const visibility = useTransform(progress, value => value > CINEMATIC_ENTRY_FADE_FROM ? 'visible' : 'hidden');
   const pointerEvents = useTransform(progress, value => value >= CINEMATIC_ENTRY_TRIGGER ? 'auto' : 'none');
   return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
@@ -62,18 +62,22 @@ function StaticEntryCTA() {
   return <section className="cm-enter" aria-labelledby="enter-title"><EntryCTAContent progress={null} animated={false}/></section>;
 }
 
+function StaticLanding() {
+  return <>
+    <Hero enhanced={false}/>
+    <section id="research" className="cm-research-intro" aria-labelledby="research-title"><p className="cm-eyebrow">THE CONNECTED VIEW</p><h2 id="research-title">A price is a point.<br/><span>Intelligence is the connection.</span></h2><p>Move from market structure to evidence in one connected view.</p><div className="cm-capabilities">{[{label:'Market context',icon:ChartNoAxesCombined},{label:'News intelligence',icon:Newspaper},{label:'Forecast ranges',icon:ScanLine},{label:'Model validation',icon:ShieldCheck}].map(({label,icon:Icon},i)=><div key={label}><span className="cm-capability-index">0{i+1}</span><Icon size={22} strokeWidth={1.4} aria-hidden="true"/><span>{label}</span></div>)}</div></section>
+    <ResearchStory enhanced={false}/>
+    <StaticEntryCTA/>
+  </>;
+}
+
 export function LandingPage() {
   const { enhanced, quality } = useExperiencePolicy();
   return <div className={`cm-landing cm-landing--quality-${quality}${enhanced ? ' cm-landing--cinematic' : ''}`}>
     {!enhanced ? <Suspense fallback={<div aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', background: '#080e17' }}/>}><TerraAtmosphere className="cm-terra-atmosphere--landing-static"/></Suspense> : null}
     <a className="cm-skip" href="#main-content">Skip to content</a>
     <main id="main-content" tabIndex={-1}>
-      {enhanced ? <Suspense fallback={<Hero enhanced={false}/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={(progress, revealProgress) => <CinematicEntryCTA progress={progress} revealProgress={revealProgress}/>}/></Suspense> : <>
-        <Hero enhanced={false}/>
-        <section id="research" className="cm-research-intro" aria-labelledby="research-title"><p className="cm-eyebrow">THE CONNECTED VIEW</p><h2 id="research-title">A price is a point.<br/><span>Intelligence is the connection.</span></h2><p>Move from market structure to evidence in one connected view.</p><div className="cm-capabilities">{[{label:'Market context',icon:ChartNoAxesCombined},{label:'News intelligence',icon:Newspaper},{label:'Forecast ranges',icon:ScanLine},{label:'Model validation',icon:ShieldCheck}].map(({label,icon:Icon},i)=><div key={label}><span className="cm-capability-index">0{i+1}</span><Icon size={22} strokeWidth={1.4} aria-hidden="true"/><span>{label}</span></div>)}</div></section>
-        <ResearchStory enhanced={false}/>
-      </>}
-      {!enhanced ? <StaticEntryCTA/> : null}
+      {enhanced ? <Suspense fallback={<StaticLanding/>}><CinematicLanding quality={quality === 'high' ? 'high' : 'balanced'} entry={(progress, revealProgress) => <CinematicEntryCTA progress={progress} revealProgress={revealProgress}/>}/></Suspense> : <StaticLanding/>}
     </main>
   </div>;
 }

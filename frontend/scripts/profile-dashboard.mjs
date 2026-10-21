@@ -28,7 +28,9 @@ try {
     });
     await page.goto((process.env.EXPERIENCE_URL || 'http://127.0.0.1:5185') + '/dashboard');
     await page.locator('#price-forecast .recharts-surface').waitFor();
-    await page.getByRole('heading', { name: 'Market Heatmap', exact: true }).waitFor();
+    await page.locator('#market-map').scrollIntoViewIfNeeded();
+    await page.locator('#market-map h2').waitFor();
+    await page.locator('#price-forecast').scrollIntoViewIfNeeded();
     await page.waitForTimeout(1200);
     const start = await page.evaluate(() => performance.now());
     for (let i = 0; i < 4; i++) {

@@ -13,6 +13,13 @@ import { heatmapMetrics, recordLayout } from './performance';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = HEATMAP_MAX_ZOOM;
+/**
+ * A page scroll moves the map under a stationary pointer, but browsers only
+ * re-resolve hover lazily (and inconsistently). Ignore scroll-born boundary
+ * events for this long so the fixed-position category card cannot re-open
+ * while the page is still moving.
+ */
+const HOVER_SCROLL_SUPPRESS_MS = 200;
 
 /** An element shown only while the camera scale is within [minScale, maxScale). */
 interface LodEntry {
@@ -87,6 +94,8 @@ interface Props {
   onCategoryDrillDown?: (anchor: CategoryAnchor) => void;
   onNavigateBack?: () => void;
   onZoomDelta?: (delta: number) => void;
+  /** Hover was invalidated without a pointer transition (e.g. page scroll). */
+  onHoverInvalidated?: () => void;
   resetKey?: string | number;
 }
 
@@ -150,6 +159,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   onCategoryDrillDown,
   onNavigateBack,
   onZoomDelta,
+  onHoverInvalidated,
   resetKey,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -180,6 +190,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const lastZoomFrameTimeRef = useRef<number | null>(null);
   const zoomingRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const hoverScrollSuppressedRef = useRef(false);
+  const hoverScrollTimerRef = useRef<number | null>(null);
+  const hoverInvalidatedRef = useRef(false);
   const startZoomAnimationRef = useRef<() => void>(() => {});
   const dragRef = useRef<{
     pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
@@ -231,7 +244,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
   })), [parents]);
 
-  const setCategoryHoverVisual = (id: string | null) => {
+  const setCategoryHoverVisual = useCallback((id: string | null) => {
     const previous = hoveredCategoryElementRef.current;
     const next = id ? categoryElementsRef.current.get(id) || null : null;
     if (previous === next) return;
@@ -256,7 +269,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       next.style.backgroundColor = '#d99a5b';
       next.style.boxShadow = '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)';
     }
-  };
+  }, [hoveredCategoryId]);
 
   const updateTileVisibility = useCallback((scale: number) => {
     const { entries, boundaries } = lodRef.current;
@@ -488,6 +501,41 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     };
   }, [onNavigateBack, onZoomDelta]);
 
+  // Hover belongs to the map's live position. A scroll moves the map under a
+  // stationary pointer, so drop the hover immediately instead of leaving the
+  // fixed-position card floating over unrelated sections until the next
+  // pointer event (boundary events on scroll are late or absent).
+  useEffect(() => {
+    const invalidate = (event: Event) => {
+      const scroller = scrollRef.current;
+      // Ignore scrollers that cannot move the map (e.g. the pinned peer list).
+      if (event.target instanceof Node && scroller && !event.target.contains(scroller)) return;
+      hoverScrollSuppressedRef.current = true;
+      hoverInvalidatedRef.current = true;
+      if (hoverScrollTimerRef.current !== null) window.clearTimeout(hoverScrollTimerRef.current);
+      hoverScrollTimerRef.current = window.setTimeout(() => {
+        hoverScrollTimerRef.current = null;
+        hoverScrollSuppressedRef.current = false;
+      }, HOVER_SCROLL_SUPPRESS_MS);
+      if (!activeCategoryRef.current && !activeLeafRef.current) return;
+      activeCategoryRef.current = null;
+      activeLeafRef.current = null;
+      setCategoryHoverVisual(null);
+      onLeafHover?.(null);
+      onHoverInvalidated?.();
+    };
+    window.addEventListener('scroll', invalidate, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('scroll', invalidate, { capture: true });
+      if (hoverScrollTimerRef.current !== null) {
+        window.clearTimeout(hoverScrollTimerRef.current);
+        hoverScrollTimerRef.current = null;
+      }
+    };
+    // `setCategoryHoverVisual` already tracks `hoveredCategoryId` so the
+    // highlight restore inside the closure stays current.
+  }, [onHoverInvalidated, onLeafHover, setCategoryHoverVisual]);
+
   const anchorFor = (
     id: string,
     pointer?: { x: number; y: number },
@@ -513,6 +561,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const targetData = (target: EventTarget | null) =>
     target instanceof Element ? target.closest<HTMLElement>('[data-hm-leaf-id],[data-hm-category-id]') : null;
 
+  // Boundary events born from a scroll arrive as mouse pointers; a touch tap
+  // that follows a scroll must still be able to open the card.
+  const suppressScrollHover = (pointerType: string) =>
+    pointerType !== 'touch' && hoverScrollSuppressedRef.current;
+
   const showCategory = (
     id: string | undefined,
     x?: number,
@@ -529,12 +582,11 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     if (anchor) onCategoryHover(anchor);
   };
 
-  const onPointerOver = (event: React.PointerEvent<HTMLDivElement>) => {
-    lastPointerRef.current = { x: event.clientX, y: event.clientY };
-    if (zoomingRef.current) return;
-    const target = targetData(event.target);
-    if (!target) return;
-    const leafId = target.dataset.hmLeafId;
+  /** Resolve the cell under the pointer; true when one was found. */
+  const resolveHoverTarget = (target: EventTarget | null, x: number, y: number) => {
+    const cell = targetData(target);
+    if (!cell) return false;
+    const leafId = cell.dataset.hmLeafId;
     if (leafId) {
       const node = leafById.get(leafId);
       const leafChanged = activeLeafRef.current !== leafId;
@@ -544,9 +596,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }
       const scroller = scrollRef.current;
       showCategory(
-        target.dataset.hmParentId,
-        event.clientX,
-        event.clientY,
+        cell.dataset.hmParentId,
+        x,
+        y,
         node && scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
         leafChanged,
       );
@@ -555,8 +607,16 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         activeLeafRef.current = null;
         onLeafHover?.(null);
       }
-      showCategory(target.dataset.hmCategoryId, event.clientX, event.clientY);
+      showCategory(cell.dataset.hmCategoryId, x, y);
     }
+    return true;
+  };
+
+  const onPointerOver = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    if (zoomingRef.current) return;
+    if (suppressScrollHover(event.pointerType)) return;
+    if (resolveHoverTarget(event.target, event.clientX, event.clientY)) hoverInvalidatedRef.current = false;
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -586,11 +646,19 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       }
       return;
     }
+    if (hoverInvalidatedRef.current) {
+      // A scroll cleared hover; the browser will not replay the boundary
+      // events, so re-resolve on the first genuine move.
+      if (suppressScrollHover(event.pointerType)) return;
+      if (resolveHoverTarget(event.target, event.clientX, event.clientY)) hoverInvalidatedRef.current = false;
+      return;
+    }
     if (activeCategoryRef.current) onCategoryPointerMove?.(event.clientX, event.clientY);
   };
 
   const onPointerOut = (event: React.PointerEvent<HTMLDivElement>) => {
     if (zoomingRef.current) return;
+    if (suppressScrollHover(event.pointerType)) return;
     const next = targetData(event.relatedTarget);
     const nextLeaf = next?.dataset.hmLeafId || null;
     const nextCategory = next?.dataset.hmParentId || next?.dataset.hmCategoryId || null;

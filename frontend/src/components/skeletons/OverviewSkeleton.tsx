@@ -62,14 +62,16 @@ export function OverviewSkeleton() {
             </div>
 
             <div className="cm-dashboard-price-row">
-              <SkeletonBone className="w-40 h-12" rounded="md" />
+              {/* Transparent text keeps the real quote's line box, so the
+                  skeleton and the live price row settle at the same height. */}
+              <span className="cm-dashboard-price cm-dashboard-price--skeleton" aria-hidden="true" />
               <span className="cm-dashboard-currency">USD</span>
-              <SkeletonBone className="w-24 h-5" rounded="md" />
+              <span className="cm-dashboard-change cm-dashboard-change--skeleton" aria-hidden="true" />
             </div>
 
             <div className="cm-dashboard-quote-meta">
-              <SkeletonBone className="w-44 h-3" />
-              <SkeletonBone className="w-32 h-3" />
+              <span className="cm-dashboard-meta--skeleton" aria-hidden="true" />
+              <span className="cm-dashboard-meta--skeleton cm-dashboard-meta--skeleton-delta" aria-hidden="true" />
             </div>
 
             <div className="cm-dashboard-sentiment">
@@ -78,10 +80,10 @@ export function OverviewSkeleton() {
                 <small>Headline tone</small>
               </div>
               <div className="cm-sentiment-badge">
-                <SkeletonBone className="w-20 h-5" rounded="md" />
+                <SkeletonBone className="w-16 h-5" rounded="md" />
               </div>
               <span className="cm-dashboard-sentiment-score">
-                <SkeletonBone className="w-14 h-5 inline-block" rounded="md" />
+                <SkeletonBone className="w-[3.7rem] h-5 inline-block" rounded="md" />
               </span>
             </div>
           </div>

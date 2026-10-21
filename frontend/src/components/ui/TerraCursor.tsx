@@ -168,7 +168,8 @@ export function TerraCursor() {
     };
     const onPointerMove = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch') {
+      // Buttons held means a selection or card drag is in progress: stay quiet.
+      if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch' || event.buttons !== 0) {
         resetTrailOrigin();
         return;
       }

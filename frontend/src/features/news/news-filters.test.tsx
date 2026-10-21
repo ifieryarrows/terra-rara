@@ -125,7 +125,7 @@ it('keeps transient-state buttons inside the rail clickable', async () => {
   expect(rail.classList.contains('is-dragging')).toBe(false);
 });
 
-it('still captures the pointer when a drag starts on a headline card', async () => {
+it('captures the pointer once a headline drag turns horizontal', async () => {
   stubFlowEnvironment();
   state.feed.mockReturnValue(feedWith(cardItems(4)));
   render(<NewsIntelligencePanel/>);
@@ -133,7 +133,27 @@ it('still captures the pointer when a drag starts on a headline card', async () 
   const capture = vi.fn();
   card.setPointerCapture = capture;
   fireEvent.pointerDown(card, { pointerId: 9, button: 0, pointerType: 'mouse' });
+  expect(capture).not.toHaveBeenCalled();
+  fireEvent.pointerMove(card, { pointerId: 9, clientX: 40, clientY: 0 });
   expect(capture).toHaveBeenCalledWith(9);
+  expect(document.querySelector('.cm-news-feed')?.classList.contains('is-dragging')).toBe(true);
+});
+
+// Pressing on a headline to select its text must stay a native gesture: the rail
+// only takes over once the pointer travels horizontally.
+it('leaves vertical drags to native text selection', async () => {
+  stubFlowEnvironment();
+  state.feed.mockReturnValue(feedWith(cardItems(4)));
+  render(<NewsIntelligencePanel/>);
+  const card = screen.getByRole('button', { name: /QA headline 1/ });
+  const capture = vi.fn();
+  card.setPointerCapture = capture;
+  const rail = document.querySelector<HTMLElement>('.cm-news-feed');
+  if (!rail) throw new Error('news rail not rendered');
+  fireEvent.pointerDown(card, { pointerId: 9, button: 0, pointerType: 'mouse' });
+  fireEvent.pointerMove(card, { pointerId: 9, clientX: 2, clientY: 40 });
+  expect(capture).not.toHaveBeenCalled();
+  expect(rail.classList.contains('is-dragging')).toBe(false);
 });
 
 // The refresh status must sit inside the headline count row: as a separate block above it,

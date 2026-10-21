@@ -83,7 +83,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     duration: number;
   } | null>(null);
   const rampFrameRef = useRef<number | null>(null);
-  const dragState = useRef<{ pointerId: number; startX: number; startScroll: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
+  const dragState = useRef<{ pointerId: number; startX: number; startY: number; startScroll: number; trackWidth: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
   const suppressCardClick = useRef(false);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
@@ -475,37 +475,50 @@ export const NewsIntelligencePanel: React.FC = () => {
   };
 
   const startHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    pauseNewsFlow();
-    if (event.pointerType === 'touch' || event.button !== 0) return;
+    if (event.pointerType === 'touch') {
+      pauseNewsFlow();
+      return;
+    }
+    if (event.button !== 0) return;
     const rail = event.currentTarget;
     const target = event.target instanceof HTMLElement ? event.target : null;
     const card = target?.closest<HTMLElement>('.cm-news-card') ?? null;
     // Controls rendered inside the rail (retry/reset in transient states) rely on the
     // native click: capturing the pointer on the rail would retarget it away from them.
     if (!card && target?.closest('button, a, input, select, textarea, [role="button"]')) return;
-    const captureTarget = card ?? rail;
+    // Arm a pending drag but leave the pointer alone until the gesture proves to be
+    // horizontal, so pressing on a headline to select its text stays fully native.
     dragState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
+      startY: event.clientY,
       startScroll: flowPositionRef.current + rail.scrollLeft,
+      trackWidth: originalNewsSetRef.current?.getBoundingClientRect().width ?? 0,
       moved: false,
-      captureTarget,
+      captureTarget: card ?? rail,
     };
-    captureTarget.setPointerCapture(event.pointerId);
-    setIsDraggingHeadlines(true);
   };
 
   const moveHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragState.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const delta = event.clientX - drag.startX;
-    if (!drag.moved && Math.abs(delta) < 4) return;
-    drag.moved = true;
-    pauseNewsFlow();
+    if (!drag.moved) {
+      const vertical = event.clientY - drag.startY;
+      if (Math.hypot(delta, vertical) < 6) return;
+      // Vertical gestures belong to native text selection, not to the rail.
+      if (Math.abs(delta) < Math.abs(vertical)) {
+        dragState.current = null;
+        return;
+      }
+      drag.moved = true;
+      drag.captureTarget.setPointerCapture(event.pointerId);
+      setIsDraggingHeadlines(true);
+      pauseNewsFlow();
+    }
     const rail = event.currentTarget;
-    const width = originalNewsSetRef.current?.getBoundingClientRect().width ?? 0;
     let next = drag.startScroll - delta;
-    if (width > rail.clientWidth) next = ((next % width) + width) % width;
+    if (drag.trackWidth > rail.clientWidth) next = ((next % drag.trackWidth) + drag.trackWidth) % drag.trackWidth;
     applyNewsFlowPosition(next);
   };
 

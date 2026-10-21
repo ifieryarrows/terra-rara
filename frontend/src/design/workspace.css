@@ -12,7 +12,7 @@
 .cm-tone-bad { color: var(--cm-negative); }
 .cm-tone-neutral { color: var(--cm-text); }
 .cm-workspace { position: relative; isolation: isolate; min-height: 100svh; color: var(--cm-text); background: transparent; }
-.cm-workspace-header { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--cm-bg) 78%, transparent); border-bottom: 1px solid var(--cm-border); backdrop-filter: blur(14px); transform: translateY(0); opacity: 1; transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease; will-change: transform, opacity; }
+.cm-workspace-header { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--cm-bg) 78%, transparent); border-bottom: 1px solid var(--cm-border); backdrop-filter: blur(14px); transform: translateY(0); opacity: 1; transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease; }
 .cm-workspace-header--hidden { transform: translateY(-100%); opacity: 0; pointer-events: none; transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease; }
 .cm-workspace-header:focus-within { transform: translateY(0); opacity: 1; pointer-events: auto; transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease; }
 .cm-workspace-bar { max-width: var(--cm-content-width); margin: auto; padding: .85rem clamp(1rem, 3vw, 2.5rem); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
@@ -21,6 +21,7 @@
 .cm-nav-link:hover { color: var(--cm-text); background: var(--cm-surface); }
 .cm-nav-link[aria-current=page] { color: var(--cm-copper); background: var(--cm-copper-soft); border-color: #e6a47a35; }
 .cm-workspace-main { position: relative; z-index: 1; max-width: var(--cm-content-width); margin: auto; padding: 2rem clamp(1rem, 3vw, 2.5rem); min-width: 0; scroll-margin-top: 4.5rem; }
+.cm-workspace-page-skeleton { display: grid; gap: 1.5rem; min-height: 70svh; }
 .cm-workspace-main:focus { outline: none; }
 .cm-workspace-main > div > .flex.items-end.justify-between { flex-wrap: wrap; align-items: flex-start; gap: 1rem; }
 .cm-workspace-footer { position: relative; z-index: 1; max-width: var(--cm-content-width); margin: auto; border-top: 1px solid var(--cm-border); padding: 1.5rem clamp(1rem, 3vw, 2.5rem); display: flex; flex-wrap: wrap; gap: .7rem; justify-content: space-between; color: var(--cm-muted); font-size: .75rem; }
@@ -358,22 +359,46 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   background: linear-gradient(90deg, color-mix(in srgb, var(--cm-bg) 22%, transparent), transparent 88%);
 }
 .cm-dashboard-instrument { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .7rem 1rem; }
+.cm-dashboard-instrument > div:first-child { min-width: 0; }
 .cm-dashboard-instrument-name { margin: 0 0 .35rem; color: var(--cm-muted); font-size: .68rem; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
 .cm-dashboard-symbol { color: var(--cm-text); font: 600 .78rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
-.cm-dashboard-quote-status { display: inline-flex; align-items: center; gap: .45rem; color: var(--cm-muted); font-size: .7rem; }
+.cm-dashboard-quote-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: .45rem; min-width: 7.5rem; color: var(--cm-muted); font-size: .7rem; white-space: nowrap; flex-shrink: 0; }
 .cm-dashboard-quote-status i { width: .42rem; height: .42rem; border-radius: 50%; background: var(--cm-muted); }
 .cm-dashboard-quote-status--delayed i { background: #e3b56e; box-shadow: 0 0 .6rem #e3b56e55; }
 .cm-dashboard-price-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: .45rem .75rem; padding: clamp(1.2rem, 2.2vw, 1.8rem) 0 .85rem; }
 .cm-dashboard-price { max-width: 100%; color: var(--cm-text); font: 350 clamp(2.5rem, 5vw, 4.75rem)/.98 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; letter-spacing: -.075em; white-space: nowrap; }
 .cm-dashboard-currency { color: var(--cm-muted); font-size: .72rem; font-weight: 600; letter-spacing: .12em; white-space: nowrap; }
-.cm-dashboard-change { min-width: 0; font: 550 .83rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cm-dashboard-change { min-width: 9.5rem; font: 550 .83rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; white-space: nowrap; }
 .cm-dashboard-change span { opacity: .78; }
+.cm-dashboard-change--placeholder,
+.cm-dashboard-meta--placeholder { visibility: hidden; }
+.cm-dashboard-change--placeholder::before,
+.cm-dashboard-change--skeleton::before { content: '+0.0000 (+00.00%)'; }
+.cm-dashboard-price--skeleton::before { content: '4.7800'; }
+.cm-dashboard-meta--skeleton::before { content: 'Showing the last available historical close'; }
+.cm-dashboard-meta--placeholder::before,
+.cm-dashboard-meta--skeleton-delta::before { content: 'Change vs last stored close'; }
+.cm-dashboard-price--skeleton,
+.cm-dashboard-change--skeleton,
+.cm-dashboard-meta--skeleton {
+  color: transparent;
+  border-radius: .35rem;
+  background: linear-gradient(90deg, var(--cm-surface-raised) 0%, color-mix(in srgb, var(--cm-surface-raised) 65%, var(--cm-copper) 14%) 50%, var(--cm-surface-raised) 100%);
+  background-size: 200% 100%;
+  animation: cm-skeleton-shimmer 1.6s var(--cm-ease) infinite;
+  user-select: none;
+}
 .cm-dashboard-quote-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .35rem 1rem; padding-bottom: 1.1rem; border-bottom: 1px solid var(--cm-dashboard-rule-soft); color: var(--cm-muted); font-size: .67rem; line-height: 1.5; }
+@media (max-width: 27rem) {
+  /* Two fixed rows keep the metas from collapsing to one line when the live
+     "Checked…" text replaces the longer historical-close sentence. */
+  .cm-market-dashboard .cm-dashboard-quote-meta { display: grid; grid-template-columns: minmax(0, 1fr); gap: .35rem; }
+}
 .cm-dashboard-sentiment { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .8rem; padding-top: 1rem; }
 .cm-dashboard-sentiment-copy { display: grid; gap: .3rem; }
 .cm-dashboard-sentiment-copy > span { color: var(--cm-text); font-size: .66rem; font-weight: 600; letter-spacing: .1em; }
 .cm-dashboard-sentiment-copy small { color: var(--cm-muted); font-size: .68rem; }
-.cm-market-dashboard .cm-sentiment-badge { display: inline-flex; min-height: 1.9rem; align-items: center; gap: .38rem; padding: .3rem .48rem; border: 1px solid currentColor; border-radius: 999px; font-size: .68rem; font-weight: 600; }
+.cm-market-dashboard .cm-sentiment-badge { display: inline-flex; min-width: 5rem; min-height: 1.9rem; align-items: center; justify-content: center; gap: .38rem; padding: .3rem .48rem; border: 1px solid currentColor; border-radius: 999px; font-size: .68rem; font-weight: 600; }
 .cm-dashboard-sentiment-score { min-width: 3.8rem; text-align: right; font: 600 .87rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
 
 .cm-market-dashboard .cm-overview-tools {
@@ -918,6 +943,22 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+/* Hold the deferred sections at their loaded heights so mounting the news
+   panel or the map does not shift everything below it (dashboard CLS). */
+.cm-market-dashboard .cm-dashboard-news-section {
+  min-height: 540px;
+}
+.cm-market-dashboard .cm-news-loading {
+  min-height: 540px;
+}
+.cm-market-dashboard .cm-map-skeleton {
+  height: 705px;
+}
+@media (max-width: 639px) {
+  .cm-market-dashboard .cm-map-skeleton {
+    height: 812px;
+  }
 }
 .cm-market-dashboard .cm-dashboard-market-map > .cm-heatmap {
   width: 100%;
