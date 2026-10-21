@@ -48,7 +48,39 @@
   position: relative;
   display: flex;
   align-items: flex-start;
-  min-height: 11.5rem;
+  height: 17rem;
+  min-height: 17rem;
+}
+
+.cm-cuprum-bubble--dialogue {
+  height: 100%;
+}
+
+.cm-cuprum-bubble--dialogue .cm-cuprum-bubble-inner {
+  display: flex;
+  height: 100%;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cm-cuprum-bubble--dialogue .cm-cuprum-copy {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--cuprum-accent) 45%, transparent) transparent;
+}
+
+.cm-cuprum-bubble--dialogue .cm-cuprum-action {
+  margin-right: 0;
+}
+
+.cm-cuprum-bubble--dialogue .cm-cuprum-choices {
+  flex: 0 0 auto;
 }
 
 .cm-cuprum-bubble {
@@ -141,6 +173,10 @@
   white-space: pre-wrap;
 }
 
+.cm-cuprum-copy {
+  min-width: 0;
+}
+
 .cm-cuprum-caret {
   display: inline-block;
   width: 0.38rem;
@@ -215,7 +251,6 @@
   width: 100%;
   max-width: 22rem;
   height: 1px;
-  margin-top: 4.2rem;
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--cm-copper) 45%, transparent),
@@ -301,11 +336,8 @@
 
 @media (max-width: 639px) {
   .cm-cuprum-bubble-slot {
-    min-height: 7rem;
-  }
-
-  .cm-cuprum-idle-wire {
-    margin-top: 2rem;
+    height: 20rem;
+    min-height: 20rem;
   }
 
   .cm-cuprum-tail,

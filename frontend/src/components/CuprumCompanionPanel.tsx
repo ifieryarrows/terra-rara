@@ -102,6 +102,8 @@ export function CuprumCompanionPanel({
     cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
   );
 
+  const modeRef = useRef<'idle' | 'dialogue'>('idle');
+  const ambientTimerRef = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const petButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -213,6 +215,10 @@ export function CuprumCompanionPanel({
     return () => document.removeEventListener('visibilitychange', onChange);
   }, []);
 
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
   // Ambient speech bubbles: first after a short welcome, then a long, irregular
   // cadence. Any interaction resets the clock, and dialogue always wins.
   useEffect(() => {
@@ -221,13 +227,17 @@ export function CuprumCompanionPanel({
       ? IDLE_DELAY_MIN_MS + Math.random() * IDLE_DELAY_RANGE_MS
       : IDLE_FIRST_DELAY_MS;
     const timer = window.setTimeout(() => {
+      ambientTimerRef.current = null;
+      if (modeRef.current !== 'idle') return;
       const line = pickIdleLine(ctx, runtime, recentIdleIdsRef.current);
       recentIdleIdsRef.current = [...recentIdleIdsRef.current, line.id].slice(-4);
       hasShownIdleRef.current = true;
       setIdleLine(line);
     }, delay);
+    ambientTimerRef.current = timer;
     return () => {
       window.clearTimeout(timer);
+      if (ambientTimerRef.current === timer) ambientTimerRef.current = null;
     };
   }, [mode, idleLine, inView, visible, interactionEpoch, ctx, runtime]);
 
@@ -239,11 +249,12 @@ export function CuprumCompanionPanel({
   const closeConversation = useCallback(
     (restoreFocus = false) => {
       noteInteraction();
+      modeRef.current = 'idle';
       setMode('idle');
       setActiveNodeId(null);
       setIsTyping(false);
       if (restoreFocus) {
-        window.setTimeout(() => petButtonRef.current?.focus(), 0);
+        window.setTimeout(() => petButtonRef.current?.focus({ preventScroll: true }), 0);
       }
     },
     [noteInteraction],
@@ -254,6 +265,11 @@ export function CuprumCompanionPanel({
   }, [closeConversation]);
 
   const openConversation = useCallback(() => {
+    if (ambientTimerRef.current !== null) {
+      window.clearTimeout(ambientTimerRef.current);
+      ambientTimerRef.current = null;
+    }
+    modeRef.current = 'dialogue';
     setIdleLine(null);
     setActiveNodeId(ROOT_NODE_ID);
     setRuntime((previous) => ({ ...previous, freshData: freshDataRef.current }));
@@ -290,7 +306,8 @@ export function CuprumCompanionPanel({
     [activeNodeId, ctx, runtime],
   );
 
-  // Esc closes the conversation; a click outside the stage dismisses it too.
+  // Esc closes the conversation. The pet and the × stay deliberate exits; a
+  // stray dashboard click must not yank the reader out of an answer.
   useEffect(() => {
     if (mode !== 'dialogue') return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -298,24 +315,21 @@ export function CuprumCompanionPanel({
       event.preventDefault();
       closeConversation(true);
     };
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (stageRef.current?.contains(target)) return;
-      closeConversation(false);
-    };
     document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('pointerdown', onPointerDown, true);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('pointerdown', onPointerDown, true);
     };
   }, [mode, closeConversation]);
 
   // Move focus into the new bubble so screen readers get the whole turn and
-  // the 1/2/3 shortcuts work without hunting for the menu.
+  // the 1/2/3 shortcuts work without hunting for the menu. preventScroll keeps
+  // the dashboard exactly where the reader left it.
   useEffect(() => {
     if (mode !== 'dialogue') return;
-    const timer = window.setTimeout(() => bubbleRef.current?.focus(), 0);
+    const timer = window.setTimeout(
+      () => bubbleRef.current?.focus({ preventScroll: true }),
+      0,
+    );
     return () => {
       window.clearTimeout(timer);
     };
@@ -424,20 +438,22 @@ export function CuprumCompanionPanel({
 
         <div className="min-w-0 flex-1">
           <div className="cm-cuprum-bubble-slot">
-            {mode === 'dialogue' && resolvedNode ? (
-              <CuprumSpeechBubble
-                ref={bubbleRef}
-                key={`dialogue-${runtime.turn}-${resolvedNode.id}`}
-                mode="dialogue"
-                speech={resolvedNode.speech}
-                action={resolvedNode.action}
-                choices={resolvedNode.choices}
-                accent={moodMeta.ringColor}
-                coreColor={moodMeta.coreColor}
-                onChoose={handleChoose}
-                onClose={closeDialogue}
-                onTypingChange={setIsTyping}
-              />
+            {mode === 'dialogue' ? (
+              resolvedNode ? (
+                <CuprumSpeechBubble
+                  ref={bubbleRef}
+                  key={`dialogue-${runtime.turn}-${resolvedNode.id}`}
+                  mode="dialogue"
+                  speech={resolvedNode.speech}
+                  action={resolvedNode.action}
+                  choices={resolvedNode.choices}
+                  accent={moodMeta.ringColor}
+                  coreColor={moodMeta.coreColor}
+                  onChoose={handleChoose}
+                  onClose={closeDialogue}
+                  onTypingChange={setIsTyping}
+                />
+              ) : null
             ) : idleLine ? (
               <CuprumSpeechBubble
                 key={`idle-${idleLine.id}`}

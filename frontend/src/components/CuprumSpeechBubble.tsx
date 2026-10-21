@@ -187,12 +187,14 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
             </button>
           )}
 
-          {action && <p className="cm-cuprum-action">{action}</p>}
+          <div className="cm-cuprum-copy">
+            {action && <p className="cm-cuprum-action">{action}</p>}
 
-          <p className="cm-cuprum-speech" aria-hidden="true">
-            {visibleText}
-            {typing && <span className="cm-cuprum-caret" aria-hidden="true" />}
-          </p>
+            <p className="cm-cuprum-speech" aria-hidden="true">
+              {visibleText}
+              {typing && <span className="cm-cuprum-caret" aria-hidden="true" />}
+            </p>
+          </div>
           <p className="sr-only" aria-live="polite" data-testid="cuprum-spoken-text">
             {spokenText}
           </p>

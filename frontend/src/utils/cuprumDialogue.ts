@@ -3,23 +3,28 @@ import type {
   ExplainResponse,
   TFTAnalysisResponse,
 } from '../types';
+import {
+  buildCuprumBriefing,
+  composeCuprumReply,
+  signalPhrase,
+  type CuprumConfidence,
+  type CuprumDataState,
+  type CuprumEnergy,
+  type CuprumMood,
+  type CuprumVoiceContext,
+} from './cuprumVoice';
 
-export type CuprumMood = 'molten_bull' | 'patina_bear' | 'tempered_neutral';
-export type CuprumEnergy = 'calm' | 'charged' | 'volatile';
-export type CuprumConfidence = 'high' | 'medium' | 'low';
-export type CuprumDataState = 'ready' | 'loading' | 'empty' | 'error';
+export type {
+  CuprumConfidence,
+  CuprumDataState,
+  CuprumEnergy,
+  CuprumMood,
+} from './cuprumVoice';
 
-export interface CuprumContext {
-  mood: CuprumMood;
-  energy: CuprumEnergy;
-  confidence: CuprumConfidence;
+export interface CuprumContext extends CuprumVoiceContext {
   stance: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   signalCategory: string | null;
   signalLabel: string | null;
-  riskCount: number;
-  opportunityCount: number;
-  hasBiasWarning: boolean;
-  dataState: CuprumDataState;
   updatedAt: string | null;
 }
 
@@ -45,7 +50,9 @@ export interface CuprumNode {
   id: string;
   speech: string | ((ctx: CuprumContext, runtime: CuprumRuntime) => string);
   action?: string | ((ctx: CuprumContext, runtime: CuprumRuntime) => string | null);
-  choices: CuprumChoice[];
+  choices:
+    | CuprumChoice[]
+    | ((ctx: CuprumContext, runtime: CuprumRuntime) => CuprumChoice[]);
 }
 
 export interface ResolvedCuprumNode {
@@ -82,26 +89,11 @@ const BOND_GREETINGS: Record<CuprumMood, string> = {
   tempered_neutral: 'You came back. I saved you the quiet seat.',
 };
 
-const SPARK_LINES: Record<CuprumMood, string> = {
-  molten_bull:
-    "Loud. The whole board is warm, and I've been practicing my roar in the reflection of your coffee.",
-  patina_bear:
-    "Low and green. I'm keeping my edges soft until the weather makes up its mind.",
-  tempered_neutral:
-    "Steady. I've been listening to the space between prices. It has a nice hum.",
-};
-
 const SPARK_ACTIONS: Record<CuprumMood, string> = {
   molten_bull: 'The ember in its chest brightens.',
   patina_bear: 'A little green flame curls around its ear.',
   tempered_neutral: 'It taps one claw against the glass, very softly.',
 };
-
-const BALANCE_LINES = {
-  knots: 'More knots than doors today.',
-  doors: "The doors are winning. I'm watching the hinges.",
-  balanced: 'A balanced knot. Those are the ones that bite.',
-} as const;
 
 export const CUPRUM_STORIES: CuprumStory[] = [
   {
@@ -303,12 +295,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   spark: {
     id: 'spark',
-    speech: (ctx) => {
-      if (ctx.dataState === 'loading') return 'Still warming up. The wires are full of half-finished thoughts.';
-      if (ctx.dataState === 'error') return 'A little thin. Something in the wires went quiet.';
-      if (ctx.dataState === 'empty') return "Quiet. But I'm a copper thing. We're good at waiting.";
-      return SPARK_LINES[ctx.mood];
-    },
+    speech: (ctx, runtime) => composeCuprumReply('spark', ctx, runtime),
     action: (ctx) => (ctx.dataState === 'ready' ? SPARK_ACTIONS[ctx.mood] : null),
     choices: [
       { id: 'spark-weight', label: "What's weighing on you?", next: 'spark-weight', effect: 'curious' },
@@ -318,23 +305,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'spark-weight': {
     id: 'spark-weight',
-    speech: (ctx) => {
-      if (ctx.dataState !== 'ready') return "The wires are quiet. I'm listening to the quiet.";
-      const imagery = signalImagery(ctx);
-      if (imagery === 'the paper weather') {
-        return "The dollar keeps tapping on the window. I'm trying not to answer.";
-      }
-      if (ctx.riskCount === 0 && ctx.opportunityCount === 0) {
-        return `I don't have a knot to show you today. Just ${imagery}, humming.`;
-      }
-      if (ctx.riskCount > ctx.opportunityCount) {
-        return `Something in ${imagery} is leaning on the door. I can hear the hinges.`;
-      }
-      if (ctx.opportunityCount > ctx.riskCount) {
-        return `The doors are winning today. I'm keeping one eye on the hinges.`;
-      }
-      return BALANCE_LINES.balanced;
-    },
+    speech: (ctx, runtime) => composeCuprumReply('weight', ctx, runtime),
     action: 'Its whiskers twitch at something you cannot see.',
     choices: [
       { id: 'weight-warning', label: 'Is that a warning?', next: 'weight-warning', effect: 'curious' },
@@ -369,16 +340,10 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'weight-change': {
     id: 'weight-change',
-    speech: (ctx) => {
-      if (ctx.confidence === 'low') {
-        return "Ask me again after the next whisper. I don't want to guess before the wires settle.";
-      }
-      const imagery = signalImagery(ctx);
-      return `A quieter ${imagery} would help. Or a louder one. I'm not picky. I just want it to stop pretending it isn't there.`;
-    },
+    speech: (ctx, runtime) => composeCuprumReply('weight-change', ctx, runtime),
     choices: [
+      { id: 'change-now', label: 'What changed?', next: 'change', effect: 'curious' },
       { id: 'change-sense', label: 'What do you sense out there?', next: 'sense', effect: 'curious' },
-      askAgainChoice(),
       leaveChoice(),
     ],
   },
@@ -423,58 +388,30 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   sense: {
     id: 'sense',
-    speech: (ctx) => {
-      if (ctx.dataState === 'loading') {
-        return "The wires are still warm. I can hear something moving, but it hasn't decided what it is yet.";
-      }
-      if (ctx.dataState === 'error') return "The wires went quiet. I'm listening to the quiet.";
-      if (ctx.dataState === 'empty') return "The board is cold. I'm listening anyway.";
-      const imagery = signalImagery(ctx);
-      const opening =
-        ctx.mood === 'molten_bull'
-          ? `There's a current in ${imagery}. It's warm. I'd bite it if I had more teeth.`
-          : ctx.mood === 'patina_bear'
-            ? `${capitalize(imagery)} is breathing slow. That's either patience or a trap.`
-            : `I keep hearing ${imagery}. Not loud. Just... persistent.`;
-      const balance = marketBalanceLine(ctx);
-      return balance ? `${opening} ${balance}` : opening;
-    },
+    speech: (ctx, runtime) => composeCuprumReply('sense', ctx, runtime),
     action: 'It closes its eyes and tilts its head, as if listening through the floor.',
-    choices: [
+    choices: (ctx) => [
       { id: 'sense-more', label: 'Tell me more.', next: 'sense-more', effect: 'curious' },
       { id: 'sense-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
-      askAgainChoice(),
+      ctx.briefing.driver
+        ? { id: 'sense-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' }
+        : askAgainChoice(),
     ],
   },
   'sense-more': {
     id: 'sense-more',
-    speech: (ctx) => {
-      const imagery = signalImagery(ctx);
-      const footnote = ctx.hasBiasWarning
-        ? " There's a footnote in the air. I don't like footnotes."
-        : '';
-      return `I keep looking at ${imagery}. It's not the loudest thing on the board, but it's the one that hums.${footnote}`;
-    },
-    choices: [
+    speech: (ctx, runtime) => composeCuprumReply('sense-more', ctx, runtime),
+    choices: (ctx) => [
+      ctx.briefing.memory
+        ? { id: 'more-memory', label: 'Why that old day?', next: 'memory-why', effect: 'curious' }
+        : { id: 'more-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' },
       { id: 'more-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
-      { id: 'more-soft', label: "You're being very mysterious.", next: 'sense-soft', effect: 'tease' },
       leaveChoice(),
     ],
   },
   'sense-worry': {
     id: 'sense-worry',
-    speech: (ctx) => {
-      if (ctx.dataState !== 'ready') {
-        return "Worry is a big coat for a small animal. Put it on when there's weather.";
-      }
-      if (ctx.confidence === 'high') {
-        return "I'd say it out loud: the metal is leaning, not promising. Leaning is not a promise.";
-      }
-      if (ctx.confidence === 'low') {
-        return "I'd whisper it. The wires are still deciding, and I don't like to interrupt.";
-      }
-      return "I'd say it with one eye open. The metal is leaning. It hasn't picked a direction to fall.";
-    },
+    speech: (ctx, runtime) => composeCuprumReply('sense-worry', ctx, runtime),
     choices: [
       { id: 'worry-ok', label: "That's fair.", next: 'worry-ok', effect: 'warm' },
       { id: 'worry-tease', label: "You're not very reassuring.", next: 'worry-tease', effect: 'tease' },
@@ -495,6 +432,56 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     id: 'worry-tease',
     speech: "I'm not trying to be reassuring. I'm trying to be honest. The cute part is a bonus.",
     choices: closingChoices(),
+  },
+  'driver-detail': {
+    id: 'driver-detail',
+    speech: (ctx, runtime) => composeCuprumReply('driver-detail', ctx, runtime),
+    action: 'Its tail flicks toward a corner of the board that is not there.',
+    choices: [
+      { id: 'driver-risk', label: 'What worries you?', next: 'risk', effect: 'curious' },
+      { id: 'driver-door', label: "What's opening up?", next: 'opportunity', effect: 'curious' },
+      leaveChoice(),
+    ],
+  },
+  change: {
+    id: 'change',
+    speech: (ctx, runtime) => composeCuprumReply('change', ctx, runtime),
+    action: 'It turns one ear toward the window, then the other.',
+    choices: [
+      { id: 'change-sense', label: 'What do you sense out there?', next: 'sense', effect: 'curious' },
+      askAgainChoice(),
+      leaveChoice(),
+    ],
+  },
+  'memory-why': {
+    id: 'memory-why',
+    speech: (ctx, runtime) => composeCuprumReply('memory-why', ctx, runtime),
+    action: 'A thin green light moves under its patina.',
+    choices: [
+      { id: 'memory-driver', label: "What's the loudest thing?", next: 'driver-detail', effect: 'curious' },
+      { id: 'memory-soft', label: "You're being very mysterious.", next: 'sense-soft', effect: 'tease' },
+      leaveChoice(),
+    ],
+  },
+  risk: {
+    id: 'risk',
+    speech: (ctx, runtime) => composeCuprumReply('risk', ctx, runtime),
+    action: 'It taps one claw on the glass, once.',
+    choices: [
+      { id: 'risk-change', label: 'What changed?', next: 'change', effect: 'curious' },
+      { id: 'risk-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
+      leaveChoice(),
+    ],
+  },
+  opportunity: {
+    id: 'opportunity',
+    speech: (ctx, runtime) => composeCuprumReply('opportunity', ctx, runtime),
+    action: 'A small ember brightens behind its ribs.',
+    choices: [
+      { id: 'door-change', label: 'What changed?', next: 'change', effect: 'curious' },
+      { id: 'door-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
+      leaveChoice(),
+    ],
   },
   story: {
     id: 'story',
@@ -545,11 +532,12 @@ export function resolveCuprumNode(
   if (!node) return null;
   const speech = typeof node.speech === 'function' ? node.speech(ctx, runtime) : node.speech;
   const action = typeof node.action === 'function' ? node.action(ctx, runtime) : node.action ?? null;
+  const choices = typeof node.choices === 'function' ? node.choices(ctx, runtime) : node.choices;
   return {
     id: node.id,
     speech,
     action,
-    choices: node.choices,
+    choices,
   };
 }
 
@@ -614,6 +602,7 @@ export function buildCuprumContext(
     explain?.variable_selection?.encoder?.[0] ??
     null;
   const sections = commentary?.sections ?? null;
+  const briefing = buildCuprumBriefing(commentary, explain, tftAnalysis);
 
   return {
     mood,
@@ -625,6 +614,7 @@ export function buildCuprumContext(
     riskCount: sections?.risks?.length ?? 0,
     opportunityCount: sections?.opportunities?.length ?? 0,
     hasBiasWarning: Boolean(sections?.bias_warning),
+    briefing,
     dataState: error
       ? 'error'
       : loading
@@ -637,27 +627,7 @@ export function buildCuprumContext(
 }
 
 export function signalImagery(ctx: CuprumContext): string {
-  const haystack = `${ctx.signalLabel ?? ''} ${ctx.signalCategory ?? ''}`.toLowerCase();
-  if (/dollar|dxy|usd|euro|currency|yen|yuan|fx/.test(haystack)) return 'the paper weather';
-  if (/china|gxc|shfe|pmi|hang seng/.test(haystack)) return 'the far side of the world';
-  if (/inventor|stock|warehouse|supply|premium|backwardation|contango/.test(haystack)) {
-    return 'the warehouses';
-  }
-  if (/oil|energy|gas|power|electric|grid/.test(haystack)) return 'the hot wires';
-  if (/yield|rate|fed|treasury|bond|inflation/.test(haystack)) return 'the tall rooms';
-  if (/vol|vix|risk|uncertain/.test(haystack)) return 'the static';
-  if (/momentum|trend|return|price|close|moving average/.test(haystack)) return 'the current';
-
-  const byCategory: Record<string, string> = {
-    Momentum: 'the current',
-    Trend: 'the long tide',
-    Volatility: 'the static',
-    Sentiment: "the crowd's mood",
-    Macro: 'the weather from far away',
-    Sector: 'the neighboring rooms',
-    Embedding: 'a pattern in the noise',
-  };
-  return byCategory[ctx.signalCategory ?? ''] ?? 'the hum';
+  return signalPhrase(ctx.signalLabel, ctx.signalCategory);
 }
 
 function pickFromPool(
@@ -669,13 +639,6 @@ function pickFromPool(
   const candidates = fresh.length > 0 ? fresh : pool;
   const index = Math.min(candidates.length - 1, Math.floor(random() * candidates.length));
   return candidates[Math.max(0, index)] ?? { id: 'quiet', text: "I'm here." };
-}
-
-function marketBalanceLine(ctx: CuprumContext): string | null {
-  if (ctx.riskCount === 0 && ctx.opportunityCount === 0) return null;
-  if (ctx.riskCount > ctx.opportunityCount) return BALANCE_LINES.knots;
-  if (ctx.opportunityCount > ctx.riskCount) return BALANCE_LINES.doors;
-  return BALANCE_LINES.balanced;
 }
 
 function normalizeMood(value: string | undefined, stance: CuprumContext['stance']): CuprumMood {
@@ -719,8 +682,4 @@ function inferConfidence(
   if ((mode === 'llm' || mode === 'llm_repaired') && explain) return 'high';
   if (commentary || explain) return 'medium';
   return 'low';
-}
-
-function capitalize(value: string): string {
-  return value.length > 0 ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }

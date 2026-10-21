@@ -151,21 +151,72 @@ describe('CuprumCompanionPanel', () => {
     expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
   });
 
-  it('closes the conversation with Escape, an outside click, or the pet again', () => {
+  it('keeps the conversation open when the dashboard is clicked outside the stage', () => {
     render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
     expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
     fireEvent.pointerDown(document.body);
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
     expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+  });
+
+  it('does not start ambient chatter when dialogue opens while an idle bubble is visible', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6700);
+    });
+    expect(screen.getByTestId('cuprum-idle-bubble')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+  });
+
+  it('moves focus without asking the browser to scroll', async () => {
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    await waitFor(() => {
+      expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => {
+      expect(focusSpy.mock.calls.filter(([options]) => options?.preventScroll === true)).toHaveLength(2);
+    });
+  });
+
+  it('keeps the reply choices outside the scrolling copy so all three stay reachable', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    const bubble = screen.getByTestId('cuprum-dialogue-bubble');
+    const copy = bubble.querySelector('.cm-cuprum-copy');
+    const choices = screen.getByRole('group', { name: 'Your reply' });
+
+    expect(copy).not.toBeNull();
+    expect(copy).toContainElement(bubble.querySelector('.cm-cuprum-speech'));
+    expect(copy).not.toContainElement(choices);
+    expect(bubble).toContainElement(choices);
   });
 
   it('shows the talk frame while the pet is speaking and returns to the idle sprite', async () => {

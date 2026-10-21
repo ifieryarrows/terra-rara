@@ -10,22 +10,12 @@ import {
   resolveCuprumNode,
   ROOT_NODE_ID,
   signalImagery,
+  type CuprumChoice,
   type CuprumContext,
+  type CuprumNode,
+  type CuprumRuntime,
 } from './cuprumDialogue';
-
-const BASE_CONTEXT: CuprumContext = {
-  mood: 'molten_bull',
-  energy: 'charged',
-  confidence: 'high',
-  stance: 'BULLISH',
-  signalCategory: 'Macro',
-  signalLabel: 'Dollar index',
-  riskCount: 2,
-  opportunityCount: 1,
-  hasBiasWarning: true,
-  dataState: 'ready',
-  updatedAt: '2026-10-16T21:05:00Z',
-};
+import { buildCuprumBriefing } from './cuprumVoice';
 
 const COMMENTARY: CommentaryResponse = {
   symbol: 'HG=F',
@@ -59,9 +49,33 @@ const COMMENTARY: CommentaryResponse = {
           time_horizon: '5d',
         },
       ],
+      memory_anchors: [{ date: '2026-09-16', weight: 0.033 }],
     },
   },
 };
+
+const BASE_CONTEXT: CuprumContext = {
+  mood: 'molten_bull',
+  energy: 'charged',
+  confidence: 'high',
+  stance: 'BULLISH',
+  signalCategory: 'Macro',
+  signalLabel: 'Dollar index',
+  riskCount: 2,
+  opportunityCount: 1,
+  hasBiasWarning: true,
+  dataState: 'ready',
+  updatedAt: '2026-10-16T21:05:00Z',
+  briefing: buildCuprumBriefing(COMMENTARY, null, null),
+};
+
+function choicesFor(
+  node: CuprumNode,
+  ctx: CuprumContext = BASE_CONTEXT,
+  runtime: CuprumRuntime = createCuprumRuntime(),
+): CuprumChoice[] {
+  return typeof node.choices === 'function' ? node.choices(ctx, runtime) : node.choices;
+}
 
 describe('cuprumDialogue', () => {
   it('gives the root exactly three choices and every node three replies', () => {
@@ -70,13 +84,13 @@ describe('cuprumDialogue', () => {
     expect(root?.choices).toHaveLength(3);
 
     for (const node of Object.values(CUPRUM_NODES)) {
-      expect(node.choices).toHaveLength(3);
+      expect(choicesFor(node)).toHaveLength(3);
     }
   });
 
   it('keeps every dialogue link inside the tree and reachable from the root', () => {
     for (const node of Object.values(CUPRUM_NODES)) {
-      for (const choice of node.choices) {
+      for (const choice of choicesFor(node)) {
         if (choice.close) {
           expect(choice.next).toBeUndefined();
         } else {
@@ -91,7 +105,7 @@ describe('cuprumDialogue', () => {
     while (queue.length > 0) {
       const id = queue.shift() as string;
       const node = CUPRUM_NODES[id];
-      for (const choice of node.choices) {
+      for (const choice of choicesFor(node)) {
         if (choice.next && !reachable.has(choice.next)) {
           reachable.add(choice.next);
           queue.push(choice.next);
@@ -190,7 +204,7 @@ describe('cuprumDialogue', () => {
     const first = resolveCuprumNode('story', BASE_CONTEXT, start);
     expect(first?.speech).toBe(CUPRUM_STORIES[0].text);
 
-    const storyChoice = CUPRUM_NODES.story.choices.find((choice) => choice.advanceStory);
+    const storyChoice = choicesFor(CUPRUM_NODES.story).find((choice) => choice.advanceStory);
     expect(storyChoice).toBeDefined();
     const next = applyCuprumChoice(start, storyChoice!);
     expect(next.storyIndex).toBe(1);
@@ -253,6 +267,39 @@ describe('cuprumDialogue', () => {
     expect(ctx.hasBiasWarning).toBe(true);
     expect(ctx.signalCategory).toBe('Momentum');
     expect(ctx.signalLabel).toBe('China ETF momentum');
+    expect(ctx.briefing.driver?.phrase).toBe('the far side of the world');
+  });
+
+  it('turns the XAI briefing into deeper questions and grounded answers', () => {
+    const ctx: CuprumContext = {
+      ...BASE_CONTEXT,
+      briefing: buildCuprumBriefing(COMMENTARY, null, null),
+    };
+    const runtime = createCuprumRuntime();
+
+    const sense = resolveCuprumNode('sense', ctx, runtime);
+    expect(sense?.choices.map((choice) => choice.label)).toContain(
+      "What's the loose thread?",
+    );
+
+    const driver = resolveCuprumNode('driver-detail', ctx, runtime);
+    expect(driver?.speech).toContain('far side of the world');
+    expect(driver?.choices).toHaveLength(3);
+
+    const change = resolveCuprumNode('change', ctx, { ...runtime, freshData: true });
+    expect(change?.speech).toContain('wind changed');
+
+    const memory = resolveCuprumNode('memory-why', ctx, runtime);
+    expect(memory?.speech).toContain('September');
+  });
+
+  it('keeps every spoken node free of raw numbers and advice', () => {
+    const runtime = createCuprumRuntime();
+    for (const node of Object.values(CUPRUM_NODES)) {
+      const resolved = resolveCuprumNode(node.id, BASE_CONTEXT, runtime);
+      expect(resolved?.speech, node.id).not.toMatch(/\d|[$%]/);
+      expect(resolved?.speech, node.id).not.toMatch(/\b(buy|sell|target|advice)\b/i);
+    }
   });
 
   it('maps signal labels to concrete, non-numeric imagery', () => {
