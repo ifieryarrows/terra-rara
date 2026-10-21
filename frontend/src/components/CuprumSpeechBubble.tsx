@@ -187,7 +187,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
             </button>
           )}
 
-          <div className="cm-cuprum-copy">
+          <div className="cm-cuprum-copy" key={text}>
             {action && <p className="cm-cuprum-action">{action}</p>}
 
             <p className="cm-cuprum-speech" aria-hidden="true">

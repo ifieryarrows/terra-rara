@@ -52,20 +52,24 @@
   min-height: 17rem;
 }
 
+/* The stage keeps a fixed height so the dashboard never moves. The bubble
+   inside hugs its own content instead of stretching, so short answers do not
+   leave a hole between the speech and the choices. */
 .cm-cuprum-bubble--dialogue {
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
 }
 
 .cm-cuprum-bubble--dialogue .cm-cuprum-bubble-inner {
   display: flex;
-  height: 100%;
-  max-height: 100%;
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
 }
 
 .cm-cuprum-bubble--dialogue .cm-cuprum-copy {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
   padding-right: 1.5rem;
   overflow-y: auto;
@@ -73,6 +77,7 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--cuprum-accent) 45%, transparent) transparent;
+  animation: cm-cuprum-copy-in 180ms var(--cm-ease) both;
 }
 
 .cm-cuprum-bubble--dialogue .cm-cuprum-action {
@@ -295,6 +300,19 @@
   }
 }
 
+/* A new line replaces the old one in place: the bubble frame stays put and
+   only the words slide in. */
+@keyframes cm-cuprum-copy-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 3px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 @keyframes cm-cuprum-caret {
   50% {
     opacity: 0;
@@ -354,7 +372,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cm-cuprum-bubble,
-  .cm-cuprum-choice {
+  .cm-cuprum-choice,
+  .cm-cuprum-copy {
     animation: none;
   }
 

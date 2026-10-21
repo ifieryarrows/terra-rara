@@ -445,7 +445,7 @@ export function CuprumCompanionPanel({
               resolvedNode ? (
                 <CuprumSpeechBubble
                   ref={bubbleRef}
-                  key={`dialogue-${runtime.turn}-${resolvedNode.id}`}
+                  key="dialogue"
                   mode="dialogue"
                   speech={resolvedNode.speech}
                   action={resolvedNode.action}

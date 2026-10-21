@@ -229,6 +229,18 @@ describe('CuprumCompanionPanel', () => {
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
   });
 
+  it('keeps the same bubble frame while the reader moves through the tree', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    const frame = screen.getByTestId('cuprum-dialogue-bubble');
+    fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBe(frame);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tell me more.' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBe(frame);
+  });
+
   it('keeps the reply choices outside the scrolling copy so all three stay reachable', () => {
     render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
