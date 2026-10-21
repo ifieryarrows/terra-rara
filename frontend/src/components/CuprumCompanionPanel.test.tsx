@@ -151,6 +151,19 @@ describe('CuprumCompanionPanel', () => {
     expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
   });
 
+  it('closes the conversation with Escape or the pet again', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+  });
+
   it('keeps the conversation open when the dashboard is clicked outside the stage', () => {
     render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
 
@@ -159,13 +172,6 @@ describe('CuprumCompanionPanel', () => {
 
     fireEvent.pointerDown(document.body);
     expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
-    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
   });
 
   it('does not start ambient chatter when dialogue opens while an idle bubble is visible', async () => {
