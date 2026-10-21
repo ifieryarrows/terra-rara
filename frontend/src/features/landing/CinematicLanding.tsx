@@ -86,7 +86,7 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const shortNewsWindow = beat.id === 'news';
   const shortForecastWindow = beat.id === 'forecast';
   const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
-  const reveal = shortNewsWindow ? .43 : shortForecastWindow ? .64 : Math.max(.02, beat.center - .1);
+  const reveal = start + .08;
   const hold = shortNewsWindow ? .47 : shortForecastWindow ? .69 : beat.center + .07;
   const end = shortNewsWindow ? .535 : shortForecastWindow ? .75 : beat.center + .18;
   const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
