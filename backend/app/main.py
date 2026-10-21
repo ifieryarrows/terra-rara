@@ -9,7 +9,7 @@ Endpoints:
 
 import logging
 import json
-import threading
+import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -612,8 +612,53 @@ async def health_check():
 # recent payload so concurrent dashboard mounts trigger one upstream sweep.
 # ---------------------------------------------------------------------------
 _market_prices_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+_market_prices_failure_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 _MARKET_PRICES_TTL_S = 60.0
-_market_prices_refresh_lock = threading.Lock()
+_MARKET_PRICES_FAILURE_TTL_S = 5.0
+_market_prices_refresh_lock = asyncio.Lock()
+
+
+def _fetch_market_prices() -> tuple[dict, bool]:
+    """Fetch one market-price snapshot; the boolean is true only if complete."""
+    try:
+        import yfinance as yf
+
+        settings = get_settings()
+        symbols = settings.symbols_list
+        tickers = yf.Tickers(' '.join(symbols))
+        result = {}
+        had_errors = False
+
+        # Fetch all tickers at once for efficiency.
+        for symbol in symbols:
+            try:
+                ticker = tickers.tickers.get(symbol)
+                if not ticker:
+                    had_errors = True
+                    result[symbol] = {"price": None, "change": None}
+                    continue
+
+                info = ticker.info
+                current_price = info.get('regularMarketPrice') or info.get('currentPrice')
+                change_pct = info.get('regularMarketChangePercent')
+
+                if current_price is not None:
+                    result[symbol] = {
+                        "price": round(current_price, 4),
+                        "change": round(change_pct, 2) if change_pct is not None else 0,
+                    }
+                else:
+                    had_errors = True
+                    result[symbol] = {"price": None, "change": None}
+            except Exception as exc:
+                logger.debug("Error fetching %s: %s", symbol, exc)
+                had_errors = True
+                result[symbol] = {"price": None, "change": None}
+
+        return {"symbols": result}, not had_errors
+    except Exception as exc:
+        logger.error("Error fetching market prices: %s", exc)
+        return {"error": str(exc), "symbols": {}}, False
 
 
 @app.get(
@@ -629,64 +674,40 @@ async def get_market_prices():
     so the sweep runs in the threadpool behind a short TTL cache; the event
     loop never waits on it.
     """
-    cached = _market_prices_cache["payload"]
-    if cached is not None and (time.monotonic() - _market_prices_cache["ts"]) < _MARKET_PRICES_TTL_S:
+    def _fresh_payload(cache: dict[str, Any], ttl_s: float) -> Optional[dict]:
+        payload = cache["payload"]
+        if payload is not None and (time.monotonic() - cache["ts"]) < ttl_s:
+            return payload
+        return None
+
+    cached = _fresh_payload(_market_prices_cache, _MARKET_PRICES_TTL_S)
+    if cached is not None:
         return cached
+    cached_failure = _fresh_payload(_market_prices_failure_cache, _MARKET_PRICES_FAILURE_TTL_S)
+    if cached_failure is not None:
+        return cached_failure
 
-    def _fetch_market_prices() -> dict:
-        import yfinance as yf
+    # Async waiters share the refresh without occupying additional worker threads.
+    async with _market_prices_refresh_lock:
+        cached = _fresh_payload(_market_prices_cache, _MARKET_PRICES_TTL_S)
+        if cached is not None:
+            return cached
+        cached_failure = _fresh_payload(_market_prices_failure_cache, _MARKET_PRICES_FAILURE_TTL_S)
+        if cached_failure is not None:
+            return cached_failure
 
-        settings = get_settings()
-        symbols = settings.symbols_list
-        result = {}
-
-        try:
-            # Fetch all tickers at once for efficiency
-            tickers = yf.Tickers(' '.join(symbols))
-
-            for symbol in symbols:
-                try:
-                    ticker = tickers.tickers.get(symbol)
-                    if not ticker:
-                        result[symbol] = {"price": None, "change": None}
-                        continue
-
-                    info = ticker.info
-
-                    # Get current price and change
-                    current_price = info.get('regularMarketPrice') or info.get('currentPrice')
-                    change_pct = info.get('regularMarketChangePercent')
-
-                    if current_price is not None:
-                        result[symbol] = {
-                            "price": round(current_price, 4),
-                            "change": round(change_pct, 2) if change_pct else 0,
-                        }
-                    else:
-                        result[symbol] = {"price": None, "change": None}
-
-                except Exception as e:
-                    logger.debug(f"Error fetching {symbol}: {e}")
-                    result[symbol] = {"price": None, "change": None}
-
-        except Exception as e:
-            logger.error(f"Error fetching market prices: {e}")
-            return {"error": str(e), "symbols": {}}
-
-        payload = {"symbols": result}
-        _market_prices_cache["payload"] = payload
-        _market_prices_cache["ts"] = time.monotonic()
+        payload, succeeded = await run_in_threadpool(_fetch_market_prices)
+        refreshed_at = time.monotonic()
+        if succeeded:
+            _market_prices_cache["payload"] = payload
+            _market_prices_cache["ts"] = refreshed_at
+            _market_prices_failure_cache["payload"] = None
+            _market_prices_failure_cache["ts"] = 0.0
+        else:
+            # Keep the last good payload intact and share this failure briefly.
+            _market_prices_failure_cache["payload"] = payload
+            _market_prices_failure_cache["ts"] = refreshed_at
         return payload
-
-    def _refresh_market_prices() -> dict:
-        # Single-flight: parallel cache misses wait for one upstream sweep.
-        with _market_prices_refresh_lock:
-            fresh = _market_prices_cache["payload"]
-            if fresh is not None and (time.monotonic() - _market_prices_cache["ts"]) < _MARKET_PRICES_TTL_S:
-                return fresh
-            return _fetch_market_prices()
-
-    return await run_in_threadpool(_refresh_market_prices)
 
 
 # =============================================================================
@@ -1239,7 +1260,8 @@ async def get_commentary(
 _tft_cache: dict = {}
 _TFT_CACHE_TTL_S = 300  # 5 minutes
 _TFT_CACHE_MAX_ENTRIES = 128  # hard cap; live keys are also pruned per symbol
-_tft_live_lock = threading.Lock()  # single-flight guard for live TFT inference
+_tft_live_inflight: dict[str, asyncio.Task[dict]] = {}
+_tft_live_inflight_lock = asyncio.Lock()
 
 
 def _tft_entry_age_seconds(entry: dict, now: datetime) -> float:
@@ -1273,6 +1295,17 @@ def _remember_tft_entry(cache_key: str, data: dict) -> None:
     if overflow > 0:
         for stale_key, _ in sorted(_tft_cache.items(), key=lambda item: _tft_entry_sort_key(item[1]))[:overflow]:
             _tft_cache.pop(stale_key, None)
+
+
+def _forget_tft_live_task(cache_key: str, task: asyncio.Task[dict]) -> None:
+    """Drop a completed inference task and retrieve unobserved exceptions."""
+    if _tft_live_inflight.get(cache_key) is task:
+        _tft_live_inflight.pop(cache_key, None)
+    if not task.cancelled():
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
 
 def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
@@ -1499,29 +1532,43 @@ async def get_tft_analysis(
     if cached and _tft_entry_age_seconds(cached, now) < _TFT_CACHE_TTL_S:
         return cached["data"]
 
-    def _generate_live_tft() -> dict:
-        # Single-flight: concurrent cache misses queue here instead of running
-        # the model several times and multiplying its memory footprint.
-        with _tft_live_lock:
+    def _generate_live_tft_sync() -> dict:
+        from deep_learning.inference.predictor import generate_tft_analysis
+
+        with SessionLocal() as session:
+            generated = generate_tft_analysis(session, symbol)
+
+        if "error" in generated:
+            raise HTTPException(status_code=500, detail=generated["error"])
+
+        generated = dict(generated)
+        generated["source"] = "live"
+        return generated
+
+    async def _generate_and_cache_live_tft() -> dict:
+        generated = await run_in_threadpool(_generate_live_tft_sync)
+        _remember_tft_entry(cache_key, generated)
+        return generated
+
+    async def _get_or_start_live_tft() -> dict:
+        async with _tft_live_inflight_lock:
             recheck = _tft_cache.get(cache_key)
             if recheck and _tft_entry_age_seconds(recheck, datetime.now(timezone.utc)) < _TFT_CACHE_TTL_S:
                 return recheck["data"]
 
-            from deep_learning.inference.predictor import generate_tft_analysis
+            task = _tft_live_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(_generate_and_cache_live_tft())
+                _tft_live_inflight[cache_key] = task
+                task.add_done_callback(
+                    lambda completed: _forget_tft_live_task(cache_key, completed)
+                )
 
-            with SessionLocal() as session:
-                generated = generate_tft_analysis(session, symbol)
-
-            if "error" in generated:
-                raise HTTPException(status_code=500, detail=generated["error"])
-
-            generated = dict(generated)
-            generated["source"] = "live"
-            _remember_tft_entry(cache_key, generated)
-            return generated
+        # A cancelled request must not cancel inference shared with other callers.
+        return await asyncio.shield(task)
 
     try:
-        return await run_in_threadpool(_generate_live_tft)
+        return await _get_or_start_live_tft()
 
     except FileNotFoundError:
         raise HTTPException(
