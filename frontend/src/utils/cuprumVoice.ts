@@ -30,13 +30,21 @@ export interface CuprumMemoryBriefing {
 
 export interface CuprumBriefing {
   driver: CuprumDriverBriefing | null;
+  /** The next loudest encoder signal, when the console sent more than one. */
+  secondary: CuprumDriverBriefing | null;
   memory: CuprumMemoryBriefing | null;
+  /** Every attention day the console highlighted, newest first. */
+  memories: string[];
   risks: string[];
   opportunities: string[];
+  /** The console narrative, told in Cuprum's language. */
+  synthesis: string | null;
   biasWarning: boolean;
   freshness: CuprumFreshness;
   anomaly: boolean;
   horizon: string | null;
+  /** The horizon in words, e.g. "the next five sessions". */
+  horizonPhrase: string | null;
 }
 
 /** The slice of dialogue state the local voice needs. */
@@ -67,7 +75,8 @@ export type CuprumIntent =
   | 'driver-detail'
   | 'memory-why'
   | 'risk'
-  | 'opportunity';
+  | 'opportunity'
+  | 'board-read';
 
 const MONTHS = [
   'January',
@@ -116,16 +125,20 @@ export function buildCuprumBriefing(
 ): CuprumBriefing {
   const companion = commentary?.companion_state ?? null;
   const highlights = companion?.xai_highlights ?? null;
-  const topSignal: ExplainFeatureEntry | null =
-    highlights?.top_signals?.[0] ??
-    explain?.variable_selection?.encoder?.[0] ??
-    null;
+  const signals: ExplainFeatureEntry[] =
+    highlights?.top_signals ?? explain?.variable_selection?.encoder ?? [];
+  const topSignal: ExplainFeatureEntry | null = signals[0] ?? null;
+  const secondarySignal: ExplainFeatureEntry | null = signals[1] ?? null;
   const sections = commentary?.sections ?? null;
-  const anchorDate =
-    highlights?.memory_anchors?.[0]?.date ??
-    explain?.attention?.top_days?.[0]?.date ??
-    null;
-  const month = monthFromDate(anchorDate);
+  const anchors = highlights?.memory_anchors ?? explain?.attention?.top_days ?? [];
+  const memories = [
+    ...new Set(
+      anchors
+        .map((anchor) => monthFromDate(anchor.date))
+        .filter((month): month is string => Boolean(month)),
+    ),
+  ];
+  const month = memories[0] ?? null;
   const staleness = tftAnalysis?.prediction?.baseline_staleness_days;
   const risks = uniqueClauses((sections?.risks ?? []).map(riskClause)).slice(0, 2);
   const opportunities = uniqueClauses(
@@ -137,6 +150,13 @@ export function buildCuprumBriefing(
     : xaiBrief
       ? signalPhrase(xaiBrief, null)
       : null;
+  const horizon =
+    highlights?.horizon_label ??
+    explain?.horizon?.label ??
+    topSignal?.time_horizon ??
+    tftAnalysis?.primary_horizon ??
+    null;
+  const narrative = sections?.synthesis?.trim() || explain?.notes?.trim() || '';
 
   return {
     driver: driverPhrase
@@ -145,26 +165,32 @@ export function buildCuprumBriefing(
           direction: directionFromChange(topSignal?.recent),
           trait: safeTrait(topSignal?.description ?? xaiBrief),
           horizon:
-            topSignal?.time_horizon ??
-            highlights?.horizon_label ??
-            explain?.horizon?.label ??
-            tftAnalysis?.primary_horizon ??
-            null,
+            topSignal?.time_horizon ?? highlights?.horizon_label ?? explain?.horizon?.label ?? null,
+        }
+      : null,
+    secondary: secondarySignal
+      ? {
+          phrase: signalPhrase(
+            secondarySignal.label,
+            secondarySignal.category,
+            secondarySignal.feature,
+          ),
+          direction: directionFromChange(secondarySignal.recent),
+          trait: safeTrait(secondarySignal.description),
+          horizon: secondarySignal.time_horizon ?? horizon,
         }
       : null,
     memory: month ? { month, phrase: `a ${month} session` } : null,
+    memories,
     risks,
     opportunities,
+    synthesis: narrative ? synthesisClause(narrative) : null,
     biasWarning: Boolean(sections?.bias_warning),
     freshness:
       typeof staleness === 'number' ? (staleness <= 2 ? 'fresh' : 'stale') : 'unknown',
     anomaly: Boolean(tftAnalysis?.prediction?.anomaly_detected),
-    horizon:
-      highlights?.horizon_label ??
-      explain?.horizon?.label ??
-      topSignal?.time_horizon ??
-      tftAnalysis?.primary_horizon ??
-      null,
+    horizon,
+    horizonPhrase: horizonPhrase(horizon),
   };
 }
 
@@ -201,6 +227,9 @@ export function composeCuprumReply(
       let speech = `I keep looking at ${phrase}. ${DIRECTION_SENTENCES[briefing.driver?.direction ?? 'unknown']}.`;
       if (briefing.driver) speech += ` ${capitalize(briefing.driver.trait)}.`;
       if (briefing.memory) speech += ` It rhymes with ${briefing.memory.phrase}.`;
+      if (briefing.horizonPhrase) {
+        speech += ` Everything I am listening to is about ${briefing.horizonPhrase}.`;
+      }
       if (briefing.biasWarning) {
         speech += " There's a footnote in the air. I don't like footnotes.";
       }
@@ -266,6 +295,13 @@ export function composeCuprumReply(
       if (briefing.driver) {
         speech += ` ${DIRECTION_SENTENCES[briefing.driver.direction]}.`;
       }
+      if (briefing.secondary) {
+        const direction =
+          DIRECTION_WORDS[
+            briefing.secondary.direction as Exclude<CuprumDirection, 'unknown'>
+          ] ?? 'humming';
+        speech += ` Behind it, ${briefing.secondary.phrase} is ${direction} too.`;
+      }
       if (briefing.risks[0]) {
         speech += ` The nearest knot: ${briefing.risks[0]}.`;
       }
@@ -275,9 +311,14 @@ export function composeCuprumReply(
       if (!briefing.memory) {
         return "I don't have an old day to point at yet. The board is still making memories.";
       }
-      return `${capitalize(
+      let speech = `${capitalize(
         briefing.memory.phrase,
-      )} keeps rhyming with today. I don't know if it's memory or a warning. The board remembers in patterns, not in numbers.`;
+      )} keeps rhyming with today. I don't know if it's memory or a warning.`;
+      const older = briefing.memories[1];
+      if (older) {
+        speech += ` So does ${article(older)} ${older} session.`;
+      }
+      return `${speech} The board remembers in patterns, not in numbers.`;
     }
     case 'risk': {
       const knot = briefing.risks[0] ?? 'a loose thread I cannot name yet';
@@ -286,6 +327,10 @@ export function composeCuprumReply(
     case 'opportunity': {
       const door = briefing.opportunities[0] ?? 'a small door is still open';
       return `Here is the door I keep seeing: ${door}. I'm not going to shove you through it.`;
+    }
+    case 'board-read': {
+      const reading = briefing.synthesis ?? 'the board is humming, and it wants me to listen';
+      return `The board reads like this: ${reading}. I never see the numbers it used to get there. I only get the shape of it.`;
     }
     default:
       return "I'm here. Listening.";
@@ -443,6 +488,48 @@ function safeTrait(description: string | null | undefined): string {
   }
   if (/volatil|risk|uncertain/.test(haystack)) return 'it does not sit still';
   return 'it has a long memory';
+}
+
+/** The console narrative, told without its numbers. */
+function synthesisClause(text: string): string {
+  const haystack = text.toLowerCase();
+  if (/spread|backwardation|contango/.test(haystack)) {
+    return 'the spreads are holding their breath';
+  }
+  if (/dollar|dxy|usd|euro|currency|yen|yuan|fx/.test(haystack)) {
+    return 'the paper weather is doing most of the talking';
+  }
+  if (/china|gxc|shfe|pmi|hang seng|equit/.test(haystack)) {
+    return 'the far side of the world is moving';
+  }
+  if (/restock|inventor|warehouse|stock|supply/.test(haystack)) {
+    return 'the warehouses are shifting quietly';
+  }
+  if (/demand|consumption|buyer/.test(haystack)) {
+    return 'someone is still knocking on the demand door';
+  }
+  if (/momentum|trend|constructive|support|posture/.test(haystack)) {
+    return 'the current is still running';
+  }
+  if (/volatil|risk|uncertain|vol/.test(haystack)) return 'the static is up a little';
+  return 'the board is humming, and it wants me to listen';
+}
+
+/** The forecast window, in words the reader can picture. */
+function horizonPhrase(label: string | null): string | null {
+  const haystack = (label ?? '').toLowerCase();
+  if (!haystack) return null;
+  if (/week/.test(haystack)) return 'the coming week';
+  if (/month/.test(haystack)) return 'the coming month';
+  if (/quarter/.test(haystack)) return 'the coming quarter';
+  if (/three|3d/.test(haystack)) return 'the next three sessions';
+  if (/five|5d/.test(haystack)) return 'the next five sessions';
+  if (/day|1d|daily|tomorrow/.test(haystack)) return 'the next session';
+  return null;
+}
+
+function article(month: string): string {
+  return /^[aeiou]/i.test(month) ? 'an' : 'a';
 }
 
 function uniqueClauses(clauses: string[]): string[] {

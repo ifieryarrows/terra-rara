@@ -328,6 +328,24 @@ describe('cuprumDialogue', () => {
     );
   });
 
+  it('lets the reader ask the console narrative in Cuprum\'s own words', () => {
+    const ctx: CuprumContext = {
+      ...BASE_CONTEXT,
+      briefing: buildCuprumBriefing(COMMENTARY, null, null),
+    };
+    const runtime = createCuprumRuntime();
+
+    const driver = resolveCuprumNode('driver-detail', ctx, runtime);
+    expect(driver?.choices.map((choice) => choice.label)).toContain(
+      'What does the board say?',
+    );
+
+    const read = resolveCuprumNode('board-read', ctx, runtime);
+    expect(read?.speech).toMatch(/board reads like this/i);
+    expect(read?.speech).not.toMatch(/\d|[$%]/);
+    expect(read?.choices).toHaveLength(3);
+  });
+
   it('keeps the fresh-snapshot flag alive so "what changed" can still answer', () => {
     const fresh = createCuprumRuntime({ freshData: true });
     const afterChoice = applyCuprumChoice(fresh, {

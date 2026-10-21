@@ -58,8 +58,27 @@ const COMMENTARY: CommentaryResponse = {
             as_of: '2026-10-16',
           },
         },
+        {
+          feature: 'GXC_ret5',
+          weight: 0.2,
+          label: 'China ETF momentum',
+          description: 'Chinese equity momentum has led copper demand expectations.',
+          category: 'Momentum',
+          time_horizon: '5d',
+          recent: {
+            basis: '5-session',
+            kind: 'pct',
+            last_value: 0.11,
+            change: 0.03,
+            change_pct: 3.2,
+            as_of: '2026-10-16',
+          },
+        },
       ],
-      memory_anchors: [{ date: '2026-09-16', weight: 0.033 }],
+      memory_anchors: [
+        { date: '2026-09-16', weight: 0.033 },
+        { date: '2026-08-14', weight: 0.018 },
+      ],
     },
   },
 };
@@ -105,6 +124,7 @@ const INTENTS: CuprumIntent[] = [
   'memory-why',
   'risk',
   'opportunity',
+  'board-read',
 ];
 
 describe('cuprumVoice', () => {
@@ -242,6 +262,46 @@ describe('cuprumVoice', () => {
     expect(signalPhrase('Warehouse draws', 'Sector', 'Warehouse_draw')).toBe(
       'the warehouses',
     );
+  });
+
+  it('carries the whole console panel into the briefing', () => {
+    const briefing = buildCuprumBriefing(COMMENTARY, null, TFT);
+
+    expect(briefing.horizonPhrase).toBe('the next five sessions');
+    expect(briefing.secondary?.phrase).toBe('the far side of the world');
+    expect(briefing.secondary?.direction).toBe('warming');
+    expect(briefing.memories).toEqual(['September', 'August']);
+    expect(briefing.synthesis).toBe('the spreads are holding their breath');
+  });
+
+  it('talks about the horizon in its own words', () => {
+    const speech = composeCuprumReply('sense-more', makeContext(), RUNTIME);
+
+    expect(speech).toContain('the next five sessions');
+    expect(speech).not.toMatch(/\d/);
+  });
+
+  it('names the second loudest signal', () => {
+    const speech = composeCuprumReply('driver-detail', makeContext(), RUNTIME);
+
+    expect(speech).toContain('the far side of the world');
+    expect(speech).not.toMatch(/\d/);
+  });
+
+  it('remembers more than one attention day', () => {
+    const speech = composeCuprumReply('memory-why', makeContext(), RUNTIME);
+
+    expect(speech).toContain('September');
+    expect(speech).toContain('August');
+    expect(speech).not.toMatch(/\d/);
+  });
+
+  it('reads the board narrative without numbers', () => {
+    const speech = composeCuprumReply('board-read', makeContext(), RUNTIME);
+
+    expect(speech).toMatch(/board reads like this/i);
+    expect(speech).toContain('the spreads are holding their breath');
+    expect(speech).not.toMatch(/\d|[$%]/);
   });
 
   it('grounds a market answer in the briefing without leaking raw numbers', () => {

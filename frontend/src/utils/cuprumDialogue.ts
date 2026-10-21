@@ -445,6 +445,16 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     choices: [
       { id: 'driver-risk', label: 'What worries you?', next: 'risk', effect: 'curious' },
       { id: 'driver-door', label: "What's opening up?", next: 'opportunity', effect: 'curious' },
+      { id: 'driver-read', label: 'What does the board say?', next: 'board-read', effect: 'curious' },
+    ],
+  },
+  'board-read': {
+    id: 'board-read',
+    speech: (ctx, runtime) => composeCuprumReply('board-read', ctx, runtime),
+    action: 'Its eyes move across the board like it is reading something small.',
+    choices: [
+      { id: 'read-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
+      { id: 'read-change', label: 'What changed?', next: 'change', effect: 'curious' },
       leaveChoice(),
     ],
   },
