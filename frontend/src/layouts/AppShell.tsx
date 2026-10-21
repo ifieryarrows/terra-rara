@@ -25,8 +25,13 @@ const routePrefetch: Record<string, () => Promise<unknown>> = {
   '/system': () => import('../pages/SystemPage'),
 };
 
+function prefetchRoute(path: string) {
+  const load = routePrefetch[path];
+  if (load) void load().catch(() => undefined);
+}
+
 function prefetchWorkspaceRoutes() {
-  for (const load of Object.values(routePrefetch)) void load();
+  for (const path of Object.keys(routePrefetch)) prefetchRoute(path);
 }
 
 function WorkspacePageSkeleton() {
@@ -163,8 +168,8 @@ export function AppShell() {
                 key={to}
                 end
                 className="cm-nav-link"
-                onMouseEnter={() => { void routePrefetch[to]?.(); }}
-                onFocus={() => { void routePrefetch[to]?.(); }}
+                onMouseEnter={() => { prefetchRoute(to); }}
+                onFocus={() => { prefetchRoute(to); }}
               >
                 <Icon size={17} aria-hidden="true" />
                 {label}
