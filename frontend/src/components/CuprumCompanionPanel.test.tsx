@@ -274,6 +274,20 @@ describe('CuprumCompanionPanel', () => {
     });
   });
 
+  it('does not fast-forward typing when clicking the speech bubble in dialogue mode', () => {
+    const { container } = render(
+      <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    const bubble = screen.getByTestId('cuprum-dialogue-bubble');
+    fireEvent.click(bubble);
+
+    // In dialogue mode, typing is not cancelled by clicking the bubble background
+    const caret = container.querySelector('.cm-cuprum-caret');
+    expect(caret).toBeInTheDocument();
+  });
+
   it('keeps the pet interactive when every data source is empty', () => {
     render(<CuprumCompanionPanel commentary={null} explain={null} />);
 

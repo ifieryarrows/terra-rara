@@ -370,6 +370,53 @@ describe('cuprumDialogue', () => {
     expect(labels).toContain('Ask me something else.');
   });
 
+  it('makes bearish Cuprum increasingly weary and overwhelmed by repeated story requests until falling asleep', () => {
+    const bearCtx: CuprumContext = { ...BASE_CONTEXT, mood: 'patina_bear' };
+    let runtime = createCuprumRuntime();
+
+    // 1st story request
+    runtime = applyCuprumChoice(runtime, { id: 'root-story', label: "Tell me something I don't know.", next: 'story' });
+    let resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toContain('first smiths');
+
+    // 2nd story request
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toContain('Statue of Liberty');
+
+    // 3rd story request (weary & sighing)
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/deep, raspy sigh|Another one/i);
+
+    // 4th story request
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/don't quit|hammering/i);
+
+    // 5th story request (overwhelmed & complaining)
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/genuinely overwhelmed|sit in the quiet/i);
+
+    // 6th story request (bunalmış / completely suffocated)
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/completely suffocated|bunalmış|drained/i);
+
+    // 7th story request (user exaggerated -> passes out into deep sleep)
+    runtime = applyCuprumChoice(runtime, { id: 'story-installment', label: 'Tell me another.', next: 'story', advanceStory: true });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/Zzz|exhausted sleep/i);
+    expect(resolved?.action).toMatch(/fallen asleep|snores/i);
+    expect(resolved?.choices.map((c) => c.label)).toContain('[Tuck him in] Rest well, little one.');
+
+    // Poking him while asleep
+    runtime = applyCuprumChoice(runtime, { id: 'bear-sleep-poke', label: '[Poke him gently] ...Cuprum?', next: 'story' });
+    resolved = resolveCuprumNode('story', bearCtx, runtime);
+    expect(resolved?.speech).toMatch(/bother the bull|off the clock/i);
+  });
+
   it('keeps every spoken node free of raw numbers and advice', () => {
     const runtime = createCuprumRuntime();
     for (const node of Object.values(CUPRUM_NODES)) {
