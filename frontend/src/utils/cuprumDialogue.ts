@@ -32,10 +32,6 @@ export interface CuprumContext extends CuprumVoiceContext {
 export interface CuprumRuntime {
   bond: number;
   storyIndex: number;
-  hasVisitedStory: boolean;
-  spirit: number;
-  choiceCounts: Record<string, number>;
-  sameChoiceCount: number;
   turn: number;
   freshData: boolean;
 }
@@ -81,18 +77,16 @@ export interface CuprumIdleLine {
 export const ROOT_NODE_ID = 'root';
 
 export const MAX_BOND = 9;
-export const MAX_CUPRUM_SPIRIT = 5;
-export const LOW_CUPRUM_SPIRIT_THRESHOLD = 2;
 
 const GREETINGS: Record<CuprumMood, string> = {
-  molten_bull: "You caught me mid-roar. I've got a bigger idea for this board, and I want to see how far it can run.",
-  patina_bear: "The green is spreading. I'm low on spark today, so let's make the question count.",
+  molten_bull: "You caught me mid-roar. Don't tell the bear.",
+  patina_bear: "Mind the green. It's soft today, but it stains.",
   tempered_neutral: 'You came at a good moment. I was counting the space between prices.',
 };
 
 const BOND_GREETINGS: Record<CuprumMood, string> = {
-  molten_bull: 'You came back. Good. I kept the forge warm for our next big idea.',
-  patina_bear: "You came back. I saved the easier question for you; I'm short on spark today.",
+  molten_bull: 'You came back. I kept the forge warm.',
+  patina_bear: "You came back. The green is softer when you're here.",
   tempered_neutral: 'You came back. I saved you the quiet seat.',
 };
 
@@ -283,25 +277,6 @@ function closingChoices(): CuprumChoice[] {
   return [askAgainChoice(), tellStoryChoice(), leaveChoice()];
 }
 
-function repetitionSpeech(ctx: CuprumContext, runtime: CuprumRuntime): string {
-  if (runtime.spirit <= LOW_CUPRUM_SPIRIT_THRESHOLD) {
-    return moodSpeech(ctx, {
-      molten_bull: 'I heard you. Even my fire needs a new trail to chase. Ask me something different.',
-      patina_bear: "I heard you the first time. I'm running low on spirit, so please give me a different question.",
-      tempered_neutral: 'We have already walked this path. My spirit is running low; choose a different question.',
-    });
-  }
-  return moodSpeech(ctx, {
-    molten_bull: 'I heard you the first time. Give me a new challenge to chase.',
-    patina_bear: 'Same question again? My spark is small today. Ask me something different, please.',
-    tempered_neutral: 'We have already covered that one. Try a different question and keep our conversation moving.',
-  });
-}
-
-function moodSpeech(ctx: CuprumContext, lines: Record<CuprumMood, string>): string {
-  return lines[ctx.mood];
-}
-
 export const CUPRUM_NODES: Record<string, CuprumNode> = {
   [ROOT_NODE_ID]: {
     id: ROOT_NODE_ID,
@@ -310,19 +285,15 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       if (ctx.dataState === 'error') return 'I lost the thread for a moment. Sit with me anyway.';
       if (ctx.dataState === 'empty') return "The board is quiet. I'm still here.";
       if (runtime.freshData && runtime.turn === 0) {
-        return moodSpeech(ctx, {
-          molten_bull: "A new snapshot arrived. The wind changed in my little room; let's see how far this clue can run.",
-          patina_bear: "A new snapshot arrived. The wind changed in my little room. Give me a moment to wake up to it.",
-          tempered_neutral: "A new snapshot arrived. The wind changed in my little room; let's see what the report actually says.",
-        });
+        return "The wind changed since you last looked. I'm still deciding what it means.";
       }
       if (runtime.bond >= 5) return BOND_GREETINGS[ctx.mood];
       return GREETINGS[ctx.mood];
     },
     choices: [
       { id: 'root-spark', label: "How's your spark today?", next: 'spark', effect: 'curious' },
-      { id: 'root-sense', label: 'What caught your eye today?', next: 'driver-detail', effect: 'curious' },
-      { id: 'root-story', label: 'Tell me a copper story.', next: 'story', effect: 'curious' },
+      { id: 'root-sense', label: 'What do you sense out there?', next: 'sense', effect: 'curious' },
+      { id: 'root-story', label: "Tell me something I don't know.", next: 'story', effect: 'curious' },
     ],
   },
   spark: {
@@ -348,18 +319,10 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   'weight-warning': {
     id: 'weight-warning',
     speech: (ctx) => {
-      const base = moodSpeech(ctx, {
-        molten_bull: 'No. It is a loose thread I want to pull before I make a big claim.',
-        patina_bear: "No. It's one more loose thread, and I'm tired of tying them into stories.",
-        tempered_neutral: 'No. It is something to keep in view, not a warning by itself.',
-      });
-      const contextNote =
-        ctx.confidence === 'high'
-          ? 'I have commentary and a model explanation to work from, but that does not make the future certain.'
-          : ctx.confidence === 'low'
-            ? "I only have a thin snapshot, so I won't pretend otherwise."
-            : 'I have some of the picture, not all of it.';
-      return `${base} ${contextNote}`;
+      const base = 'No. A weather report from a small animal. Warnings have footnotes.';
+      if (ctx.confidence === 'high') return `${base} I would say it louder if I were sure.`;
+      if (ctx.confidence === 'low') return `${base} And this one is still sniffing.`;
+      return base;
     },
     action: 'It folds its arms, which is impressive for something with no arms.',
     choices: [
@@ -370,20 +333,12 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'warning-soft': {
     id: 'warning-soft',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "Good. I can be bold without pretending to be certain.",
-      patina_bear: "Good. I don't have the energy to dress a hunch up as certainty.",
-      tempered_neutral: "Good. A little doubt leaves room to keep learning.",
-    }),
+    speech: "Good. You're easier to talk to than the board.",
     choices: closingChoices(),
   },
   'warning-flirt': {
     id: 'warning-flirt',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: 'Careful. Compliments make me aim even higher.',
-      patina_bear: "Careful. Compliments are nice, but they don't refill my spark.",
-      tempered_neutral: 'Careful. Compliments are a pleasant sort of background music.',
-    }),
+    speech: 'Careful. Compliments make me conduct better.',
     choices: closingChoices(),
   },
   'weight-change': {
@@ -397,11 +352,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'spark-help': {
     id: 'spark-help',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "Stay a moment. I need someone to stop me declaring victory before the race starts.",
-      patina_bear: "Stay a moment. Quiet company is about all the energy I have for today.",
-      tempered_neutral: "Stay a moment. A little company makes the quiet easier to hear.",
-    }),
+    speech: "Stay a moment. That's already help.",
     action: 'It leans toward you, just slightly.',
     choices: [
       { id: 'help-stay', label: 'I can stay a little.', next: 'help-stay', effect: 'warm' },
@@ -411,29 +362,17 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'help-stay': {
     id: 'help-stay',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "Good. We'll make room for one more ambitious idea, then check it carefully.",
-      patina_bear: "Good. We can sit quietly. That's about the size of my plan today.",
-      tempered_neutral: "Good. The kettle in my chest is small, but it's enough for two.",
-    }),
+    speech: "Good. The kettle in my chest is small, but it's enough for two.",
     choices: closingChoices(),
   },
   'help-joke': {
     id: 'help-joke',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: 'Easy? No. Efficient? I admire that.',
-      patina_bear: 'Easy is a generous word. You do make the quiet less tedious.',
-      tempered_neutral: "Maybe. Still, you're good company.",
-    }),
+    speech: "Easy? I'm a very old, very particular copper thing. You just happen to be good company.",
     choices: closingChoices(),
   },
   'spark-tease': {
     id: 'spark-tease',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "I'm a copper spirit. Big plans are part of the alloy.",
-      patina_bear: "I'm a copper spirit. A dramatic sigh is all I have in the tank.",
-      tempered_neutral: "I'm a copper spirit. A little drama keeps the metal warm.",
-    }),
+    speech: "I'm a copper spirit. Drama is half my alloy.",
     choices: [
       { id: 'tease-more', label: 'And the other half?', next: 'tease-more', effect: 'tease' },
       { id: 'tease-soft', label: "I'm only teasing.", next: 'tease-soft', effect: 'warm' },
@@ -442,20 +381,12 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'tease-more': {
     id: 'tease-more',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "Good taste. Now let's give it something ambitious to admire.",
-      patina_bear: "Good taste. It may be the only thing here that isn't tired.",
-      tempered_neutral: "Good taste. It's the only part that doesn't tarnish.",
-    }),
+    speech: "Good taste. It's the only part that doesn't tarnish.",
     choices: closingChoices(),
   },
   'tease-soft': {
     id: 'tease-soft',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "I know. I'd need a bigger stage if you stopped.",
-      patina_bear: "I know. I'd miss the company, even if I pretended to nap through it.",
-      tempered_neutral: "I know. I'd tarnish if you stopped.",
-    }),
+    speech: "I know. I'd tarnish if you stopped.",
     choices: closingChoices(),
   },
   sense: {
@@ -464,7 +395,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     action: 'It closes its eyes and tilts its head, as if listening through the floor.',
     choices: (ctx) => [
       { id: 'sense-more', label: 'Tell me more.', next: 'sense-more', effect: 'curious' },
-      { id: 'sense-worry', label: 'What should I keep an eye on?', next: 'sense-worry', effect: 'curious' },
+      { id: 'sense-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
       ctx.dataState === 'ready' && ctx.briefing.driver
         ? { id: 'sense-driver', label: "What's the loose thread?", next: 'driver-detail', effect: 'curious' }
         : askAgainChoice(),
@@ -494,29 +425,17 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   'sense-soft': {
     id: 'sense-soft',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "Mystery is a challenge I haven't named yet.",
-      patina_bear: "Mystery is weather I haven't named yet. I could use a quieter forecast.",
-      tempered_neutral: "Mystery is just weather I haven't named yet.",
-    }),
+    speech: "Mystery is just weather I haven't named yet.",
     choices: closingChoices(),
   },
   'worry-ok': {
     id: 'worry-ok',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: 'Fair. I can keep my fire without calling it a sure thing.',
-      patina_bear: 'Fair. I can be tired without turning a hunch into a warning.',
-      tempered_neutral: 'Fair is my favorite temperature.',
-    }),
+    speech: 'Fair is my favorite temperature.',
     choices: closingChoices(),
   },
   'worry-tease': {
     id: 'worry-tease',
-    speech: (ctx) => moodSpeech(ctx, {
-      molten_bull: "I'm not trying to reassure you. I'm trying to find the next hill to climb. The cute part is a bonus.",
-      patina_bear: "I'm not trying to reassure you. I'm too tired for that. I'm trying to be honest; the cute part is a bonus.",
-      tempered_neutral: "I'm not trying to be reassuring. I'm trying to be honest. The cute part is a bonus.",
-    }),
+    speech: "I'm not trying to be reassuring. I'm trying to be honest. The cute part is a bonus.",
     choices: closingChoices(),
   },
   'driver-detail': {
@@ -525,7 +444,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     action: 'Its tail flicks toward a corner of the board that is not there.',
     choices: [
       { id: 'driver-risk', label: 'What worries you?', next: 'risk', effect: 'curious' },
-      { id: 'driver-door', label: "What's a hopeful sign?", next: 'opportunity', effect: 'curious' },
+      { id: 'driver-door', label: "What's opening up?", next: 'opportunity', effect: 'curious' },
       { id: 'driver-read', label: 'What does the board say?', next: 'board-read', effect: 'curious' },
     ],
   },
@@ -535,7 +454,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     action: 'Its eyes move across the board like it is reading something small.',
     choices: [
       { id: 'read-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
-      { id: 'read-change', label: 'What changed since I was here?', next: 'change', effect: 'curious' },
+      { id: 'read-change', label: 'What changed?', next: 'change', effect: 'curious' },
       leaveChoice(),
     ],
   },
@@ -602,12 +521,6 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       leaveChoice(),
     ],
   },
-  repetition: {
-    id: 'repetition',
-    speech: repetitionSpeech,
-    action: 'Cuprum pauses, waiting for a new thread to follow.',
-    choices: closingChoices(),
-  },
 };
 
 export const IDLE_LINE_COUNT =
@@ -620,10 +533,6 @@ export function createCuprumRuntime(initial: Partial<CuprumRuntime> = {}): Cupru
   return {
     bond: initial.bond ?? 0,
     storyIndex: initial.storyIndex ?? 0,
-    hasVisitedStory: initial.hasVisitedStory ?? false,
-    spirit: initial.spirit ?? MAX_CUPRUM_SPIRIT,
-    choiceCounts: initial.choiceCounts ?? {},
-    sameChoiceCount: initial.sameChoiceCount ?? 0,
     turn: initial.turn ?? 0,
     freshData: initial.freshData ?? false,
   };
@@ -651,18 +560,8 @@ export function applyCuprumChoice(
   runtime: CuprumRuntime,
   choice: CuprumChoice,
 ): CuprumRuntime {
-  const sameChoiceCount = (runtime.choiceCounts[choice.id] ?? 0) + 1;
   const next: CuprumRuntime = {
     ...runtime,
-    spirit: Math.max(
-      0,
-      Math.min(
-        MAX_CUPRUM_SPIRIT,
-        runtime.spirit + (choice.effect === 'warm' ? 1 : choice.effect === 'tease' ? -1 : 0),
-      ),
-    ),
-    choiceCounts: { ...runtime.choiceCounts, [choice.id]: sameChoiceCount },
-    sameChoiceCount,
     turn: runtime.turn + 1,
     // freshData stays sticky for the whole conversation: the root greeting and
     // the "what changed" node must both see the same fresh snapshot. It is reset
@@ -671,16 +570,8 @@ export function applyCuprumChoice(
   if (choice.effect) {
     next.bond = Math.min(MAX_BOND, next.bond + 1);
   }
-  if (choice.next === 'story') {
-    if (choice.advanceStory || next.hasVisitedStory) {
-      next.storyIndex = (next.storyIndex + 1) % CUPRUM_STORIES.length;
-    }
-    next.hasVisitedStory = true;
-  } else if (choice.advanceStory) {
+  if (choice.advanceStory) {
     next.storyIndex = (next.storyIndex + 1) % CUPRUM_STORIES.length;
-  }
-  if (next.sameChoiceCount > 1 && !choice.advanceStory) {
-    next.spirit = Math.max(0, next.spirit - 1);
   }
   return next;
 }

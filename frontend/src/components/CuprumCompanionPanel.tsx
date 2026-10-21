@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type MouseEvent,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type {
   CommentaryResponse,
   ExplainResponse,
@@ -16,7 +8,6 @@ import {
   applyCuprumChoice,
   buildCuprumContext,
   createCuprumRuntime,
-  MAX_CUPRUM_SPIRIT,
   pickIdleLine,
   resolveCuprumNode,
   ROOT_NODE_ID,
@@ -286,21 +277,12 @@ export function CuprumCompanionPanel({
     // during render, and would otherwise see an already-cleared ref.
     const fresh = freshDataRef.current;
     freshDataRef.current = false;
-    setRuntime((previous) => ({
-      ...previous,
-      freshData: fresh,
-      spirit: Math.min(MAX_CUPRUM_SPIRIT, previous.spirit + 1),
-      choiceCounts: {},
-      sameChoiceCount: 0,
-    }));
+    setRuntime((previous) => ({ ...previous, freshData: fresh }));
     setMode('dialogue');
     dispatchSpriteRef.current('alert-start');
   }, []);
 
-  const handlePetClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    // A second click in a double-click should not immediately close the
-    // conversation that the first click just opened.
-    if (event.detail > 1) return;
+  const handlePetClick = useCallback(() => {
     noteInteraction();
     if (mode === 'dialogue') {
       closeConversation(false);
@@ -316,15 +298,11 @@ export function CuprumCompanionPanel({
         closeConversation(false);
         return;
       }
-      const nextRuntime = applyCuprumChoice(runtime, choice);
-      setRuntime(nextRuntime);
-      setActiveNodeId(
-        nextRuntime.sameChoiceCount > 1 && !choice.advanceStory
-          ? 'repetition'
-          : choice.next ?? activeNodeId,
-      );
+      setRuntime((previous) => applyCuprumChoice(previous, choice));
+      if (choice.next) setActiveNodeId(choice.next);
+      setIsTyping(false);
     },
-    [noteInteraction, closeConversation, activeNodeId, runtime],
+    [noteInteraction, closeConversation],
   );
 
   const resolvedNode = useMemo(
@@ -485,7 +463,6 @@ export function CuprumCompanionPanel({
                   key="dialogue"
                   mode="dialogue"
                   speech={resolvedNode.speech}
-                  turnKey={`${resolvedNode.id}-${runtime.turn}`}
                   action={resolvedNode.action}
                   choices={resolvedNode.choices}
                   accent={moodMeta.ringColor}
