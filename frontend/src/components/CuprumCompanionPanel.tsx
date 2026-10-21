@@ -127,6 +127,21 @@ export function CuprumCompanionPanel({
     setInteractionEpoch((value) => value + 1);
   }, []);
 
+  // Preload talk and action sprites so rapid swaps never flash or delay.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const preloadList = [
+      `/assets/cuprum/${moodMeta.prefix}-talk.webp?v=retro-talk-v5`,
+      `/assets/cuprum/${moodMeta.prefix}-talk.png?v=retro-talk-v5`,
+      `/assets/cuprum/${moodMeta.prefix}-idle-1.webp?v=retro-talk-v5`,
+      `/assets/cuprum/${moodMeta.prefix}-idle-2.webp?v=retro-talk-v5`,
+    ];
+    preloadList.forEach((src) => {
+      const img = new Image();
+      img.src = src;
+    });
+  }, [moodMeta.prefix]);
+
   // Retro pixel sprite machine: clean up-down bob + transient expressions.
   useEffect(() => {
     let machine: CuprumSpriteState = INITIAL_CUPRUM_SPRITE_STATE;
@@ -419,7 +434,7 @@ export function CuprumCompanionPanel({
 
             <div className="relative flex items-center justify-center" style={{ width: 140, height: 140 }}>
               <picture>
-                <source srcSet={currentWebp} type="image/webp" />
+                <source key={currentWebp} srcSet={currentWebp} type="image/webp" />
                 <img
                   src={currentPng}
                   alt={`Cuprum — ${moodMeta.title}`}
@@ -427,10 +442,9 @@ export function CuprumCompanionPanel({
                   style={{
                     imageRendering: 'pixelated',
                     objectFit: 'contain',
-                    transition: 'opacity 150ms ease',
                     filter: `drop-shadow(0 0 16px ${moodMeta.ringColor}55)`,
                   }}
-                  loading="lazy"
+                  decoding="async"
                 />
               </picture>
             </div>
