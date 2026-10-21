@@ -105,12 +105,16 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     }, [text.length]);
 
     const handleClick = useCallback(() => {
+      if (mode === 'dialogue') {
+        // In dialogue mode, clicking background/speech area does NOT skip typewriter reveal
+        return;
+      }
       if (typing) {
         revealAll();
         return;
       }
       if (mode === 'idle') onClose();
-    }, [typing, revealAll, mode, onClose]);
+    }, [mode, typing, revealAll, onClose]);
 
     const handleKeyDown = useCallback(
       (event: KeyboardEvent<HTMLDivElement>) => {
@@ -121,14 +125,10 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         }
         if (mode !== 'dialogue' || !/^[1-3]$/.test(event.key)) return;
         event.preventDefault();
-        if (typing) {
-          revealAll();
-          return;
-        }
         const choice = choices?.[Number(event.key) - 1];
         if (choice) onChoose?.(choice);
       },
-      [mode, typing, revealAll, choices, onChoose, onClose],
+      [mode, choices, onChoose, onClose],
     );
 
     const visibleText = text.slice(0, visibleCount);

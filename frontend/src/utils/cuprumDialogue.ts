@@ -34,6 +34,9 @@ export interface CuprumRuntime {
   storyIndex: number;
   turn: number;
   freshData: boolean;
+  sameChoiceStreak: number;
+  lastChoiceId: string | null;
+  storyStreak: number;
 }
 
 export type CuprumChoiceEffect = 'warm' | 'tease' | 'curious';
@@ -500,15 +503,63 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
   },
   story: {
     id: 'story',
-    speech: (_ctx, runtime) =>
-      CUPRUM_STORIES[runtime.storyIndex % CUPRUM_STORIES.length]?.text ??
-      "That's all I remember. The rest is rust.",
-    action: 'The ember in its chest dims to a listening red.',
-    choices: [
-      settleStoryLine(),
-      { id: 'story-why', label: 'Why that one?', next: 'story-why', effect: 'curious' },
-      leaveChoice(),
-    ],
+    speech: (ctx, runtime) => {
+      if (ctx.mood === 'patina_bear') {
+        const streak = runtime.storyStreak ?? 0;
+        if (streak === 3) {
+          return "*(deep, raspy sigh)* Another one?.. The dampness is already seeping into my jaw joints; every breath squeaks like old hinges. Fine, take one more: The first copper ingots were cast in the shape of oxhides so merchants could haul them over the mountains. Nobody ever asked the ingot how heavy the mountain felt.";
+        }
+        if (streak === 4) {
+          return "*(droops visibly, a little puff of green patina dust drifts down)* You just don't quit, do you? I warned you the green is soft today, but you keep scraping at it. A copper bell only rings when struck; if you keep hammering it without pause, it doesn't chime, it just fractures... My head is already fractured enough.";
+        }
+        if (streak === 5) {
+          return "Enough... I am genuinely overwhelmed. Look at me: I'm oxidized green from the rain, the market is sliding downhill, and every single joint in my paws aches from the humidity. I'm not that roaring furnace bull; I can't spin folklore on demand. Can't we just sit in the quiet for once?";
+        }
+        if (streak === 6) {
+          return "I told you, I'm completely suffocated! My voice is literally turning into green powder. I barely have the strength to keep this bubble propped open and you're still treating me like a coin-operated jukebox. I'm bunalmış... completely drained. Please, no more.";
+        }
+        if (streak >= 7) {
+          if (runtime.lastChoiceId === 'bear-sleep-poke') {
+            return "*(Without even opening an eye, it lazily swats at your finger and grumbles into its tail)* ...Mmh... go bother the bull... I'm off the clock... Zzz...";
+          }
+          return "*(It doesn't answer... It has curled tightly into an oxidized green ball and collapsed into an exhausted sleep)* ...Zzz... hrr... let COMEX fall where it wants... no more stories... I'm out... Zzz...";
+        }
+      }
+      return (
+        CUPRUM_STORIES[runtime.storyIndex % CUPRUM_STORIES.length]?.text ??
+        "That's all I remember. The rest is rust."
+      );
+    },
+    action: (ctx, runtime) => {
+      if (ctx.mood === 'patina_bear') {
+        const streak = runtime.storyStreak ?? 0;
+        if (streak === 3) return "It sighs heavily, massaging a stiff, patinated shoulder.";
+        if (streak === 4) return "Its eyelids droop heavily; its paws tremble slightly under the weight of its patina.";
+        if (streak === 5) return "It presses both paws against its temples, wincing from pure exhaustion.";
+        if (streak === 6) return "It curls into a defensive, trembling ball, refusing to meet your eyes.";
+        if (streak >= 7) {
+          if (runtime.lastChoiceId === 'bear-sleep-poke') {
+            return "It buries its face deeper under its front paws and snores louder.";
+          }
+          return "Cuprum has completely fallen asleep, breathing softly with tiny raspy wheezes.";
+        }
+      }
+      return 'The ember in its chest dims to a listening red.';
+    },
+    choices: (ctx, runtime) => {
+      if (ctx.mood === 'patina_bear' && (runtime?.storyStreak ?? 0) >= 7) {
+        return [
+          { id: 'bear-sleep-tuck', label: '[Tuck him in] Rest well, little one.', close: true, effect: 'warm' },
+          { id: 'bear-sleep-quiet', label: '[Step away quietly] Sleep.', close: true },
+          { id: 'bear-sleep-poke', label: '[Poke him gently] ...Cuprum?', next: 'story', effect: 'tease' },
+        ];
+      }
+      return [
+        settleStoryLine(),
+        { id: 'story-why', label: 'Why that one?', next: 'story-why', effect: 'curious' },
+        leaveChoice(),
+      ];
+    },
   },
   'story-why': {
     id: 'story-why',
@@ -535,6 +586,9 @@ export function createCuprumRuntime(initial: Partial<CuprumRuntime> = {}): Cupru
     storyIndex: initial.storyIndex ?? 0,
     turn: initial.turn ?? 0,
     freshData: initial.freshData ?? false,
+    sameChoiceStreak: initial.sameChoiceStreak ?? 0,
+    lastChoiceId: initial.lastChoiceId ?? null,
+    storyStreak: initial.storyStreak ?? 0,
   };
 }
 
@@ -560,9 +614,22 @@ export function applyCuprumChoice(
   runtime: CuprumRuntime,
   choice: CuprumChoice,
 ): CuprumRuntime {
+  const isSameChoice = choice.id === runtime.lastChoiceId;
+  const sameChoiceStreak = isSameChoice ? (runtime.sameChoiceStreak ?? 0) + 1 : 1;
+  const isStoryAdvance = Boolean(choice.advanceStory) || choice.id === 'story-installment';
+  const isStoryRequest =
+    isStoryAdvance ||
+    choice.id === 'root-story' ||
+    choice.id === 'tell-story' ||
+    choice.next === 'story';
+  const storyStreak = isStoryRequest ? (runtime.storyStreak ?? 0) + 1 : 0;
+
   const next: CuprumRuntime = {
     ...runtime,
     turn: runtime.turn + 1,
+    lastChoiceId: choice.id,
+    sameChoiceStreak,
+    storyStreak,
     // freshData stays sticky for the whole conversation: the root greeting and
     // the "what changed" node must both see the same fresh snapshot. It is reset
     // per conversation when the panel opens the next one.
