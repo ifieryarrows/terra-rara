@@ -101,6 +101,7 @@ export function CuprumCompanionPanel({
   const [frame, setFrame] = useState<CuprumSpriteFrame>(() =>
     cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
   );
+  const [talkFlap, setTalkFlap] = useState(true);
 
   const modeRef = useRef<'idle' | 'dialogue'>('idle');
   const ambientTimerRef = useRef<number | null>(null);
@@ -338,9 +339,23 @@ export function CuprumCompanionPanel({
     };
   }, [mode, activeNodeId, runtime.turn]);
 
-  const currentFrame: CuprumSpriteFrame | 'talk' = isTyping ? 'talk' : frame;
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-outline-v4`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-outline-v4`;
+  // Talking animation rhythm: gentle mouth flapping in retro RPG style while text types out
+  useEffect(() => {
+    if (!isTyping) {
+      setTalkFlap(true);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setTalkFlap((prev) => !prev);
+    }, 220);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isTyping]);
+
+  const currentFrame: CuprumSpriteFrame | 'talk' = isTyping && talkFlap ? 'talk' : frame;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-talk-v5`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-talk-v5`;
 
   return (
     <div
