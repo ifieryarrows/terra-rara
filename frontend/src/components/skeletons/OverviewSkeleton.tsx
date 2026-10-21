@@ -1,4 +1,4 @@
-import { Activity, Brain, BarChart3, Crosshair, Cpu, Globe } from 'lucide-react';
+import { Activity, Brain, BarChart3, Crosshair, Flame, Globe } from 'lucide-react';
 import { BrandMark } from '../ui/BrandMark';
 import { SkeletonBone } from './SkeletonBone';
 import { COPPER_INSTRUMENT } from '../../config/instruments';
@@ -276,27 +276,33 @@ export function OverviewSkeleton() {
               </div>
             </section>
 
-            {/* Unified Cuprum Neural XAI Companion skeleton */}
+            {/* Cuprum companion stage skeleton */}
             <section
               id="neural-analysis"
               className="cm-panel cm-financial-panel"
               style={{ '--cm-panel-span': 8 } as any}
-              aria-label="Cuprum neural XAI companion skeleton"
+              aria-label="Cuprum companion skeleton"
             >
               <h2 className="cm-panel-title">
-                <Cpu size={18} aria-hidden="true" />
-                Cuprum · Neural XAI companion
+                <Flame size={18} aria-hidden="true" />
+                Cuprum · The little forge
               </h2>
-              <div className="cm-panel-body space-y-3" aria-hidden="true">
-                <div className="flex justify-between items-center mb-3">
-                  <SkeletonBone className="w-20 h-4" />
-                  <SkeletonBone className="w-24 h-5" rounded="full" />
+              <div className="flex items-start gap-4" aria-hidden="true">
+                <div className="flex shrink-0 flex-col items-center gap-2">
+                  <SkeletonBone width={112} height={112} rounded="full" />
+                  <SkeletonBone className="h-3 w-24" />
+                  <SkeletonBone className="h-2.5 w-16" />
                 </div>
-                <div className="cm-commentary text-sm text-gray-300 leading-relaxed space-y-2">
-                  <SkeletonBone className="w-full h-4" />
-                  <SkeletonBone className="w-11/12 h-4" />
-                  <SkeletonBone className="w-4/5 h-4" />
-                  <SkeletonBone className="w-9/12 h-4" />
+                <div className="min-w-0 flex-1 space-y-2 pt-2">
+                  <SkeletonBone className="h-3 w-24" />
+                  <SkeletonBone className="h-4 w-full" />
+                  <SkeletonBone className="h-4 w-11/12" />
+                  <SkeletonBone className="h-4" width="66%" />
+                  <div className="space-y-2 pt-3">
+                    <SkeletonBone className="h-8 w-full" />
+                    <SkeletonBone className="h-8 w-full" />
+                    <SkeletonBone className="h-8" width="83%" />
+                  </div>
                 </div>
               </div>
             </section>

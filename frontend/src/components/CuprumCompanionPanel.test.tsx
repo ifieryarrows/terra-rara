@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CuprumCompanionPanel } from './CuprumCompanionPanel';
-import type { CommentaryResponse, ExplainResponse } from '../types';
+import type { CommentaryResponse } from '../types';
 
 afterEach(() => {
   cleanup();
@@ -11,77 +11,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const EXPLAIN_FIXTURE: ExplainResponse = {
-  schema_version: 1,
-  symbol: 'HG=F',
-  reference_price_date: '2026-10-16',
-  generated_at: '2026-10-16T21:00:00Z',
-  run_id: 'run-42',
-  model: { checkpoint: 'best.ckpt', trained_at: '2026-10-15T00:00:00Z' },
-  horizon: { label: '5-day cumulative log return (primary)', days: 5 },
-  layout_hash: { encoder: 'abc', decoder: 'def', static: 'ghi' },
-  variable_selection: {
-    method: 'vsn_softmax_mean',
-    encoder: [
-      {
-        feature: 'HG=F_close',
-        weight: 0.42,
-        label: 'Copper · close price',
-        description: 'COMEX daily settlement price',
-        category: 'Price Action',
-        time_horizon: 'Daily',
-        recent: {
-          basis: '5 sessions',
-          kind: 'pct',
-          last_value: 4.56,
-          change: 0.09,
-          change_pct: 2.1,
-          as_of: '2026-10-16',
-        },
-      },
-      {
-        feature: 'GXC_ret5',
-        weight: 0.25,
-        label: 'GXC · return lag 5 days',
-        description: 'China ETF 5-day return',
-        category: 'Momentum',
-        time_horizon: 'Short-term (1-5d)',
-      },
-    ],
-    decoder: [],
-    static: [],
-  },
-  attention: {
-    method: 'multihead_mean',
-    step: { kind: 'first_forecast_day', horizon_index: 0 },
-    window: { start: '2026-08-19', end: '2026-10-16', days: 3 },
-    top_days: [
-      { date: '2026-09-16', weight: 0.033 },
-      { date: '2026-09-28', weight: 0.029 },
-    ],
-    series: [
-      { date: '2026-09-16', weight: 0.033 },
-      { date: '2026-09-28', weight: 0.029 },
-      { date: '2026-10-16', weight: 0.021 },
-    ],
-  },
-  notes:
-    'Model focus only: variable-selection (VSN) weights and attention weights show where the TFT-ASRO model looked inside the latest encoder window. They are raw, pre-calibration signals and are not causal.',
-};
-
 const COMMENTARY_FIXTURE: CommentaryResponse = {
   symbol: 'HG=F',
   commentary: [
-    'RISKS (3 factors):',
+    'RISKS (2 factors):',
     '• Dollar rebound could cap upside momentum.',
     '• Smelter restocking remains uneven.',
-    'OPPORTUNITIES (3 factors):',
+    'OPPORTUNITIES (1 factor):',
     '• Warehouse draws tighten prompt COMEX spreads.',
-    '• Chinese grid stimulus supports medium-term demand.',
     'SYNTHESIS:',
-    'Copper futures maintain a constructive 5-day posture supported by tight spreads and Chinese equity momentum.',
-    'BIAS ACKNOWLEDGMENT:',
-    'Subject to macro volatility around upcoming PMI releases.',
+    'Copper futures maintain a constructive 5-day posture supported by tight spreads.',
     'This is NOT financial advice.',
   ].join('\n'),
   error: null,
@@ -89,129 +28,270 @@ const COMMENTARY_FIXTURE: CommentaryResponse = {
   ai_stance: 'BULLISH',
   generation_mode: 'llm',
   model_name: 'nvidia/nemotron-3-super-120b-a12b:free',
+  sections: {
+    synthesis:
+      'Copper futures maintain a constructive 5-day posture supported by tight spreads and Chinese equity momentum.',
+    risks: [
+      'Dollar rebound could cap upside momentum.',
+      'Smelter restocking remains uneven.',
+    ],
+    opportunities: ['Warehouse draws tighten prompt COMEX spreads.'],
+    xai_brief: null,
+    bias_warning: 'Subject to macro volatility around upcoming PMI releases.',
+  },
+  companion_state: {
+    character: 'Cuprum',
+    mood: 'molten_bull',
+    stance: 'BULLISH',
+    energy: 'charged',
+    confidence_band: 'high',
+    headline_quote: 'Copper looks constructive near 5.10.',
+    xai_highlights: {
+      top_signals: [
+        {
+          feature: 'DXY_level',
+          weight: 0.31,
+          label: 'Dollar index',
+          description: 'A stronger dollar has historically capped copper upside.',
+          category: 'Macro',
+          time_horizon: '5d',
+        },
+      ],
+      memory_anchors: [{ date: '2026-09-16', weight: 0.033 }],
+    },
+  },
 };
 
 describe('CuprumCompanionPanel', () => {
-  it('renders Cuprum in Molten Resonance mode with executive synthesis and XAI summary pills', () => {
-    render(
-      <CuprumCompanionPanel
-        commentary={COMMENTARY_FIXTURE}
-        explain={EXPLAIN_FIXTURE}
-      />,
-    );
+  it('renders the living pet and opens a three-choice dialogue tree on click', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
 
     expect(screen.getByTestId('cuprum-companion-stage')).toBeInTheDocument();
     expect(screen.getByText('Molten Resonance')).toBeInTheDocument();
-    expect(screen.getByText('BULLISH')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Copper futures maintain a constructive 5-day posture/i),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/Copper · close price/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/2026-09-16/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/not causal/i)).toBeInTheDocument();
-  });
+    expect(screen.getByText('humming')).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.queryByText(/CUPRUM EXECUTIVE THESIS/i)).not.toBeInTheDocument();
 
-  it('switches between Synthesis, Risks, Opportunities, and XAI Focus & Memory tabs', () => {
-    render(
-      <CuprumCompanionPanel
-        commentary={COMMENTARY_FIXTURE}
-        explain={EXPLAIN_FIXTURE}
-      />,
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      /You caught me mid-roar/,
+    );
+    const choices = screen.getByRole('group', { name: 'Your reply' });
+    expect(choices.querySelectorAll('button')).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('button', { name: "How's your spark today?" }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      'Loud. The whole board is warm',
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: /Risks/i }));
-    expect(screen.getByText(/Dollar rebound could cap upside momentum/i)).toBeInTheDocument();
-    expect(screen.getByText(/Subject to macro volatility/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('tab', { name: /Opportunities/i }));
-    expect(
-      screen.getByText(/Warehouse draws tighten prompt COMEX spreads/i),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('tab', { name: /XAI Focus & Memory/i }));
-    expect(screen.getByTestId('cuprum-xai-tab')).toBeInTheDocument();
-    expect(screen.getByTestId('model-focus-attention')).toBeInTheDocument();
-    expect(screen.getByText('+2.10% over last 5 sessions')).toBeInTheDocument();
-    expect(screen.getByText('2026-09-28')).toBeInTheDocument();
-  });
-
-  it('renders empty state gracefully when both commentary and explain are null', () => {
-    render(<CuprumCompanionPanel commentary={null} explain={null} />);
-    expect(
-      screen.getByText('Model focus will appear after the next model refresh.'),
-    ).toBeInTheDocument();
-  });
-
-  it('toggles tactical console open and closed when clicking the pet mascot', () => {
-    render(
-      <CuprumCompanionPanel
-        commentary={COMMENTARY_FIXTURE}
-        explain={EXPLAIN_FIXTURE}
-      />,
+    fireEvent.click(screen.getByRole('button', { name: "What's weighing on you?" }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      'The dollar keeps tapping on the window',
     );
 
-    const petButton = screen.getByRole('button', { name: /Cuprum companion/i });
-    expect(screen.getByText('Close console')).toBeInTheDocument();
-
-    // Click to close
-    fireEvent.click(petButton);
-    expect(screen.getByText('Open console')).toBeInTheDocument();
-    expect(screen.getByText(/CUPRUM DIALOGUE \/\/ MINIMIZED/i)).toBeInTheDocument();
-
-    // Click to reopen
-    fireEvent.click(petButton);
-    expect(screen.getByText('Close console')).toBeInTheDocument();
-    expect(screen.getByText(/CUPRUM EXECUTIVE THESIS/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Is that a warning?' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      'Warnings have footnotes.',
+    );
   });
 
-  it('keeps the up-down bob metronome and plays transient frames in full', async () => {
+  it('answers the market-weather branch from the real risk balance without numbers', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
+
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('the paper weather');
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      'More knots than doors today.',
+    );
+    expect(screen.getByTestId('cuprum-spoken-text')).not.toHaveTextContent('31');
+    expect(screen.getByTestId('cuprum-spoken-text')).not.toHaveTextContent('%');
+  });
+
+  it('reveals ambient bubbles on their own, but never shows choices until the pet is clicked', async () => {
     vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
 
-    const { container } = render(<CuprumCompanionPanel commentary={null} explain={null} />);
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Your reply' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6700);
+    });
+
+    expect(screen.getByTestId('cuprum-idle-bubble')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Your reply' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2200);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+  });
+
+  it('keeps ambient chatter quiet while a conversation is open', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+  });
+
+  it('closes the conversation with Escape or the pet again', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+  });
+
+  it('keeps the conversation open when the dashboard is clicked outside the stage', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+  });
+
+  it('does not start ambient chatter when dialogue opens while an idle bubble is visible', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6700);
+    });
+    expect(screen.getByTestId('cuprum-idle-bubble')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-idle-bubble')).not.toBeInTheDocument();
+  });
+
+  it('moves focus without asking the browser to scroll', async () => {
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    await waitFor(() => {
+      expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => {
+      expect(focusSpy.mock.calls.filter(([options]) => options?.preventScroll === true)).toHaveLength(2);
+    });
+  });
+
+  it('still reports a fresh snapshot after the reader already picked a reply', () => {
+    const { rerender } = render(
+      <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />,
+    );
+
+    // A new pipeline snapshot lands while the card is on screen.
+    rerender(
+      <CuprumCompanionPanel
+        commentary={{ ...COMMENTARY_FIXTURE, generated_at: '2026-10-17T21:05:00Z' }}
+        explain={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
+
+    fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
+    fireEvent.click(screen.getByRole('button', { name: "What's the loose thread?" }));
+    fireEvent.click(screen.getByRole('button', { name: 'What worries you?' }));
+    fireEvent.click(screen.getByRole('button', { name: 'What changed?' }));
+
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
+  });
+
+  it('keeps the same bubble frame while the reader moves through the tree', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    const frame = screen.getByTestId('cuprum-dialogue-bubble');
+    fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBe(frame);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tell me more.' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBe(frame);
+  });
+
+  it('keeps the reply choices outside the scrolling copy so all three stay reachable', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+
+    const bubble = screen.getByTestId('cuprum-dialogue-bubble');
+    const copy = bubble.querySelector('.cm-cuprum-copy');
+    const choices = screen.getByRole('group', { name: 'Your reply' });
+
+    expect(copy).not.toBeNull();
+    expect(copy).toContainElement(bubble.querySelector('.cm-cuprum-speech'));
+    expect(copy).not.toContainElement(choices);
+    expect(bubble).toContainElement(choices);
+  });
+
+  it('shows the talk frame while the pet is speaking and returns to the idle sprite', async () => {
+    const { container } = render(
+      <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />,
+    );
     const image = container.querySelector('[data-testid="cuprum-companion-stage"] img');
-    expect(image).not.toBeNull();
-    const frameOf = () =>
-      image?.getAttribute('src')?.match(/-(idle-1|idle-2|blink|talk|alert)\./)?.[1] ?? '';
 
-    const pet = screen.getByRole('button', { name: /Cuprum companion/i });
-    const transitions: Array<{ t: number; frame: string }> = [{ t: 0, frame: frameOf() }];
-    let last = frameOf();
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
 
-    for (let t = 0; t <= 7000; t += 10) {
-      if (t === 500) fireEvent.click(pet);
-      const clicked = frameOf();
-      if (clicked !== last) {
-        transitions.push({ t, frame: clicked });
-        last = clicked;
-      }
-      if (t === 7000) break;
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10);
-      });
-      const current = frameOf();
-      if (current !== last) {
-        transitions.push({ t: t + 10, frame: current });
-        last = current;
-      }
-    }
+    await waitFor(() => {
+      expect(image?.getAttribute('src')).toContain('-talk.');
+    });
+  });
 
-    const runs: Array<{ frame: string; duration: number }> = [];
-    for (let i = 0; i < transitions.length - 1; i += 1) {
-      runs.push({
-        frame: transitions[i].frame,
-        duration: transitions[i + 1].t - transitions[i].t,
-      });
-    }
-    const durations = (frame: string) =>
-      runs.filter((run) => run.frame === frame).map((run) => run.duration);
+  it('keeps the pet interactive when every data source is empty', () => {
+    render(<CuprumCompanionPanel commentary={null} explain={null} />);
 
-    // The click reaction always plays its full 280ms window.
-    expect(durations('alert')).toEqual([280]);
-    // Every raised (idle-2) phase runs in full; the blink rides inside the
-    // landed phase (160ms blink + 440ms tail) without cutting the metronome.
-    expect(durations('idle-2')).toEqual([600, 600, 600, 600, 600]);
-    expect(durations('idle-1')).toEqual([500, 600, 600, 440, 600, 600]);
-    expect(durations('blink')).toEqual([160]);
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
+      /The board is quiet/,
+    );
+    expect(screen.getByRole('group', { name: 'Your reply' })).toBeInTheDocument();
+  });
+
+  it('uses the story branch as a loop and advances to the next memory', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    fireEvent.click(screen.getByRole('button', { name: "Tell me something I don't know." }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('first smiths');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tell me another.' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('Statue of Liberty');
   });
 });

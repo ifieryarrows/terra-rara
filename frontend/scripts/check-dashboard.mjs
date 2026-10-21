@@ -78,6 +78,81 @@ try {
     await page.getByRole('button', { name: 'Weight', exact: true }).click();
     assert.equal(await page.getByRole('button', { name: 'All categories', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.getByRole('button', { name: 'Weight', exact: true }).getAttribute('aria-pressed'), 'true');
+    // Cuprum: the companion may not move the dashboard, may not leave a hole
+    // between the words and the choices, and has to keep the same bubble frame
+    // while the reader walks the dialogue tree.
+    const cuprumStage = page.getByTestId('cuprum-companion-stage');
+    await cuprumStage.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const cuprumScrollBefore = await page.evaluate(() => scrollY);
+    const cuprumTalk = page.getByRole('button', { name: 'Talk to Cuprum' });
+    const cuprumTalkBox = await cuprumTalk.boundingBox();
+    assert.ok(cuprumTalkBox, 'Cuprum pet must be visible');
+    await page.mouse.click(
+      cuprumTalkBox.x + cuprumTalkBox.width / 2,
+      cuprumTalkBox.y + cuprumTalkBox.height / 2,
+    );
+    await page.getByTestId('cuprum-dialogue-bubble').waitFor();
+    await page.waitForTimeout(300);
+    const cuprumScrollAfter = await page.evaluate(() => scrollY);
+    assert.ok(
+      Math.abs(cuprumScrollAfter - cuprumScrollBefore) < 2,
+      `Opening Cuprum moved the page (${cuprumScrollBefore} -> ${cuprumScrollAfter})`,
+    );
+    const cuprumLayout = await page.evaluate(() => {
+      const box = el => (el ? el.getBoundingClientRect() : null);
+      const slot = box(document.querySelector('.cm-cuprum-bubble-slot'));
+      const frame = box(document.querySelector('.cm-cuprum-bubble--dialogue'));
+      const speech = box(document.querySelector('.cm-cuprum-bubble--dialogue .cm-cuprum-speech'));
+      const choices = box(document.querySelector('.cm-cuprum-choices'));
+      return {
+        slotHeight: slot?.height ?? 0,
+        frameHeight: frame?.height ?? 0,
+        // The gap between the last line of words and the replies: this is the
+        // hole that appears when the copy is stretched to fill the bubble.
+        hole: speech && choices ? choices.top - speech.bottom : 999,
+      };
+    });
+    assert.ok(
+      cuprumLayout.frameHeight <= cuprumLayout.slotHeight + 1,
+      'The Cuprum bubble must fit its reserved stage',
+    );
+    assert.ok(
+      cuprumLayout.hole < 40,
+      `The Cuprum bubble must not leave a hole between the words and the choices (${cuprumLayout.hole}px)`,
+    );
+    const cuprumReplies = page.getByRole('group', { name: 'Your reply' }).getByRole('button');
+    assert.equal(await cuprumReplies.count(), 3, 'Cuprum must offer three replies');
+    const cuprumChoicesInside = await page.evaluate(() => {
+      const bubble = document.querySelector('.cm-cuprum-bubble--dialogue');
+      const buttons = [...document.querySelectorAll('.cm-cuprum-choice')];
+      if (!bubble || buttons.length !== 3) return false;
+      const box = bubble.getBoundingClientRect();
+      return buttons.every(button => {
+        const rect = button.getBoundingClientRect();
+        return rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1;
+      });
+    });
+    assert.ok(cuprumChoicesInside, 'Every Cuprum reply must stay inside the bubble');
+    await page.evaluate(() => {
+      window.__cuprumFrame = document.querySelector('.cm-cuprum-bubble--dialogue');
+    });
+    await page.getByRole('button', { name: 'What do you sense out there?' }).click();
+    await page.waitForTimeout(300);
+    assert.equal(
+      await page.evaluate(
+        () => window.__cuprumFrame === document.querySelector('.cm-cuprum-bubble--dialogue'),
+      ),
+      true,
+      'Cuprum must not rebuild its bubble on every reply',
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    assert.equal(
+      await page.getByTestId('cuprum-dialogue-bubble').count(),
+      0,
+      'Escape must close the Cuprum conversation',
+    );
     // The map panel mounts on approach; scroll its section into view first.
     await page.locator('#market-map').scrollIntoViewIfNeeded();
     // Wheel zoom is the current zoom mechanism; the map mirrors it in data-zoomed.

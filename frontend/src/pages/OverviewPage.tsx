@@ -8,7 +8,7 @@ import { ViewState } from '../components/ui/ViewState';
 import { OverviewSkeleton } from '../components/skeletons';
 import { BrandMark } from '../components/ui/BrandMark';
 import {
-  Activity, Globe, BarChart3, Cpu, TrendingUp, TrendingDown,
+  Activity, Globe, BarChart3, Flame, TrendingUp, TrendingDown,
   Brain, Crosshair, AlertTriangle, Minus
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -663,8 +663,8 @@ export const OverviewPage = () => {
             <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']}/>
           </GlassCard>
 
-          {/* Unified Cuprum XAI & Neural Companion Stage (merges AI Commentary + TFT-ASRO Model Focus) */}
-          <GlassCard id="neural-analysis" title="Cuprum · Neural XAI companion" icon={Cpu} colSpan={8}>
+          {/* Cuprum companion stage — the little forge */}
+          <GlassCard id="neural-analysis" title="Cuprum · The little forge" icon={Flame} colSpan={8}>
             {deferredPanels.companion ? (
               <Suspense fallback={companionFallback}>
                 <CuprumCompanionPanel
