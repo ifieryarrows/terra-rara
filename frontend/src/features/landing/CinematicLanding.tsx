@@ -68,8 +68,9 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
   const opacity = useTransform(progress, [0, .1, .2], [1, 1, 0]);
   const y = useTransform(progress, [0, .2], [0, -72]);
   const blur = useTransform(progress, [.1, .2], ['blur(0px)', 'blur(10px)']);
+  const visibility = useTransform(progress, value => value <= .2 ? 'visible' : 'hidden');
   return <article className="cm-cinematic-beat cm-cinematic-hero" aria-labelledby="hero-title">
-    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur }}>
+    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur, visibility }}>
       <p className="cm-eyebrow cm-brand-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
       <h1 id="hero-title" data-cm-route-reveal="copy">Read the market.<br/><span>See the structure.</span></h1>
       <p className="cm-hero-description" data-cm-route-reveal="copy">Behind every copper price, a bigger picture.</p>
@@ -94,8 +95,9 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const detailOpacity = useTransform(progress, [start + .025, reveal + .045], [0, 1]);
   const detailY = useTransform(progress, [start + .025, reveal + .045], [26, 0]);
   const blur = useTransform(progress, [start, reveal, end - .035, end], ['blur(9px)', 'blur(0px)', 'blur(0px)', 'blur(5px)']);
+  const visibility = useTransform(progress, value => value >= start && value <= end ? 'visible' : 'hidden');
   return <article id={beat.id} className="cm-cinematic-beat" aria-labelledby={`${beat.id}-title`}>
-    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur }}>
+    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur, visibility }}>
       <p className="cm-eyebrow"><span>{beat.number}</span> / {beat.label}</p>
       <motion.h2 id={`${beat.id}-title`} style={{ clipPath: titleClip }}>{beat.title}</motion.h2>
       <motion.div style={{ opacity: detailOpacity, y: detailY }}>

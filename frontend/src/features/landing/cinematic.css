@@ -1,7 +1,7 @@
 /* Continuous, native-scroll cinematic world. The static story remains the
    complete reduced-motion, Save-Data and constrained-device fallback. */
 .cm-landing--cinematic { background: #080e17; }
-.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 400svh; margin: 0; padding: 0; overflow: clip; }
+.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 500svh; margin: 0; padding: 0; overflow: clip; }
 .cm-cinematic-sticky,
 .cm-cinematic-copy { grid-area: 1 / 1; }
 .cm-cinematic-sticky { position: sticky; top: 0; align-self: start; width: 100%; height: 100svh; overflow: hidden; background: var(--cm-bg); contain: layout paint style; }
@@ -23,7 +23,8 @@
 .cm-cinematic-surface .cm-preview-map { min-height: min(43svh, 23rem); }
 .cm-cinematic-surface .cm-news-flow { overflow: hidden; }
 .cm-cinematic-surface .cm-preview-caption { margin-top: auto; }
-.cm-cinematic-copy { position: relative; z-index: 5; width: 100%; pointer-events: none; }
+.cm-cinematic-copy { position: sticky; z-index: 5; top: 0; align-self: start; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; height: 100svh; pointer-events: none; }
+.cm-cinematic-copy > .cm-cinematic-beat { grid-area: 1 / 1; }
 .cm-cinematic-beat { min-height: 100svh; display: flex; align-items: center; padding: clamp(6rem, 12vh, 9rem) clamp(1.5rem, 5vw, 5rem) clamp(3rem, 8vh, 6rem); scroll-margin-top: 0; }
 .cm-cinematic-copy-block { position: relative; z-index: 0; width: min(39vw, 34rem); pointer-events: auto; text-shadow: 0 2px 2rem #080e17; will-change: transform, opacity, filter; }
 .cm-cinematic-copy-block::before { content: ''; position: absolute; z-index: -1; inset: -4rem -7rem -4rem -14vw; background: radial-gradient(ellipse at 42% 50%, #080e17ee 0, #080e17b8 43%, transparent 73%); pointer-events: none; }
