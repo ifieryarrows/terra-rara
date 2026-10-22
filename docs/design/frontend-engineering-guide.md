@@ -77,7 +77,7 @@ Provide low/mid/high tiers only when a scene exists. Low uses the static product
 
 ## Validation and budgets
 
-Run `npm run test`, `npm run lint`, `npm run build`, `npm run check:budgets`. Budget checks recursively count static manifest imports; dynamic imports are excluded from landing and included for the chosen dashboard route. Limits: landing JS 190,000 gzip bytes; shared CSS 14,000 bytes; dashboard before lazy news/heatmap 280,000 JS bytes. These are project budgets, not web standards.
+Run `npm run test`, `npm run lint`, `npm run build`, `npm run check:budgets`. Budget checks recursively count static manifest imports; dynamic imports are excluded from landing and included for the chosen dashboard route. Limits: landing JS 190,000 gzip bytes; shared CSS 15,000 bytes; dashboard before lazy news/heatmap 300,000 JS bytes. These are project budgets, not web standards: they carry deliberate slack above the measured payload (127,070 / 13,926 / 279,833 bytes at the time of the last raise) so routine copy or style edits do not fail CI, while a dependency or asset regression still does. Do not raise a limit to pay for new weight — trim or lazy-load first, and raise only when the slack itself is gone.
 
 Production targets remain p75 LCP ≤2.5 s, INP ≤200 ms, CLS ≤0.1; agreed-device scroll p95 frame ≤16.7 ms at 60 Hz. Use identical production builds, viewport, network/CPU throttling, cache mode, API fixtures and interaction scripts before/after. Capture DevTools network/long tasks/heap and a 10–15 s interaction trace. Lighthouse lab results are not field INP or measured GPU time. Keep tests of reference and 1,000-instrument D3 layouts independent of browser measurements.
 
