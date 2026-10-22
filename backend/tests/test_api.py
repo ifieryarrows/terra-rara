@@ -134,15 +134,16 @@ class TestMarketDriverRecovery:
         assert recovered == [{"feature": "HG=F_EMA_10", "importance": 1.0}]
 
     def test_cached_importance_falls_back_to_model_artifact(self, tmp_path, monkeypatch):
-        from app import main
+        from app import inference, main
 
         importance_path = tmp_path / "xgb_HG_F_latest.importance.json"
         importance_path.write_text(
             '[{"feature": "HG=F_RSI_14", "importance": 0.75}]',
             encoding="utf-8",
         )
+        # The recovery lives in app.inference now; the API delegates to it.
         monkeypatch.setattr(
-            main,
+            inference,
             "get_settings",
             lambda: SimpleNamespace(model_dir=str(tmp_path)),
         )

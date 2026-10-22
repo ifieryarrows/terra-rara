@@ -30,6 +30,7 @@ from sqlalchemy import func, desc
 
 from app.db import init_db, SessionLocal, get_db_type
 from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw, PipelineRunMetrics
+from app.sentiment import classify_sentiment
 from app.settings import get_settings
 from app.lock import is_pipeline_locked
 from app.instruments import (
@@ -145,34 +146,9 @@ def _load_cached_xgb_importance(session, symbol: str) -> list[dict]:
     metadata write. Prefer the DB copy and fall back to the model artifact
     written by the worker so the UI can still render the drivers.
     """
-    from app.models import ModelMetadata
+    from app.inference import load_cached_xgb_importance
 
-    try:
-        metadata = (
-            session.query(ModelMetadata)
-            .filter(ModelMetadata.symbol == symbol)
-            .first()
-        )
-        if metadata and metadata.importance_json:
-            importance = json.loads(metadata.importance_json)
-            if isinstance(importance, list) and importance:
-                return importance[:10]
-    except Exception as exc:
-        logger.warning("Could not load XGBoost importance from DB: %s", exc)
-
-    try:
-        model_dir = Path(get_settings().model_dir)
-        importance_path = model_dir / (
-            f"xgb_{symbol.replace('=', '_')}_latest.importance.json"
-        )
-        if importance_path.exists():
-            importance = json.loads(importance_path.read_text(encoding="utf-8"))
-            if isinstance(importance, list) and importance:
-                return importance[:10]
-    except Exception as exc:
-        logger.warning("Could not load XGBoost importance artifact: %s", exc)
-
-    return []
+    return load_cached_xgb_importance(session, symbol)
 
 @app.get(
     "/api/analysis",
@@ -2275,12 +2251,10 @@ async def get_sentiment_summary(
 ):
     from sqlalchemy import func, desc
 
-    def _label(idx: float) -> str:
-        if idx > 0.10:
-            return "Bullish"
-        if idx < -0.10:
-            return "Bearish"
-        return "Neutral"
+    # The label is the product's classification of the index (shared balance
+    # band): the dashboard renders it next to the raw number, and every other
+    # layer reads the same classification.
+    _label = classify_sentiment
 
     with SessionLocal() as session:
         now = datetime.now(timezone.utc)

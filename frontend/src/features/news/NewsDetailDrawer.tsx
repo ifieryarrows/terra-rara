@@ -51,6 +51,16 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
   // and the detail endpoint is the authoritative source for reasoning text.
   const { data: freshItem } = useNewsDetail(processedId);
   const displayed = freshItem ?? item;
+  // The colour of a score follows the article's classification, never the sign
+  // of the number: a balanced story must not read as bearish because its
+  // score is slightly negative.
+  const sentimentLabel = normaliseLabel(displayed?.sentiment?.label);
+  const sentimentTone =
+    sentimentLabel === 'BULLISH'
+      ? 'positive'
+      : sentimentLabel === 'BEARISH'
+        ? 'negative'
+        : 'neutral';
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
   const isOpen = Boolean(item);
@@ -163,7 +173,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                     <span
                       className={clsx(
                         'cm-news-detail-sentiment-tag text-xs font-mono tracking-wider uppercase',
-                        LABEL_STYLES[normaliseLabel(displayed.sentiment.label)],
+                        LABEL_STYLES[sentimentLabel],
                       )}
                     >
                       {displayed.sentiment.label ?? 'NEUTRAL'}
@@ -171,8 +181,8 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                   </div>
 
                   <div className="cm-news-detail-stats grid grid-cols-2 gap-3 text-xs font-mono">
-                    <Stat label="Final score" value={displayed.sentiment.final_score} signed />
-                    <Stat label="LLM impact" value={displayed.sentiment.impact_score_llm} signed />
+                    <Stat label="Final score" value={displayed.sentiment.final_score} signed tone={sentimentTone} />
+                    <Stat label="LLM impact" value={displayed.sentiment.impact_score_llm} signed tone={sentimentTone} />
                     <Stat label="Confidence" value={displayed.sentiment.confidence} percent />
                     <Stat label="Relevance" value={displayed.sentiment.relevance} percent />
                   </div>
@@ -230,28 +240,33 @@ function Stat({
   value,
   signed = false,
   percent = false,
+  tone,
 }: {
   label: string;
   value: number | null | undefined;
   signed?: boolean;
   percent?: boolean;
+  /** Colour follows the classification, never the sign of the number. */
+  tone?: 'positive' | 'negative' | 'neutral';
 }) {
   let display = '—';
-  let tone = 'text-gray-200';
+  let toneClass = 'text-gray-200';
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (percent) {
       display = `${Math.round(value * 100)}%`;
     } else if (signed) {
       display = value >= 0 ? `+${value.toFixed(3)}` : value.toFixed(3);
-      tone = value > 0 ? 'text-emerald-300' : value < 0 ? 'text-rose-300' : 'text-gray-200';
     } else {
       display = value.toFixed(3);
     }
   }
+  if (tone === 'positive') toneClass = 'text-emerald-300';
+  else if (tone === 'negative') toneClass = 'text-rose-300';
+  else if (tone === 'neutral') toneClass = 'text-gray-300';
   return (
     <div className="cm-news-detail-stat">
       <div className="text-xs uppercase tracking-widest">{label}</div>
-      <div className={clsx('text-sm', tone)}>{display}</div>
+      <div className={clsx('text-sm', toneClass)}>{display}</div>
     </div>
   );
 }

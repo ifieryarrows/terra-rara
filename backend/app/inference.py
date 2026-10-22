@@ -36,6 +36,7 @@ from app.models import (
     NewsProcessed,
     NewsSentimentV2,
 )
+from app.sentiment import classify_sentiment, is_balanced
 from app.settings import get_settings
 from app.features import (
     load_price_data,
@@ -321,13 +322,8 @@ def calculate_confidence_band(
 
 
 def get_sentiment_label(sentiment_index: float) -> str:
-    """Convert sentiment index to label."""
-    if sentiment_index > 0.1:
-        return "Bullish"
-    elif sentiment_index < -0.1:
-        return "Bearish"
-    else:
-        return "Neutral"
+    """Convert sentiment index to label (shared balance band)."""
+    return classify_sentiment(sentiment_index)
 
 
 def _sign(value: float) -> int:
@@ -361,7 +357,13 @@ def _apply_sentiment_adjustment(
     news_floor = max(1, int(round(news_ref * 0.4)))  # default: 12 when ref is 30
 
     news_intensity = min(1.0, max(0.0, float(news_count_7d) / news_ref))
-    sentiment_power = float(np.tanh(abs(float(sentiment_index)) / power_ref))
+    # A balanced regime carries no directional information: only the sign of a
+    # noise-level index would tilt the forecast, and the dashboard renders that
+    # same index as "Balanced" next to this forecast.
+    balanced = is_balanced(sentiment_index)
+    sentiment_power = (
+        0.0 if balanced else float(np.tanh(abs(float(sentiment_index)) / power_ref))
+    )
 
     raw_sign = _sign(float(raw_predicted_return))
     sentiment_sign = _sign(float(sentiment_index))
@@ -375,7 +377,8 @@ def _apply_sentiment_adjustment(
     )
 
     use_tiny_floor = (
-        abs(float(raw_predicted_return)) < float(settings.inference_tiny_signal_threshold)
+        not balanced
+        and abs(float(raw_predicted_return)) < float(settings.inference_tiny_signal_threshold)
         and abs(float(sentiment_index)) >= power_ref
         and int(news_count_7d) >= news_floor
     )
@@ -468,6 +471,45 @@ def build_features_for_prediction(
 
 
 
+def load_cached_xgb_importance(session, symbol: str) -> list[dict]:
+    """Feature importance cached outside the active model bundle.
+
+    The active artifact can carry an empty importance list (a metadata write
+    that lost the payload). The DB copy and the worker-written artifact file
+    still hold the ranking, and the API already serves the drivers from them —
+    the report must see the same drivers, otherwise the snapshot (and the
+    commentary built from it) claims the run had no ranked features at all.
+    """
+    from app.models import ModelMetadata
+
+    try:
+        metadata = (
+            session.query(ModelMetadata)
+            .filter(ModelMetadata.symbol == symbol)
+            .first()
+        )
+        if metadata and metadata.importance_json:
+            importance = json.loads(metadata.importance_json)
+            if isinstance(importance, list) and importance:
+                return importance[:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance from DB: %s", exc)
+
+    try:
+        model_dir = Path(get_settings().model_dir)
+        importance_path = model_dir / (
+            f"xgb_{symbol.replace('=', '_')}_latest.importance.json"
+        )
+        if importance_path.exists():
+            importance = json.loads(importance_path.read_text(encoding="utf-8"))
+            if isinstance(importance, list) and importance:
+                return importance[:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance artifact: %s", exc)
+
+    return []
+
+
 def generate_analysis_report(
     session: Session,
     target_symbol: str = "HG=F"
@@ -489,6 +531,10 @@ def generate_analysis_report(
     # Load metadata
     features = metadata.get("features", [])
     importance = metadata.get("importance", [])
+    if not importance:
+        # The active bundle can ship without its importance payload; the cached
+        # ranking is the same one the API serves the drivers from.
+        importance = load_cached_xgb_importance(session, target_symbol)
     metrics = metadata.get("metrics", {})
     
     if not features:

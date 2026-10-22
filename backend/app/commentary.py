@@ -14,6 +14,15 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .openrouter_client import OpenRouterError, create_chat_completion
+from .sentiment import (
+    BEARISH,
+    BULLISH,
+    NEUTRAL,
+    SENTIMENT_BALANCE_BAND,
+    classify_sentiment,
+    is_balanced,
+    sentiment_direction,
+)
 from .settings import get_settings
 from .tft_explain import summarize_explain_for_commentary
 
@@ -88,13 +97,81 @@ def _normalize_stance(value: str) -> str:
     return stance
 
 
-def _deterministic_stance_from_inputs(predicted_return: float, sentiment_index: float) -> str:
-    combined = float(predicted_return) + float(sentiment_index)
+def _sentiment_regime_label(sentiment_index: float, sentiment_label: Optional[str]) -> str:
+    """Published sentiment label, falling back to the shared classification."""
+    label = (sentiment_label or "").strip()
+    if label:
+        return label
+    return classify_sentiment(sentiment_index)
+
+
+def _sentiment_stance_contribution(
+    sentiment_index: float,
+    sentiment_label: Optional[str] = None,
+) -> float:
+    """Directional weight the sentiment regime adds to the deterministic stance.
+
+    A balanced regime contributes nothing: the sign of a noise-level index is
+    not a market read, and letting it tilt the stance would contradict the
+    "Balanced" label the dashboard renders next to the same number. A
+    directional regime keeps contributing its own index, as before.
+    """
+    label = (sentiment_label or "").strip().lower()
+    if label == BULLISH.lower():
+        return abs(float(sentiment_index))
+    if label == BEARISH.lower():
+        return -abs(float(sentiment_index))
+    if label == NEUTRAL.lower():
+        return 0.0
+    # No usable label: fall back to the shared classification.
+    if sentiment_direction(sentiment_index) == 0:
+        return 0.0
+    return float(sentiment_index)
+
+
+def _deterministic_stance_from_inputs(
+    predicted_return: float,
+    sentiment_index: float,
+    sentiment_label: Optional[str] = None,
+) -> str:
+    """Stance from the model return plus the *classified* sentiment regime.
+
+    The regime is read through its classification, never through the sign of
+    the raw index: a balanced index must not flip the stance away from what
+    the model actually says.
+    """
+    combined = float(predicted_return) + _sentiment_stance_contribution(
+        sentiment_index, sentiment_label
+    )
     if combined > 0:
         return "BULLISH"
     if combined < 0:
         return "BEARISH"
     return "NEUTRAL"
+
+
+def _build_sentiment_regime_line(sentiment_index: float, sentiment_label: str) -> str:
+    """One risk line describing the sentiment regime without inventing polarity.
+
+    A balanced regime is reported as balanced — it carries no directional
+    information — instead of being dressed up as a negative score to fear.
+    """
+    label = _sentiment_regime_label(sentiment_index, sentiment_label)
+    if label.strip().lower() == NEUTRAL.lower():
+        if is_balanced(sentiment_index):
+            return (
+                f"Sentiment regime is balanced (Neutral, index {sentiment_index:.3f} inside the "
+                f"±{SENTIMENT_BALANCE_BAND:.2f} balance band), so headlines carry no directional "
+                "information today."
+            )
+        return (
+            f"Sentiment regime is balanced (Neutral, index {sentiment_index:.3f}), so headlines "
+            "carry no directional information today."
+        )
+    return (
+        f"Sentiment regime is {label} with score {sentiment_index:.3f}, "
+        "which can reverse quickly."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +418,77 @@ def _build_xai_brief(tft_digest: Optional[dict]) -> Optional[str]:
     )
 
 
+def _driver_display_name(influencer: dict) -> str:
+    """Human-readable driver name; falls back to the raw feature key."""
+    label = influencer.get("label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    feature = influencer.get("feature")
+    if isinstance(feature, str) and feature.strip():
+        return f"`{feature.strip()}`"
+    return ""
+
+
+def _build_driver_lines(top_influencers: Optional[list]) -> list[str]:
+    """The two opportunity lines about the ranked feature drivers.
+
+    A run without a driver ranking says so; it never prints placeholder names
+    that read like real features.
+    """
+    names = [
+        name
+        for name in (_driver_display_name(inf) for inf in (top_influencers or []))
+        if name
+    ]
+    if not names:
+        return [
+            "No ranked feature drivers are available for this run, so driver "
+            "concentration cannot be assessed.",
+            "Secondary driver checkpoints are unavailable for this run.",
+        ]
+
+    lines = [
+        f"Feature signal concentration around {names[0]} can support tactical monitoring."
+    ]
+    secondary = names[1:3]
+    if len(secondary) == 2:
+        lines.append(
+            f"Secondary drivers {secondary[0]} and {secondary[1]} provide confirmation checkpoints."
+        )
+    elif len(secondary) == 1:
+        lines.append(f"Secondary driver {secondary[0]} provides a confirmation checkpoint.")
+    else:
+        lines.append("Secondary driver checkpoints are unavailable for this run.")
+    return lines
+
+
+def _min_news_sample() -> int:
+    """Sample floor below which a 7-day news read cannot be trusted.
+
+    Mirrors the inference news floor (40% of ``inference_sentiment_news_ref``).
+    """
+    try:
+        news_ref = float(get_settings().inference_sentiment_news_ref)
+    except Exception:
+        news_ref = 30.0
+    return max(1, int(round(news_ref * 0.4)))
+
+
+def _build_news_sample_line(news_count: int) -> str:
+    """One risk line about the news sample — scaled to the actual sample."""
+    if news_count <= 0:
+        return (
+            "No headlines were scored in the last 7 days, so the news mix cannot "
+            "inform this read."
+        )
+    if news_count < _min_news_sample():
+        return f"News sample size ({news_count}) is thin for stable short-horizon inference."
+    return (
+        f"News sample size ({news_count}) is broad, so unrelated coverage can dilute "
+        "the copper-specific read."
+    )
+
+
 def _build_commentary_template_fallback(
     current_price: Optional[float],
     baseline_price: Optional[float],
@@ -356,15 +504,13 @@ def _build_commentary_template_fallback(
 ) -> str:
     """Deterministic fallback commentary used when LLM is unavailable."""
     direction = "upside" if predicted_return >= 0 else "downside"
-    top_driver_names = [inf.get("feature", "unknown_driver") for inf in top_influencers[:3]]
-    while len(top_driver_names) < 3:
-        top_driver_names.append("unknown_driver")
+    driver_lines = _build_driver_lines(top_influencers)
 
     lines = [
             "Risks:",
             f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
-            f"2. Sentiment regime is {sentiment_label} with score {sentiment_index:.3f}, which can reverse quickly.",
-            f"3. News sample size ({news_count}) may be insufficient for stable short-horizon inference.",
+            f"2. {_build_sentiment_regime_line(sentiment_index, sentiment_label)}",
+            f"3. {_build_news_sample_line(news_count)}",
             "Opportunities:",
             (
                 f"1. The model-derived price is ${predicted_price:.4f} from the finite baseline "
@@ -377,8 +523,8 @@ def _build_commentary_template_fallback(
                     else "1. Predicted price is unavailable because no finite reference close was available."
                 )
             ),
-            f"2. Feature signal concentration around `{top_driver_names[0]}` can support tactical monitoring.",
-            f"3. Secondary drivers `{top_driver_names[1]}` and `{top_driver_names[2]}` provide confirmation checkpoints.",
+            f"2. {driver_lines[0]}",
+            f"3. {driver_lines[1]}",
             f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
             "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
     ]
@@ -487,7 +633,9 @@ async def _generate_commentary_and_stance(
     tft_summary: Optional[dict] = None,
 ) -> CommentaryGenerationResult:
     settings = get_settings()
-    deterministic_stance = _deterministic_stance_from_inputs(predicted_return, sentiment_index)
+    deterministic_stance = _deterministic_stance_from_inputs(
+        predicted_return, sentiment_index, sentiment_label
+    )
     tft_digest = summarize_explain_for_commentary(tft_explain)
     fallback_commentary = _build_commentary_template_fallback(
         current_price=current_price,
@@ -539,6 +687,7 @@ DATA INPUTS:
 - Price Basis: {price_basis or "unavailable"}
 - Sentiment Index: {sentiment_index:.6f}
 - Sentiment Label: {sentiment_label}
+- Sentiment Balance Band: |index| <= {SENTIMENT_BALANCE_BAND:.2f} is Neutral (balanced); outside that band the index is directional
 - News Count: {news_count}
 - Model Status Note: {model_status_note or "No degraded model inputs excluded."}
 - Top Influencers & Their Signals:
@@ -554,8 +703,10 @@ DATA INPUTS:
    - Consider price levels relative to historical support/resistance zones if contextually relevant
 
 2. Sentiment Cross-Validation:
-   - Analyze sentiment index polarity (positive/negative scale) and intensity
-   - Compare sentiment label classification against predicted return to identify confirmation or divergence
+   - The Sentiment Label is authoritative, not the raw index. A Neutral label means the index sits inside the ±{SENTIMENT_BALANCE_BAND:.2f} balance band and carries no directional information
+   - Never describe a Neutral (balanced) index as slightly positive or negative, never call it bullish or bearish, and never let it tilt the stance
+   - Only when the label is Bullish or Bearish may you read polarity and intensity from the index
+   - Compare the sentiment label against the predicted return to identify confirmation or divergence; a balanced label confirms nothing and diverges from nothing
    - High sentiment-price alignment suggests conviction; divergence signals caution or contrarian opportunity
 
 3. Information Flow & Market Attention:

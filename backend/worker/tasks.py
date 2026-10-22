@@ -158,6 +158,47 @@ def evaluate_pipeline_result(result: dict, *, train_model: bool) -> tuple[dict, 
     return critical_errors, "ok", None
 
 
+def _xgb_commentary_context(payloads: list[dict]) -> dict:
+    """Commentary context taken from the newest XGBoost snapshot payload.
+
+    The snapshot row keeps the whole report in ``report_json``; the ORM row has
+    no ``sentiment_index`` / ``top_influencers`` columns, so the payload is the
+    only place these values live. Payloads are expected newest first.
+    """
+    context = {
+        "sentiment_index": 0.0,
+        "sentiment_label": "Neutral",
+        "top_influencers": [],
+        "news_count": 0,
+    }
+    for payload in payloads or []:
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("model_type") == "TFT-ASRO":
+            continue
+        version = str(payload.get("artifact_version") or "")
+        if not version.startswith("xgb-") and not payload.get("top_influencers"):
+            continue
+        data_quality = payload.get("data_quality")
+        news_count = 0
+        if isinstance(data_quality, dict):
+            try:
+                news_count = int(data_quality.get("news_count_7d") or 0)
+            except (TypeError, ValueError):
+                news_count = 0
+        try:
+            sentiment_index = float(payload.get("sentiment_index") or 0.0)
+        except (TypeError, ValueError):
+            sentiment_index = 0.0
+        return {
+            "sentiment_index": sentiment_index,
+            "sentiment_label": payload.get("sentiment_label") or "Neutral",
+            "top_influencers": payload.get("top_influencers") or [],
+            "news_count": news_count,
+        }
+    return context
+
+
 def prepare_commentary_report(
     report: Optional[dict],
     tft_status_note: Optional[str] = None,
@@ -904,22 +945,27 @@ async def _execute_pipeline_stages_v2(
                 try:
                     from app.inference import get_current_price
                     from app.models import AnalysisSnapshot
-                    
+
                     # Guarantee current price isn't zero
                     fetched_price = get_current_price(session, "HG=F")
                     if fetched_price:
                         current_price = fetched_price
-                    
-                    # Graft missing context from the most recent successful XGBoost run
-                    last_xgb = session.query(AnalysisSnapshot).filter(
-                        AnalysisSnapshot.symbol == "HG=F"
-                    ).order_by(AnalysisSnapshot.generated_at.desc()).first()
-                    
-                    if last_xgb:
-                        sentiment_index = last_xgb.sentiment_index or 0.0
-                        sentiment_label = last_xgb.sentiment_label or "Neutral"
-                        top_influencers = last_xgb.top_influencers or []
-                        news_count = last_xgb.data_quality.get("news_count_7d", 0) if isinstance(last_xgb.data_quality, dict) else 0
+
+                    # Graft missing context from the most recent successful XGBoost run.
+                    # The report lives in the snapshot payload (report_json); the
+                    # ORM row itself carries no sentiment/influencer columns.
+                    snapshot_payloads = [
+                        row.report_json
+                        for row in session.query(AnalysisSnapshot)
+                        .filter(AnalysisSnapshot.symbol == "HG=F")
+                        .order_by(AnalysisSnapshot.generated_at.desc())
+                        .all()
+                    ]
+                    xgb_context = _xgb_commentary_context(snapshot_payloads)
+                    sentiment_index = xgb_context["sentiment_index"]
+                    sentiment_label = xgb_context["sentiment_label"]
+                    top_influencers = xgb_context["top_influencers"]
+                    news_count = xgb_context["news_count"]
                 except Exception as fallback_exc:
                     logger.warning(f"Error mapping TFT values in Stage 6: {fallback_exc}")
             # --------------------------------
