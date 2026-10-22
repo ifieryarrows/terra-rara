@@ -231,3 +231,96 @@ class TestPromptKeepsThePriority:
 
         assert "Next-day XGBoost drivers (diagnostic" in prompt
         assert "TFT-ASRO focus takes priority" in prompt
+
+
+class TestStanceIsDerivedNotNegotiated:
+    """The LLM writes the prose; the news regime owns the stance.
+
+    Prompt rules alone cannot guarantee the model's answer, and a stance that
+    disagrees with the label rendered next to the same sentiment index would
+    put the pet in a mood the dashboard contradicts.
+    """
+
+    def _run(
+        self,
+        monkeypatch,
+        *,
+        llm_stance: str,
+        sentiment_index: float,
+        sentiment_label: str,
+    ):
+        captured: dict = {}
+        settings = SimpleNamespace(
+            openrouter_api_key="test-key",
+            resolved_commentary_model="test/model",
+            openrouter_max_retries=1,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(commentary_module, "get_settings", lambda: settings)
+
+        async def fake_openrouter(**kwargs):
+            captured["prompt"] = kwargs["messages"][1]["content"]
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"stance":"' + llm_stance + '",'
+                                '"commentary":"Summary: model prose."}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(
+            commentary_module, "create_chat_completion", fake_openrouter
+        )
+
+        result = asyncio.run(
+            commentary_module._generate_commentary_and_stance(
+                current_price=6.4815,
+                predicted_price=6.5497,
+                predicted_return=0.0012,
+                sentiment_index=sentiment_index,
+                sentiment_label=sentiment_label,
+                top_influencers=[],
+                news_count=279,
+                tft_explain=_tft_explain(),
+                tft_summary=_tft_summary(),
+            )
+        )
+        return result, captured["prompt"]
+
+    def test_the_llm_cannot_turn_balanced_news_bullish(self, monkeypatch):
+        result, _ = self._run(
+            monkeypatch,
+            llm_stance="BULLISH",
+            sentiment_index=-0.0646,
+            sentiment_label="Neutral",
+        )
+
+        assert result.generation_mode == "llm"
+        assert result.stance == "NEUTRAL"
+
+    def test_the_llm_cannot_override_bearish_news(self, monkeypatch):
+        result, _ = self._run(
+            monkeypatch,
+            llm_stance="BULLISH",
+            sentiment_index=-0.40,
+            sentiment_label="Bearish",
+        )
+
+        assert result.stance == "BEARISH"
+
+    def test_the_prompt_states_the_stance_the_run_will_publish(self, monkeypatch):
+        _, prompt = self._run(
+            monkeypatch,
+            llm_stance="NEUTRAL",
+            sentiment_index=-0.0646,
+            sentiment_label="Neutral",
+        )
+
+        assert "Stance for this run is fixed at NEUTRAL" in prompt
+        assert "Do not contradict it" in prompt

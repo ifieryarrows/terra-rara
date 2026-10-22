@@ -138,6 +138,23 @@ def _deterministic_stance_from_inputs(
     return "NEUTRAL"
 
 
+def _resolve_stance(llm_stance: str, derived_stance: str) -> str:
+    """The news regime owns the stance; the model's answer is advisory only.
+
+    Prompt rules cannot guarantee the model's JSON, and a stance that disagrees
+    with the label rendered next to the same sentiment index would put the pet
+    in a mood the dashboard contradicts. Divergences are logged so prompt
+    regressions stay visible.
+    """
+    if llm_stance != derived_stance:
+        logger.warning(
+            "LLM stance %s disagrees with the news-derived %s; publishing the derived stance",
+            llm_stance,
+            derived_stance,
+        )
+    return derived_stance
+
+
 def _build_sentiment_regime_line(sentiment_index: float, sentiment_label: str) -> str:
     """One risk line describing the sentiment regime without inventing polarity.
 
@@ -861,6 +878,7 @@ DATA INPUTS:
 Return valid JSON with exactly two keys: "stance" and "commentary"
 
 **stance**: Must be one of: BULLISH, BEARISH, NEUTRAL
+   - Stance for this run is fixed at {deterministic_stance}: the news sentiment regime above decides it, not price direction. Do not contradict it anywhere in the commentary.
    - Derive the stance from the news sentiment regime: Bullish -> BULLISH, Bearish -> BEARISH, Neutral (balanced) -> NEUTRAL. The 5-day TFT-ASRO outlook informs the commentary and synthesis, never the stance.
    - Where both models describe the same thing, the TFT-ASRO 5-day view takes priority; the XGBoost next-day view is a diagnostic and must be labelled as such.
 
@@ -995,7 +1013,14 @@ Write as a seasoned commodities strategist would for institutional clients—pre
         try:
             stance, commentary = _parse_commentary_payload(content)
             logger.info("AI commentary generated successfully (%s chars)", len(commentary))
-            return CommentaryGenerationResult(commentary, stance, "llm", actual_model, None, attempts)
+            return CommentaryGenerationResult(
+                commentary,
+                _resolve_stance(stance, deterministic_stance),
+                "llm",
+                actual_model,
+                None,
+                attempts,
+            )
         except Exception as parse_exc:
             logger.warning("Commentary JSON parse failed, attempting repair: %s", parse_exc)
             repaired, repair_data = await _repair_commentary(content)
@@ -1008,7 +1033,14 @@ Write as a seasoned commodities strategist would for institutional clients—pre
             )
             attempts = [*attempts, *(repair_meta.get("attempts") or [])]
             logger.info("AI commentary generated via JSON repair (%s chars)", len(commentary))
-            return CommentaryGenerationResult(commentary, stance, "llm_repaired", actual_model, None, attempts)
+            return CommentaryGenerationResult(
+                commentary,
+                _resolve_stance(stance, deterministic_stance),
+                "llm_repaired",
+                actual_model,
+                None,
+                attempts,
+            )
     except Exception as exc:
         logger.warning("Commentary generation failed, using deterministic fallback: %s", exc)
         return CommentaryGenerationResult(
