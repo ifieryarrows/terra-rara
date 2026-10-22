@@ -28,10 +28,23 @@ export interface CuprumMemoryBriefing {
   phrase: string;
 }
 
+/** One input the model is listening to, in the pet's own language. */
+export interface CuprumDriverProfile {
+  phrase: string;
+  /** How much of the model's attention this input holds. */
+  loudness: 'loud' | 'middling' | 'quiet';
+  /** The same attention share said in words: "three in ten". */
+  share: string;
+  direction: CuprumDirection;
+  horizon: string | null;
+}
+
 export interface CuprumBriefing {
   driver: CuprumDriverBriefing | null;
   /** The next loudest encoder signal, when the console sent more than one. */
   secondary: CuprumDriverBriefing | null;
+  /** Every driver the console ranked, loudest first, so the pet can name them. */
+  drivers: CuprumDriverProfile[];
   memory: CuprumMemoryBriefing | null;
   /** Every attention day the console highlighted, newest first. */
   memories: string[];
@@ -73,6 +86,8 @@ export type CuprumIntent =
   | 'weight-change'
   | 'change'
   | 'driver-detail'
+  | 'drivers'
+  | 'driver-outlook'
   | 'memory-why'
   | 'risk'
   | 'opportunity'
@@ -117,6 +132,56 @@ const DIRECTION_SENTENCES: Record<CuprumDirection, string> = {
 
 /** Below this percent move a signal counts as steady rather than leaning. */
 const DIRECTION_EPSILON_PERCENT = 0.1;
+
+/**
+ * One bubble fits the companion's fixed stage. Longer lines open a scrollbar,
+ * so every composed reply is trimmed at a sentence boundary before it ships.
+ */
+export const CUPRUM_SPEECH_BUDGET = 220;
+
+/** Attention shares said the way a pet would say them: never a raw percent. */
+const SHARE_WORDS = [
+  'less than one in ten',
+  'one in ten',
+  'two in ten',
+  'three in ten',
+  'four in ten',
+  'five in ten',
+  'six in ten',
+  'seven in ten',
+  'eight in ten',
+  'nine in ten',
+  'all of it',
+];
+
+function shareWords(weight: number | null | undefined): string {
+  if (typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0) {
+    return 'a whisper';
+  }
+  if (weight < 0.05) return SHARE_WORDS[0];
+  const tenths = Math.min(10, Math.max(1, Math.round(weight * 10)));
+  return SHARE_WORDS[tenths];
+}
+
+function loudnessFromWeight(weight: number | null | undefined): CuprumDriverProfile['loudness'] {
+  if (typeof weight !== 'number' || !Number.isFinite(weight)) return 'quiet';
+  if (weight >= 0.15) return 'loud';
+  if (weight >= 0.08) return 'middling';
+  return 'quiet';
+}
+
+function buildDriverProfiles(
+  signals: ExplainFeatureEntry[],
+  fallbackHorizon: string | null,
+): CuprumDriverProfile[] {
+  return signals.slice(0, 3).map((signal) => ({
+    phrase: signalPhrase(signal.label, signal.category, signal.feature),
+    loudness: loudnessFromWeight(signal.weight),
+    share: shareWords(signal.weight),
+    direction: directionFromChange(signal.recent),
+    horizon: signal.time_horizon ?? fallbackHorizon,
+  }));
+}
 
 export function buildCuprumBriefing(
   commentary: CommentaryResponse | null,
@@ -180,6 +245,7 @@ export function buildCuprumBriefing(
           horizon: secondarySignal.time_horizon ?? horizon,
         }
       : null,
+    drivers: buildDriverProfiles(signals, horizon),
     memory: month ? { month, phrase: `a ${month} session` } : null,
     memories,
     risks,
@@ -224,16 +290,17 @@ export function composeCuprumReply(
       return balance ? `${opening} ${balance}` : opening;
     }
     case 'sense-more': {
-      let speech = `I keep looking at ${phrase}. ${DIRECTION_SENTENCES[briefing.driver?.direction ?? 'unknown']}.`;
-      if (briefing.driver) speech += ` ${capitalize(briefing.driver.trait)}.`;
-      if (briefing.memory) speech += ` It rhymes with ${briefing.memory.phrase}.`;
+      const direction = briefing.driver?.direction ?? 'unknown';
+      const parts = [
+        `I keep looking at ${phrase}. ${DIRECTION_SENTENCES[direction]}.`,
+      ];
+      if (briefing.driver) parts.push(`${capitalize(briefing.driver.trait)}.`);
+      if (briefing.memory) parts.push(`It rhymes with ${briefing.memory.phrase}.`);
       if (briefing.horizonPhrase) {
-        speech += ` Everything I am listening to is about ${briefing.horizonPhrase}.`;
+        parts.push(`Everything I hear is about ${briefing.horizonPhrase}.`);
       }
-      if (briefing.biasWarning) {
-        speech += " There's a footnote in the air. I don't like footnotes.";
-      }
-      return speech;
+      if (briefing.biasWarning) parts.push("There's a footnote in the air.");
+      return joinWithin(parts);
     }
     case 'sense-worry': {
       const knot = briefing.risks[0] ? ` ${capitalize(briefing.risks[0])}.` : '';
@@ -289,23 +356,62 @@ export function composeCuprumReply(
       return `Nothing new on the wires yet. I'm still holding ${phrase} in my teeth.`;
     }
     case 'driver-detail': {
-      let speech = `${capitalize(phrase)} is the loudest thing I hear. ${capitalize(
-        briefing.driver?.trait ?? 'it has a long memory',
-      )}.`;
-      if (briefing.driver) {
-        speech += ` ${DIRECTION_SENTENCES[briefing.driver.direction]}.`;
-      }
+      const parts = [
+        `${capitalize(phrase)} is the loudest thing I hear, and I would rather be honest.`,
+      ];
+      if (briefing.driver) parts.push(`${capitalize(briefing.driver.trait)}.`);
+      if (briefing.driver) parts.push(`${DIRECTION_SENTENCES[briefing.driver.direction]}.`);
       if (briefing.secondary) {
-        const direction =
-          DIRECTION_WORDS[
-            briefing.secondary.direction as Exclude<CuprumDirection, 'unknown'>
-          ] ?? 'humming';
-        speech += ` Behind it, ${briefing.secondary.phrase} is ${direction} too.`;
+        parts.push(
+          `Just behind it, ${briefing.secondary.phrase} is ${directionWord(
+            briefing.secondary.direction,
+          )} too.`,
+        );
       }
       if (briefing.risks[0]) {
-        speech += ` The nearest knot: ${briefing.risks[0]}.`;
+        parts.push(`The nearest knot: ${briefing.risks[0]}.`);
       }
-      return `${speech} I don't need it to be right; I need it to be honest.`;
+      return joinWithin(parts);
+    }
+    case 'drivers': {
+      const cast = briefing.drivers;
+      if (cast.length === 0) {
+        return "I don't hear anything loud enough to name yet. Just the hum, and me listening.";
+      }
+      const [lead, second, third] = cast;
+      const parts = [
+        `${capitalize(lead.phrase)} is the loudest — ${lead.share} of everything I hear, and it is ${directionWord(
+          lead.direction,
+        )}.`,
+      ];
+      if (second) {
+        parts.push(
+          `${capitalize(second.phrase)} sits right behind it, ${
+            second.loudness === 'quiet' ? 'quieter but awake' : 'almost as loud'
+          }.`,
+        );
+      }
+      if (third) {
+        parts.push(
+          `Then ${third.phrase}, ${third.share}, ${directionWord(third.direction)}.`,
+        );
+      }
+      return joinWithin(parts);
+    }
+    case 'driver-outlook': {
+      const cast = briefing.drivers;
+      if (cast.length === 0) {
+        return "I only see this window, and there's nothing loud in it. Ask me again when the board speaks.";
+      }
+      const [lead, second] = cast;
+      const parts = [
+        `${capitalize(lead.phrase)} is still the loudest, still ${directionWord(lead.direction)}.`,
+        'That is not a promise: it is only what the direction shows right now.',
+      ];
+      if (second) {
+        parts.splice(1, 0, `And ${second.phrase} is ${directionWord(second.direction)} too.`);
+      }
+      return joinWithin(parts);
     }
     case 'memory-why': {
       if (!briefing.memory) {
@@ -538,4 +644,25 @@ function uniqueClauses(clauses: string[]): string[] {
 
 function capitalize(value: string): string {
   return value.length > 0 ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+}
+
+function directionWord(direction: CuprumDirection): string {
+  return direction === 'unknown' ? 'humming' : DIRECTION_WORDS[direction];
+}
+
+/**
+ * Keeps the bubble inside its stage: parts are added in priority order and the
+ * line stops before the first part that would overflow. Nothing is cut midway.
+ */
+function joinWithin(
+  parts: string[],
+  budget: number = CUPRUM_SPEECH_BUDGET,
+): string {
+  let speech = '';
+  for (const part of parts) {
+    const candidate = speech ? `${speech} ${part}` : part;
+    if (speech && candidate.length > budget) break;
+    speech = candidate;
+  }
+  return speech;
 }

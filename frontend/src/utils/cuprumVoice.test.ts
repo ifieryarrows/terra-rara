@@ -121,11 +121,16 @@ const INTENTS: CuprumIntent[] = [
   'weight-change',
   'change',
   'driver-detail',
+  'drivers',
+  'driver-outlook',
   'memory-why',
   'risk',
   'opportunity',
   'board-read',
 ];
+
+/** Measured against the real bubble: 220 chars fits the 18rem stage. */
+const SPEECH_BUDGET = 220;
 
 describe('cuprumVoice', () => {
   it('turns the old XAI payload into a safe, human briefing', () => {
@@ -403,5 +408,49 @@ describe('cuprumVoice', () => {
     expect(composeCuprumReply('sense', context, RUNTIME)).toBe(
       composeCuprumReply('sense', context, RUNTIME),
     );
+  });
+
+  it('keeps every composed reply inside the speech budget', () => {
+    for (const mood of ['molten_bull', 'patina_bear', 'tempered_neutral'] as const) {
+      for (const intent of INTENTS) {
+        const speech = composeCuprumReply(intent, makeContext({ mood }), RUNTIME);
+        expect(speech.length, `${intent} @ ${mood}`).toBeLessThanOrEqual(SPEECH_BUDGET);
+      }
+    }
+  });
+});
+
+describe('cuprumVoice driver cast', () => {
+  it('turns every encoder signal into a driver the pet can name', () => {
+    const briefing = buildCuprumBriefing(COMMENTARY, null, TFT);
+
+    expect(briefing.drivers).toHaveLength(2);
+    expect(briefing.drivers[0]).toMatchObject({
+      phrase: 'the paper weather',
+      loudness: 'loud',
+      share: 'three in ten',
+      direction: 'cooling',
+    });
+    expect(briefing.drivers[1]).toMatchObject({
+      phrase: 'the far side of the world',
+      share: 'two in ten',
+    });
+  });
+
+  it('speaks the whole cast instead of only the loudest one', () => {
+    const speech = composeCuprumReply('drivers', makeContext(), RUNTIME);
+
+    expect(speech).toContain('paper weather');
+    expect(speech).toContain('far side of the world');
+    expect(speech).toMatch(/loud/i);
+    expect(speech).not.toMatch(/\d/);
+  });
+
+  it('answers "will it hold" with the direction it can see, never a promise', () => {
+    const speech = composeCuprumReply('driver-outlook', makeContext(), RUNTIME);
+
+    expect(speech).toMatch(/still/);
+    expect(speech).toMatch(/not a promise|the direction shows/i);
+    expect(speech).not.toMatch(/\d/);
   });
 });

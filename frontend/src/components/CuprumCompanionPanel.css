@@ -48,8 +48,8 @@
   position: relative;
   display: flex;
   align-items: flex-start;
-  height: 17rem;
-  min-height: 17rem;
+  height: 18rem;
+  min-height: 18rem;
 }
 
 /* The stage keeps a fixed height so the dashboard never moves. The bubble
@@ -196,8 +196,8 @@
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  margin-top: 0.9rem;
-  padding-top: 0.75rem;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
   border-top: 1px solid color-mix(in srgb, var(--cuprum-accent) 18%, transparent);
 }
 
@@ -207,8 +207,8 @@
   align-items: center;
   gap: 0.6rem;
   width: 100%;
-  min-height: 2.45rem;
-  padding: 0.45rem 0.55rem;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.55rem;
   border: 1px solid transparent;
   border-radius: 0.25rem;
   background: transparent;
@@ -352,9 +352,27 @@
   }
 }
 
-@media (max-width: 639px) {
+@media (min-width: 640px) and (max-width: 1200px) {
+  /* The dashboard card is narrower here, so the bubble gets fewer characters
+     per line. A taller fixed stage keeps the same speech budget scroll-free. */
   .cm-cuprum-bubble-slot {
     height: 20rem;
+    min-height: 20rem;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Narrow cards cannot fit a full answer in a fixed stage. Let the bubble grow
+     instead of trapping the reader in an inner scrollbar. */
+  .cm-cuprum-bubble-slot {
+    height: auto;
+    min-height: 18rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .cm-cuprum-bubble-slot {
+    height: auto;
     min-height: 20rem;
   }
 

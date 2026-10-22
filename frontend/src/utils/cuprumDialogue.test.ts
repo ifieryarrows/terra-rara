@@ -76,12 +76,38 @@ const SPARSE_CONTEXT: CuprumContext = {
 
 const CONTEXTS = [BASE_CONTEXT, SPARSE_CONTEXT];
 
+const NEUTRAL_CONTEXT: CuprumContext = { ...BASE_CONTEXT, mood: 'tempered_neutral' };
+const BEAR_CONTEXT: CuprumContext = { ...BASE_CONTEXT, mood: 'patina_bear' };
+const MOOD_CONTEXTS: CuprumContext[] = [
+  BASE_CONTEXT,
+  SPARSE_CONTEXT,
+  NEUTRAL_CONTEXT,
+  BEAR_CONTEXT,
+];
+
+/** Measured against the real bubble: 220 chars fits the 18rem stage. */
+const SPEECH_BUDGET = 220;
+const ACTION_BUDGET = 90;
+
 function choicesFor(
   node: CuprumNode,
   ctx: CuprumContext = BASE_CONTEXT,
   runtime: CuprumRuntime = createCuprumRuntime(),
 ): CuprumChoice[] {
   return typeof node.choices === 'function' ? node.choices(ctx, runtime) : node.choices;
+}
+
+function tellStories(runtime: CuprumRuntime, times: number): CuprumRuntime {
+  let next = runtime;
+  for (let index = 0; index < times; index += 1) {
+    next = applyCuprumChoice(next, {
+      id: 'story-installment',
+      label: 'Tell me another.',
+      next: 'story',
+      advanceStory: true,
+    });
+  }
+  return next;
 }
 
 describe('cuprumDialogue', () => {
@@ -225,9 +251,16 @@ describe('cuprumDialogue', () => {
     const storyChoice = choicesFor(CUPRUM_NODES.story).find((choice) => choice.advanceStory);
     expect(storyChoice).toBeDefined();
     const next = applyCuprumChoice(start, storyChoice!);
-    expect(next.storyIndex).toBe(1);
+    expect(next.storiesTold).toBe(1);
     expect(next.turn).toBe(1);
     expect(resolveCuprumNode('story', BASE_CONTEXT, next)?.speech).toBe(
+      CUPRUM_STORIES[0].text,
+    );
+
+    // Asking again moves to the next story instead of repeating the first.
+    const after = applyCuprumChoice(next, storyChoice!);
+    expect(after.storiesTold).toBe(2);
+    expect(resolveCuprumNode('story', BASE_CONTEXT, after)?.speech).toBe(
       CUPRUM_STORIES[1].text,
     );
   });
@@ -297,7 +330,7 @@ describe('cuprumDialogue', () => {
 
     const sense = resolveCuprumNode('sense', ctx, runtime);
     expect(sense?.choices.map((choice) => choice.label)).toContain(
-      "What's the loose thread?",
+      "Who's doing the talking?",
     );
 
     const driver = resolveCuprumNode('driver-detail', ctx, runtime);
@@ -424,5 +457,100 @@ describe('cuprumDialogue', () => {
       expect(resolved?.speech, node.id).not.toMatch(/\d|[$%]/);
       expect(resolved?.speech, node.id).not.toMatch(/\b(buy|sell|target|advice)\b/i);
     }
+  });
+
+  it('keeps every spoken line and action inside the bubble budget', () => {
+    const runtimes = [
+      createCuprumRuntime(),
+      tellStories(createCuprumRuntime(), 3),
+      tellStories(createCuprumRuntime(), 8),
+      tellStories(createCuprumRuntime(), 13),
+    ];
+
+    for (const ctx of MOOD_CONTEXTS) {
+      for (const runtime of runtimes) {
+        for (const node of Object.values(CUPRUM_NODES)) {
+          const resolved = resolveCuprumNode(node.id, ctx, runtime);
+          expect(
+            (resolved?.speech ?? '').length,
+            `${node.id} speech @ ${ctx.mood}`,
+          ).toBeLessThanOrEqual(SPEECH_BUDGET);
+          expect(
+            (resolved?.action ?? '').length,
+            `${node.id} action @ ${ctx.mood}`,
+          ).toBeLessThanOrEqual(ACTION_BUDGET);
+        }
+      }
+    }
+  });
+
+  it('runs out of stories in neutral and repeats the same line until the page reloads', () => {
+    let runtime = applyCuprumChoice(createCuprumRuntime(), {
+      id: 'root-story',
+      label: "Tell me something I don't know.",
+      next: 'story',
+    });
+    expect(resolveCuprumNode('story', NEUTRAL_CONTEXT, runtime)?.speech).toContain(
+      'first smiths',
+    );
+
+    // All ten stories told.
+    runtime = tellStories(runtime, CUPRUM_STORIES.length - 1);
+    expect(resolveCuprumNode('story', NEUTRAL_CONTEXT, runtime)).not.toBeNull();
+
+    runtime = tellStories(runtime, 1);
+    const done = resolveCuprumNode('story', NEUTRAL_CONTEXT, runtime);
+    expect(done?.speech).toMatch(/out of stories|no more stories|nothing left/i);
+    expect(done?.choices.map((choice) => choice.label)).not.toContain('Tell me another.');
+    // The story question stays available so asking again repeats the same answer.
+    expect(done?.choices.map((choice) => choice.label)).toContain('Tell me a story.');
+
+    runtime = tellStories(runtime, 1);
+    expect(resolveCuprumNode('story', NEUTRAL_CONTEXT, runtime)?.speech).toBe(done?.speech);
+    runtime = tellStories(runtime, 1);
+    expect(resolveCuprumNode('story', NEUTRAL_CONTEXT, runtime)?.speech).toBe(done?.speech);
+  });
+
+  it('keeps the bull telling stories and heats up after the first two', () => {
+    let runtime = applyCuprumChoice(createCuprumRuntime(), {
+      id: 'root-story',
+      label: "Tell me something I don't know.",
+      next: 'story',
+    });
+    const first = resolveCuprumNode('story', BASE_CONTEXT, runtime);
+    expect(first?.speech).toContain('first smiths');
+
+    runtime = tellStories(runtime, 1);
+    expect(resolveCuprumNode('story', BASE_CONTEXT, runtime)?.speech).toContain(
+      'Statue of Liberty',
+    );
+
+    runtime = tellStories(runtime, 1);
+    const heated = resolveCuprumNode('story', BASE_CONTEXT, runtime);
+    expect(heated?.speech).not.toBe(first?.speech);
+    expect(heated?.speech).not.toContain('first smiths');
+    expect(heated?.action).toMatch(/ember|spark|roar|heat|fire/i);
+    expect(heated?.action).not.toBe(first?.action);
+
+    // The bull never runs out; it just stays hot.
+    runtime = tellStories(runtime, 6);
+    const later = resolveCuprumNode('story', BASE_CONTEXT, runtime);
+    expect((later?.speech ?? '').length).toBeGreaterThan(0);
+    expect(later?.choices.map((choice) => choice.label)).toContain('Tell me another.');
+  });
+
+  it('offers the driver cast and its persistence question once the data is ready', () => {
+    const sense = choicesFor(CUPRUM_NODES.sense);
+    expect(sense.map((choice) => choice.next)).toContain('drivers');
+
+    const cast = resolveCuprumNode('drivers', BASE_CONTEXT, createCuprumRuntime());
+    const lead = BASE_CONTEXT.briefing.drivers[0];
+    expect(lead).toBeTruthy();
+    expect(cast?.speech.toLowerCase()).toContain(lead.phrase);
+    expect(cast?.choices.map((choice) => choice.next)).toContain('driver-outlook');
+
+    const outlook = resolveCuprumNode('driver-outlook', BASE_CONTEXT, createCuprumRuntime());
+    expect(outlook?.speech).toMatch(/still/);
+    expect(outlook?.choices).toHaveLength(3);
   });
 });
