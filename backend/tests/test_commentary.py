@@ -644,11 +644,14 @@ def test_parse_commentary_sections_extracts_deterministic_fallback():
     sections = commentary_module.parse_commentary_sections(fallback)
 
     assert sections["synthesis"] == (
-        "Current model inputs suggest a cautious upside bias with elevated uncertainty."
+        "News sentiment is bullish (+0.196), so the daily read leans up; "
+        "no 5-day model outlook is available for this run."
     )
     assert len(sections["risks"]) == 3
     assert sections["risks"][0].startswith("Model indicates upside uncertainty")
-    assert len(sections["opportunities"]) == 3
+    assert len(sections["opportunities"]) == 2
+    # TFT-ASRO focus outranks the XGBoost importance list, so this payload
+    # yields the price line plus a single TFT driver line (the parser caps at 3).
     assert sections["opportunities"][0].startswith("The model-derived price is $6.6046")
     assert sections["bias_warning"].startswith("This view is model-driven")
     # The XAI line must never leak into the bias section.

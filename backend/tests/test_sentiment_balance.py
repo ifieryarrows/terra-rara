@@ -71,20 +71,22 @@ class TestClassification:
 
 
 class TestDeterministicStance:
-    def test_balanced_sentiment_does_not_flip_the_stance(self):
-        # Production case: model reads +0.10% upside, sentiment is -0.0287 (Neutral).
-        stance = commentary_module._deterministic_stance_from_inputs(0.001, -0.0287)
+    """The stance follows the news regime; the price model never sets it."""
 
-        assert stance == "BULLISH"
-
-    def test_balanced_sentiment_with_a_flat_model_move_is_neutral(self):
-        stance = commentary_module._deterministic_stance_from_inputs(0.0, -0.0287)
+    def test_balanced_sentiment_is_neutral_whatever_the_model_says(self):
+        # Production case: news -0.0646 (Neutral), XGBoost +0.12% for tomorrow.
+        stance = commentary_module._deterministic_stance_from_inputs(-0.0287, "Neutral")
 
         assert stance == "NEUTRAL"
 
-    def test_directional_sentiment_still_drives_the_stance(self):
-        assert commentary_module._deterministic_stance_from_inputs(0.001, -0.30) == "BEARISH"
-        assert commentary_module._deterministic_stance_from_inputs(-0.001, 0.30) == "BULLISH"
+    def test_label_is_optional_and_falls_back_to_the_classification(self):
+        stance = commentary_module._deterministic_stance_from_inputs(-0.0287)
+
+        assert stance == "NEUTRAL"
+
+    def test_directional_sentiment_drives_the_stance(self):
+        assert commentary_module._deterministic_stance_from_inputs(-0.30, "Bearish") == "BEARISH"
+        assert commentary_module._deterministic_stance_from_inputs(0.30, "Bullish") == "BULLISH"
 
 
 class TestFallbackCommentary:

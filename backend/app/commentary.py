@@ -105,47 +105,35 @@ def _sentiment_regime_label(sentiment_index: float, sentiment_label: Optional[st
     return classify_sentiment(sentiment_index)
 
 
-def _sentiment_stance_contribution(
-    sentiment_index: float,
-    sentiment_label: Optional[str] = None,
-) -> float:
-    """Directional weight the sentiment regime adds to the deterministic stance.
-
-    A balanced regime contributes nothing: the sign of a noise-level index is
-    not a market read, and letting it tilt the stance would contradict the
-    "Balanced" label the dashboard renders next to the same number. A
-    directional regime keeps contributing its own index, as before.
-    """
-    label = (sentiment_label or "").strip().lower()
-    if label == BULLISH.lower():
-        return abs(float(sentiment_index))
-    if label == BEARISH.lower():
-        return -abs(float(sentiment_index))
-    if label == NEUTRAL.lower():
-        return 0.0
-    # No usable label: fall back to the shared classification.
-    if sentiment_direction(sentiment_index) == 0:
-        return 0.0
-    return float(sentiment_index)
+# Published label spellings plus the legacy taxonomy some rows still carry.
+_BULLISH_LABELS = {BULLISH.lower(), "positive"}
+_BEARISH_LABELS = {BEARISH.lower(), "negative"}
 
 
 def _deterministic_stance_from_inputs(
-    predicted_return: float,
     sentiment_index: float,
     sentiment_label: Optional[str] = None,
 ) -> str:
-    """Stance from the model return plus the *classified* sentiment regime.
+    """Stance from the *news* regime, never from a model's price direction.
 
-    The regime is read through its classification, never through the sign of
-    the raw index: a balanced index must not flip the stance away from what
-    the model actually says.
+    News changes daily, so the companion speaks to what the headlines say
+    today: a balanced regime is NEUTRAL. The 5-day TFT outlook colours the
+    narrative; driving the stance from the price direction instead would leave
+    no neutral pet at all, because the model is almost always mildly
+    directional.
     """
-    combined = float(predicted_return) + _sentiment_stance_contribution(
-        sentiment_index, sentiment_label
-    )
-    if combined > 0:
+    label = (sentiment_label or "").strip().lower()
+    if label in _BULLISH_LABELS:
         return "BULLISH"
-    if combined < 0:
+    if label in _BEARISH_LABELS:
+        return "BEARISH"
+    if label == NEUTRAL.lower():
+        return "NEUTRAL"
+    # No usable label: fall back to the shared classification.
+    direction = sentiment_direction(sentiment_index)
+    if direction > 0:
+        return "BULLISH"
+    if direction < 0:
         return "BEARISH"
     return "NEUTRAL"
 
@@ -429,12 +417,49 @@ def _driver_display_name(influencer: dict) -> str:
     return ""
 
 
-def _build_driver_lines(top_influencers: Optional[list]) -> list[str]:
-    """The two opportunity lines about the ranked feature drivers.
+def _tft_driver_names(tft_digest: Optional[dict]) -> list[str]:
+    """Human-readable TFT encoder signals, each with its share of model focus."""
+    names: list[str] = []
+    if not isinstance(tft_digest, dict):
+        return names
+    for signal in tft_digest.get("top_encoder_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        label = str(signal.get("label") or "").strip()
+        feature = str(signal.get("feature") or "").strip()
+        name = label if label and label != feature else feature
+        if not name:
+            continue
+        weight_pct = signal.get("weight_pct")
+        if isinstance(weight_pct, (int, float)):
+            name = f"{name} ({float(weight_pct):.1f}% of encoder focus)"
+        names.append(name)
+        if len(names) >= 3:
+            break
+    return names
 
-    A run without a driver ranking says so; it never prints placeholder names
-    that read like real features.
+
+def _build_driver_lines(
+    top_influencers: Optional[list],
+    tft_digest: Optional[dict] = None,
+) -> list[str]:
+    """Driver lines: TFT-ASRO focus first, XGBoost importance only as a backstop.
+
+    Where both models describe the same inputs, the 5-day TFT model wins. A run
+    without any driver ranking says so; it never prints placeholder names that
+    read like real features.
     """
+    tft_names = _tft_driver_names(tft_digest)
+    if tft_names:
+        if len(tft_names) == 1:
+            focus = tft_names[0]
+        else:
+            focus = ", ".join(tft_names[:-1]) + f" and {tft_names[-1]}"
+        return [
+            f"TFT-ASRO encoder focus concentrates on {focus} - the inputs behind "
+            "the 5-day view."
+        ]
+
     names = [
         name
         for name in (_driver_display_name(inf) for inf in (top_influencers or []))
@@ -460,6 +485,61 @@ def _build_driver_lines(top_influencers: Optional[list]) -> list[str]:
     else:
         lines.append("Secondary driver checkpoints are unavailable for this run.")
     return lines
+
+
+def _format_percent(value) -> Optional[str]:
+    """Signed percentage for a finite return, else ``None``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return f"{number * 100:+.2f}%"
+
+
+def _build_tft_primary_line(tft_summary: Optional[dict]) -> Optional[str]:
+    """The 5-day primary outlook, stated before anything from the daily model."""
+    if not isinstance(tft_summary, dict):
+        return None
+    direction = str(tft_summary.get("direction") or "unavailable").lower()
+    risk_level = str(tft_summary.get("risk_level") or "unavailable").lower()
+    parts = [f"5-day primary outlook (TFT-ASRO): {direction} bias"]
+    median = _format_percent(tft_summary.get("primary_forecast_return"))
+    q10 = _format_percent(tft_summary.get("primary_forecast_q10"))
+    q90 = _format_percent(tft_summary.get("primary_forecast_q90"))
+    if median:
+        parts.append(f"median {median}")
+    if q10 and q90:
+        parts.append(f"q10 {q10}")
+        parts.append(f"q90 {q90}")
+    parts.append(f"risk {risk_level}")
+    return ", ".join(parts) + "."
+
+
+def _build_summary_line(
+    sentiment_index: float,
+    sentiment_label: Optional[str],
+    has_tft_outlook: bool,
+) -> str:
+    """Summary that matches the news-driven stance instead of the price sign."""
+    horizon = (
+        "the 5-day TFT-ASRO outlook above is the primary horizon"
+        if has_tft_outlook
+        else "no 5-day model outlook is available for this run"
+    )
+    stance = _deterministic_stance_from_inputs(sentiment_index, sentiment_label)
+    if stance == "NEUTRAL":
+        return (
+            "Summary: News sentiment is balanced, so the daily read carries no "
+            f"directional bias; {horizon}."
+        )
+    label = _sentiment_regime_label(sentiment_index, sentiment_label).lower()
+    lean = "up" if stance == "BULLISH" else "down"
+    return (
+        f"Summary: News sentiment is {label} ({sentiment_index:+.3f}), so the daily "
+        f"read leans {lean}; {horizon}."
+    )
 
 
 def _min_news_sample() -> int:
@@ -489,6 +569,33 @@ def _build_news_sample_line(news_count: int) -> str:
     )
 
 
+def _next_day_diagnostic_line(
+    current_price: Optional[float],
+    baseline_price: Optional[float],
+    predicted_price: Optional[float],
+) -> str:
+    """The daily model's price, explicitly demoted to a diagnostic."""
+    if predicted_price is None:
+        return (
+            "Next-day diagnostic (XGBoost): predicted price is unavailable because "
+            "no finite reference close was available."
+        )
+    if baseline_price is None:
+        return (
+            f"Next-day diagnostic (XGBoost): predicted price ${predicted_price:.4f}, "
+            "but its finite baseline metadata is unavailable."
+        )
+    line = (
+        f"Next-day diagnostic (XGBoost): price ${predicted_price:.4f} from the finite "
+        f"baseline ${baseline_price:.4f}"
+    )
+    if current_price is not None:
+        line += f"; the live display ${current_price:.4f} is a separate observation."
+    else:
+        line += "; the live display price is unavailable."
+    return line
+
+
 def _build_commentary_template_fallback(
     current_price: Optional[float],
     baseline_price: Optional[float],
@@ -504,7 +611,41 @@ def _build_commentary_template_fallback(
 ) -> str:
     """Deterministic fallback commentary used when LLM is unavailable."""
     direction = "upside" if predicted_return >= 0 else "downside"
-    driver_lines = _build_driver_lines(top_influencers)
+    tft_digest = summarize_explain_for_commentary(tft_explain)
+    tft_primary_line = _build_tft_primary_line(tft_summary)
+    driver_lines = _build_driver_lines(top_influencers, tft_digest)
+
+    if predicted_price is not None and baseline_price is not None:
+        price_line = (
+            f"The model-derived price is ${predicted_price:.4f} from the finite baseline "
+            f"${baseline_price:.4f}; the live display price"
+            + (
+                f" is ${current_price:.4f} and is a separate observation."
+                if current_price is not None
+                else " is unavailable."
+            )
+        )
+    elif predicted_price is not None:
+        price_line = (
+            f"The model-derived predicted price is ${predicted_price:.4f}, but its "
+            "finite baseline metadata is unavailable."
+        )
+    else:
+        price_line = (
+            "Predicted price is unavailable because no finite reference close was available."
+        )
+    if tft_primary_line:
+        # The daily model is a diagnostic once the 5-day primary outlook exists.
+        price_line = _next_day_diagnostic_line(
+            current_price, baseline_price, predicted_price
+        )
+
+    if tft_primary_line:
+        opportunities = [tft_primary_line, *driver_lines, price_line]
+    else:
+        opportunities = [price_line, *driver_lines]
+    # ``parse_commentary_sections`` renders at most three bullets.
+    opportunities = opportunities[:3]
 
     lines = [
             "Risks:",
@@ -512,25 +653,18 @@ def _build_commentary_template_fallback(
             f"2. {_build_sentiment_regime_line(sentiment_index, sentiment_label)}",
             f"3. {_build_news_sample_line(news_count)}",
             "Opportunities:",
-            (
-                f"1. The model-derived price is ${predicted_price:.4f} from the finite baseline "
-                f"${baseline_price:.4f}; the live display price"
-                + (f" is ${current_price:.4f} and is a separate observation." if current_price is not None else " is unavailable.")
-                if predicted_price is not None and baseline_price is not None
-                else (
-                    f"1. The model-derived predicted price is ${predicted_price:.4f}, but its finite baseline metadata is unavailable."
-                    if predicted_price is not None
-                    else "1. Predicted price is unavailable because no finite reference close was available."
-                )
+            *[
+                f"{position}. {text}"
+                for position, text in enumerate(opportunities, start=1)
+            ],
+            _build_summary_line(
+                sentiment_index, sentiment_label, tft_primary_line is not None
             ),
-            f"2. {driver_lines[0]}",
-            f"3. {driver_lines[1]}",
-            f"Summary: Current model inputs suggest a cautious {direction} bias with elevated uncertainty.",
             "Bias warning: This view is model-driven and sensitive to news mix, data latency, and feature drift.",
     ]
     if model_status_note:
         lines.append(f"Model status note: {model_status_note}")
-    xai_focus_line = _build_xai_focus_line(summarize_explain_for_commentary(tft_explain))
+    xai_focus_line = _build_xai_focus_line(tft_digest)
     if xai_focus_line:
         lines.append(xai_focus_line)
     lines.append("This is NOT financial advice.")
@@ -634,7 +768,7 @@ async def _generate_commentary_and_stance(
 ) -> CommentaryGenerationResult:
     settings = get_settings()
     deterministic_stance = _deterministic_stance_from_inputs(
-        predicted_return, sentiment_index, sentiment_label
+        sentiment_index, sentiment_label
     )
     tft_digest = summarize_explain_for_commentary(tft_explain)
     fallback_commentary = _build_commentary_template_fallback(
@@ -690,7 +824,7 @@ DATA INPUTS:
 - Sentiment Balance Band: |index| <= {SENTIMENT_BALANCE_BAND:.2f} is Neutral (balanced); outside that band the index is directional
 - News Count: {news_count}
 - Model Status Note: {model_status_note or "No degraded model inputs excluded."}
-- Top Influencers & Their Signals:
+- Next-day XGBoost drivers (diagnostic; the TFT-ASRO focus takes priority where both apply):
 {influencers_text}
 
 {tft_data_section}ANALYTICAL FRAMEWORK:
@@ -727,6 +861,8 @@ DATA INPUTS:
 Return valid JSON with exactly two keys: "stance" and "commentary"
 
 **stance**: Must be one of: BULLISH, BEARISH, NEUTRAL
+   - Derive the stance from the news sentiment regime: Bullish -> BULLISH, Bearish -> BEARISH, Neutral (balanced) -> NEUTRAL. The 5-day TFT-ASRO outlook informs the commentary and synthesis, never the stance.
+   - Where both models describe the same thing, the TFT-ASRO 5-day view takes priority; the XGBoost next-day view is a diagnostic and must be labelled as such.
 
 **commentary**: Structure as follows:
 
