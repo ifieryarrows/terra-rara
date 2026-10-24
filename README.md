@@ -612,7 +612,7 @@ Copy `env.example` to `backend/.env` and configure:
 
 OpenRouter's free-model daily allowance applies across free models on an account, not separately per model. Fallback and failed requests can also consume that allowance.
 
-For local runs, set `OPENROUTER_API_KEY_BACKUP` beside `OPENROUTER_API_KEY` in `backend/.env`. For the Hugging Face Space, add it as a Space Secret with that exact name; the primary key remains `OPENROUTER_API_KEY`. The worker tries the backup key after a primary HTTP 429 or 402 and remembers an explicitly exhausted free-tier daily quota in process memory until the next UTC day. It does not log either key value.
+For local runs, set `OPENROUTER_API_KEY_BACKUP` beside `OPENROUTER_API_KEY` in `backend/.env`. For the Hugging Face Space, add it as a Space Secret with that exact name; the primary key remains `OPENROUTER_API_KEY`. The worker tries the backup key after a primary HTTP 429 or 402, and skips a key with an explicitly exhausted free-tier daily quota for the rest of that request. It does not log either key value.
 
 The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Generate a random secret before deploying.
 

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import random
 import threading
 import time
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -16,8 +14,6 @@ import httpx
 logger = logging.getLogger(__name__)
 _RATE_LOCK = threading.Lock()
 _NEXT_ALLOWED_TS = 0.0
-_FREE_TIER_DAILY_QUOTA_LOCK = threading.Lock()
-_FREE_TIER_DAILY_QUOTA_EXHAUSTED: dict[str, str] = {}
 
 
 class OpenRouterError(RuntimeError):
@@ -133,28 +129,6 @@ def _api_key_slot(index: int) -> str:
     return "primary" if index == 0 else f"backup-{index}"
 
 
-def _api_key_fingerprint(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-
-
-def _free_tier_quota_exhausted_today(api_key: str) -> bool:
-    today = datetime.now(timezone.utc).date().isoformat()
-    fingerprint = _api_key_fingerprint(api_key)
-    with _FREE_TIER_DAILY_QUOTA_LOCK:
-        return _FREE_TIER_DAILY_QUOTA_EXHAUSTED.get(fingerprint) == today
-
-
-def _mark_free_tier_quota_exhausted_today(api_key: str) -> None:
-    today = datetime.now(timezone.utc).date().isoformat()
-    fingerprint = _api_key_fingerprint(api_key)
-    with _FREE_TIER_DAILY_QUOTA_LOCK:
-        # Discard yesterday's fingerprints so the cache stays bounded.
-        for stale_key, exhausted_date in list(_FREE_TIER_DAILY_QUOTA_EXHAUSTED.items()):
-            if exhausted_date != today:
-                _FREE_TIER_DAILY_QUOTA_EXHAUSTED.pop(stale_key, None)
-        _FREE_TIER_DAILY_QUOTA_EXHAUSTED[fingerprint] = today
-
-
 def _extract_message_text(data: dict[str, Any]) -> str:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -235,11 +209,7 @@ async def create_chat_completion(
     deadline = time.monotonic() + max(float(chain_deadline_seconds), 1.0)
     last_error: Optional[OpenRouterError] = None
     first_rate_limit_error: Optional[OpenRouterRateLimitError] = None
-    free_tier_daily_exhausted_keys = {
-        index
-        for index, key in enumerate(configured_keys)
-        if _free_tier_quota_exhausted_today(key)
-    }
+    free_tier_daily_exhausted_keys: set[int] = set()
     retryable_categories = {"rate_limit", "timeout", "network", "provider_5xx"}
     key_rotation_categories = {"rate_limit", "spend_limit"}
 
@@ -313,9 +283,8 @@ async def create_chat_completion(
                             if _is_free_tier_daily_quota_exhausted(response.status_code, body, candidate):
                                 daily_quota_exhausted = True
                                 free_tier_daily_exhausted_keys.add(key_index)
-                                _mark_free_tier_quota_exhausted_today(active_key)
                                 logger.warning(
-                                    "OpenRouter free-tier daily quota exhausted; skipping this key for remaining free models key_slot=%s",
+                                    "OpenRouter free-tier daily quota exhausted; skipping this key for remaining free models in this request key_slot=%s",
                                     key_slot,
                                 )
 
