@@ -157,13 +157,18 @@ def _candidate_payload(base_payload: dict[str, Any], candidate: str) -> dict[str
         # thinking mode; a low reasoning effort can consume the whole output
         # budget without returning the JSON scoring payload.
         payload["reasoning"] = {"enabled": False, "exclude": True}
-    elif candidate.lower().startswith("nvidia/nemotron"):
+    elif candidate.lower().startswith("nvidia/nemotron-3.5-super-vl"):
         if isinstance(existing_reasoning, dict) and existing_reasoning.get("enabled") is False:
             payload["reasoning"] = {"enabled": False, "exclude": True}
         else:
             reasoning = dict(existing_reasoning) if isinstance(existing_reasoning, dict) else {}
             reasoning.setdefault("effort", "low")
             payload["reasoning"] = reasoning
+    elif candidate.lower().startswith("nvidia/nemotron"):
+        if isinstance(existing_reasoning, dict) and "effort" in existing_reasoning:
+            payload["reasoning"] = {"effort": existing_reasoning["effort"]}
+        else:
+            payload["reasoning"] = {"effort": "low"}
     elif isinstance(existing_reasoning, dict) and set(existing_reasoning.keys()) == {"effort"}:
         payload.pop("reasoning", None)
     return payload
