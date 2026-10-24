@@ -47,7 +47,12 @@ from app.settings import get_settings
 from app.features import build_feature_matrix, get_feature_descriptions
 from app.lock import pipeline_lock
 from app.async_bridge import run_async_from_sync
-from app.openrouter_client import OpenRouterError, OpenRouterRateLimitError, create_chat_completion
+from app.openrouter_client import (
+    OpenRouterError,
+    OpenRouterRateLimitError,
+    create_chat_completion,
+    get_configured_api_keys,
+)
 from pipelines.market_calendar import assign_market_date, is_after_close_news
 
 logging.basicConfig(
@@ -649,7 +654,7 @@ async def score_batch_with_llm(
     """
     settings = get_settings()
 
-    if not settings.openrouter_api_key:
+    if not get_configured_api_keys(settings):
         raise RuntimeError("OpenRouter API key not configured")
 
     normalized_articles = [
@@ -670,7 +675,7 @@ async def score_batch_with_llm(
 
     async def _request_scoring(*, max_tokens: int) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
-            "api_key": settings.openrouter_api_key,
+            "api_keys": get_configured_api_keys(settings),
             "model": model_name,
             "messages": [
                 {"role": "system", "content": LLM_SENTIMENT_SYSTEM_PROMPT},
@@ -697,7 +702,7 @@ async def score_batch_with_llm(
             f"MALFORMED:\n{malformed_content}"
         )
         repair_data = await create_chat_completion(
-            api_key=settings.openrouter_api_key,
+            api_keys=get_configured_api_keys(settings),
             model=model_name,
             messages=[
                 {
@@ -1018,7 +1023,7 @@ async def _repair_json_response_v2(
         f"MALFORMED:\n{malformed_content}"
     )
     repair_data = await create_chat_completion(
-        api_key=settings.openrouter_api_key,
+        api_keys=get_configured_api_keys(settings),
         model=model_name,
         messages=[
             {
@@ -1086,7 +1091,7 @@ async def _score_subset_with_model_v2(
 
     async def _request(*, max_tokens: int) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
-            "api_key": settings.openrouter_api_key,
+            "api_keys": get_configured_api_keys(settings),
             "model": model_name,
             "messages": [
                 {"role": "system", "content": LLM_V2_SYSTEM_PROMPT},
@@ -1197,7 +1202,7 @@ async def _score_batch_with_llm_v2_unbounded(
     Commodity-aware sentiment scoring with fast+reliable model escalation.
     """
     settings = get_settings()
-    if not settings.openrouter_api_key:
+    if not get_configured_api_keys(settings):
         raise RuntimeError("OpenRouter API key not configured")
 
     fast_model = settings.resolved_scoring_fast_model
@@ -1574,7 +1579,7 @@ def score_unscored_processed_articles(
         reliable_exhausted = rate_limited_by_model.get(reliable_model) == today_utc
         both_exhausted = fast_exhausted and reliable_exhausted
 
-        if settings.openrouter_api_key and llm_budget_remaining > 0 and not both_exhausted:
+        if get_configured_api_keys(settings) and llm_budget_remaining > 0 and not both_exhausted:
             eligible_items = [item for item in chunk_items if item["id"] in llm_eligible_ids]
             skipped = len(chunk_items) - len(eligible_items)
             if skipped > 0:
@@ -1587,7 +1592,7 @@ def score_unscored_processed_articles(
             llm_budget_remaining -= llm_take
             for item in eligible_items[llm_take:]:
                 fallback_reason_by_id[item["id"]] = "budget_policy"
-        elif not settings.openrouter_api_key:
+        elif not get_configured_api_keys(settings):
             for article_id in llm_eligible_ids:
                 fallback_reason_by_id[article_id] = "auth"
         elif both_exhausted:
@@ -2038,13 +2043,13 @@ def score_unscored_articles(
         llm_candidates: list[Any] = []
         non_llm_candidates: list[Any] = []
 
-        if settings.openrouter_api_key and llm_budget_remaining > 0:
+        if get_configured_api_keys(settings) and llm_budget_remaining > 0:
             llm_take = min(len(chunk), llm_budget_remaining)
             llm_candidates = chunk[:llm_take]
             non_llm_candidates = chunk[llm_take:]
         else:
             non_llm_candidates = chunk
-            if settings.openrouter_api_key and llm_budget_remaining <= 0 and not budget_exhausted_logged:
+            if get_configured_api_keys(settings) and llm_budget_remaining <= 0 and not budget_exhausted_logged:
                 logger.info(
                     "LLM budget exhausted (%s articles). Remaining chunks use soft-neutral FinBERT fallback.",
                     settings.max_llm_articles_per_run,
@@ -2096,7 +2101,7 @@ def score_unscored_articles(
         for article in non_llm_candidates:
             reason = (
                 "llm_skipped_budget"
-                if settings.openrouter_api_key and llm_budget_remaining <= 0
+                if get_configured_api_keys(settings) and llm_budget_remaining <= 0
                 else "llm_unavailable_no_api_key"
             )
             llm_results_by_id[article.id] = _neutral_llm_result(

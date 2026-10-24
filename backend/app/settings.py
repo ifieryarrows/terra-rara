@@ -89,36 +89,45 @@ class Settings(BaseSettings):
     
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
-    # Deprecated - kept for backward compatibility. Keep this on a currently
-    # listed free model so installations without an explicit env override do
-    # not silently start with a retired OpenRouter slug.
-    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    # Keep fast and reliable roles independent so one provider/model removal
-    # cannot collapse the entire LLM path. NVIDIA and Liquid passed the exact
-    # credentialed scoring/commentary probe on 2026-09-27; the Gemma free
-    # models were temporarily rate-limited by their shared upstream pool.
-    openrouter_model_scoring: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3-super-120b-a12b:free"
-    openrouter_model_scoring_reliable: Optional[str] = "liquid/lfm-2.5-2.6b:free"
-    openrouter_model_commentary: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    # Stay below the shared free-provider request ceiling. The worker still
-    # uses bounded retries and a per-chain deadline for transient 429s.
+    # Rotated to when the primary key receives a rate-limit response.
+    openrouter_api_key_backup: Optional[str] = None
+    # Deprecated generic fallback. Keep it on a currently listed model that
+    # supports the project's structured-output contract.
+    openrouter_model: str = "google/gemma-4-31b-it:free"
+    # Use a high-usage free model for fast scoring and a separate provider for
+    # reliable scoring/commentary. All selected routes support response_format
+    # and reasoning in the current OpenRouter catalog.
+    openrouter_model_scoring: str = "nvidia/nemotron-3.5-super-vl:free"
+    openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3.5-super-vl:free"
+    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-4-31b-it:free"
+    openrouter_model_commentary: str = "google/gemma-4-31b-it:free"
+    # Stay below OpenRouter's free-model per-minute ceiling. The account-wide
+    # daily allowance is separate, and bounded fallbacks can still consume it.
     openrouter_rpm: int = 12
     openrouter_max_retries: int = 1
     openrouter_timeout_seconds: float = 45.0
     openrouter_chain_deadline_seconds: float = 120.0
-    # Free tier: ~50 req/day per model. At chunk_size=12 a run of 60 articles
-    # costs ~5 chunks (=5–10 requests incl. escalation) which leaves headroom
-    # for multiple runs per day before hitting the ceiling. Raise cautiously.
+    # OpenRouter's free-model daily allowance is account-wide, not per model.
+    # Failed attempts and model fallbacks can also consume that allowance.
     max_llm_articles_per_run: int = 100
     # Comma-separated list of additional OpenRouter model slugs used by the
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
     openrouter_fallback_models: Optional[str] = (
-        "liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,"
-        "nvidia/nemotron-3.5-super-vl:free,"
-        "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free"
+        "google/gemma-4-31b-it:free,xingchen-agi/xing4.0-29b-a4b:free,"
+        "google/gemma-4-26b-a4b-it:free"
     )
+
+    @property
+    def openrouter_api_keys(self) -> list[str]:
+        """Configured OpenRouter keys in priority order, with duplicates removed."""
+        keys: list[str] = []
+        for candidate in (self.openrouter_api_key, self.openrouter_api_key_backup):
+            normalized = str(candidate or "").strip()
+            if normalized and normalized not in keys:
+                keys.append(normalized)
+        return keys
+
     tokenizers_parallelism: str = "false"
     
     # Twelve Data (Live Price)
@@ -135,7 +144,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    llm_sentiment_model: str = "google/gemma-4-31b-it:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
@@ -256,7 +265,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model,
             )
-            or "nvidia/nemotron-3-super-120b-a12b:free"
+            or "nvidia/nemotron-3.5-super-vl:free"
         )
 
     @property
@@ -274,7 +283,7 @@ class Settings(BaseSettings):
                 self.llm_sentiment_model,
                 self.openrouter_model_scoring,
             )
-            or "nvidia/nemotron-3-super-120b-a12b:free"
+            or "google/gemma-4-31b-it:free"
         )
 
     @property
@@ -322,6 +331,7 @@ def mask_api_key(text: str, settings: Settings = None) -> str:
     keys_to_mask = [
         settings.twelvedata_api_key,
         settings.openrouter_api_key,
+        settings.openrouter_api_key_backup,
         settings.newsapi_key,
         settings.pipeline_trigger_secret,
     ]

@@ -35,23 +35,24 @@ jobs:
           python - <<'PY'
           import json
           import os
+          from urllib.parse import quote
           from urllib.request import Request, urlopen
           from huggingface_hub import HfApi
 
           api = HfApi(token=os.environ["HF_TOKEN"])
           variables = {
-              "OPENROUTER_MODEL": "nvidia/nemotron-3-super-120b-a12b:free",
-              "LLM_SENTIMENT_MODEL": "nvidia/nemotron-3-super-120b-a12b:free",
-              "OPENROUTER_MODEL_SCORING": "nvidia/nemotron-3-super-120b-a12b:free",
-              "OPENROUTER_MODEL_SCORING_FAST": "nvidia/nemotron-3-super-120b-a12b:free",
-              "OPENROUTER_MODEL_SCORING_RELIABLE": "liquid/lfm-2.5-2.6b:free",
-              "OPENROUTER_MODEL_COMMENTARY": "nvidia/nemotron-3-super-120b-a12b:free",
+              "OPENROUTER_MODEL": "google/gemma-4-31b-it:free",
+              "LLM_SENTIMENT_MODEL": "google/gemma-4-31b-it:free",
+              "OPENROUTER_MODEL_SCORING": "nvidia/nemotron-3.5-super-vl:free",
+              "OPENROUTER_MODEL_SCORING_FAST": "nvidia/nemotron-3.5-super-vl:free",
+              "OPENROUTER_MODEL_SCORING_RELIABLE": "google/gemma-4-31b-it:free",
+              "OPENROUTER_MODEL_COMMENTARY": "google/gemma-4-31b-it:free",
               "OPENROUTER_RPM": "12",
               "OPENROUTER_MAX_RETRIES": "1",
               "OPENROUTER_TIMEOUT_SECONDS": "45",
               "OPENROUTER_CHAIN_DEADLINE_SECONDS": "120",
               "MAX_LLM_ARTICLES_PER_RUN": "100",
-              "OPENROUTER_FALLBACK_MODELS": "liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free",
+              "OPENROUTER_FALLBACK_MODELS": "google/gemma-4-31b-it:free,xingchen-agi/xing4.0-29b-a4b:free,google/gemma-4-26b-a4b-it:free",
               "XGB_ARTIFACT_SOURCE": "auto",
           }
           role_models = {
@@ -63,6 +64,7 @@ jobs:
               variables["OPENROUTER_MODEL_COMMENTARY"],
               *[item.strip() for item in variables["OPENROUTER_FALLBACK_MODELS"].split(",") if item.strip()],
           }
+          required_parameters = {"response_format", "reasoning"}
           catalog_request = Request(
               "https://openrouter.ai/api/v1/models",
               headers={"User-Agent": "terra-rara-hf-sync"},
@@ -82,14 +84,48 @@ jobs:
           unsupported_structured = [
               model
               for model in role_models
-              if "response_format" not in (catalog[model].get("supported_parameters") or [])
+              if not required_parameters.issubset(
+                  set(catalog[model].get("supported_parameters") or [])
+              )
           ]
           if unsupported_structured:
               raise RuntimeError(
-                  "Configured structured-output roles do not support response_format: "
+                  "Configured model roles lack required parameters "
+                  + ", ".join(sorted(required_parameters))
+                  + ": "
                   + ", ".join(sorted(set(unsupported_structured)))
               )
-          print(f"Validated {len(role_models)} OpenRouter model slugs against the live catalog")
+          unavailable_routes = []
+          for model in sorted(role_models):
+              endpoint_request = Request(
+                  "https://openrouter.ai/api/v1/models/"
+                  + quote(model, safe="/")
+                  + "/endpoints",
+                  headers={"User-Agent": "terra-rara-hf-sync"},
+              )
+              with urlopen(endpoint_request, timeout=30) as response:
+                  endpoints = json.load(response).get("data", {}).get("endpoints", [])
+              usable = [
+                  endpoint
+                  for endpoint in endpoints
+                  if required_parameters.issubset(
+                      set(endpoint.get("supported_parameters") or [])
+                  )
+                  and (
+                      endpoint.get("uptime_last_1d") is None
+                      or float(endpoint["uptime_last_1d"]) > 0
+                  )
+              ]
+              if not usable:
+                  unavailable_routes.append(model)
+          if unavailable_routes:
+              raise RuntimeError(
+                  "No currently usable response_format endpoint for: "
+                  + ", ".join(unavailable_routes)
+              )
+          print(
+              f"Validated {len(role_models)} OpenRouter model slugs and structured-output endpoints"
+          )
           current_variables = api.get_space_variables("ifieryarrows/copper-mind")
           for key, value in variables.items():
               # Existing production configuration stored some runtime model

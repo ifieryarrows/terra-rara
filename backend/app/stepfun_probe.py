@@ -25,7 +25,7 @@ from app.ai_engine import (
 )
 from app.db import SessionLocal, init_db
 from app.models import NewsProcessed, NewsRaw
-from app.openrouter_client import OpenRouterError, create_chat_completion
+from app.openrouter_client import OpenRouterError, create_chat_completion, get_configured_api_keys
 from app.settings import get_settings
 
 
@@ -99,7 +99,7 @@ async def _run_strict_probe(
     started = time.perf_counter()
     try:
         data = await create_chat_completion(
-            api_key=settings.openrouter_api_key or "",
+            api_keys=get_configured_api_keys(settings),
             model=model,
             messages=[
                 {

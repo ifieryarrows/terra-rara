@@ -19,11 +19,14 @@ from app.settings import get_settings
 
 async def run_probe(*, fast: str, reliable: str, commentary_model: str, batch_size: int = 12) -> dict:
     runtime = get_settings()
-    if not runtime.openrouter_api_key:
+    api_keys = runtime.openrouter_api_keys
+    if not api_keys:
         return {"ok": False, "error": "OpenRouter credential is not configured"}
 
     probe_settings = SimpleNamespace(
         openrouter_api_key=runtime.openrouter_api_key,
+        openrouter_api_key_backup=runtime.openrouter_api_key_backup,
+        openrouter_api_keys=api_keys,
         openrouter_max_retries=1,
         openrouter_rpm=runtime.openrouter_rpm,
         openrouter_timeout_seconds=runtime.openrouter_timeout_seconds,
@@ -106,9 +109,9 @@ async def run_probe(*, fast: str, reliable: str, commentary_model: str, batch_si
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe exact OpenRouter production contracts")
-    parser.add_argument("--fast", default="nvidia/nemotron-3-super-120b-a12b:free")
-    parser.add_argument("--reliable", default="liquid/lfm-2.5-2.6b:free")
-    parser.add_argument("--commentary", default="nvidia/nemotron-3-super-120b-a12b:free")
+    parser.add_argument("--fast", default="nvidia/nemotron-3.5-super-vl:free")
+    parser.add_argument("--reliable", default="google/gemma-4-31b-it:free")
+    parser.add_argument("--commentary", default="google/gemma-4-31b-it:free")
     parser.add_argument("--batch-size", type=int, default=12, help="Synthetic scoring items, up to the worker's 12-item chunk")
     args = parser.parse_args()
     result = asyncio.run(run_probe(fast=args.fast, reliable=args.reliable, commentary_model=args.commentary, batch_size=args.batch_size))

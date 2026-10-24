@@ -582,17 +582,18 @@ Copy `env.example` to `backend/.env` and configure:
 | ------------------------------------- | -------- | --------------------------------------- | -------------------------------------------------------------- |
 | `DATABASE_URL`                      | Yes      | -                                       | PostgreSQL connection string                                   |
 | `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM sentiment and commentary            |
+| `OPENROUTER_API_KEY_BACKUP`         | No       | -                                       | Optional second key; tried after primary HTTP 429/402            |
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for pipeline task queue                 |
 | `SYMBOL_SET`                        | No       | `active`                              | Which symbol set to use (`active`, `champion`, `challenger`)   |
-| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Primary fast sentiment scoring role                            |
-| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `liquid/lfm-2.5-2.6b:free`              | Reliable scoring & escalation repair role                      |
-| `OPENROUTER_MODEL_COMMENTARY`       | No       | `nvidia/nemotron-3-super-120b-a12b:free` | Commentary generation role                                     |
+| `OPENROUTER_MODEL_SCORING_FAST`     | No       | `nvidia/nemotron-3.5-super-vl:free`      | Primary fast sentiment scoring role                            |
+| `OPENROUTER_MODEL_SCORING_RELIABLE` | No       | `google/gemma-4-31b-it:free`             | Reliable scoring & escalation repair role                      |
+| `OPENROUTER_MODEL_COMMENTARY`       | No       | `google/gemma-4-31b-it:free`             | Commentary generation role                                     |
 | `OPENROUTER_RPM`                    | No       | `12`                                    | Soft throttle target for OpenRouter calls                      |
 | `OPENROUTER_MAX_RETRIES`            | No       | `1`                                     | One bounded retry for 408/429/5xx/network errors               |
 | `OPENROUTER_CHAIN_DEADLINE_SECONDS` | No       | `120`                                   | Total sentiment batch deadline                                 |
 | `MAX_LLM_ARTICLES_PER_RUN`          | No       | `100`                                   | Per-run LLM scoring budget                                     |
-| `OPENROUTER_FALLBACK_MODELS`        | No       | `liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
+| `OPENROUTER_FALLBACK_MODELS`        | No       | `google/gemma-4-31b-it:free,xingchen-agi/xing4.0-29b-a4b:free,google/gemma-4-26b-a4b-it:free` | Client-controlled fallback model chain |
 | `XGB_ARTIFACT_SOURCE`               | No       | `auto`                                | Atomic DB artifact first, verified paired files during rollout |
 | `VITE_LOGO_DEV_PUBLISHABLE_KEY`     | No       | -                                       | Optional publishable key for Logo.dev company icons in heatmap |
 | `TWELVEDATA_API_KEY`                | No       | -                                       | Backup live price source                                       |
@@ -608,6 +609,10 @@ Copy `env.example` to `backend/.env` and configure:
 | `HF_HUB_DISABLE_PROGRESS_BARS`      | No       | `1`                                   | Disable Hugging Face progress bars                             |
 | `TRANSFORMERS_VERBOSITY`            | No       | `error`                               | Reduce Transformers log noise                                  |
 | `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No       | `1`                                   | Disable advisory warnings from Transformers                    |
+
+OpenRouter's free-model daily allowance applies across free models on an account, not separately per model. Fallback and failed requests can also consume that allowance.
+
+For local runs, set `OPENROUTER_API_KEY_BACKUP` beside `OPENROUTER_API_KEY` in `backend/.env`. For the Hugging Face Space, add it as a Space Secret with that exact name; the primary key remains `OPENROUTER_API_KEY`. The worker tries the backup key after a primary HTTP 429 or 402 and remembers an explicitly exhausted free-tier daily quota in process memory until the next UTC day. It does not log either key value.
 
 The `env.example` file includes `PIPELINE_TRIGGER_SECRET=` with no value. Generate a random secret before deploying.
 

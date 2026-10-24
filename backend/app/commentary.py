@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .openrouter_client import OpenRouterError, create_chat_completion
+from .openrouter_client import OpenRouterError, create_chat_completion, get_configured_api_keys
 from .sentiment import (
     BEARISH,
     BULLISH,
@@ -802,7 +802,7 @@ async def _generate_commentary_and_stance(
         tft_summary=tft_summary,
     )
 
-    if not settings.openrouter_api_key:
+    if not get_configured_api_keys(settings):
         logger.warning("OpenRouter API key not configured, using template commentary fallback")
         return CommentaryGenerationResult(
             fallback_commentary, deterministic_stance, "deterministic_fallback", None, "auth", []
@@ -908,7 +908,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
 """
 
     base_request_kwargs = {
-        "api_key": settings.openrouter_api_key,
+        "api_keys": get_configured_api_keys(settings),
         "model": settings.resolved_commentary_model,
         "messages": [
             {
@@ -976,7 +976,7 @@ Write as a seasoned commodities strategist would for institutional clients—pre
             f"<malformed_output>{malformed_content}</malformed_output>"
         )
         repair_data = await create_chat_completion(
-            api_key=settings.openrouter_api_key,
+            api_keys=get_configured_api_keys(settings),
             model=next(
                 (m for m in settings.openrouter_fallback_models_list if m != settings.resolved_commentary_model),
                 settings.resolved_scoring_fast_model if hasattr(settings, "resolved_scoring_fast_model") else settings.resolved_commentary_model,
