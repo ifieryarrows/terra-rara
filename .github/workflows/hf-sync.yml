@@ -41,30 +41,38 @@ jobs:
 
           api = HfApi(token=os.environ["HF_TOKEN"])
           variables = {
-              "OPENROUTER_MODEL": "google/gemma-4-31b-it:free",
-              "LLM_SENTIMENT_MODEL": "google/gemma-4-31b-it:free",
+              "OPENROUTER_MODEL": "nvidia/nemotron-3.5-super-vl:free",
+              "LLM_SENTIMENT_MODEL": "nvidia/nemotron-3.5-lightning:free",
               "OPENROUTER_MODEL_SCORING": "nvidia/nemotron-3.5-super-vl:free",
-              "OPENROUTER_MODEL_SCORING_FAST": "nvidia/nemotron-3.5-super-vl:free",
-              "OPENROUTER_MODEL_SCORING_RELIABLE": "google/gemma-4-31b-it:free",
-              "OPENROUTER_MODEL_COMMENTARY": "google/gemma-4-31b-it:free",
+              "OPENROUTER_MODEL_SCORING_FAST": "nvidia/nemotron-3.5-lightning:free",
+              "OPENROUTER_MODEL_SCORING_RELIABLE": "recursive/flint-v1.0:free",
+              "OPENROUTER_MODEL_COMMENTARY": "nvidia/nemotron-3.5-super-vl:free",
               "OPENROUTER_RPM": "12",
               "OPENROUTER_MAX_RETRIES": "1",
               "OPENROUTER_TIMEOUT_SECONDS": "45",
               "OPENROUTER_CHAIN_DEADLINE_SECONDS": "120",
               "MAX_LLM_ARTICLES_PER_RUN": "100",
-              "OPENROUTER_FALLBACK_MODELS": "google/gemma-4-31b-it:free,xingchen-agi/xing4.0-29b-a4b:free,google/gemma-4-26b-a4b-it:free",
+              "OPENROUTER_FALLBACK_MODELS": "recursive/flint-v1.0:free",
               "XGB_ARTIFACT_SOURCE": "auto",
           }
-          role_models = {
-              variables["OPENROUTER_MODEL"],
-              variables["LLM_SENTIMENT_MODEL"],
-              variables["OPENROUTER_MODEL_SCORING"],
-              variables["OPENROUTER_MODEL_SCORING_FAST"],
-              variables["OPENROUTER_MODEL_SCORING_RELIABLE"],
-              variables["OPENROUTER_MODEL_COMMENTARY"],
-              *[item.strip() for item in variables["OPENROUTER_FALLBACK_MODELS"].split(",") if item.strip()],
+          fallback_models = [
+              item.strip()
+              for item in variables["OPENROUTER_FALLBACK_MODELS"].split(",")
+              if item.strip()
+          ]
+          # V2 scoring validates its JSON locally and intentionally omits
+          # response_format. Commentary and its fallback require that feature.
+          role_requirements = {
+              variables["OPENROUTER_MODEL"]: {"response_format", "reasoning"},
+              variables["LLM_SENTIMENT_MODEL"]: {"reasoning"},
+              variables["OPENROUTER_MODEL_SCORING"]: {"response_format", "reasoning"},
+              variables["OPENROUTER_MODEL_SCORING_FAST"]: {"reasoning"},
+              variables["OPENROUTER_MODEL_SCORING_RELIABLE"]: {"reasoning"},
+              variables["OPENROUTER_MODEL_COMMENTARY"]: {"response_format", "reasoning"},
           }
-          required_parameters = {"response_format", "reasoning"}
+          for model in fallback_models:
+              role_requirements.setdefault(model, set()).update({"response_format", "reasoning"})
+          role_models = set(role_requirements)
           catalog_request = Request(
               "https://openrouter.ai/api/v1/models",
               headers={"User-Agent": "terra-rara-hf-sync"},
@@ -81,25 +89,18 @@ jobs:
                   "OpenRouter model catalog no longer contains configured slugs: "
                   + ", ".join(missing_models)
               )
-          unsupported_structured = [
-              model
-              for model in role_models
-              if not required_parameters.issubset(
-                  set(catalog[model].get("supported_parameters") or [])
-              )
-          ]
-          if unsupported_structured:
-              raise RuntimeError(
-                  "Configured model roles lack required parameters "
-                  + ", ".join(sorted(required_parameters))
-                  + ": "
-                  + ", ".join(sorted(set(unsupported_structured)))
-              )
+          unsupported = {
+              model: sorted(requirements - set(catalog[model].get("supported_parameters") or []))
+              for model, requirements in role_requirements.items()
+              if requirements - set(catalog[model].get("supported_parameters") or [])
+          }
+          if unsupported:
+              raise RuntimeError("Configured model roles lack required parameters: " + repr(unsupported))
           unavailable_routes = []
           for model in sorted(role_models):
               endpoint_request = Request(
                   "https://openrouter.ai/api/v1/models/"
-                  + quote(model, safe="/")
+                  + quote(model, safe="/:")
                   + "/endpoints",
                   headers={"User-Agent": "terra-rara-hf-sync"},
               )
@@ -108,7 +109,7 @@ jobs:
               usable = [
                   endpoint
                   for endpoint in endpoints
-                  if required_parameters.issubset(
+                  if role_requirements[model].issubset(
                       set(endpoint.get("supported_parameters") or [])
                   )
                   and (
@@ -124,7 +125,7 @@ jobs:
                   + ", ".join(unavailable_routes)
               )
           print(
-              f"Validated {len(role_models)} OpenRouter model slugs and structured-output endpoints"
+              f"Validated {len(role_models)} OpenRouter model slugs and role-specific endpoints"
           )
           current_variables = api.get_space_variables("ifieryarrows/copper-mind")
           for key, value in variables.items():

@@ -152,11 +152,18 @@ def _extract_message_text(data: dict[str, Any]) -> str:
 def _candidate_payload(base_payload: dict[str, Any], candidate: str) -> dict[str, Any]:
     payload = {**base_payload, "model": candidate}
     existing_reasoning = payload.get("reasoning")
-    if candidate.lower().startswith("nvidia/nemotron"):
-        if isinstance(existing_reasoning, dict) and "effort" in existing_reasoning:
-            payload["reasoning"] = {"effort": existing_reasoning["effort"]}
+    if candidate.lower().startswith("nvidia/nemotron-3.5-lightning"):
+        # This model is the low-cost scoring route. Explicitly disable its
+        # thinking mode; a low reasoning effort can consume the whole output
+        # budget without returning the JSON scoring payload.
+        payload["reasoning"] = {"enabled": False, "exclude": True}
+    elif candidate.lower().startswith("nvidia/nemotron"):
+        if isinstance(existing_reasoning, dict) and existing_reasoning.get("enabled") is False:
+            payload["reasoning"] = {"enabled": False, "exclude": True}
         else:
-            payload["reasoning"] = {"effort": "low"}
+            reasoning = dict(existing_reasoning) if isinstance(existing_reasoning, dict) else {}
+            reasoning.setdefault("effort", "low")
+            payload["reasoning"] = reasoning
     elif isinstance(existing_reasoning, dict) and set(existing_reasoning.keys()) == {"effort"}:
         payload.pop("reasoning", None)
     return payload

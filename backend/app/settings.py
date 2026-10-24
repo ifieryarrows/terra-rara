@@ -93,14 +93,13 @@ class Settings(BaseSettings):
     openrouter_api_key_backup: Optional[str] = None
     # Deprecated generic fallback. Keep it on a currently listed model that
     # supports the project's structured-output contract.
-    openrouter_model: str = "google/gemma-4-31b-it:free"
-    # Use a high-usage free model for fast scoring and a separate provider for
-    # reliable scoring/commentary. All selected routes support response_format
-    # and reasoning in the current OpenRouter catalog.
+    openrouter_model: str = "nvidia/nemotron-3.5-super-vl:free"
+    # Keep routine scoring lean; reserve the larger Super VL model for the
+    # once-per-run commentary task and use a small tested model for escalation.
     openrouter_model_scoring: str = "nvidia/nemotron-3.5-super-vl:free"
-    openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3.5-super-vl:free"
-    openrouter_model_scoring_reliable: Optional[str] = "google/gemma-4-31b-it:free"
-    openrouter_model_commentary: str = "google/gemma-4-31b-it:free"
+    openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3.5-lightning:free"
+    openrouter_model_scoring_reliable: Optional[str] = "recursive/flint-v1.0:free"
+    openrouter_model_commentary: str = "nvidia/nemotron-3.5-super-vl:free"
     # Stay below OpenRouter's free-model per-minute ceiling. The account-wide
     # daily allowance is separate, and bounded fallbacks can still consume it.
     openrouter_rpm: int = 12
@@ -113,10 +112,7 @@ class Settings(BaseSettings):
     # Comma-separated list of additional OpenRouter model slugs used by the
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
-    openrouter_fallback_models: Optional[str] = (
-        "google/gemma-4-31b-it:free,xingchen-agi/xing4.0-29b-a4b:free,"
-        "google/gemma-4-26b-a4b-it:free"
-    )
+    openrouter_fallback_models: Optional[str] = "recursive/flint-v1.0:free"
 
     @property
     def openrouter_api_keys(self) -> list[str]:
@@ -144,7 +140,7 @@ class Settings(BaseSettings):
     
     # LLM Sentiment Analysis
     # Deprecated - kept for backward compatibility
-    llm_sentiment_model: str = "google/gemma-4-31b-it:free"
+    llm_sentiment_model: str = "nvidia/nemotron-3.5-lightning:free"
     
     # Pipeline trigger authentication
     pipeline_trigger_secret: Optional[str] = None
