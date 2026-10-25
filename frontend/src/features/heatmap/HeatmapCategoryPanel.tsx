@@ -103,13 +103,15 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   );
   const isSheet = initialPosition.mode === 'sheet';
   const isInteractive = pinned || isSheet;
+  const maxRows = isSheet ? 2 : MAX_VISIBLE_ROWS;
+  const rowHeight = isSheet ? 28 : ROW_HEIGHT;
   const virtualized = peers.length > 40;
-  const listHeight = Math.min(ROW_HEIGHT * MAX_VISIBLE_ROWS, Math.max(ROW_HEIGHT, peers.length * ROW_HEIGHT));
-  const start = virtualized ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
-  const end = virtualized ? Math.min(peers.length, start + MAX_VISIBLE_ROWS + OVERSCAN * 2) : peers.length;
+  const listHeight = Math.min(rowHeight * maxRows, Math.max(rowHeight, peers.length * rowHeight));
+  const start = virtualized ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
+  const end = virtualized ? Math.min(peers.length, start + maxRows + OVERSCAN * 2) : peers.length;
   const visible = peers.slice(start, end);
   const style: React.CSSProperties = isSheet
-    ? { position: 'absolute', left: 6, right: 6, bottom: 6, maxHeight: Math.min(initialPosition.maxHeight, Math.max(220, anchor.containerRect.height - 12)), zIndex: 70 }
+    ? { position: 'absolute', left: 6, right: 6, bottom: 6, maxHeight: Math.min(164, Math.max(124, Math.round(anchor.containerRect.height * 0.38))), zIndex: 70 }
     : {
         position: 'fixed', left: 0, top: 0, width: initialPosition.width, maxHeight: initialPosition.maxHeight, zIndex: 70,
         transform: `translate3d(${initialPosition.left}px, ${initialPosition.top}px, 0)`,
@@ -193,7 +195,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       onPointerLeave={onPointerLeave}
       aria-label={`${categoryName} category details`}
     >
-      <header className="flex min-h-10 items-center justify-between gap-2 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
+      <header className={`flex items-center justify-between gap-2 border-b border-white/10 ${isSheet ? 'min-h-8 px-2.5 py-1' : 'min-h-10 px-3 py-2'}`} title={pinned ? 'Pinned category' : undefined}>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-xs font-semibold tracking-wide text-slate-200">{heading}</h3>
         </div>
@@ -226,18 +228,18 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
           href={visibleNews.url || undefined}
           target={visibleNews.url ? '_blank' : undefined}
           rel="noopener noreferrer"
-          className="block border-b border-white/10 bg-white/[0.025] px-3 py-2 hover:bg-white/[0.045]"
+          className={`block border-b border-white/10 bg-white/[0.025] hover:bg-white/[0.045] ${isSheet ? 'px-2.5 py-1' : 'px-3 py-2'}`}
         >
           <div className="flex items-center gap-2 text-[9px] text-slate-500">
             <span>{visibleNews.publishedAt ? new Date(visibleNews.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
             {visibleNews.publisher && <span className="truncate text-slate-600">· {visibleNews.publisher}</span>}
             {visibleNews.sentiment && <span className="ml-auto shrink-0 text-copper-300">{visibleNews.sentiment}</span>}
           </div>
-          <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-slate-300">{visibleNews.summary || visibleNews.title}</p>
+          <p className={`mt-0.5 text-[11px] leading-[1.35] text-slate-300 ${isSheet ? 'line-clamp-1' : 'mt-1 line-clamp-3'}`}>{visibleNews.summary || visibleNews.title}</p>
         </a>
       )}
 
-      {activeLeaf && context && !visibleNews && (
+      {!isSheet && activeLeaf && context && !visibleNews && (
         <div className="flex min-h-9 items-center gap-2 border-b border-white/10 bg-white/[0.018] px-3 py-2 text-[10px] text-slate-500" role="status">
           <span aria-hidden="true" className="text-copper-400">✧</span>
           <span>No recent news is available for {activeLeaf.name}.</span>
@@ -245,12 +247,12 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       )}
 
       {activeLeaf && (
-        <div className="grid grid-cols-[minmax(0,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/10 bg-white/[0.045] px-3 py-2.5" data-testid="selected-stock">
+        <div className={`grid grid-cols-[minmax(0,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/10 bg-white/[0.045] ${isSheet ? 'px-2.5 py-1.5' : 'px-3 py-2.5'}`} data-testid="selected-stock">
           <div className="min-w-0">
-            <strong className="block truncate text-lg font-bold leading-none tracking-wide text-white">{activeLeaf.name}</strong>
-            <span className="mt-1 block truncate text-[9px] leading-none text-slate-400" title={activeLeaf.shortName || activeLeaf.instrumentType || 'Instrument'}>{activeLeaf.shortName || activeLeaf.instrumentType || 'Instrument'}</span>
+            <strong className={`block truncate font-bold leading-none tracking-wide text-white ${isSheet ? 'text-sm' : 'text-lg'}`}>{activeLeaf.name}</strong>
+            <span className="mt-0.5 block truncate text-[9px] leading-none text-slate-400" title={activeLeaf.shortName || activeLeaf.instrumentType || 'Instrument'}>{activeLeaf.shortName || activeLeaf.instrumentType || 'Instrument'}</span>
           </div>
-          <Sparkline values={activeLeaf.sparkline} positive={(activeLeaf.changePercent || 0) >= 0} width={82} height={30} />
+          <Sparkline values={activeLeaf.sparkline} positive={(activeLeaf.changePercent || 0) >= 0} width={82} height={isSheet ? 20 : 30} />
           <div className="text-right font-mono text-sm tabular-nums text-slate-100">{activeLeaf.price == null ? '—' : activeLeaf.price.toFixed(activeLeaf.price < 10 ? 3 : 2)}</div>
           <div className={`text-right font-mono text-sm font-bold tabular-nums ${(activeLeaf.changePercent || 0) > 0 ? 'text-emerald-400' : (activeLeaf.changePercent || 0) < 0 ? 'text-rose-400' : 'text-slate-400'}`}>
             {(activeLeaf.changePercent || 0) > 0 ? '+' : ''}{(activeLeaf.changePercent || 0).toFixed(2)}%
@@ -262,7 +264,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
         ref={listRef}
         className="custom-scrollbar relative overflow-y-auto overscroll-contain"
         data-testid="peer-list"
-        style={{ height: listHeight, minHeight: Math.min(ROW_HEIGHT, listHeight) }}
+        style={{ height: listHeight, minHeight: Math.min(rowHeight, listHeight) }}
         onScroll={(event) => {
           const next = event.currentTarget.scrollTop;
           if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
@@ -272,7 +274,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
         {peers.length === 0 ? (
           <p className="px-3 py-3 text-[10px] text-slate-500">No additional peers in this category.</p>
         ) : (
-          <div className="relative" style={{ height: virtualized ? peers.length * ROW_HEIGHT : 'auto' }}>
+          <div className="relative" style={{ height: virtualized ? peers.length * rowHeight : 'auto' }}>
             {visible.map((item, index) => {
               const rowIndex = start + index;
               const change = item.changePercent || 0;
@@ -281,10 +283,10 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
                   key={item.id || item.name}
                   data-testid="peer-row"
                   aria-label={`${item.name}, ${item.shortName || 'peer'}, ${item.price ?? 'price unavailable'}, ${change >= 0 ? 'plus' : 'minus'} ${Math.abs(change).toFixed(2)} percent`}
-                  className={`grid grid-cols-[minmax(54px,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/[0.05] px-3 hover:bg-white/[0.055] ${rowIndex % 2 ? 'bg-white/[0.025]' : 'bg-transparent'}`}
+                  className={`grid grid-cols-[minmax(54px,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/[0.05] ${isSheet ? 'px-2.5' : 'px-3'} hover:bg-white/[0.055] ${rowIndex % 2 ? 'bg-white/[0.025]' : 'bg-transparent'}`}
                   style={{
-                    height: ROW_HEIGHT,
-                    ...(virtualized ? { position: 'absolute', left: 0, right: 0, transform: `translateY(${rowIndex * ROW_HEIGHT}px)` } : {}),
+                    height: rowHeight,
+                    ...(virtualized ? { position: 'absolute', left: 0, right: 0, transform: `translateY(${rowIndex * rowHeight}px)` } : {}),
                   }}
                 >
                   <strong className="truncate text-xs font-semibold text-slate-100">{item.name}</strong>

@@ -314,7 +314,9 @@ export const HeatmapPanel: React.FC = () => {
   const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
     clearTimer(openTimer);
     clearTimer(closeTimer);
-    if (!anchor.isLeafTap) {
+    if (anchor.isLeafTap) {
+      if (anchor.tappedLeaf) setHoveredLeaf(anchor.tappedLeaf);
+    } else {
       setHoveredLeaf(null);
     }
     setPinnedAnchor((current) => {

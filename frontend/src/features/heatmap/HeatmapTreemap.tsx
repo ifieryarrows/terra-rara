@@ -78,6 +78,7 @@ export interface CategoryAnchor {
   depth: number;
   pointer?: { x: number; y: number };
   isLeafTap?: boolean;
+  tappedLeaf?: HeatmapData;
   rect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
   containerRect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
 }
@@ -765,7 +766,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         clientX != null && clientY != null ? { x: clientX, y: clientY } : undefined,
         rectOverride,
       );
-      if (anchor) onCategoryClick({ ...anchor, isLeafTap: true });
+      if (anchor) onCategoryClick({ ...anchor, isLeafTap: true, tappedLeaf: node?.data as HeatmapData | undefined });
     }
 
 

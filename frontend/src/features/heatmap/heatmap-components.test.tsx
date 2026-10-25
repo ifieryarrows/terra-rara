@@ -692,4 +692,49 @@ describe('heatmap interaction primitives', () => {
     await vi.advanceTimersByTimeAsync(180);
     expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
   });
+
+  it('renders a compact bottom sheet on phone viewports without covering the whole heatmap', () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
+    try {
+      const selected = {
+        id: 's0', name: 'S0', shortName: 'Selected company', weight: 100, price: 101, changePercent: 1,
+        sector: 'Technology', industry: 'Semiconductors', sparkline: [1, 2, 3],
+      };
+      const leaves = [selected, ...Array.from({ length: 8 }, (_, index) => ({
+        id: `s${index + 1}`, name: `S${index + 1}`, shortName: `Peer ${index + 1}`, weight: 10,
+        price: 50 + index, changePercent: index % 2 ? -1 : 1, sector: 'Technology', industry: 'Semiconductors',
+      }))];
+      const anchor = {
+        id: 'industry', name: 'Semiconductors', depth: 2, pointer: { x: 100, y: 100 },
+        rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+        containerRect: { left: 0, top: 0, right: 358, bottom: 400, width: 358, height: 400 },
+      };
+      const onClose = vi.fn();
+      const { unmount } = render(
+        <HeatmapCategoryPanel
+          categoryId="industry"
+          categoryName="Semiconductors"
+          leaves={leaves}
+          activeLeaf={selected}
+          anchor={anchor}
+          view="market"
+          pinned
+          onClose={onClose}
+          onPointerEnter={() => {}}
+          onPointerLeave={() => {}}
+        />,
+      );
+      const panel = screen.getByLabelText(/Semiconductors category details/i);
+      expect(panel.style.position).toBe('absolute');
+      expect(Number.parseInt(panel.style.maxHeight, 10)).toBeLessThanOrEqual(164);
+      expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '56px' });
+      fireEvent.click(within(panel).getByRole('button', { name: 'Close category details' }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      unmount();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: previousWidth });
+    }
+    expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
+  });
 });
