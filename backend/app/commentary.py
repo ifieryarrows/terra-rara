@@ -948,7 +948,10 @@ Write as a seasoned commodities strategist would for institutional clients—pre
         "fallback_models": settings.openrouter_fallback_models_list,
         "chain_deadline_seconds": getattr(settings, "openrouter_chain_deadline_seconds", 120.0),
         "provider": {"require_parameters": True},
-        "extra_payload": {"reasoning": {"effort": "low", "exclude": True}},
+        # Commentary has a fixed output budget. Reasoning tokens share that
+        # budget with visible text, so excluding reasoning while leaving it
+        # enabled can produce HTTP 200 responses with empty content.
+        "extra_payload": {"reasoning": {"enabled": False, "exclude": True}},
         "referer": "https://copper-mind.vercel.app",
         "title": "CopperMind Commentary",
     }

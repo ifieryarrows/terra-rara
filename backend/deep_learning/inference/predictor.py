@@ -44,6 +44,12 @@ warnings.filterwarnings(
     category=DeprecationWarning,
     module="lightning.pytorch.utilities",
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"`isinstance\(treespec, LeafSpec\)` is deprecated.*",
+    category=FutureWarning,
+    module=r"lightning\.pytorch\.utilities\._pytree",
+)
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 from app.instruments import TARGET_DISPLAY_NAME, TARGET_SYMBOL
@@ -475,7 +481,11 @@ class TFTPredictor:
             # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
             # Avoids the inhomogeneous-shape error from mode="raw" which returns a
             # NamedTuple; np.array() cannot convert that to a uniform array.
-            pred_tensor = model.predict(dl, mode="quantiles")
+            pred_tensor = model.predict(
+                dl,
+                mode="quantiles",
+                trainer_kwargs={"logger": False},
+            )
 
             if isinstance(pred_tensor, torch.Tensor):
                 pred_np = pred_tensor.cpu().numpy()

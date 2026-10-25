@@ -652,6 +652,7 @@ async def _execute_pipeline_stages_v2(
         result["tft_embeddings_computed"] = emb_stats.get("embedded", 0)
         result["tft_embeddings_skipped"] = emb_stats.get("skipped", 0)
         result["tft_pca_fitted"] = emb_stats.get("pca_fitted", False)
+        result["tft_pca_deferred"] = emb_stats.get("pca_deferred", False)
 
         update_run_metrics(
             session, run_id,
@@ -663,6 +664,11 @@ async def _execute_pipeline_stages_v2(
             f"[run_id={run_id}] FinBERT embeddings: "
             f"{emb_stats.get('embedded', 0)} computed, {emb_stats.get('skipped', 0)} skipped"
         )
+        if emb_stats.get("pca_deferred"):
+            logger.info(
+                f"[run_id={run_id}] FinBERT PCA deferred: "
+                "insufficient samples for the configured component count"
+            )
 
     except ImportError:
         logger.info(f"[run_id={run_id}] Stage 3.5 skipped: deep_learning module not available")

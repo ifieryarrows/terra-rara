@@ -313,10 +313,33 @@ def backfill_embeddings(
         full_embeddings = extract_embeddings_batch(texts, batch_size=batch_size)
         logger.info("Extracted %d embeddings, shape=%s", len(full_embeddings), full_embeddings.shape)
 
-        if pca_path.exists():
-            pca = load_pca(str(pca_path))
+        pca = load_pca(str(pca_path)) if pca_path.exists() else None
+        existing_components = (
+            int(getattr(pca, "n_components_", getattr(pca, "n_components", 0)))
+            if pca is not None
+            else 0
+        )
+        existing_samples = int(getattr(pca, "n_samples_seen_", 0)) if pca is not None else 0
+        if (
+            pca is not None
+            and existing_components == pca_dim
+            and existing_samples > pca_dim
+        ):
             logger.info("Loaded existing PCA model from %s", pca_path)
         else:
+            # IncrementalPCA fitted with n_samples == n_components emits an
+            # empty-slice warning for noise variance, while fewer samples can
+            # silently produce a lower-dimensional model than pca_dim. Wait
+            # for enough data instead of persisting an invalid/mislabeled PCA.
+            if len(full_embeddings) <= pca_dim:
+                logger.info(
+                    "Deferring PCA fit: need more than %d samples for %d components; have %d",
+                    pca_dim,
+                    pca_dim,
+                    len(full_embeddings),
+                )
+                stats["pca_deferred"] = True
+                return stats
             pca = fit_pca(full_embeddings, n_components=pca_dim, save_path=str(pca_path))
             stats["pca_fitted"] = True
 

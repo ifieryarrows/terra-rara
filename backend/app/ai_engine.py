@@ -1500,7 +1500,8 @@ def score_unscored_processed_articles(
             "parse_fail_count": 0,
             "escalation_count": 0,
             "fallback_count": 0,
-            "finbert_used": 0,
+            "finbert_tone_count": 0,
+            "finbert_fallback_count": 0,
         }
 
     logger.info("Found %s unscored processed articles for V2 scoring", len(rows))
@@ -1514,7 +1515,8 @@ def score_unscored_processed_articles(
     final_unresolved_count = 0
     escalation_count = 0
     fallback_count = 0
-    finbert_used = 0
+    finbert_tone_count = 0
+    finbert_fallback_count = 0
     llm_success_count = 0
     operational_fallback_count = 0
     policy_fallback_count = 0
@@ -1561,7 +1563,10 @@ def score_unscored_processed_articles(
                 )
 
         finbert_by_id = score_batch_with_finbert_v2(chunk_items)
-        finbert_used += len(finbert_by_id)
+        # FinBERT probabilities are deliberately computed for every article
+        # as an intensity feature in the LLM + FinBERT ensemble. Track that
+        # separately from articles that actually use the FinBERT/rule fallback.
+        finbert_tone_count += len(finbert_by_id)
 
         llm_results_by_id: dict[int, dict] = {}
         llm_candidates: list[dict] = []
@@ -1679,6 +1684,7 @@ def score_unscored_processed_articles(
 
             if bool(llm.get("fallback_used", False)):
                 fallback_count += 1
+                finbert_fallback_count += 1
                 if str(llm.get("fallback_reason", "")).endswith("_policy"):
                     policy_fallback_count += 1
                 else:
@@ -1745,7 +1751,8 @@ def score_unscored_processed_articles(
     logger.info(
         "V2 scoring summary: scored=%s parse_fail=%s raw_parse_fail=%s "
         "repair_success=%s missing_retry=%s missing_recovered=%s "
-        "final_unresolved=%s escalations=%s fallback=%s finbert_used=%s",
+        "final_unresolved=%s escalations=%s llm_success=%s fallback=%s "
+        "policy_fallback=%s operational_fallback=%s finbert_tone=%s finbert_fallback=%s",
         scored_count,
         parse_fail_count,
         parse_fail_raw_count,
@@ -1754,8 +1761,12 @@ def score_unscored_processed_articles(
         missing_id_recovered_count,
         final_unresolved_count,
         escalation_count,
+        llm_success_count,
         fallback_count,
-        finbert_used,
+        policy_fallback_count,
+        operational_fallback_count,
+        finbert_tone_count,
+        finbert_fallback_count,
     )
     return {
         "scored_count": scored_count,
@@ -1770,7 +1781,8 @@ def score_unscored_processed_articles(
         "llm_success_count": llm_success_count,
         "operational_fallback_count": operational_fallback_count,
         "policy_fallback_count": policy_fallback_count,
-        "finbert_used": finbert_used,
+        "finbert_tone_count": finbert_tone_count,
+        "finbert_fallback_count": finbert_fallback_count,
     }
 
 

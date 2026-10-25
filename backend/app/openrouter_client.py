@@ -169,6 +169,9 @@ def _candidate_payload(base_payload: dict[str, Any], candidate: str) -> dict[str
             payload["reasoning"] = {"effort": existing_reasoning["effort"]}
         else:
             payload["reasoning"] = {"effort": "low"}
+    elif isinstance(existing_reasoning, dict) and existing_reasoning.get("enabled") is False:
+        # Do not send a provider-specific reasoning switch to unrelated models.
+        payload.pop("reasoning", None)
     elif isinstance(existing_reasoning, dict) and set(existing_reasoning.keys()) == {"effort"}:
         payload.pop("reasoning", None)
     return payload
@@ -255,6 +258,7 @@ async def create_chat_completion(
                     attempt_timeout = min(float(timeout_seconds), max(remaining_before_call, 0.1))
                     payload = _candidate_payload(base_payload, candidate)
                     response: Optional[httpx.Response] = None
+                    response_details: dict[str, Any] = {}
                     try:
                         response = await asyncio.wait_for(
                             client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload),
@@ -272,10 +276,28 @@ async def create_chat_completion(
                             except ValueError:
                                 last_error = OpenRouterError("OpenRouter returned a non-JSON response", status_code=200, category="empty_response", model=candidate)
                             else:
+                                choices = data.get("choices")
+                                first_choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                                usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                                completion_details = usage.get("completion_tokens_details")
+                                completion_details = completion_details if isinstance(completion_details, dict) else {}
+                                response_details = {
+                                    "finish_reason": first_choice.get("finish_reason"),
+                                    "completion_tokens": usage.get("completion_tokens"),
+                                    "reasoning_tokens": completion_details.get("reasoning_tokens"),
+                                }
                                 if not data.get("choices"):
                                     last_error = OpenRouterError("OpenRouter returned no completion choices", status_code=200, category="empty_response", model=candidate)
                                 elif not _extract_message_text(data):
-                                    last_error = OpenRouterError("OpenRouter returned empty message content", status_code=200, category="empty_response", model=candidate)
+                                    last_error = OpenRouterError(
+                                        "OpenRouter returned empty message content "
+                                        f"(finish_reason={response_details['finish_reason']}, "
+                                        f"completion_tokens={response_details['completion_tokens']}, "
+                                        f"reasoning_tokens={response_details['reasoning_tokens']})",
+                                        status_code=200,
+                                        category="empty_response",
+                                        model=candidate,
+                                    )
                                 else:
                                     attempts.append(_attempt(candidate, attempt_index + 1, "success", 200, attempt_index > 0) | {"key_slot": key_slot})
                                     data["_coppermind"] = {
@@ -323,6 +345,7 @@ async def create_chat_completion(
                     attempts.append(
                         _attempt(candidate, attempt_index + 1, last_error.category if last_error else "network", status, will_retry)
                         | {"key_slot": key_slot}
+                        | response_details
                     )
                     if last_error and last_error.category == "auth":
                         last_error.attempts = attempts
