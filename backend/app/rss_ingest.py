@@ -8,6 +8,7 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 import feedparser
+import requests
 from dateutil import parser as dateutil_parser
 
 from app.settings import get_settings
@@ -64,7 +65,20 @@ def fetch_rss_feed(
     logger.info(f"Fetching RSS feed: {url}")
     
     try:
-        feed = feedparser.parse(url)
+        # feedparser.parse(url) performs its own urllib request without a
+        # configurable timeout. A stalled RSS host can therefore hold the
+        # pipeline worker and its advisory lock indefinitely. Bound both
+        # connection setup and response reads, then give feedparser the
+        # downloaded bytes so parsing remains unchanged.
+        response = requests.get(url, timeout=(5.0, 15.0))
+        response.raise_for_status()
+        feed = feedparser.parse(
+            response.content,
+            response_headers={
+                "content-location": response.url,
+                "content-type": response.headers.get("Content-Type", ""),
+            },
+        )
         
         if feed.bozo and feed.bozo_exception:
             logger.warning(f"RSS feed parsing warning: {feed.bozo_exception}")
