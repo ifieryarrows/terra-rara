@@ -24,7 +24,7 @@ try {
     page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url()); });
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base);
-    await page.locator('.cm-story').waitFor();
+    await page.locator(typeof reducedMotion === 'string' && reducedMotion !== 'reduce' ? '.cm-story--enhanced' : '.cm-story').waitFor();
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(400);
     assert.equal(await page.locator('.cm-evidence-preview').count(), 0, 'Landing moves directly from possibilities to the research CTA');
@@ -109,7 +109,7 @@ try {
       if (fallbackMode === 'low-cpu') Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 2 });
     }, mode);
     await page.goto(base);
-    await page.locator('.cm-story').waitFor();
+    await page.locator(typeof reducedMotion === 'string' && reducedMotion !== 'reduce' ? '.cm-story--enhanced' : '.cm-story').waitFor();
     await page.waitForTimeout(300);
     assert.equal(await page.locator('.cm-story--static').count(), 1, `${mode} must use the complete static fallback`);
     assert.equal(await page.locator('.cm-particle-world').count(), 0, `${mode} must not start the particle renderer`);

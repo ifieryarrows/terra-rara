@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUpRight } from 'lucide-react';
 import { motion, useScroll, useTransform, type MotionValue } from 'framer-motion';
@@ -29,6 +29,12 @@ const beats = [
     tags: ['Deep-learning forecasts', 'Price & risk context'], link: 'Examine the forecasts', to: '/dashboard#price-forecast', center: .75,
   },
 ] as const;
+
+const ANCHOR_PROGRESS: Record<string, number> = {
+  '#market': .24,
+  '#news': .43,
+  '#forecast': .66,
+};
 
 type CinematicEntryRenderer = (progress: MotionValue<number>, revealProgress: MotionValue<number>) => ReactNode;
 
@@ -64,7 +70,7 @@ function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
   </div>;
 }
 
-function HeroCopy({ progress }: { progress: MotionValue<number> }) {
+function HeroCopy({ progress, onNavigateAnchor }: { progress: MotionValue<number>; onNavigateAnchor: (event: MouseEvent<HTMLAnchorElement>) => void }) {
   const opacity = useTransform(progress, [0, .1, .2], [1, 1, 0]);
   const y = useTransform(progress, [0, .2], [0, -72]);
   const blur = useTransform(progress, [.1, .2], ['blur(0px)', 'blur(10px)']);
@@ -75,8 +81,8 @@ function HeroCopy({ progress }: { progress: MotionValue<number> }) {
       <h1 id="hero-title" data-cm-route-reveal="copy">Read the market.<br/><span>See the structure.</span></h1>
       <p className="cm-hero-description" data-cm-route-reveal="copy">Behind every copper price, a bigger picture.</p>
       <p className="cm-hero-detail" data-cm-route-reveal="copy">Market, news, forecasts and evidence in one workspace.</p>
-      <div className="cm-hero-actions" data-cm-route-reveal="surface"><EnterWorkspaceLink className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></EnterWorkspaceLink><a href="#market" className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
-      <nav className="cm-hero-capabilities" aria-label="Explore the platform" data-cm-route-reveal="surface"><a href="#market">Market</a><a href="#news">News</a><a href="#forecast">Forecasts</a><Link to="/validation">Validation</Link></nav>
+      <div className="cm-hero-actions" data-cm-route-reveal="surface"><EnterWorkspaceLink className="cm-button">Enter CopperMind <ArrowUpRight size={17} aria-hidden="true"/></EnterWorkspaceLink><a href="#market" onClick={onNavigateAnchor} className="cm-discover">Follow the signal <ArrowDown size={16} aria-hidden="true"/></a></div>
+      <nav className="cm-hero-capabilities" aria-label="Explore the platform" data-cm-route-reveal="surface"><a href="#market" onClick={onNavigateAnchor}>Market</a><a href="#news" onClick={onNavigateAnchor}>News</a><a href="#forecast" onClick={onNavigateAnchor}>Forecasts</a><Link to="/validation">Validation</Link></nav>
       <p className="cm-hero-caption" data-cm-route-reveal="copy">Built around copper. Designed for perspective.</p>
     </motion.div>
   </article>;
@@ -86,15 +92,15 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const shortNewsWindow = beat.id === 'news';
   const shortForecastWindow = beat.id === 'forecast';
   const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
-  const reveal = start + .08;
-  const hold = shortNewsWindow ? .47 : shortForecastWindow ? .69 : beat.center + .07;
-  const end = shortNewsWindow ? .535 : shortForecastWindow ? .75 : beat.center + .18;
+  const reveal = shortNewsWindow ? .425 : shortForecastWindow ? .63 : start + .08;
+  const hold = shortNewsWindow ? .57 : shortForecastWindow ? .70 : beat.center + .07;
+  const end = shortNewsWindow ? .59 : shortForecastWindow ? .745 : beat.center + .18;
   const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
   const y = useTransform(progress, [start, reveal, hold, end], [64, 0, 0, -48]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
-  const detailOpacity = useTransform(progress, [start + .025, reveal + .045], [0, 1]);
-  const detailY = useTransform(progress, [start + .025, reveal + .045], [26, 0]);
-  const blur = useTransform(progress, [start, reveal, end - .035, end], ['blur(9px)', 'blur(0px)', 'blur(0px)', 'blur(5px)']);
+  const detailOpacity = useTransform(progress, [start + .015, reveal + .02], [0, 1]);
+  const detailY = useTransform(progress, [start + .015, reveal + .02], [26, 0]);
+  const blur = useTransform(progress, [start, reveal, end - .02, end], ['blur(9px)', 'blur(0px)', 'blur(0px)', 'blur(5px)']);
   const visibility = useTransform(progress, value => value >= start && value <= end ? 'visible' : 'hidden');
   return <article id={beat.id} className="cm-cinematic-beat" aria-labelledby={`${beat.id}-title`}>
     <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur, visibility }}>
@@ -136,6 +142,20 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
   const entryRevealProgress = useCinematicEntryReveal(scrollYProgress);
+  const handleNavigateAnchor = (event: MouseEvent<HTMLAnchorElement>) => {
+    const hash = event.currentTarget.getAttribute('href') || '';
+    const targetProgress = ANCHOR_PROGRESS[hash];
+    const scene = ref.current;
+    if (targetProgress === undefined || !scene) return;
+    event.preventDefault();
+    const rect = scene.getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    const length = Math.max(0, rect.height - window.innerHeight);
+    window.scrollTo({
+      top: Math.round(top + length * targetProgress),
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  };
   useEffect(() => {
     const scene = ref.current;
     if (!scene) return;
@@ -179,12 +199,8 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
   return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
     <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality}/>
     <div className="cm-cinematic-copy">
-      <HeroCopy progress={scrollYProgress}/>
+      <HeroCopy progress={scrollYProgress} onNavigateAnchor={handleNavigateAnchor}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }
-      {/* Quiet closing slot: keeps the three story beats centred at .25/.5/.75
-          (hero + 3 beats + outro = 5 slots, scroll length 4 slots) and gives the
-          research/CTA stage room after the forecast copy. */}
-      <div aria-hidden="true" style={{ minHeight: '100svh' }}/>
     </div>
     {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress, entryRevealProgress)}</div> : null}
   </section>;

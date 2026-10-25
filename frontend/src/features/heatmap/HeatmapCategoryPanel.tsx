@@ -18,6 +18,7 @@ interface Props {
   view: 'market' | 'themes';
   pinned: boolean;
   onClose: () => void;
+  onDrillDown?: () => void;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
 }
@@ -34,6 +35,8 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   anchor,
   view,
   pinned,
+  onClose,
+  onDrillDown,
   onPointerEnter,
   onPointerLeave,
 }, ref) {
@@ -98,13 +101,15 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     undefined,
     activeLeaf ? anchor.rect : undefined,
   );
+  const isSheet = initialPosition.mode === 'sheet';
+  const isInteractive = pinned || isSheet;
   const virtualized = peers.length > 40;
   const listHeight = Math.min(ROW_HEIGHT * MAX_VISIBLE_ROWS, Math.max(ROW_HEIGHT, peers.length * ROW_HEIGHT));
   const start = virtualized ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
   const end = virtualized ? Math.min(peers.length, start + MAX_VISIBLE_ROWS + OVERSCAN * 2) : peers.length;
   const visible = peers.slice(start, end);
-  const style: React.CSSProperties = initialPosition.mode === 'sheet'
-    ? { position: 'fixed', left: 0, right: 0, bottom: 0, maxHeight: initialPosition.maxHeight, zIndex: 70 }
+  const style: React.CSSProperties = isSheet
+    ? { position: 'absolute', left: 6, right: 6, bottom: 6, maxHeight: Math.min(initialPosition.maxHeight, Math.max(220, anchor.containerRect.height - 12)), zIndex: 70 }
     : {
         position: 'fixed', left: 0, top: 0, width: initialPosition.width, maxHeight: initialPosition.maxHeight, zIndex: 70,
         transform: `translate3d(${initialPosition.left}px, ${initialPosition.top}px, 0)`,
@@ -188,10 +193,32 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       onPointerLeave={onPointerLeave}
       aria-label={`${categoryName} category details`}
     >
-      <header className="flex min-h-10 items-center justify-start gap-3 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
-        <div className="min-w-0">
+      <header className="flex min-h-10 items-center justify-between gap-2 border-b border-white/10 px-3 py-2" title={pinned ? 'Pinned category' : undefined}>
+        <div className="min-w-0 flex-1">
           <h3 className="truncate text-xs font-semibold tracking-wide text-slate-200">{heading}</h3>
         </div>
+        {isInteractive && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {onDrillDown && (
+              <button
+                type="button"
+                onClick={onDrillDown}
+                aria-label={`Drill into ${categoryName}`}
+                className="rounded border border-copper-400/35 bg-copper-500/10 px-2 py-1 text-[10px] font-medium text-copper-300 transition hover:border-copper-400/60 hover:bg-copper-500/20 hover:text-white"
+              >
+                Focus →
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close category details"
+              className="inline-grid h-7 w-7 place-items-center rounded text-sm leading-none text-slate-400 transition hover:bg-white/10 hover:text-white"
+            >
+              ×
+            </button>
+          </div>
+        )}
       </header>
 
       {visibleNews && (

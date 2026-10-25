@@ -466,28 +466,35 @@ export const NewsIntelligencePanel: React.FC = () => {
 
   const scrollHeadlines = (direction: -1 | 1) => {
     const rail = newsRailRef.current;
+    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
     if (!rail) return;
     pauseNewsFlow();
+    const step = direction * Math.max(240, rail.clientWidth * 0.82);
+    if (cycleWidth > rail.clientWidth) {
+      syncFromCompositor();
+      applyNewsFlowPosition(flowPositionRef.current + rail.scrollLeft + step);
+      return;
+    }
     rail.scrollBy({
-      left: direction * Math.max(240, rail.clientWidth * 0.82),
+      left: step,
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
   };
 
   const startHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'touch') {
-      pauseNewsFlow();
-      return;
-    }
-    if (event.button !== 0) return;
+    if (event.pointerType !== 'touch' && event.button !== 0) return;
     const rail = event.currentTarget;
     const target = event.target instanceof HTMLElement ? event.target : null;
     const card = target?.closest<HTMLElement>('.cm-news-card') ?? null;
     // Controls rendered inside the rail (retry/reset in transient states) rely on the
     // native click: capturing the pointer on the rail would retarget it away from them.
     if (!card && target?.closest('button, a, input, select, textarea, [role="button"]')) return;
+    if (event.pointerType === 'touch') {
+      pauseNewsFlow();
+    }
+    syncFromCompositor();
     // Arm a pending drag but leave the pointer alone until the gesture proves to be
-    // horizontal, so pressing on a headline to select its text stays fully native.
+    // horizontal, so pressing on a headline to select its text or scrolling vertically stays native.
     dragState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -506,7 +513,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     if (!drag.moved) {
       const vertical = event.clientY - drag.startY;
       if (Math.hypot(delta, vertical) < 6) return;
-      // Vertical gestures belong to native text selection, not to the rail.
+      // Vertical gestures belong to native text selection / vertical page scroll, not to the rail.
       if (Math.abs(delta) < Math.abs(vertical)) {
         dragState.current = null;
         return;
@@ -698,6 +705,7 @@ export const NewsIntelligencePanel: React.FC = () => {
         className="cm-news-feed-shell"
         onMouseEnter={() => { flowHoveredRef.current = true; retargetNewsFlow(); }}
         onMouseLeave={() => { flowHoveredRef.current = false; retargetNewsFlow(); }}
+        onFocusCapture={pauseNewsFlow}
       >
         <div
           id={`${filterId}-headlines`}

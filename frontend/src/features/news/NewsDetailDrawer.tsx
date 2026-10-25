@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, ExternalLink, Globe, Radio } from 'lucide-react';
 import clsx from 'clsx';
@@ -90,7 +91,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
     };
   }, [isOpen]);
 
-  return (
+  const content = (
     <AnimatePresence>
       {item && displayed && (
         <>
@@ -233,6 +234,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
       )}
     </AnimatePresence>
   );
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };
 
 function Stat({

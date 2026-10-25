@@ -162,6 +162,10 @@ describe('CuprumCompanionPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
     expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
   });
 
   it('keeps the conversation open when the dashboard is clicked outside the stage', () => {

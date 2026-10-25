@@ -206,6 +206,7 @@ export const HeatmapPanel: React.FC = () => {
       if (pinnedAnchor || hoveredAnchor) {
         setPinnedAnchor(null);
         setHoveredAnchor(null);
+        setHoveredLeaf(null);
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -266,6 +267,15 @@ export const HeatmapPanel: React.FC = () => {
       : [],
     [activeAnchor, categoryLeafIndex],
   );
+  const canDrillActiveAnchor = useMemo(
+    () => Boolean(
+      activeAnchor
+      && sourceTree
+      && findMapCategory(renderTree || sourceTree, activeAnchor.id)
+      && focusedPath[focusedPath.length - 1]?.id !== activeAnchor.id,
+    ),
+    [activeAnchor, focusedPath, renderTree, sourceTree],
+  );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
   const moveCategoryPanel = useCallback((x: number, y: number) => {
     latestPointer.current = { x, y };
@@ -304,8 +314,18 @@ export const HeatmapPanel: React.FC = () => {
   const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
     clearTimer(openTimer);
     clearTimer(closeTimer);
-    setPinnedAnchor((current) => current?.id === anchor.id ? null : anchor);
-    setHoveredAnchor(anchor);
+    if (!anchor.isLeafTap) {
+      setHoveredLeaf(null);
+    }
+    setPinnedAnchor((current) => {
+      if (!anchor.isLeafTap && current?.id === anchor.id) {
+        setHoveredAnchor(null);
+        setHoveredLeaf(null);
+        return null;
+      }
+      setHoveredAnchor(anchor);
+      return anchor;
+    });
   }, []);
 
   const content = (
@@ -410,12 +430,13 @@ export const HeatmapPanel: React.FC = () => {
               pinned={!!pinnedAnchor}
               onPointerEnter={cancelClose}
               onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
+              onDrillDown={canDrillActiveAnchor ? () => handleCategoryDrillDown(activeAnchor) : undefined}
               onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
             />
           )}
         </div>
         <footer className="cm-heatmap-footer">
-          <span>Wheel to zoom <i/> drag to pan <i/> double-click a category to drill in or a ticker to open its quote</span>
+          <span>Wheel or pinch to zoom <i/> drag to pan <i/> tap or click to inspect <i/> double-click to drill in</span>
           <a href="https://www.logo.dev" target="_blank" rel="noopener">Logos by Logo.dev</a>
         </footer>
       </div>

@@ -77,6 +77,7 @@ export interface CategoryAnchor {
   name: string;
   depth: number;
   pointer?: { x: number; y: number };
+  isLeafTap?: boolean;
   rect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
   containerRect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
 }
@@ -198,6 +199,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
+  const lastPointerTypeRef = useRef<string>('mouse');
   const dimensionsRef = useRef({ width, height });
   dimensionsRef.current = { width, height };
 
@@ -496,10 +498,56 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       onZoomDelta?.(nextZoom - currentTarget);
     };
     element.addEventListener('wheel', wheel, { passive: false });
+    let pinchStartDist = 0;
+    let pinchStartScale = MIN_ZOOM;
+    let pinchAnchor: { x: number; y: number; contentX: number; contentY: number } | null = null;
+    const touchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) return;
+      const [t1, t2] = [event.touches[0], event.touches[1]];
+      pinchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (pinchStartDist < 8) return;
+      pinchStartScale = cameraRef.current.scale;
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const { width: contentWidth, height: contentHeight } = dimensionsRef.current;
+      const pointer = localPoint(element, midX, midY, contentWidth, contentHeight);
+      const camera = cameraRef.current;
+      pinchAnchor = {
+        x: pointer.x,
+        y: pointer.y,
+        contentX: (pointer.x - camera.x) / camera.scale,
+        contentY: (pointer.y - camera.y) / camera.scale,
+      };
+    };
+    const touchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !pinchAnchor || pinchStartDist < 8) return;
+      event.preventDefault();
+      const [t1, t2] = [event.touches[0], event.touches[1]];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(pinchStartScale * (dist / pinchStartDist)).toFixed(2)));
+      zoomTargetRef.current = nextZoom;
+      applyCamera({
+        scale: nextZoom,
+        x: pinchAnchor.x - pinchAnchor.contentX * nextZoom,
+        y: pinchAnchor.y - pinchAnchor.contentY * nextZoom,
+      });
+    };
+    const touchEnd = () => {
+      pinchStartDist = 0;
+      pinchAnchor = null;
+    };
+    element.addEventListener('touchstart', touchStart, { passive: true });
+    element.addEventListener('touchmove', touchMove, { passive: false });
+    element.addEventListener('touchend', touchEnd, { passive: true });
+    element.addEventListener('touchcancel', touchEnd, { passive: true });
     return () => {
       element.removeEventListener('wheel', wheel);
+      element.removeEventListener('touchstart', touchStart);
+      element.removeEventListener('touchmove', touchMove);
+      element.removeEventListener('touchend', touchEnd);
+      element.removeEventListener('touchcancel', touchEnd);
     };
-  }, [onNavigateBack, onZoomDelta]);
+  }, [applyCamera, onNavigateBack, onZoomDelta]);
 
   // Hover belongs to the map's live position. A scroll moves the map under a
   // stationary pointer, so drop the hover immediately instead of leaving the
@@ -693,11 +741,36 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     }
   };
 
-  const activateCategory = (target: HTMLElement | null) => {
-    const id = target?.dataset.hmCategoryId;
-    if (!id || !onCategoryClick) return;
-    const anchor = anchorFor(id);
-    if (anchor) onCategoryClick(anchor);
+  const activateCategory = (target: HTMLElement | null, clientX?: number, clientY?: number) => {
+    if (!target || !onCategoryClick) return;
+    const id = target.dataset.hmCategoryId;
+    if (id) {
+      const anchor = anchorFor(id, clientX != null && clientY != null ? { x: clientX, y: clientY } : undefined);
+      if (anchor) onCategoryClick(anchor);
+  
+      return;
+    }
+    if ((lastPointerTypeRef.current === 'touch' || window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 1024) && target.dataset.hmLeafId && target.dataset.hmParentId) {
+      const node = leafById.get(target.dataset.hmLeafId);
+      const scroller = scrollRef.current;
+      if (node) {
+        activeLeafRef.current = target.dataset.hmLeafId;
+        onLeafHover?.(node.data as HeatmapData);
+      }
+      const rectOverride = node && scroller
+        ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height)
+        : undefined;
+      const anchor = anchorFor(
+        target.dataset.hmParentId,
+        clientX != null && clientY != null ? { x: clientX, y: clientY } : undefined,
+        rectOverride,
+      );
+      if (anchor) onCategoryClick({ ...anchor, isLeafTap: true });
+    }
+
+
+
+
   };
 
   const finishDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -720,6 +793,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       onPointerMove={onPointerMove}
       onPointerOut={onPointerOut}
       onPointerDown={(event) => {
+        lastPointerTypeRef.current = event.pointerType || 'mouse';
         if (zoomTargetRef.current <= MIN_ZOOM || event.button !== 0 || !scrollRef.current) return;
         if (zoomFrameRef.current !== null) {
           window.cancelAnimationFrame(zoomFrameRef.current);
@@ -750,7 +824,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           suppressClickRef.current = false;
           return;
         }
-        activateCategory(targetData(event.target));
+        activateCategory(targetData(event.target), event.clientX, event.clientY);
       }}
       onDoubleClick={(event) => {
         const target = targetData(event.target);
@@ -797,6 +871,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
             true,
           );
         } else {
+      
           const id = target?.dataset.hmCategoryId;
           if (id) showCategory(id);
         }
