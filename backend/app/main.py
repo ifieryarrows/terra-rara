@@ -1734,7 +1734,10 @@ def verify_pipeline_secret(
         )
 
     _PIPELINE_AUTH_FAILURES.pop(auth_key, None)
-    logger.info("Pipeline trigger authorized successfully")
+    # This dependency also protects the status-polling GET endpoint. Keep
+    # successful auth at debug level so a 30-second poll does not look like a
+    # repeated trigger in production logs.
+    logger.debug("Pipeline endpoint request authorized successfully")
 
 
 @app.post(
@@ -1857,6 +1860,50 @@ async def get_pipeline_run_status(
         record = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
         if record is None:
             raise HTTPException(status_code=404, detail="Pipeline run not found")
+
+        # A worker process can be killed by arq's job_timeout after its metrics
+        # row has been set to "running". Its finally block releases the
+        # PostgreSQL advisory lock, but a hard cancellation/process death may
+        # prevent the row from being finalized. Recover that row on polling so
+        # clients do not receive "running" forever. Keep a short grace period
+        # for the worker's startup/lock-acquisition window and only fail it
+        # when PostgreSQL confirms that no worker owns the global lock.
+        if (
+            record.status == "running"
+            and record.worker_started_at is not None
+            and get_db_type() == "postgresql"
+        ):
+            worker_started_at = record.worker_started_at
+            if worker_started_at.tzinfo is None:
+                worker_started_at = worker_started_at.replace(tzinfo=timezone.utc)
+            run_age = datetime.now(timezone.utc) - worker_started_at
+            if run_age > timedelta(minutes=2):
+                try:
+                    from adapters.db.lock import is_lock_held, PIPELINE_LOCK_KEY
+
+                    lock_held = is_lock_held(session, PIPELINE_LOCK_KEY)
+                except Exception:
+                    # An inconclusive lock query must never mark a live run as
+                    # failed; a later poll can retry the recovery check.
+                    logger.exception(
+                        "Could not verify worker lock for pipeline run %s",
+                        run_id,
+                    )
+                    lock_held = True
+
+                if not lock_held:
+                    completed_at = datetime.now(timezone.utc)
+                    record.status = "failed"
+                    record.quality_state = "failed"
+                    record.error_message = "worker_lost_lock_before_finalizing"
+                    record.run_completed_at = completed_at
+                    record.duration_seconds = run_age.total_seconds()
+                    session.commit()
+                    logger.error(
+                        "Recovered stale pipeline run %s: worker lock is no longer held",
+                        run_id,
+                    )
+
         try:
             stages = json.loads(record.stage_results_json or "{}")
         except (TypeError, ValueError):

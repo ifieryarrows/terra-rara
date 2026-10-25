@@ -8,6 +8,7 @@ Faz 2: Integrated news_raw/news_processed pipeline with proper
        commit boundaries, metrics tracking, and degraded mode handling.
 """
 
+import asyncio
 import logging
 import json
 import os
@@ -349,6 +350,27 @@ async def run_pipeline(
             **result,
         }
         
+    except asyncio.CancelledError:
+        # arq cancels a job when job_timeout is reached. CancelledError is a
+        # BaseException, so the regular failure handler below does not catch
+        # it; without this branch the finally block releases the advisory lock
+        # while leaving pipeline_run_metrics.status stuck at "running".
+        logger.error(
+            "[run_id=%s] Pipeline worker task was cancelled (likely job timeout)",
+            run_id,
+        )
+        try:
+            finalize_run_metrics(
+                session,
+                run_id,
+                status="failed",
+                quality_state="failed",
+                error_message="worker_cancelled_or_timed_out",
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+        raise
     except Exception as e:
         logger.error(f"[run_id={run_id}] Pipeline failed: {e}", exc_info=True)
         
