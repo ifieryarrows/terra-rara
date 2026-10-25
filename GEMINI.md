@@ -1,24 +1,28 @@
-# CopperMind Modeling & Quality Gate Invariants
+# CopperMind Modeling, Quality Gate & Database Invariants
 
-## 1. Financial Metric Invariants & Lookahead/Autocorrelation Safeguards
-- **Annualization Consistency:** Always match the annualization factor in `sharpe_ratio` and `sortino_ratio` to the target horizon. Daily returns must use $\sqrt{252}$, while 5-day / weekly cumulative returns must use $\sqrt{52}$ (or $\sqrt{252 / \text{horizon}}$). Never annualize weekly series with $\sqrt{252}$.
-- **Overlapping Horizon Transparency:** Sliding-window cumulative returns ($R_{t \to t+h}$) exhibit MA($h-1$) autocorrelation. When reporting Sharpe or Sortino on overlapping test sets, note the autocorrelation inflation or report non-overlapping / HAC (Newey-West) adjusted statistics.
-- **Causal Feature Boundaries:** Never compute rolling statistics on forward-looking target variables (e.g. `target_1d`). Use historical observed returns (`observed_return_1d`) for regime and volatility features. All feature selection (MRMR) and scaler fittings must occur strictly on the training partition.
+These rules define the **low-freedom (hard) domain invariants** for CopperMind. Outside these boundaries, exercise full autonomy and flexibility in implementation design, refactoring, and testing.
+
+## 1. Financial Metric Invariants & Lookahead Safeguards
+- **Annualization Consistency:** Match the annualization factor in `sharpe_ratio` and `sortino_ratio` to the target horizon. Daily ($T+1$) returns use $\sqrt{252}$; 5-day / weekly cumulative returns use $\sqrt{52}$ ($\sqrt{252 / \text{horizon}}$). Never annualize weekly series with $\sqrt{252}$.
+- **Overlapping Horizon Transparency:** Sliding-window cumulative returns ($R_{t \to t+h}$) exhibit $\text{MA}(h-1)$ autocorrelation. When reporting Sharpe or Sortino on overlapping test sets, note autocorrelation inflation or report non-overlapping / HAC (Newey-West) adjusted statistics.
+- **Causal Feature Boundaries:** Never compute rolling statistics on forward-looking targets (e.g., `target_1d`). Use historical observed returns (`observed_return_1d`) for regime and volatility features. Fit MRMR feature selection and scalers strictly on the training partition.
 
 ## 2. Magnitude Transparency & Clipping Audits
-- **Raw vs. Bounded Magnitude:** Bounding mechanisms (`weekly_median_cap`) prevent inference explosion but can mask an unstable neural network.
-- **Quality Gate Invariant:** Quality gate evaluation must audit `weekly_raw_magnitude_ratio` alongside `weekly_bounded_magnitude_ratio`. A raw magnitude ratio above `3.0` blocks promotion. A `weekly_median_bound_applied_rate > 0.30` or raw magnitude ratio above `1.8` is surfaced as a non-blocking stability warning until a controlled OOS study justifies changing the hard gate.
+- **Raw vs. Bounded Magnitude:** Inference bounding (`weekly_median_cap`) prevents extreme outliers from reaching snapshots but can mask network instability if unaudited.
+- **Quality Gate Thresholds:** Audit `weekly_raw_magnitude_ratio` alongside `weekly_bounded_magnitude_ratio` in `backend/app/quality_gate.py`:
+  - **Hard Block:** `weekly_raw_magnitude_ratio > 3.0` blocks promotion.
+  - **Non-Blocking Stability Warning:** `weekly_raw_magnitude_ratio > 1.8` or `weekly_median_bound_applied_rate > 0.30`.
 
 ## 3. Artifact Discovery & Deployment Isolation
-- **Dual Storage Verification:** When searching for previous models or release candidates, inspect both local database/disk paths AND remote CI/CD storage (GitHub Actions run artifacts via `gh run download`).
-- **Strict Quality Gate Filtering:** Endpoints serving the active model (`/api/models/tft/summary`, etc.) and snapshot invalidation logic must explicitly filter for `quality_gate_passed.is_(True)`. Candidate training must not update the single active DB row. Active metadata is written only after the shared quality gate and HF Hub upload both succeed; rejected checkpoints must never serve predictions or invalidate valid snapshots.
+- **Strict Quality Gate Filtering:** Active model serving endpoints (`/api/models/tft/summary`, etc.) and snapshot invalidation logic must explicitly filter `quality_gate_passed.is_(True)`. Candidate training must never overwrite active serving rows; active metadata is committed only after both the shared quality gate and Hugging Face Hub upload succeed.
+- **Dual Storage Verification (Release Recovery Only):** When explicitly asked to audit or recover historical model checkpoints/release candidates, inspect both local DB/disk paths and GitHub Actions run artifacts (`gh run download`). Skip remote CI artifact checks during routine coding tasks.
 
 ## 4. Horizon Consistency & Presentation Hierarchy
-- **Primary vs. Diagnostic Separation:** Multi-horizon forecasting models must strictly separate primary horizon metrics (e.g. 5D cumulative weekly returns) from single-step diagnostics (e.g. T+1 daily path).
-- **UI Horizon Alignment:** Dashboards and summary views must never place daily risk-adjusted ratios (Daily Sharpe/Sortino) directly alongside weekly accuracy (Weekly DA) without explicit horizon labels and grouping.
-- **Promotion Gate Horizon Matching:** A model whose primary operational deliverable is a multi-day forecast must enforce risk-adjusted performance on that same primary horizon (weekly_sharpe_ratio), retaining single-step metrics purely as lower-bound sanity checks.
-- **Explainability Framing & Fail-Open Contract:** TFT-ASRO explanations (`explain_json`, served by `/api/explain/{symbol}`) are optional, fail-open artifacts computed once by the pipeline worker; their absence must never fail a run nor drop or invalidate a snapshot, and they must always be presented as raw, pre-calibration model focus (VSN weights + encoder-window attention) labeled to the 5-day primary horizon, never as causality.
+- **Primary vs. Diagnostic Separation:** Strictly separate primary 5-day cumulative weekly forecasts (TFT-ASRO) from single-step $T+1$ daily diagnostics (XGBoost) across backend schemas and UI views.
+- **UI Horizon Alignment:** Never place daily risk-adjusted ratios (Daily Sharpe/Sortino) alongside weekly directional accuracy (Weekly DA) without explicit horizon labels and visual grouping.
+- **Promotion Gate Horizon Matching:** Enforce risk-adjusted promotion criteria on the primary 5-day operational horizon (`weekly_sharpe_ratio`), retaining single-step metrics only as lower-bound sanity checks.
+- **Explainability Framing & Fail-Open Contract:** TFT-ASRO explanations (`explain_json`, served by `/api/explain/{symbol}`) are optional, fail-open worker artifacts; their absence must never fail a pipeline run or invalidate a snapshot. Always frame them as raw, pre-calibration 5-day model focus (VSN weights + encoder-window attention), never as causal attribution.
 
 ## 5. Database & Connection Pooler Invariants
-- **Dialect Explicit Binding & Fallback:** Unspecified `postgresql://` URIs must normalize dynamically to the installed driver (`postgresql+psycopg://` or `postgresql+psycopg2://`) to guard against ORM dialect default shifts across major/minor upgrades (e.g. SQLAlchemy 2.1+).
-- **PgBouncer / Supabase Prepared Statement Safety:** When connecting to transaction-mode connection poolers (`:6543`, `pooler.supabase.com`, `supabase.co`, `pgbouncer`) with `psycopg` (v3), prepared statements must be disabled via `connect_args={"prepare_threshold": None}` to prevent `DuplicatePreparedStatement` / `InvalidSqlStatementName` collision errors.
+- **Dialect Explicit Binding & Fallback:** Dynamically normalize unspecified `postgresql://` URIs in `backend/app/db.py` to the installed driver (`postgresql+psycopg://` or `postgresql+psycopg2://`) to remain resilient across SQLAlchemy 2.1+ dialect shifts.
+- **PgBouncer / Supabase Prepared Statement Safety:** When connecting to transaction-mode poolers (`:6543`, `pooler.supabase.com`, `supabase.co`, `pgbouncer`) with `psycopg` v3, disable prepared statements via `connect_args={"prepare_threshold": None}` to prevent `DuplicatePreparedStatement` / `InvalidSqlStatementName` errors.
