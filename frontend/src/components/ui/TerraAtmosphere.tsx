@@ -60,8 +60,13 @@ function StarFieldCanvas() {
     };
 
     render();
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(render) : null;
+    resizeObserver?.observe(canvas);
     window.addEventListener('resize', render, { passive: true });
-    return () => window.removeEventListener('resize', render);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', render);
+    };
   }, []);
 
   return <canvas ref={canvasRef} className="cm-atmosphere-starfield" aria-hidden="true"/>;

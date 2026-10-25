@@ -71,10 +71,10 @@ function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
 }
 
 function HeroCopy({ progress, onNavigateAnchor }: { progress: MotionValue<number>; onNavigateAnchor: (event: MouseEvent<HTMLAnchorElement>) => void }) {
-  const opacity = useTransform(progress, [0, .1, .2], [1, 1, 0]);
-  const y = useTransform(progress, [0, .2], [0, -72]);
-  const blur = useTransform(progress, [.1, .2], ['blur(0px)', 'blur(10px)']);
-  const visibility = useTransform(progress, value => value <= .2 ? 'visible' : 'hidden');
+  const opacity = useTransform(progress, [0, .09, .165], [1, 1, 0]);
+  const y = useTransform(progress, [0, .165], [0, -48]);
+  const blur = useTransform(progress, [.09, .165], ['blur(0px)', 'blur(10px)']);
+  const visibility = useTransform(progress, value => value <= .165 ? 'visible' : 'hidden');
   return <article className="cm-cinematic-beat cm-cinematic-hero" aria-labelledby="hero-title">
     <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, filter: blur, visibility }}>
       <p className="cm-eyebrow cm-brand-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
@@ -91,15 +91,15 @@ function HeroCopy({ progress, onNavigateAnchor }: { progress: MotionValue<number
 function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: typeof beats[number] }) {
   const shortNewsWindow = beat.id === 'news';
   const shortForecastWindow = beat.id === 'forecast';
-  const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : Math.max(0, beat.center - .18);
-  const reveal = shortNewsWindow ? .425 : shortForecastWindow ? .63 : start + .08;
-  const hold = shortNewsWindow ? .57 : shortForecastWindow ? .70 : beat.center + .07;
-  const end = shortNewsWindow ? .59 : shortForecastWindow ? .745 : beat.center + .18;
+  const start = shortNewsWindow ? .39 : shortForecastWindow ? .60 : .16;
+  const reveal = shortNewsWindow ? .425 : shortForecastWindow ? .63 : .21;
+  const hold = shortNewsWindow ? .57 : shortForecastWindow ? .76 : .34;
+  const end = shortNewsWindow ? .595 : shortForecastWindow ? .83 : .385;
   const opacity = useTransform(progress, [start, reveal, hold, end], [0, 1, 1, 0]);
-  const y = useTransform(progress, [start, reveal, hold, end], [64, 0, 0, -48]);
+  const y = useTransform(progress, [start, reveal, hold, end], [48, 0, 0, -32]);
   const titleClip = useTransform(progress, [start, reveal], ['inset(0 0 100% 0)', 'inset(0 0 0% 0)']);
   const detailOpacity = useTransform(progress, [start + .015, reveal + .02], [0, 1]);
-  const detailY = useTransform(progress, [start + .015, reveal + .02], [26, 0]);
+  const detailY = useTransform(progress, [start + .015, reveal + .02], [22, 0]);
   const blur = useTransform(progress, [start, reveal, end - .02, end], ['blur(9px)', 'blur(0px)', 'blur(0px)', 'blur(5px)']);
   const visibility = useTransform(progress, value => value >= start && value <= end ? 'visible' : 'hidden');
   return <article id={beat.id} className="cm-cinematic-beat" aria-labelledby={`${beat.id}-title`}>
@@ -131,11 +131,15 @@ function StickyWorld({ progress, releaseProgress, quality }: { progress: MotionV
       <BackgroundWord progress={progress} word="FORECAST" range={[.60, .64, .69, .75]} reverse/>
       <BackgroundWord progress={progress} word="RESEARCH" range={[.92, .95, .99, 1]}/>
     </div>
-    <ParticleWorld progress={progress} releaseProgress={releaseProgress} quality={quality}/>
+    <ParticleWorld progress={progress} releaseProgress={entryRevealProgressOrFallback(releaseProgress)} quality={quality}/>
     <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, rotate: signalRotate, filter: signalBlur }} aria-hidden="true"><div data-cm-route-reveal="surface" className="cm-cinematic-symbol-reveal"><CopperSignal progress={signalPath}/></div></motion.div>
     <DashboardComposition progress={progress}/>
     <div className="cm-cinematic-progress" aria-hidden="true"><motion.span style={{ scaleX: progress }}/></div>
   </div>;
+}
+
+function entryRevealProgressOrFallback(value: MotionValue<number>) {
+  return value;
 }
 
 export function CinematicLanding({ quality = 'high', entry }: { quality?: ParticleQuality; entry?: CinematicEntryRenderer }) {
