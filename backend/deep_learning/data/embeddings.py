@@ -315,15 +315,20 @@ def backfill_embeddings(
 
         pca = load_pca(str(pca_path)) if pca_path.exists() else None
         existing_components = (
-            int(getattr(pca, "n_components_", getattr(pca, "n_components", 0)))
+            int(getattr(pca, "n_components_", getattr(pca, "n_components", 0)) or 0)
             if pca is not None
             else 0
         )
         existing_samples = int(getattr(pca, "n_samples_seen_", 0)) if pca is not None else 0
         if (
             pca is not None
-            and existing_components == pca_dim
-            and existing_samples > pca_dim
+            and (
+                (existing_components == pca_dim and existing_samples > pca_dim)
+                # Older serialized/custom PCA implementations may not expose
+                # sklearn's fitted-state metadata; preserve compatibility and
+                # validate the transformed shape below.
+                or existing_components == 0
+            )
         ):
             logger.info("Loaded existing PCA model from %s", pca_path)
         else:

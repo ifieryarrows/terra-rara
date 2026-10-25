@@ -13,6 +13,7 @@ for A/B comparison.
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import replace
@@ -481,11 +482,14 @@ class TFTPredictor:
             # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
             # Avoids the inhomogeneous-shape error from mode="raw" which returns a
             # NamedTuple; np.array() cannot convert that to a uniform array.
-            pred_tensor = model.predict(
-                dl,
-                mode="quantiles",
-                trainer_kwargs={"logger": False},
-            )
+            predict_kwargs = {"mode": "quantiles"}
+            try:
+                predict_parameters = inspect.signature(model.predict).parameters
+            except (TypeError, ValueError):
+                predict_parameters = {}
+            if "trainer_kwargs" in predict_parameters:
+                predict_kwargs["trainer_kwargs"] = {"logger": False}
+            pred_tensor = model.predict(dl, **predict_kwargs)
 
             if isinstance(pred_tensor, torch.Tensor):
                 pred_np = pred_tensor.cpu().numpy()
