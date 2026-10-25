@@ -430,6 +430,10 @@ export function ParticleWorld({ progress, releaseProgress, quality = 'high' }: {
     const schedule = () => { if (!frame && visible && !document.hidden) frame = window.requestAnimationFrame(draw); };
     const resize = () => {
       const bounds = activeCanvas.getBoundingClientRect();
+      const nextWidth = Math.max(1, bounds.width);
+      const nextHeight = Math.max(1, bounds.height);
+      const isMobileViewport = window.matchMedia('(max-width: 1023px)').matches;
+      if (width > 1 && Math.abs(nextWidth - width) < 2 && (Math.abs(nextHeight - height) < 2 || isMobileViewport)) return;
       const ratio = Math.min(window.devicePixelRatio || 1, config.dpr);
       width = Math.max(1, bounds.width); height = Math.max(1, bounds.height);
       activeCanvas.width = Math.max(1, Math.round(width * ratio)); activeCanvas.height = Math.max(1, Math.round(height * ratio));

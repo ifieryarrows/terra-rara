@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import './TerraAtmosphere.css';
 
@@ -18,9 +18,23 @@ function StarFieldCanvas() {
     const context = canvas?.getContext('2d', { alpha: true });
     if (!canvas || !context) return;
 
+    let lastWidth = 0;
+    let lastHeight = 0;
+
     const render = () => {
       const { width, height } = canvas.getBoundingClientRect();
       if (width === 0 || height === 0) return;
+
+      const roundedWidth = Math.round(width);
+      const roundedHeight = Math.round(height);
+      const isMobileViewport = window.matchMedia('(max-width: 1023px)').matches;
+      if (lastWidth > 0 && Math.abs(roundedWidth - lastWidth) < 2) {
+        if (Math.abs(roundedHeight - lastHeight) < 2 || isMobileViewport) {
+          return;
+        }
+      }
+      lastWidth = roundedWidth;
+      lastHeight = roundedHeight;
 
       const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = Math.round(width * pixelRatio);
@@ -60,11 +74,8 @@ function StarFieldCanvas() {
     };
 
     render();
-    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(render) : null;
-    resizeObserver?.observe(canvas);
     window.addEventListener('resize', render, { passive: true });
     return () => {
-      resizeObserver?.disconnect();
       window.removeEventListener('resize', render);
     };
   }, []);
@@ -72,7 +83,7 @@ function StarFieldCanvas() {
   return <canvas ref={canvasRef} className="cm-atmosphere-starfield" aria-hidden="true"/>;
 }
 
-export function TerraAtmosphere({ progress, interactive = false, className = '' }: TerraAtmosphereProps) {
+export const TerraAtmosphere = memo(function TerraAtmosphere({ progress, interactive = false, className = '' }: TerraAtmosphereProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<HTMLDivElement>(null);
   const staticProgress = useMotionValue(1);
@@ -127,4 +138,4 @@ export function TerraAtmosphere({ progress, interactive = false, className = '' 
     {progress || interactive ? <div ref={pointerRef} className="cm-atmosphere-pointer"/> : null}
     <div className="cm-atmosphere-grain"/>
   </div>;
-}
+});

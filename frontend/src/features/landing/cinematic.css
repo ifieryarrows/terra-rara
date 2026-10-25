@@ -1,10 +1,10 @@
 /* Continuous, native-scroll cinematic world. The static story remains the
    complete reduced-motion, Save-Data and constrained-device fallback. */
 .cm-landing--cinematic { background: #080e17; }
-.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 500svh; min-height: 500dvh; margin: 0; padding: 0; overflow: clip; }
+.cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 500svh; margin: 0; padding: 0; overflow: clip; }
 .cm-cinematic-sticky,
 .cm-cinematic-copy { grid-area: 1 / 1; }
-.cm-cinematic-sticky { position: sticky; top: 0; align-self: start; width: 100%; height: 100svh; height: 100dvh; overflow: hidden; background: var(--cm-bg); contain: layout paint style; }
+.cm-cinematic-sticky { position: sticky; top: 0; align-self: start; width: 100%; height: 100vh; height: 100lvh; overflow: hidden; background: var(--cm-bg); contain: layout paint style; }
 .cm-background-typography { position: absolute; inset: 0; display: grid; align-items: center; overflow: hidden; pointer-events: none; }
 .cm-background-word { grid-area: 1 / 1; display: block; width: max-content; margin-left: clamp(1rem, 5vw, 5rem); color: transparent; -webkit-text-stroke: 1px #d9e0e814; font-size: clamp(8rem, 22vw, 22rem); font-weight: 560; line-height: .74; letter-spacing: -.085em; white-space: nowrap; transform-origin: center; }
 .cm-particle-world { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .94; pointer-events: none; contain: strict; }
@@ -23,9 +23,9 @@
 .cm-cinematic-surface .cm-preview-map { min-height: min(43svh, 23rem); }
 .cm-cinematic-surface .cm-news-flow { overflow: hidden; }
 .cm-cinematic-surface .cm-preview-caption { margin-top: auto; }
-.cm-cinematic-copy { position: sticky; z-index: 5; top: 0; align-self: start; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; height: 100svh; height: 100dvh; overflow: clip; pointer-events: none; }
+.cm-cinematic-copy { position: sticky; z-index: 5; top: 0; align-self: start; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; height: 100svh; overflow: clip; pointer-events: none; }
 .cm-cinematic-copy > .cm-cinematic-beat { grid-area: 1 / 1; }
-.cm-cinematic-beat { min-height: 100svh; min-height: 100dvh; display: flex; align-items: center; padding: clamp(6rem, 12vh, 9rem) clamp(1.5rem, 5vw, 5rem) clamp(3rem, 8vh, 6rem); scroll-margin-top: 0; }
+.cm-cinematic-beat { min-height: 100svh; display: flex; align-items: center; padding: clamp(6rem, 12vh, 9rem) clamp(1.5rem, 5vw, 5rem) clamp(3rem, 8vh, 6rem); scroll-margin-top: 0; }
 .cm-cinematic-copy-block { position: relative; z-index: 0; width: min(39vw, 34rem); pointer-events: auto; text-shadow: 0 2px 2rem #080e17; will-change: transform, opacity, filter; }
 .cm-cinematic-copy-block::before { content: ''; position: absolute; z-index: -1; inset: -4rem -7rem -4rem -14vw; background: radial-gradient(ellipse at 42% 50%, #080e17ee 0, #080e17b8 43%, transparent 73%); pointer-events: none; }
 .cm-cinematic-hero h1,
@@ -39,10 +39,10 @@
 .cm-cinematic-copy .cm-story-link:focus-visible { color: #ffd0ae; }
 .cm-cinematic-progress { position: absolute; z-index: 6; right: clamp(1.5rem, 4vw, 4rem); bottom: clamp(1.5rem, 4vh, 3rem); left: 52%; height: 1px; background: #71809642; }
 .cm-cinematic-progress span { display: block; width: 100%; height: 100%; transform-origin: left; background: linear-gradient(90deg, var(--cm-copper), var(--cm-forecast)); }
-.cm-cinematic-entry-layer { position: sticky; z-index: 7; grid-area: 1 / 1; top: 0; align-self: start; width: 100%; height: 100svh; height: 100dvh; overflow: clip; pointer-events: none; }
+.cm-cinematic-entry-layer { position: sticky; z-index: 7; grid-area: 1 / 1; top: 0; align-self: start; width: 100%; height: 100svh; overflow: clip; pointer-events: none; }
 .cm-cinematic-entry { position: absolute !important; inset: 0; width: 100%; height: 100%; min-height: 100% !important; border-top: 0; pointer-events: auto; }
 /* The CTA is another beat in the same pinned world, not a separate panel. */
-.cm-landing--cinematic .cm-enter { position: relative; z-index: 2; min-height: 82svh; min-height: 82dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; }
+.cm-landing--cinematic .cm-enter { position: relative; z-index: 2; min-height: 82svh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; }
 .cm-landing--cinematic .cm-enter::before { display: none; }
 
 @media (max-width: 1199px) {
