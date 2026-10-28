@@ -31,6 +31,9 @@ export interface CuprumMemoryBriefing {
 /** One input the model is listening to, in the pet's own language. */
 export interface CuprumDriverProfile {
   phrase: string;
+  label: string;
+  feature: string;
+  weightPct: number;
   /** How much of the model's attention this input holds. */
   loudness: 'loud' | 'middling' | 'quiet';
   /** The same attention share said in words: "three in ten". */
@@ -91,7 +94,8 @@ export type CuprumIntent =
   | 'memory-why'
   | 'risk'
   | 'opportunity'
-  | 'board-read';
+  | 'board-read'
+  | 'wires';
 
 const MONTHS = [
   'January',
@@ -170,17 +174,34 @@ function loudnessFromWeight(weight: number | null | undefined): CuprumDriverProf
   return 'quiet';
 }
 
+function cleanFeatureLabel(
+  label: string | null | undefined,
+  feature: string | null | undefined,
+): string {
+  if (label && label.trim().length > 0) return label.trim();
+  if (feature && feature.trim().length > 0) return feature.trim().replace(/_/g, ' ');
+  return 'Unknown signal';
+}
+
 function buildDriverProfiles(
   signals: ExplainFeatureEntry[],
   fallbackHorizon: string | null,
 ): CuprumDriverProfile[] {
-  return signals.slice(0, 3).map((signal) => ({
-    phrase: signalPhrase(signal.label, signal.category, signal.feature),
-    loudness: loudnessFromWeight(signal.weight),
-    share: shareWords(signal.weight),
-    direction: directionFromChange(signal.recent),
-    horizon: signal.time_horizon ?? fallbackHorizon,
-  }));
+  return signals.slice(0, 3).map((signal) => {
+    const rawWeight =
+      typeof signal.weight === 'number' && Number.isFinite(signal.weight) ? signal.weight : 0;
+    const weightPct = Math.round(rawWeight * 1000) / 10;
+    return {
+      phrase: signalPhrase(signal.label, signal.category, signal.feature),
+      label: cleanFeatureLabel(signal.label, signal.feature),
+      feature: signal.feature ?? '',
+      weightPct,
+      loudness: loudnessFromWeight(signal.weight),
+      share: shareWords(signal.weight),
+      direction: directionFromChange(signal.recent),
+      horizon: signal.time_horizon ?? fallbackHorizon,
+    };
+  });
 }
 
 export function buildCuprumBriefing(
@@ -438,6 +459,49 @@ export function composeCuprumReply(
       const reading = briefing.synthesis ?? 'the board is humming, and it wants me to listen';
       return `The board reads like this: ${reading}. I never see the numbers it used to get there. I only get the shape of it.`;
     }
+    case 'wires': {
+      const cast = briefing.drivers;
+      if (cast.length === 0) {
+        return 'The wires are quiet right now. Nothing is pulling hard enough to register on the scales.';
+      }
+      const [lead, second, third] = cast;
+      if (ctx.mood === 'molten_bull') {
+        const parts = [
+          `${lead.label} is eating ${lead.weightPct.toFixed(1)}% of the fire right now, ${directionWord(lead.direction)}.`,
+        ];
+        if (second) {
+          parts.push(`Right behind it, ${second.label} claims ${second.weightPct.toFixed(1)}%.`);
+        }
+        if (third) {
+          parts.push(
+            `And ${third.label} takes ${third.weightPct.toFixed(1)}%. That's where the heat is coming from.`,
+          );
+        }
+        return joinWithin(parts);
+      }
+      if (ctx.mood === 'patina_bear') {
+        const parts = [
+          `${lead.weightPct.toFixed(1)}% of my headache is ${lead.label}. It's ${directionWord(lead.direction)} like heavy damp air.`,
+        ];
+        if (second) {
+          parts.push(`Another ${second.weightPct.toFixed(1)}% is ${second.label}.`);
+        }
+        if (third) {
+          parts.push(`And ${third.weightPct.toFixed(1)}% is ${third.label}. It wears on the joints.`);
+        }
+        return joinWithin(parts);
+      }
+      const parts = [
+        `The wires are humming with clear numbers: ${lead.label} holds ${lead.weightPct.toFixed(1)}% of the model's focus.`,
+      ];
+      if (second) {
+        parts.push(`${second.label} follows at ${second.weightPct.toFixed(1)}%.`);
+      }
+      if (third) {
+        parts.push(`And ${third.label} sits at ${third.weightPct.toFixed(1)}%. The scales are steady.`);
+      }
+      return joinWithin(parts);
+    }
     default:
       return "I'm here. Listening.";
   }
@@ -661,7 +725,14 @@ function joinWithin(
   let speech = '';
   for (const part of parts) {
     const candidate = speech ? `${speech} ${part}` : part;
-    if (speech && candidate.length > budget) break;
+    if (candidate.length > budget) {
+      if (!speech) {
+        return candidate.length > budget
+          ? candidate.slice(0, budget - 1).replace(/\s+\S*$/, '\u2026')
+          : candidate;
+      }
+      break;
+    }
     speech = candidate;
   }
   return speech;

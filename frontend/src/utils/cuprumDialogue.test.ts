@@ -111,14 +111,15 @@ function tellStories(runtime: CuprumRuntime, times: number): CuprumRuntime {
 }
 
 describe('cuprumDialogue', () => {
-  it('gives the root exactly three choices and every node three replies', () => {
+  it('gives the root four choices and every other node three replies', () => {
     const root = resolveCuprumNode(ROOT_NODE_ID, BASE_CONTEXT, createCuprumRuntime());
     expect(root).not.toBeNull();
-    expect(root?.choices).toHaveLength(3);
+    expect(root?.choices).toHaveLength(4);
 
     for (const ctx of CONTEXTS) {
       for (const node of Object.values(CUPRUM_NODES)) {
-        expect(choicesFor(node, ctx), `${node.id} @ ${ctx.dataState}`).toHaveLength(3);
+        const expected = node.id === ROOT_NODE_ID ? 4 : 3;
+        expect(choicesFor(node, ctx), `${node.id} @ ${ctx.dataState}`).toHaveLength(expected);
       }
     }
   });
@@ -353,12 +354,33 @@ describe('cuprumDialogue', () => {
 
     const later = applyCuprumChoice(fresh, {
       id: 'ask-again',
-      label: 'Ask me something else.',
+      label: 'Let me ask something else.',
       next: ROOT_NODE_ID,
     });
     expect(resolveCuprumNode(ROOT_NODE_ID, BASE_CONTEXT, later)?.speech).not.toContain(
       'wind changed',
     );
+  });
+
+  it('welcomes return within conversation without repeating arrival greetings or "You came back"', () => {
+    const runtime = applyCuprumChoice(createCuprumRuntime({ bond: 5 }), {
+      id: 'ask-again',
+      label: 'Let me ask something else.',
+      next: ROOT_NODE_ID,
+    });
+    expect(runtime.turn).toBe(1);
+    const resolved = resolveCuprumNode(ROOT_NODE_ID, BASE_CONTEXT, runtime);
+    expect(resolved?.speech).not.toContain('You came back');
+    expect(resolved?.speech).not.toContain('You caught me mid-roar');
+    expect(resolved?.speech).toContain('Fire away. What else is on your mind?');
+
+    const bear = resolveCuprumNode(ROOT_NODE_ID, { ...BASE_CONTEXT, mood: 'patina_bear' }, runtime);
+    expect(bear?.speech).not.toContain('You came back');
+    expect(bear?.speech).toContain("Go ahead, I'm still listening. What else?");
+
+    const neutral = resolveCuprumNode(ROOT_NODE_ID, { ...BASE_CONTEXT, mood: 'tempered_neutral' }, runtime);
+    expect(neutral?.speech).not.toContain('You came back');
+    expect(neutral?.speech).toContain('Still here with you. What else did you want to check?');
   });
 
   it('lets the reader ask the console narrative in Cuprum\'s own words', () => {
@@ -400,7 +422,7 @@ describe('cuprumDialogue', () => {
     );
 
     expect(labels).not.toContain("What's the loose thread?");
-    expect(labels).toContain('Ask me something else.');
+    expect(labels).toContain('Let me ask something else.');
   });
 
   it('makes bearish Cuprum increasingly weary and overwhelmed by repeated story requests until falling asleep', () => {
@@ -450,13 +472,33 @@ describe('cuprumDialogue', () => {
     expect(resolved?.speech).toMatch(/bother the bull|off the clock/i);
   });
 
-  it('keeps every spoken node free of raw numbers and advice', () => {
+  it('keeps every spoken node free of raw numbers and advice (wires reports attention percentages without advice or price targets)', () => {
     const runtime = createCuprumRuntime();
     for (const node of Object.values(CUPRUM_NODES)) {
       const resolved = resolveCuprumNode(node.id, BASE_CONTEXT, runtime);
-      expect(resolved?.speech, node.id).not.toMatch(/\d|[$%]/);
+      if (node.id === 'wires') {
+        expect(resolved?.speech, node.id).toMatch(/%/);
+        expect(resolved?.speech, node.id).not.toMatch(/\$/);
+      } else {
+        expect(resolved?.speech, node.id).not.toMatch(/\d|[$%]/);
+      }
       expect(resolved?.speech, node.id).not.toMatch(/\b(buy|sell|target|advice)\b/i);
     }
+  });
+
+  it('reports exact top-3 attention weight percentages on the wires node without advice or price targets', () => {
+    const runtime = createCuprumRuntime();
+    const bull = resolveCuprumNode('wires', BASE_CONTEXT, runtime);
+    expect(bull?.speech).toContain('%');
+    expect(bull?.speech).toContain('China ETF momentum');
+    expect(bull?.speech).toMatch(/is eating 20\.0% of the fire/);
+    expect(bull?.speech).not.toMatch(/\$|\b(buy|sell|target|price)\b/i);
+
+    const bear = resolveCuprumNode('wires', { ...BASE_CONTEXT, mood: 'patina_bear' }, runtime);
+    expect(bear?.speech).toMatch(/20\.0% of my headache is China ETF momentum/);
+
+    const neutral = resolveCuprumNode('wires', { ...BASE_CONTEXT, mood: 'tempered_neutral' }, runtime);
+    expect(neutral?.speech).toMatch(/China ETF momentum holds 20\.0% of the model's focus/);
   });
 
   it('keeps every spoken line and action inside the bubble budget', () => {

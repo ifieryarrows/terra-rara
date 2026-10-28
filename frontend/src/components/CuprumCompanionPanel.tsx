@@ -292,7 +292,14 @@ export function CuprumCompanionPanel({
     // during render, and would otherwise see an already-cleared ref.
     const fresh = freshDataRef.current;
     freshDataRef.current = false;
-    setRuntime((previous) => ({ ...previous, freshData: fresh, sameChoiceStreak: 0, lastChoiceId: null, storyStreak: 0 }));
+    setRuntime((previous) => ({
+      ...previous,
+      turn: 0,
+      freshData: fresh,
+      sameChoiceStreak: 0,
+      lastChoiceId: null,
+      storyStreak: 0,
+    }));
     setMode('dialogue');
     dispatchSpriteRef.current('alert-start');
   }, []);

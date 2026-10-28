@@ -127,6 +127,7 @@ const INTENTS: CuprumIntent[] = [
   'risk',
   'opportunity',
   'board-read',
+  'wires',
 ];
 
 /** Measured against the real bubble: 220 chars fits the 18rem stage. */
@@ -309,6 +310,21 @@ describe('cuprumVoice', () => {
     expect(speech).not.toMatch(/\d|[$%]/);
   });
 
+  it('delivers exact driver weight percentages and real labels for wires intent', () => {
+    const bullSpeech = composeCuprumReply('wires', makeContext({ mood: 'molten_bull' }), RUNTIME);
+    expect(bullSpeech).toContain('Dollar index is eating 31.0% of the fire');
+    expect(bullSpeech).toContain('China ETF momentum claims 20.0%');
+    expect(bullSpeech).not.toMatch(/\$|\b(buy|sell|target)\b/i);
+
+    const bearSpeech = composeCuprumReply('wires', makeContext({ mood: 'patina_bear' }), RUNTIME);
+    expect(bearSpeech).toContain('31.0% of my headache is Dollar index');
+    expect(bearSpeech).toContain('Another 20.0% is China ETF momentum');
+
+    const neutralSpeech = composeCuprumReply('wires', makeContext({ mood: 'tempered_neutral' }), RUNTIME);
+    expect(neutralSpeech).toContain("Dollar index holds 31.0% of the model's focus");
+    expect(neutralSpeech).toContain('China ETF momentum follows at 20.0%');
+  });
+
   it('grounds a market answer in the briefing without leaking raw numbers', () => {
     const speech = composeCuprumReply('sense', makeContext(), RUNTIME);
 
@@ -397,8 +413,13 @@ describe('cuprumVoice', () => {
         makeContext({ briefing: risky, riskCount: 2, opportunityCount: 1 }),
         RUNTIME,
       );
-      expect(speech, intent).not.toMatch(/\d/);
-      expect(speech, intent).not.toMatch(/[$%]/);
+      if (intent === 'wires') {
+        expect(speech, intent).toMatch(/%/);
+        expect(speech, intent).not.toMatch(/\$/);
+      } else {
+        expect(speech, intent).not.toMatch(/\d/);
+        expect(speech, intent).not.toMatch(/[$%]/);
+      }
       expect(speech, intent).not.toMatch(/\b(buy|sell|target|advice)\b/i);
     }
   });

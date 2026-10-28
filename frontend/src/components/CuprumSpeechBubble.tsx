@@ -123,9 +123,11 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
           onClose();
           return;
         }
-        if (mode !== 'dialogue' || !/^[1-3]$/.test(event.key)) return;
+        if (mode !== 'dialogue') return;
+        const num = Number(event.key);
+        if (!Number.isInteger(num) || num < 1 || num > (choices?.length ?? 0)) return;
         event.preventDefault();
-        const choice = choices?.[Number(event.key) - 1];
+        const choice = choices?.[num - 1];
         if (choice) onChoose?.(choice);
       },
       [mode, choices, onChoose, onClose],

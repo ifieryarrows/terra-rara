@@ -78,7 +78,7 @@ describe('CuprumCompanionPanel', () => {
       /You caught me mid-roar/,
     );
     const choices = screen.getByRole('group', { name: 'Your reply' });
-    expect(choices.querySelectorAll('button')).toHaveLength(3);
+    expect(choices.querySelectorAll('button')).toHaveLength(4);
 
     fireEvent.click(screen.getByRole('button', { name: "How's your spark today?" }));
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent(
@@ -312,5 +312,25 @@ describe('CuprumCompanionPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Tell me another.' }));
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('Statue of Liberty');
+  });
+
+  it('navigates via number keys including key 4 and allows returning to root seamlessly', () => {
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    const bubble = screen.getByTestId('cuprum-dialogue-bubble');
+
+    // Press key '4' (Choice 4: Tell me something I don't know.)
+    fireEvent.keyDown(bubble, { key: '4' });
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('first smiths');
+
+    // Select 'Why that one?'
+    fireEvent.click(screen.getByRole('button', { name: 'Why that one?' }));
+    expect(screen.getByRole('button', { name: 'Let me ask something else.' })).toBeInTheDocument();
+
+    // Return to root via 'Let me ask something else.'
+    fireEvent.click(screen.getByRole('button', { name: 'Let me ask something else.' }));
+    expect(screen.getByTestId('cuprum-spoken-text')).not.toHaveTextContent('You came back');
+    expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('The fire is still hot. What else do you want to ask?');
   });
 });

@@ -94,6 +94,18 @@ const BOND_GREETINGS: Record<CuprumMood, string> = {
   tempered_neutral: 'You came back. I saved you the quiet seat.',
 };
 
+const RETURN_LINES: Record<CuprumMood, string> = {
+  molten_bull: "The fire is still hot. What else do you want to ask?",
+  patina_bear: "What else? Make it count before the dampness settles in.",
+  tempered_neutral: "I'm still here. What else are you listening for?",
+};
+
+const BOND_RETURN_LINES: Record<CuprumMood, string> = {
+  molten_bull: "Fire away. What else is on your mind?",
+  patina_bear: "Go ahead, I'm still listening. What else?",
+  tempered_neutral: "Still here with you. What else did you want to check?",
+};
+
 const SPARK_ACTIONS: Record<CuprumMood, string> = {
   molten_bull: 'The ember in its chest brightens.',
   patina_bear: 'A little green flame curls around its ear.',
@@ -321,7 +333,7 @@ function settleStoryLine(): CuprumChoice {
 }
 
 function askAgainChoice(): CuprumChoice {
-  return { id: 'ask-again', label: 'Ask me something else.', next: ROOT_NODE_ID };
+  return { id: 'ask-again', label: 'Let me ask something else.', next: ROOT_NODE_ID };
 }
 
 function tellStoryChoice(): CuprumChoice {
@@ -346,13 +358,40 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       if (runtime.freshData && runtime.turn === 0) {
         return "The wind changed since you last looked. I'm still deciding what it means.";
       }
+      if (runtime.turn > 0) {
+        if (runtime.bond >= 5) return BOND_RETURN_LINES[ctx.mood];
+        return RETURN_LINES[ctx.mood];
+      }
       if (runtime.bond >= 5) return BOND_GREETINGS[ctx.mood];
       return GREETINGS[ctx.mood];
     },
+    action: (ctx, runtime) => {
+      if (runtime.turn > 0) {
+        if (ctx.mood === 'molten_bull') return 'Sparks dance across its back, waiting for your next question.';
+        if (ctx.mood === 'patina_bear') return 'It blinks slowly, waiting with quiet patience.';
+        return 'The ember in its chest pulses once, listening.';
+      }
+      return null;
+    },
     choices: [
+      { id: 'root-wires', label: "What's pulling at your wires?", next: 'wires', effect: 'curious' },
       { id: 'root-spark', label: "How's your spark today?", next: 'spark', effect: 'curious' },
       { id: 'root-sense', label: 'What do you sense out there?', next: 'sense', effect: 'curious' },
       { id: 'root-story', label: "Tell me something I don't know.", next: 'story', effect: 'curious' },
+    ],
+  },
+  wires: {
+    id: 'wires',
+    speech: (ctx, runtime) => composeCuprumReply('wires', ctx, runtime),
+    action: (ctx) => {
+      if (ctx.mood === 'molten_bull') return 'Sparks crackle across its shoulders as it tallies the weights.';
+      if (ctx.mood === 'patina_bear') return 'It rubs its temples, weary from the constant pulling of the wires.';
+      return 'It tilts its head, measuring the exact tension in each coil.';
+    },
+    choices: [
+      { id: 'wires-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
+      askAgainChoice(),
+      leaveChoice(),
     ],
   },
   spark: {
