@@ -7,6 +7,7 @@ import type {
 } from '../types';
 import {
   buildCuprumBriefing,
+  cleanFeatureLabel,
   composeCuprumReply,
   signalPhrase,
   type CuprumIntent,
@@ -473,5 +474,27 @@ describe('cuprumVoice driver cast', () => {
     expect(speech).toMatch(/still/);
     expect(speech).toMatch(/not a promise|the direction shows/i);
     expect(speech).not.toMatch(/\d/);
+  });
+
+  it('cleans driver labels into natural asset names without exaggerated 1-day noise', () => {
+    // 1-day price change should name the asset itself, not the redundant indicator
+    expect(cleanFeatureLabel('US Dollar Index · 1-day price change', 'DX_Y_NYB_ret1')).toBe('US Dollar Index');
+    expect(cleanFeatureLabel('US Dollar Index · 1-day return', 'DX_Y_NYB_ret1')).toBe('US Dollar Index');
+    expect(cleanFeatureLabel('Copper Futures · 1-day price change', 'ret1')).toBe('Copper');
+    expect(cleanFeatureLabel('Vale · 1-day price change', 'VALE_ret1')).toBe('Vale');
+
+    // Moving averages and volatilities must preserve the technical window
+    expect(cleanFeatureLabel('Copper Futures · 20-day moving average', 'SMA_20')).toBe('Copper (20-day average)');
+    expect(cleanFeatureLabel('Freeport-McMoRan · 10-day price volatility', 'FCX_vol_10')).toBe('Freeport-McMoRan (10-day volatility)');
+    expect(cleanFeatureLabel('Southern Copper · 20-day weighted moving average', 'SCCO_EMA_20')).toBe('Southern Copper (20-day EMA)');
+    expect(cleanFeatureLabel('China Large-Cap · 1-day lagged return', 'GXC_lag_ret1_1')).toBe('China Large-Cap (1-day lag)');
+
+    // Naked indicators with no asset attribute to Copper
+    expect(cleanFeatureLabel('1-day price change', 'ret1')).toBe('Copper');
+    expect(cleanFeatureLabel('1-day return', 'ret1')).toBe('Copper');
+
+    // Feature code fallbacks
+    expect(cleanFeatureLabel('', 'DX_Y_NYB_ret1')).toBe('US Dollar Index');
+    expect(cleanFeatureLabel('', 'FCX_vol_10')).toBe('Freeport-McMoRan (10-day volatility)');
   });
 });

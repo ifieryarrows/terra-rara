@@ -174,13 +174,56 @@ function loudnessFromWeight(weight: number | null | undefined): CuprumDriverProf
   return 'quiet';
 }
 
-function cleanFeatureLabel(
+export function cleanFeatureLabel(
   label: string | null | undefined,
   feature: string | null | undefined,
 ): string {
-  if (label && label.trim().length > 0) return label.trim();
-  if (feature && feature.trim().length > 0) return feature.trim().replace(/_/g, ' ');
-  return 'Unknown signal';
+  const raw = (label || feature || '').trim();
+  if (!raw) return 'Copper';
+
+  // If label is purely a bare price change phrase without an asset (e.g. "1-day price change" or "1-day return")
+  if (/^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(raw)) {
+    return 'Copper';
+  }
+
+  // Handle "Subject · Indicator" or "Subject — Indicator"
+  const split = raw.split(/\s+[·—–-]\s+/);
+  if (split.length >= 2) {
+    const rawSubject = split[0].trim();
+    const indicator = split.slice(1).join(' ').trim();
+    const subject = rawSubject.replace(/\s+Futures$/i, '');
+
+    // 1-day return or 1-day price change: the subject alone is the natural human driver name (e.g. US Dollar Index, Copper, Vale)
+    if (/^(?:1-day\s+(?:price\s+)?(?:change|return)|daily\s+return)$/i.test(indicator)) {
+      return subject;
+    }
+
+    // Meaningful technical metrics (averages, volatility, lag, momentum): keep concise in parentheses
+    // e.g. "20-day moving average" -> "20-day average"
+    const conciseIndicator = indicator
+      .replace(/weighted\s+(?:moving\s+)?average/i, 'EMA')
+      .replace(/moving\s+average/i, 'average')
+      .replace(/price\s+volatility/i, 'volatility')
+      .replace(/price\s+momentum/i, 'momentum')
+      .replace(/lagged\s+return/i, 'lag');
+
+    return `${subject} (${conciseIndicator})`;
+  }
+
+  // Fallback heuristic for raw ticker symbols:
+  if (/^DX_?Y_?NYB/i.test(raw)) return 'US Dollar Index';
+  if (/^HG[=_]F?_?(?:ret1)?$/i.test(raw) || raw === 'ret1') return 'Copper';
+  if (/^GXC/i.test(raw)) return 'China Large-Cap';
+  if (/^FCX/i.test(raw)) {
+    if (/vol/i.test(raw)) return 'Freeport-McMoRan (10-day volatility)';
+    return 'Freeport-McMoRan';
+  }
+  if (/^SCCO/i.test(raw)) {
+    if (/EMA/i.test(raw)) return 'Southern Copper (20-day average)';
+    return 'Southern Copper';
+  }
+
+  return raw.replace(/_/g, ' ');
 }
 
 function buildDriverProfiles(

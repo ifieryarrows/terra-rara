@@ -616,7 +616,12 @@ export const OverviewPage = () => {
               {analysis?.top_influencers?.length ? (
                 analysis.top_influencers.slice(0, 5).map((inf: Influencer, i: number) => {
                   const maxImp = analysis.top_influencers[0]?.importance || 1;
-                  const label = inf.label || inf.description || inf.feature;
+                  const rawLabel = (inf.label || inf.description || inf.feature || '').trim();
+                  const label = /^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(rawLabel)
+                    ? `Copper · ${rawLabel}`
+                    : /^SMA\s*[·-]\s*(\d+)$/i.test(rawLabel)
+                      ? `Copper · ${rawLabel.match(/\d+/)?.[0] ?? '20'}-day moving average`
+                      : rawLabel;
                   return (
                     <div key={inf.feature} className="group">
                       <div className="flex justify-between items-start mb-1 gap-3">

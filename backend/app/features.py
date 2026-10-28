@@ -10,6 +10,7 @@ Handles:
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -439,6 +440,15 @@ _SYMBOL_LABEL_MAP: dict[str, str] = {
     "TIP":        "TIPS Bond ETF",
     "EEM":        "Emerging Markets ETF",
     "FXI":        "China Large-Cap ETF",
+    "GXC":        "China Large-Cap",
+    "HBM.TO":     "Hudbay Minerals",
+    "HBM":        "Hudbay Minerals",
+    "LUN.TO":     "Lundin Mining",
+    "LUN":        "Lundin Mining",
+    "TECK":       "Teck Resources",
+    "CPER":       "US Copper Index Fund",
+    "CEW":        "Emerging Markets Currency ETF",
+    "ALI=F":      "Aluminum Futures",
     "DBA":        "Agricultural Commodity ETF",
     "DBB":        "Base Metals ETF",
     "DBC":        "Broad Commodity ETF",
@@ -492,23 +502,39 @@ def _label_indicator(token: str) -> str:
     """Return a friendly label for a bare indicator token."""
     if token in _INDICATOR_LABEL_MAP:
         return _INDICATOR_LABEL_MAP[token]
-    # Lagged return — e.g. lag_ret1_2 → "return lag 2 days"
-    if token.startswith("lag_ret1_"):
-        n = token.replace("lag_ret1_", "")
-        return f"return lag {n} days"
-    if token.startswith("lag_ret2_"):
-        n = token.replace("lag_ret2_", "")
-        return f"2-day return lag {n}"
+    t_lower = token.lower()
+    # Dynamic SMA/EMA e.g. SMA_10, to_sma_10
+    m_sma = re.match(r"^(?:to_)?sma_(\d+)$", t_lower)
+    if m_sma:
+        return f"{m_sma.group(1)}-day moving average"
+    m_ema = re.match(r"^ema_(\d+)$", t_lower)
+    if m_ema:
+        return f"{m_ema.group(1)}-day weighted moving average"
+    m_vol = re.match(r"^vol_(\d+)$", t_lower)
+    if m_vol:
+        return f"{m_vol.group(1)}-day price volatility"
+    m_rsi = re.match(r"^rsi_(\d+)$", t_lower)
+    if m_rsi:
+        return f"{m_rsi.group(1)}-day price momentum"
+    # Lagged return — e.g. lag_ret1_2 → "2-day lagged return"
+    m_lag = re.match(r"^lag_ret(?:1|2)?_(\d+)$", t_lower)
+    if m_lag:
+        n = m_lag.group(1)
+        return f"{n}-day lagged return"
     # Embedding features
-    if token.startswith("emb_") or token.startswith("news_emb_"):
+    if t_lower.startswith("emb_") or t_lower.startswith("news_emb_"):
         return f"news embedding component {token.split('_')[-1]}"
     # Sentiment features
-    if token.startswith("sentiment"):
-        if "news_count" in token:
+    if t_lower.startswith("sentiment"):
+        if "news_count" in t_lower:
             return "daily news volume"
         return "sentiment index"
     # Fallback: prettify by replacing underscores and lower-casing
     return token.replace("_", " ").lower()
+
+_KNOWN_INDICATOR_PREFIXES = frozenset(
+    {"ret", "lag_ret", "sma", "ema", "rsi", "vol", "price_sma", "to_sma", "target"}
+)
 
 
 def describe_feature(feature: str) -> dict[str, str]:
@@ -534,24 +560,27 @@ def describe_feature(feature: str) -> dict[str, str]:
     symbol = ""
     token = feature
     for prefix, canonical in sorted(_symbol_prefix_aliases(), key=lambda item: len(item[0]), reverse=True):
-        prefix = f"{prefix}_"
-        if feature.startswith(prefix):
+        prefix_with_ = f"{prefix}_"
+        if feature.startswith(prefix_with_):
             symbol = canonical
-            token = feature[len(prefix) :]
+            token = feature[len(prefix_with_) :]
             break
 
     if not symbol:
-        # Fallback heuristic: features are often serialized as
-        # "<TICKER>_<INDICATOR...>". If the prefix looks like a ticker we
-        # treat it as the subject even when it's not in _SYMBOL_LABEL_MAP yet.
-        if "_" in feature:
+        first_token = feature.split("_", 1)[0].lower()
+        if (
+            first_token in _KNOWN_INDICATOR_PREFIXES
+            or any(feature.lower().startswith(p) for p in ("ret", "vol_", "sma_", "ema_", "rsi_", "price_sma", "to_sma"))
+        ):
+            symbol = "HG=F"
+            token = feature
+        elif "_" in feature:
             maybe_sym, rest = feature.split("_", 1)
-            if re.fullmatch(r"[A-Z0-9^=.\-]{1,20}", maybe_sym or ""):
+            if re.fullmatch(r"[A-Z0-9^=.\-]{1,20}", maybe_sym or "") and maybe_sym.lower() not in _KNOWN_INDICATOR_PREFIXES:
                 symbol = maybe_sym
                 token = rest
-        indicator_label = _label_indicator(token)
-    else:
-        indicator_label = _label_indicator(token)
+
+    indicator_label = _label_indicator(token)
 
     # Category classification
     category = "Other"
@@ -564,7 +593,7 @@ def describe_feature(feature: str) -> dict[str, str]:
         category = "Momentum"
     elif t.startswith("vol"):
         category = "Volatility"
-    elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t:
+    elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t or "to_sma" in t:
         category = "Trend"
     elif symbol and symbol != "HG=F":
         category = "Macro" if symbol in {"DX-Y.NYB", "^TNX", "^VIX", "^GSPC", "^DJI", "^IXIC"} else "Sector"

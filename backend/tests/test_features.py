@@ -167,6 +167,37 @@ class TestFeatureDescriptions:
         assert "weighted moving average" in described["label"]
         assert "…" not in described["label"]
 
+    def test_bare_indicators_attribute_to_copper(self):
+        ret = describe_feature("ret1")
+        assert ret["label"] == "Copper Futures · 1-day price change"
+        assert ret["category"] == "Momentum"
+
+        sma = describe_feature("SMA_20")
+        assert sma["label"] == "Copper Futures · 20-day moving average"
+        assert sma["category"] == "Trend"
+        assert sma["time_horizon"] == "20d"
+
+        vol = describe_feature("vol_10")
+        assert vol["label"] == "Copper Futures · 10-day price volatility"
+        assert vol["category"] == "Volatility"
+        assert vol["time_horizon"] == "10d"
+
+    def test_universe_symbols_and_indicators_format_cleanly(self):
+        gxc = describe_feature("GXC_lag_ret1_1")
+        assert gxc["label"] == "China Large-Cap · 1-day lagged return"
+        assert gxc["category"] == "Momentum"
+
+        hbm = describe_feature("HBM_TO_SMA_10")
+        assert hbm["label"] == "Hudbay Minerals · 10-day moving average"
+        assert hbm["category"] == "Trend"
+
+        lun = describe_feature("LUN.TO_lag_ret1_3")
+        assert lun["label"] == "Lundin Mining · 3-day lagged return"
+
+        fcx = describe_feature("FCX_vol_10")
+        assert fcx["label"] == "Freeport-McMoRan · 10-day price volatility"
+        assert fcx["category"] == "Volatility"
+
 
 class TestTargetCreation:
     def test_target_shift(self, sample_price_data):
