@@ -487,7 +487,20 @@ describe('cuprumVoice driver cast', () => {
     expect(cleanFeatureLabel('Copper Futures · 20-day moving average', 'SMA_20')).toBe('Copper (20-day average)');
     expect(cleanFeatureLabel('Freeport-McMoRan · 10-day price volatility', 'FCX_vol_10')).toBe('Freeport-McMoRan (10-day volatility)');
     expect(cleanFeatureLabel('Southern Copper · 20-day weighted moving average', 'SCCO_EMA_20')).toBe('Southern Copper (20-day EMA)');
-    expect(cleanFeatureLabel('China Large-Cap · 1-day lagged return', 'GXC_lag_ret1_1')).toBe('China Large-Cap (1-day lag)');
+    // 1-day lag and return lag 1 day are just that day's price/return: name the asset itself
+    expect(cleanFeatureLabel('China Large-Cap · 1-day lagged return', 'GXC_lag_ret1_1')).toBe('China Large-Cap');
+    expect(cleanFeatureLabel('China Large-Cap · return lag 1 days', 'GXC_lag_ret1_1')).toBe('China Large-Cap');
+    expect(cleanFeatureLabel('China Large-Cap · return lag 1 day', 'GXC_lag_ret1_1')).toBe('China Large-Cap');
+    expect(cleanFeatureLabel('China Large-Cap (1-day lag)', 'GXC_lag_ret1_1')).toBe('China Large-Cap');
+
+    // Multi-day lag preserves the specific window
+    expect(cleanFeatureLabel('Lundin Mining · 3-day lagged return', 'LUN.TO_lag_ret1_3')).toBe('Lundin Mining (3-day lag)');
+    expect(cleanFeatureLabel('Lundin Mining · return lag 3 days', 'LUN.TO_lag_ret1_3')).toBe('Lundin Mining (3-day lag)');
+
+    // Naked 1-day lag indicators attribute to Copper
+    expect(cleanFeatureLabel('return lag 1 day', 'lag_ret1_1')).toBe('Copper');
+    expect(cleanFeatureLabel('return lag 1 days', 'lag_ret1_1')).toBe('Copper');
+    expect(cleanFeatureLabel('1-day lagged return', 'lag_ret1_1')).toBe('Copper');
 
     // Naked indicators with no asset attribute to Copper
     expect(cleanFeatureLabel('1-day price change', 'ret1')).toBe('Copper');

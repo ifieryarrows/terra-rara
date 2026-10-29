@@ -178,11 +178,18 @@ export function cleanFeatureLabel(
   label: string | null | undefined,
   feature: string | null | undefined,
 ): string {
-  const raw = (label || feature || '').trim();
+  let raw = (label || feature || '').trim();
   if (!raw) return 'Copper';
 
-  // If label is purely a bare price change phrase without an asset (e.g. "1-day price change" or "1-day return")
-  if (/^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(raw)) {
+  // Strip any redundant 1-day lag phrases already wrapped in parentheses
+  raw = raw.replace(/\s*\((?:1-day\s+lag|return\s+lag\s*1(?:\s*days?)?)\)/gi, '').trim();
+
+  // If label is purely a bare price change or 1-day lag phrase without an asset (e.g. "1-day price change", "return lag 1 day")
+  if (
+    /^(?:(\d+-day|daily)\s+(?:price\s+)?(?:change|return)|1\s*day\s*price|(?:1-day\s+)?lag(?:ged)?(?:\s+return)?(?:\s*1)?(?:\s*days?)?|return\s+lag\s*1(?:\s*days?)?|lag\s*1(?:\s*days?)?)/i.test(
+      raw,
+    )
+  ) {
     return 'Copper';
   }
 
@@ -193,18 +200,25 @@ export function cleanFeatureLabel(
     const indicator = split.slice(1).join(' ').trim();
     const subject = rawSubject.replace(/\s+Futures$/i, '');
 
-    // 1-day return or 1-day price change: the subject alone is the natural human driver name (e.g. US Dollar Index, Copper, Vale)
-    if (/^(?:1-day\s+(?:price\s+)?(?:change|return)|daily\s+return)$/i.test(indicator)) {
+    // 1-day return, 1-day price change, or 1-day lag: the subject alone is the natural human driver name (e.g. US Dollar Index, Copper, Vale, China Large-Cap)
+    // 1-day lag / "return lag 1 day" is already that day's price/return, so omit redundant lag phrasing for Cuprum
+    if (
+      /^(?:(?:1-day|daily)\s+(?:price\s+)?(?:change|return)|(?:1-day\s+)?lag(?:ged)?(?:\s+return)?(?:\s*1)?(?:\s*days?)?|return\s+lag\s*1(?:\s*days?)?|lag\s*1(?:\s*days?)?)$/i.test(
+        indicator,
+      )
+    ) {
       return subject;
     }
 
-    // Meaningful technical metrics (averages, volatility, lag, momentum): keep concise in parentheses
-    // e.g. "20-day moving average" -> "20-day average"
+    // Meaningful technical metrics (averages, volatility, multi-day lag, momentum): keep concise in parentheses
+    // e.g. "20-day moving average" -> "20-day average", "3-day lagged return" -> "3-day lag"
     const conciseIndicator = indicator
       .replace(/weighted\s+(?:moving\s+)?average/i, 'EMA')
       .replace(/moving\s+average/i, 'average')
       .replace(/price\s+volatility/i, 'volatility')
       .replace(/price\s+momentum/i, 'momentum')
+      .replace(/return\s+lag\s*(\d+)\s*days?/i, '$1-day lag')
+      .replace(/(\d+)-day\s+lagged\s+return/i, '$1-day lag')
       .replace(/lagged\s+return/i, 'lag');
 
     return `${subject} (${conciseIndicator})`;
@@ -212,8 +226,8 @@ export function cleanFeatureLabel(
 
   // Fallback heuristic for raw ticker symbols:
   if (/^DX_?Y_?NYB/i.test(raw)) return 'US Dollar Index';
-  if (/^HG[=_]F?_?(?:ret1)?$/i.test(raw) || raw === 'ret1') return 'Copper';
-  if (/^GXC/i.test(raw)) return 'China Large-Cap';
+  if (/^HG[=_]F?_?(?:ret1|lag_ret1_1)?$/i.test(raw) || raw === 'ret1' || raw === 'lag_ret1_1') return 'Copper';
+  if (/^GXC(?:_lag_ret1_1)?$/i.test(raw)) return 'China Large-Cap';
   if (/^FCX/i.test(raw)) {
     if (/vol/i.test(raw)) return 'Freeport-McMoRan (10-day volatility)';
     return 'Freeport-McMoRan';
