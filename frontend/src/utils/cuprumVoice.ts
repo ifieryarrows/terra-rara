@@ -1,5 +1,6 @@
 import type {
   CommentaryResponse,
+  CuprumDailyDialogue,
   ExplainFeatureEntry,
   ExplainRecent,
   ExplainResponse,
@@ -72,6 +73,7 @@ export interface CuprumVoiceContext {
   riskCount: number;
   opportunityCount: number;
   briefing: CuprumBriefing;
+  cuprumDaily?: CuprumDailyDialogue | null;
 }
 
 export interface CuprumVoiceRuntime {
@@ -452,6 +454,9 @@ export function composeCuprumReply(
       return joinWithin(parts);
     }
     case 'drivers': {
+      if (ctx.cuprumDaily?.drivers_reply) {
+        return ctx.cuprumDaily.drivers_reply;
+      }
       const cast = briefing.drivers;
       if (cast.length === 0) {
         return "I don't hear anything loud enough to name yet. Just the hum, and me listening.";
@@ -477,6 +482,9 @@ export function composeCuprumReply(
       return joinWithin(parts);
     }
     case 'driver-outlook': {
+      if (ctx.cuprumDaily?.outlook_reply) {
+        return ctx.cuprumDaily.outlook_reply;
+      }
       const cast = briefing.drivers;
       if (cast.length === 0) {
         return "I only see this window, and there's nothing loud in it. Ask me again when the board speaks.";
@@ -517,6 +525,9 @@ export function composeCuprumReply(
       return `The board reads like this: ${reading}. I never see the numbers it used to get there. I only get the shape of it.`;
     }
     case 'wires': {
+      if (ctx.cuprumDaily?.drivers_reply) {
+        return ctx.cuprumDaily.drivers_reply;
+      }
       const cast = briefing.drivers;
       if (cast.length === 0) {
         return 'The wires are quiet right now. Nothing is pulling hard enough to register on the scales.';

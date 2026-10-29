@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     # Redis Queue (for worker)
     redis_url: str = "redis://localhost:6379/0"
     
+    # IFM AI (Institute of Foundation Models - K2 Horizon)
+    ifm_api_key: Optional[str] = None
+    ifm_model: str = "IFM/K2-Horizon-375B-A23B"
+    ifm_base_url: str = "https://api.ifm.ai/v1"
+    ifm_timeout_seconds: float = 45.0
+    ifm_reasoning_effort: str = "low"
+
     # OpenRouter AI Commentary
     openrouter_api_key: Optional[str] = None
     # Rotated to when the primary key receives a rate-limit response.

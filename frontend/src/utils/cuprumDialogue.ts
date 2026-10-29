@@ -355,6 +355,9 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       if (ctx.dataState === 'loading') return "The wires are still warm. Give me a moment.";
       if (ctx.dataState === 'error') return 'I lost the thread for a moment. Sit with me anyway.';
       if (ctx.dataState === 'empty') return "The board is quiet. I'm still here.";
+      if (runtime.turn === 0 && ctx.cuprumDaily?.greeting) {
+        return ctx.cuprumDaily.greeting;
+      }
       if (runtime.freshData && runtime.turn === 0) {
         return "The wind changed since you last looked. I'm still deciding what it means.";
       }
@@ -808,6 +811,7 @@ export function buildCuprumContext(
     explain?.variable_selection?.encoder?.[0] ??
     null;
   const sections = commentary?.sections ?? null;
+  const cuprumDaily = companion?.cuprum_daily ?? sections?.cuprum_daily ?? null;
   const briefing = buildCuprumBriefing(commentary, explain, tftAnalysis);
 
   return {
@@ -829,6 +833,7 @@ export function buildCuprumContext(
           ? 'empty'
           : 'ready',
     updatedAt: commentary?.generated_at ?? null,
+    cuprumDaily,
   };
 }
 

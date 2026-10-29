@@ -38,7 +38,7 @@ _STANCE_MOODS = {
     "NEUTRAL": "tempered_neutral",
 }
 _RISK_LEVEL_ENERGY = {"HIGH": "volatile", "MEDIUM": "charged"}
-_LLM_GENERATION_MODES = ("llm", "llm_repaired")
+_LLM_GENERATION_MODES = ("ifm_k2", "llm", "llm_repaired")
 
 _DEFAULT_HORIZON_LABEL = "5-day cumulative log return (primary)"
 _DEFAULT_HEADLINE_QUOTE = "Cuprum is awaiting the next pipeline refresh."
@@ -67,6 +67,7 @@ _HEADER_RES = (
     ("bias", re.compile(r"^BIAS\s+ACKNOWLEDGMENT\s*:\s*(.*)$", re.IGNORECASE)),
     ("bias", re.compile(r"^BIAS\s+WARNING\s*:\s*(.*)$", re.IGNORECASE)),
     ("disclaimer", re.compile(r"^DISCLAIMER\s*:?\s*(.*)$", re.IGNORECASE)),
+    ("cuprum", re.compile(r"^CUPRUM\s*(?:DIALOGUE)?\s*:\s*(.*)$", re.IGNORECASE)),
 )
 
 
@@ -158,12 +159,27 @@ def _parse_commentary_sections_fallback(
     if not synthesis:
         synthesis = _first_nonempty_paragraph(commentary or "")
 
+    cuprum_daily = None
+    if "cuprum" in prose and prose["cuprum"]:
+        combined = " ".join(prose["cuprum"])
+        start = combined.find("{")
+        end = combined.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                import json
+                parsed_c = json.loads(combined[start : end + 1])
+                if isinstance(parsed_c, dict):
+                    cuprum_daily = parsed_c
+            except Exception:
+                pass
+
     return {
         "synthesis": synthesis,
         "risks": bullets["risks"][:_MAX_BULLETS],
         "opportunities": bullets["opportunities"][:_MAX_BULLETS],
         "xai_brief": _extract_xai_brief(tft_explain),
         "bias_warning": _join_lines(prose["bias"]) or None,
+        "cuprum_daily": cuprum_daily,
     }
 
 
@@ -389,6 +405,7 @@ def build_companion_state(
         or _DEFAULT_HEADLINE_QUOTE
     )
 
+    cuprum_daily = sections.get("cuprum_daily") if isinstance(sections, dict) else None
     return {
         "character": _CHARACTER,
         "mood": mood,
@@ -397,4 +414,5 @@ def build_companion_state(
         "confidence_band": confidence_band,
         "headline_quote": headline_quote,
         "xai_highlights": _extract_xai_highlights(explain_payload),
+        "cuprum_daily": cuprum_daily,
     }

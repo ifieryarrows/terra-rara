@@ -85,12 +85,20 @@ export interface HealthResponse {
 
 export type LoadingState = 'idle' | 'loading' | 'success' | 'error';
 
+export interface CuprumDailyDialogue {
+  mood?: string | null;
+  greeting?: string | null;
+  drivers_reply?: string | null;
+  outlook_reply?: string | null;
+}
+
 export interface CommentarySections {
   synthesis: string;
   risks: string[];
   opportunities: string[];
   xai_brief?: string | null;
   bias_warning?: string | null;
+  cuprum_daily?: CuprumDailyDialogue | null;
 }
 
 export interface CompanionXaiHighlights {
@@ -110,6 +118,7 @@ export interface CompanionState {
   confidence_band: 'high' | 'medium' | 'low' | string;
   headline_quote: string;
   xai_highlights?: CompanionXaiHighlights | null;
+  cuprum_daily?: CuprumDailyDialogue | null;
 }
 
 export interface CommentaryResponse {

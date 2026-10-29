@@ -595,4 +595,41 @@ describe('cuprumDialogue', () => {
     expect(outlook?.speech).toMatch(/still/);
     expect(outlook?.choices).toHaveLength(3);
   });
+
+  it('uses daily AI cuprum dialogue slots when provided in companion_state or sections', () => {
+    const dailyCommentary: CommentaryResponse = {
+      ...COMMENTARY,
+      companion_state: {
+        ...COMMENTARY.companion_state!,
+        cuprum_daily: {
+          mood: 'molten_bull',
+          greeting: 'The forge is roaring with fresh dollar and china currents.',
+          drivers_reply: 'The Dollar and China Large-Cap are pulling the hardest on my wires today.',
+          outlook_reply: 'The trend has momentum, but keep an eye on the warehouse inventories.',
+        },
+      },
+    };
+
+    const ctx = buildCuprumContext(dailyCommentary, null, null);
+    expect(ctx.cuprumDaily).toBeDefined();
+    expect(ctx.cuprumDaily?.greeting).toBe(
+      'The forge is roaring with fresh dollar and china currents.',
+    );
+
+    // Root greeting on turn 0
+    const root = resolveCuprumNode(ROOT_NODE_ID, ctx, createCuprumRuntime());
+    expect(root?.speech).toBe('The forge is roaring with fresh dollar and china currents.');
+
+    // Wires reply
+    const wires = resolveCuprumNode('wires', ctx, createCuprumRuntime());
+    expect(wires?.speech).toBe(
+      'The Dollar and China Large-Cap are pulling the hardest on my wires today.',
+    );
+
+    // Driver outlook reply
+    const outlook = resolveCuprumNode('driver-outlook', ctx, createCuprumRuntime());
+    expect(outlook?.speech).toBe(
+      'The trend has momentum, but keep an eye on the warehouse inventories.',
+    );
+  });
 });
