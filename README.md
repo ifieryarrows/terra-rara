@@ -29,7 +29,7 @@ AI-powered copper futures price prediction platform combining XGBoost ML, TFT-AS
 
 ## Overview
 
-Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3.5 Super VL as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment and generate AI-driven market commentary.
+Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3.5 Super VL as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment, generate AI-driven institutional market commentary and produce dynamic Cuprum companion dialogue powered primarily by IFM K2-Horizon (375B parameter reasoning model) with fail-open fallback to OpenRouter.
 
 **XGBoost target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
 
@@ -49,7 +49,8 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 - Aggregate daily sentiment using time-weighted exponential decay
 - Compute advanced sentiment features: momentum, surprise (Z-score), volume-weighted scores
 - Ingest LME warehouse stock data and futures curve signals for physical-market context
-- Generate AI-powered market commentary with stance classification (BULLISH/NEUTRAL/BEARISH)
+- Generate AI-powered market commentary and dynamic in-character Cuprum companion dialogue powered primarily by IFM K2-Horizon (375B reasoning model) with fail-open OpenRouter fallback
+- Interactive Cuprum Companion: living reactive market spirit with dynamic moods (Molten Bull, Patina Bear, Tempered Neutral) and RAG-grounded daily dialogue nodes ('What is pulling at your wires?', 'Will it hold?', 'Tell me something I don't know') that explain model drivers in plain terms
 - Interactive S&P/Finviz-style Market Heatmap treemap with live quotes, sector grouping, logos and sparklines
 - News Intelligence panel with drawer inspection, commodity relevance filtering and LLM reasoning
 - Multi-page workspace (`/` Landing, `/dashboard` Overview, `/models` Models, `/validation` Backtesting, `/system` Status)
@@ -86,7 +87,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 │  ├── GET /api/history           → 180d historical price & sentiment     │
 │  ├── GET /api/market-heatmap    → Sector/category asset treemap (15m)   │
 │  ├── GET /api/market-prices     → Real-time quotes (14 symbols)         │
-│  ├── GET /api/commentary        → AI market commentary & stance         │
+│  ├── GET /api/commentary        → AI commentary, stance & Cuprum dialog │
 │  ├── GET /api/news              → Processed news intelligence feed      │
 │  ├── GET /api/models/tft/summary→ Quality gate status & TFT metrics     │
 │  ├── GET /api/health            → System & database health              │
@@ -100,7 +101,7 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 │  ├── 250+ feature engineering across 17 training symbols                │
 │  ├── XGBoost training (scheduled weekly on Sundays)                     │
 │  ├── TFT-ASRO inference (quantile forecasts from HF Hub checkpoint)    │
-│  ├── AI commentary generation via OpenRouter                            │
+│  ├── AI commentary & Cuprum dialogue via IFM K2 (OpenRouter fallback)  │
 │  └── Pipeline metrics & quality state recorded in database              │
 │                                                                         │
 │  DEEP LEARNING (Scheduled Retraining & Validation)                      │
@@ -403,7 +404,9 @@ terra-rara/
 │   │   ├── quality_gate.py   # Shared TFT promotion quality gate
 │   │   ├── features.py       # Technical indicator computation
 │   │   ├── data_manager.py   # News ingestion & market price fetcher
-│   │   ├── commentary.py     # AI commentary generation via OpenRouter
+│   │   ├── ifm_client.py     # IFM K2-Horizon async client & error handling
+│   │   ├── commentary.py     # AI commentary generation (IFM K2 & OpenRouter)
+│   │   ├── companion.py      # Cuprum companion state builder & dialogue extraction
 │   │   ├── models.py         # SQLAlchemy ORM models
 │   │   ├── db.py             # Database engine & driver normalization
 │   │   └── settings.py       # Pydantic settings & env management
@@ -524,7 +527,8 @@ The screener uses two fingerprints to ensure both reproducibility and auditabili
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL database (or Supabase account)
-- OpenRouter API key (free tier available at [openrouter.ai](https://openrouter.ai))
+- IFM API key (recommended primary for high-speed institutional commentary & Cuprum dialogue, available at [ifm.ai](https://ifm.ai/))
+- OpenRouter API key (secondary/fallback LLM sentiment and commentary, available at [openrouter.ai](https://openrouter.ai))
 
 ### Quickstart
 
@@ -581,7 +585,11 @@ Copy `env.example` to `backend/.env` and configure:
 | Variable                              | Required | Default                                 | Description                                                    |
 | ------------------------------------- | -------- | --------------------------------------- | -------------------------------------------------------------- |
 | `DATABASE_URL`                      | Yes      | -                                       | PostgreSQL connection string                                   |
-| `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM sentiment and commentary            |
+| `IFM_API_KEY`                       | No       | -                                       | Primary IFM API key for K2-Horizon-375B commentary & dialogue   |
+| `IFM_MODEL`                         | No       | `IFM/K2-Horizon-375B-A23B`              | Primary reasoning LLM model identifier                         |
+| `IFM_BASE_URL`                      | No       | `https://api.ifm.ai/v1`                 | IFM API base endpoint                                          |
+| `IFM_REASONING_EFFORT`              | No       | `low`                                   | Fast reasoning budget for structured output                    |
+| `OPENROUTER_API_KEY`                | Yes      | -                                       | OpenRouter API key for LLM sentiment and commentary fallback   |
 | `OPENROUTER_API_KEY_BACKUP`         | No       | -                                       | Optional second key; tried after primary HTTP 429/402            |
 | `PIPELINE_TRIGGER_SECRET`           | Yes      | -                                       | Secret token for POST /api/pipeline/trigger (32+ random chars) |
 | `REDIS_URL`                          | No       | `redis://localhost:6379/0`              | Redis connection string for pipeline task queue                 |
@@ -610,6 +618,13 @@ Copy `env.example` to `backend/.env` and configure:
 | `TRANSFORMERS_VERBOSITY`            | No       | `error`                               | Reduce Transformers log noise                                  |
 | `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No       | `1`                                   | Disable advisory warnings from Transformers                    |
 
+### AI Commentary & Companion Routing Hierarchy
+
+Market commentary and daily Cuprum companion dialogue follow a resilient, fail-open routing hierarchy:
+1. **IFM K2-Horizon-375B-A23B (Primary):** State-of-the-art 375B parameter reasoning model providing deep institutional commodity commentary and in-character Cuprum dialogue slots (`greeting`, `drivers_reply`, `outlook_reply`).
+2. **OpenRouter (Secondary Fallback):** Rotates through configured OpenRouter models if `IFM_API_KEY` is omitted or encounters rate limits.
+3. **Deterministic Fallback (Tertiary):** Guaranteed rule-based template generation if all upstream LLMs are unavailable, ensuring pipeline continuity without failing.
+
 OpenRouter's free-model daily allowance applies across free models on an account, not separately per model. Fallback and failed requests can also consume that allowance.
 
 For local runs, set `OPENROUTER_API_KEY_BACKUP` beside `OPENROUTER_API_KEY` in `backend/.env`. For the Hugging Face Space, add it as a Space Secret with that exact name; the primary key remains `OPENROUTER_API_KEY`. The worker tries the backup key after a primary HTTP 429 or 402, and skips a key with an explicitly exhausted free-tier daily quota for the rest of that request. It does not log either key value.
@@ -624,7 +639,8 @@ Access the live dashboard at [terra-rara.vercel.app](https://terra-rara.vercel.a
 
 1. **Cinematic Landing Page (`/`)**: Real-time copper market signal ticker, hero statistics and interactive platform narrative
 2. **Market Overview (`/dashboard`)**:
-   - **Consensus & Forecast Header**: Blended prediction, latest price quote and AI market stance
+   - **Consensus & Forecast Header**: Blended prediction, latest price quote, AI market stance and living Cuprum Companion avatar
+   - **Cuprum Companion & Dialogue Tree**: Interactive living pet reflecting market mood (Molten Bull, Patina Bear, Tempered Neutral), speaking daily RAG-grounded dialogue explaining top drivers in plain human language without technical lag jargon
    - **Price Forecast Chart**: 180 days of historical prices with T+1 prediction dot and Q10-Q90 quantile confidence bands
    - **Market Heatmap Treemap**: S&P/Finviz-style interactive treemap across miners, metals ETFs and commodities with company logos, sparklines and news context
    - **Market Grid**: Real-time quotes for all 14 dashboard symbols
@@ -730,14 +746,58 @@ Returns active TFT-ASRO model parameters, deployment Quality Gate audit status (
 
 ### GET /api/commentary
 
-Returns AI-generated market analysis with stance classification.
+Returns AI-generated market analysis with stance classification, section breakdown, and dynamic Cuprum companion dialogue slots.
 
 ```json
 {
   "symbol": "HG=F",
-  "commentary": "Copper futures show bullish momentum...",
+  "commentary": "Copper futures show bullish momentum supported by tightening inventory...\nThis is NOT financial advice.",
   "ai_stance": "BULLISH",
-  "generated_at": "2026-01-17T09:15:00Z"
+  "generation_mode": "ifm_k2",
+  "model_name": "IFM/K2-Horizon-375B-A23B",
+  "generated_at": "2026-10-29T23:00:00Z",
+  "sections": {
+    "synthesis": "Copper futures show bullish momentum...",
+    "risks": [
+      "Dollar index strengthening above resistance",
+      "Smelter treatment charges at historical lows"
+    ],
+    "opportunities": [
+      "Physical stock drawdowns in LME warehouses"
+    ],
+    "bias_warning": null,
+    "cuprum_daily": {
+      "mood": "molten_bull",
+      "greeting": "The forge is roaring with fresh dollar and china currents.",
+      "drivers_reply": "The Dollar and China Large-Cap are pulling the hardest on my wires today.",
+      "outlook_reply": "The trend has momentum, but keep an eye on warehouse inventories."
+    }
+  },
+  "companion_state": {
+    "character": "cuprum",
+    "mood": "molten_bull",
+    "stance": "BULLISH",
+    "energy": "charged",
+    "confidence_band": "high",
+    "headline_quote": "The forge is roaring with fresh dollar and china currents.",
+    "xai_highlights": {
+      "horizon_label": "5-day cumulative log return (primary)",
+      "top_signals": [
+        {
+          "feature": "DX-Y.NYB_ret1",
+          "weight": 0.28,
+          "label": "US Dollar Index",
+          "category": "Macro"
+        }
+      ]
+    },
+    "cuprum_daily": {
+      "mood": "molten_bull",
+      "greeting": "The forge is roaring with fresh dollar and china currents.",
+      "drivers_reply": "The Dollar and China Large-Cap are pulling the hardest on my wires today.",
+      "outlook_reply": "The trend has momentum, but keep an eye on warehouse inventories."
+    }
+  }
 }
 ```
 
@@ -877,7 +937,7 @@ The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily
 6. Aggregate daily sentiment with time-weighted decay (half-life: 7 days)
 7. Generate XGBoost prediction using active model (or retrain if `train_model=true` on Sundays)
 8. Generate TFT-ASRO inference from HF Hub checkpoint (quantile forecasts)
-9. Generate AI commentary via OpenRouter
+9. Generate AI commentary and daily Cuprum companion dialogue via IFM K2-Horizon (with OpenRouter fallback)
 10. Cache prediction snapshots in database
 11. Record run duration, fallback counts and `quality_state` to `pipeline_run_metrics` table
 
