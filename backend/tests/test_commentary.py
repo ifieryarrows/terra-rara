@@ -687,3 +687,55 @@ def test_worker_stage6_passes_tft_xai_context_into_commentary_call():
     assert "tft_explain=tft_explain_payload" in source
     assert "tft_summary=tft_commentary_summary" in source
     assert "tft_commentary_summary = {" in source
+
+
+def test_parse_commentary_payload_strips_thinking_tags():
+    raw = (
+        "<ifm|think>\n"
+        "Let's see: { test thinking block with braces }\n"
+        "</ifm|think>\n"
+        '{"stance":"BEARISH","headline":"Copper cools","commentary":"RISKS:\\n• Dollar up","cuprum_daily":{"mood":"patina_bear","greeting":"Morning"}}'
+    )
+    stance, commentary, cuprum = commentary_module._parse_commentary_payload(raw)
+    assert stance == "BEARISH"
+    assert "RISKS:" in commentary
+    assert cuprum["mood"] == "patina_bear"
+    assert cuprum["greeting"] == "Morning"
+
+
+def test_parse_commentary_payload_recovers_unquoted_and_trailing_commas():
+    raw = (
+        '{\n'
+        '  stance: BEARISH,\n'
+        '  headline: "Copper cools",\n'
+        '  commentary: "RISKS:\\n• Dollar up",\n'
+        '  cuprum_daily: {\n'
+        '    mood: "patina_bear",\n'
+        '    greeting: "Morning",\n'
+        '  },\n'
+        '}'
+    )
+    stance, commentary, cuprum = commentary_module._parse_commentary_payload(raw)
+    assert stance == "BEARISH"
+    assert "RISKS:" in commentary
+    assert cuprum["mood"] == "patina_bear"
+    assert cuprum["greeting"] == "Morning"
+
+
+def test_parse_commentary_payload_recovers_unescaped_newlines_via_regex():
+    raw = (
+        '{\n'
+        '  "stance": "BEARISH",\n'
+        '  "headline": "Copper cools",\n'
+        '  "commentary": "RISKS:\n'
+        '• Line 1\n'
+        '• Line 2",\n'
+        '  "cuprum_daily": {"mood": "patina_bear", "greeting": "Morning"}\n'
+        '}'
+    )
+    stance, commentary, cuprum = commentary_module._parse_commentary_payload(raw)
+    assert stance == "BEARISH"
+    assert "Line 1" in commentary
+    assert cuprum["mood"] == "patina_bear"
+    assert cuprum["greeting"] == "Morning"
+
