@@ -498,7 +498,7 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       { id: 'sense-more', label: 'Tell me more.', next: 'sense-more', effect: 'curious' },
       { id: 'sense-worry', label: 'Should I worry?', next: 'sense-worry', effect: 'curious' },
       ctx.dataState === 'ready' && ctx.briefing.drivers.length > 0
-        ? { id: 'sense-drivers', label: "Who's doing the talking?", next: 'drivers', effect: 'curious' }
+        ? { id: 'sense-drivers', label: "What's pulling at the wires?", next: 'drivers', effect: 'curious' }
         : askAgainChoice(),
     ],
   },

@@ -331,7 +331,7 @@ describe('cuprumDialogue', () => {
 
     const sense = resolveCuprumNode('sense', ctx, runtime);
     expect(sense?.choices.map((choice) => choice.label)).toContain(
-      "Who's doing the talking?",
+      "What's pulling at the wires?",
     );
 
     const driver = resolveCuprumNode('driver-detail', ctx, runtime);

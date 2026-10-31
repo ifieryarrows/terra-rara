@@ -232,7 +232,7 @@ describe('CuprumCompanionPanel', () => {
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('wind changed');
 
     fireEvent.click(screen.getByRole('button', { name: 'What do you sense out there?' }));
-    fireEvent.click(screen.getByRole('button', { name: "Who's doing the talking?" }));
+    fireEvent.click(screen.getByRole('button', { name: "What's pulling at the wires?" }));
     fireEvent.click(screen.getByRole('button', { name: 'The loudest one?' }));
     fireEvent.click(screen.getByRole('button', { name: 'What worries you?' }));
     fireEvent.click(screen.getByRole('button', { name: 'What changed?' }));
