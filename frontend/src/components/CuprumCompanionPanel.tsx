@@ -137,7 +137,7 @@ export function CuprumCompanionPanel({
 
     frames.forEach((frameName) => {
       const img = new Image();
-      img.src = `/assets/cuprum/${moodMeta.prefix}-${frameName}.webp?v=retro-v6`;
+      img.src = `/assets/cuprum/${moodMeta.prefix}-${frameName}.webp?v=retro-v7`;
       if (typeof img.decode === 'function') {
         img.decode().catch(() => {});
       }
@@ -381,8 +381,8 @@ export function CuprumCompanionPanel({
   }, [isTyping]);
 
   const currentFrame: CuprumSpriteFrame | 'talk' = isTyping && talkFlap ? 'talk' : frame;
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-v6`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-v6`;
+  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-v7`;
+  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-v7`;
 
   return (
     <div
