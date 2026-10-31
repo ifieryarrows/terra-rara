@@ -90,6 +90,8 @@ export interface CuprumDailyDialogue {
   greeting?: string | null;
   drivers_reply?: string | null;
   outlook_reply?: string | null;
+  worry_reply?: string | null;
+  board_read_reply?: string | null;
   headline?: string | null;
 }
 

@@ -383,6 +383,9 @@ export function composeCuprumReply(
       return joinWithin(parts);
     }
     case 'sense-worry': {
+      if (ctx.cuprumDaily?.worry_reply) {
+        return ctx.cuprumDaily.worry_reply;
+      }
       const knot = briefing.risks[0] ? ` ${capitalize(briefing.risks[0])}.` : '';
       if (ctx.confidence === 'high') {
         let speech = `I'd say it out loud: the metal is leaning, not promising. Leaning is not a promise.${knot}`;
@@ -521,6 +524,9 @@ export function composeCuprumReply(
       return `Here is the door I keep seeing: ${door}. I'm not going to shove you through it.`;
     }
     case 'board-read': {
+      if (ctx.cuprumDaily?.board_read_reply) {
+        return ctx.cuprumDaily.board_read_reply;
+      }
       const reading = briefing.synthesis ?? 'the board is humming, and it wants me to listen';
       return `The board reads like this: ${reading}. I never see the numbers it used to get there. I only get the shape of it.`;
     }

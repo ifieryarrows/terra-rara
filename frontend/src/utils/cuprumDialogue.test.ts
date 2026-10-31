@@ -606,6 +606,8 @@ describe('cuprumDialogue', () => {
           greeting: 'The forge is roaring with fresh dollar and china currents.',
           drivers_reply: 'The Dollar and China Large-Cap are pulling the hardest on my wires today.',
           outlook_reply: 'The trend has momentum, but keep an eye on the warehouse inventories.',
+          worry_reply: "No need to panic, but keep one hand on the heat shield.",
+          board_read_reply: "The whole board is humming with forward momentum.",
         },
       },
     };
@@ -630,6 +632,18 @@ describe('cuprumDialogue', () => {
     const outlook = resolveCuprumNode('driver-outlook', ctx, createCuprumRuntime());
     expect(outlook?.speech).toBe(
       'The trend has momentum, but keep an eye on the warehouse inventories.',
+    );
+
+    // Sense worry reply
+    const worry = resolveCuprumNode('sense-worry', ctx, createCuprumRuntime());
+    expect(worry?.speech).toBe(
+      'No need to panic, but keep one hand on the heat shield.',
+    );
+
+    // Board read reply
+    const boardRead = resolveCuprumNode('board-read', ctx, createCuprumRuntime());
+    expect(boardRead?.speech).toBe(
+      'The whole board is humming with forward momentum.',
     );
   });
 });

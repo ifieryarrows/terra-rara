@@ -16,7 +16,9 @@ PRODUCTION_COMMENTARY = (
     "DISCLAIMER:\nThis is NOT financial advice.\n\n"
     "CUPRUM DIALOGUE:\n"
     '{"greeting": "The wires hum with caution.", "drivers_reply": "The dollar is pulling hardest.", '
-    '"outlook_reply": "It may hold.", "mood": "patina_bear", "headline": "Copper leans lower this week as the dollar firms."}'
+    '"outlook_reply": "It may hold.", "worry_reply": "Keep one hand on the heat shield.", '
+    '"board_read_reply": "The board is humming with downward bias.", '
+    '"mood": "patina_bear", "headline": "Copper leans lower this week as the dollar firms."}'
 )
 
 
@@ -24,6 +26,8 @@ def test_cuprum_dialogue_block_is_parsed_from_stored_commentary():
     sections = parse_commentary_sections(PRODUCTION_COMMENTARY)
     assert sections["cuprum_daily"]["greeting"] == "The wires hum with caution."
     assert sections["cuprum_daily"]["drivers_reply"] == "The dollar is pulling hardest."
+    assert sections["cuprum_daily"]["worry_reply"] == "Keep one hand on the heat shield."
+    assert sections["cuprum_daily"]["board_read_reply"] == "The board is humming with downward bias."
     # The dialogue block must not leak into the bias/disclaimer text.
     assert "greeting" not in (sections["bias_warning"] or "")
 
@@ -59,7 +63,7 @@ def test_ifm_is_primary_provider_and_receives_the_full_prompt(monkeypatch):
             '{"stance":"BEARISH","headline":"Copper leans lower.",'
             '"commentary":"RISKS:\\n• a\\nOPPORTUNITIES:\\n• b\\nSYNTHESIS: c\\n'
             'BIAS ACKNOWLEDGMENT: d\\nDISCLAIMER:\\nThis is NOT financial advice.",'
-            '"cuprum_daily":{"mood":"patina_bear","greeting":"g","drivers_reply":"r","outlook_reply":"o"}}',
+            '"cuprum_daily":{"mood":"patina_bear","greeting":"g","drivers_reply":"r","outlook_reply":"o","worry_reply":"w","board_read_reply":"b"}}',
             {},
         )
 
