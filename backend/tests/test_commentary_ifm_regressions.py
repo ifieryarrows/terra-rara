@@ -95,3 +95,23 @@ def test_ifm_is_primary_provider_and_receives_the_full_prompt(monkeypatch):
     # raw identifiers never reach the model as data (the rule text cites one as an example)
     assert "- SCCO_EMA_20:" not in prompt
     assert "CUPRUM DIALOGUE" in result.commentary
+
+
+def test_clean_json_content_handles_reasoning_scratchpad_with_braces():
+    from app.commentary import _clean_json_content
+
+    messy_output = (
+        "We need answer JSON only. Need craft JSON with { and end }. Need include all keys.\n"
+        'Draft notes: { "scratchpad": true }\n\n'
+        '{"stance":"BEARISH","headline":"Copper cools over five sessions.",'
+        '"commentary":"RISKS:\\n• a\\nOPPORTUNITIES:\\n• b\\nSYNTHESIS: c\\nBIAS ACKNOWLEDGMENT: d\\nDISCLAIMER:\\nThis is NOT financial advice.",'
+        '"cuprum_daily":{"mood":"patina_bear","greeting":"hi","drivers_reply":"r","outlook_reply":"o","worry_reply":"w","board_read_reply":"b"}}'
+    )
+
+    cleaned = _clean_json_content(messy_output)
+    import json
+    data = json.loads(cleaned)
+    assert data["stance"] == "BEARISH"
+    assert data["headline"] == "Copper cools over five sessions."
+    assert data["cuprum_daily"]["mood"] == "patina_bear"
+

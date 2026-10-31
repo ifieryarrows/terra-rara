@@ -112,11 +112,32 @@ def _clean_json_content(content: str) -> str:
     if normalized.startswith("json"):
         normalized = normalized[4:].strip()
 
-    if not normalized.startswith("{"):
-        first = normalized.find("{")
-        last = normalized.rfind("}")
-        if first != -1 and last != -1 and last > first:
-            normalized = normalized[first : last + 1]
+    # Fast path: already valid JSON
+    try:
+        json.loads(normalized)
+        return normalized
+    except Exception:
+        pass
+
+    last_brace = normalized.rfind("}")
+    if last_brace != -1:
+        # Search backwards for candidate '{' followed by a JSON key
+        candidates = [m.start() for m in re.finditer(r'\{\s*"', normalized)]
+        for idx in reversed(candidates):
+            chunk = normalized[idx : last_brace + 1]
+            try:
+                parsed = json.loads(chunk)
+                if isinstance(parsed, dict) and any(
+                    k in parsed for k in ("stance", "commentary", "headline", "cuprum_daily")
+                ):
+                    return chunk
+            except Exception:
+                continue
+
+    # Fallback to legacy first/last brace logic if candidate search didn't resolve
+    first = normalized.find("{")
+    if first != -1 and last_brace != -1 and last_brace > first:
+        normalized = normalized[first : last_brace + 1]
 
     return normalized
 
@@ -984,15 +1005,21 @@ Speak as Cuprum ("Külçe Ruh"): perceptive, confident where data supports it, c
         try:
             logger.info("Attempting AI commentary generation via IFM (K2-Horizon)")
             from .ifm_client import create_ifm_chat_completion
+            ifm_system_prompt = (
+                f"{_SYSTEM_PROMPT}\n\n"
+                "CRITICAL OUTPUT INSTRUCTION: You are an automated JSON endpoint. Return strictly valid raw JSON only. "
+                "Do NOT include any preamble, chain-of-thought scratchpad, markdown code fences, or planning monologue. "
+                "Your output MUST begin immediately with '{' and end with '}'."
+            )
             ifm_messages = [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": ifm_system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
             ifm_content, ifm_data = await create_ifm_chat_completion(
                 ifm_messages,
                 model=settings.ifm_model,
                 temperature=0.3,
-                max_tokens=2500,
+                max_tokens=4000,
                 response_format=COMMENTARY_RESPONSE_FORMAT,
                 reasoning_effort=settings.ifm_reasoning_effort,
                 timeout_seconds=settings.ifm_timeout_seconds,

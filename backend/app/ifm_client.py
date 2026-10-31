@@ -61,7 +61,7 @@ async def create_ifm_chat_completion(
     *,
     model: Optional[str] = None,
     temperature: float = 0.3,
-    max_tokens: int = 1500,
+    max_tokens: int = 4000,
     response_format: Optional[dict[str, Any]] = None,
     reasoning_effort: Optional[str] = None,
     timeout_seconds: Optional[float] = None,
@@ -128,7 +128,9 @@ async def create_ifm_chat_completion(
     if not isinstance(choices, list) or not choices:
         raise IFMError("IFM response contained no choices", status_code=status, category="empty_response", model=target_model)
 
-    message = choices[0].get("message", {})
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason")
+    message = choice.get("message", {})
     content = message.get("content", "")
     if isinstance(content, str):
         content = content.strip()
@@ -139,6 +141,13 @@ async def create_ifm_chat_completion(
         content = str(content or "").strip()
 
     if not content:
-        raise IFMError("IFM choice message content was empty", status_code=status, category="empty_response", model=target_model)
+        # Some reasoning models return text in reasoning or reasoning_content
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
+            logger.info("IFM message content empty but reasoning text present (%s chars); using reasoning", len(reasoning))
+            content = reasoning.strip()
+
+    if not content:
+        raise IFMError(f"IFM choice message content was empty (finish_reason={finish_reason})", status_code=status, category="empty_response", model=target_model)
 
     return content, data
