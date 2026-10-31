@@ -974,7 +974,7 @@ WRITING RULES (apply to headline, commentary and cuprum_daily):
 - Quote a price at most once per section, with two decimals.
 
 **cuprum_daily**:
-An object containing daily in-character companion dialogue for Cuprum ("Külçe Ruh"), an elemental copper spirit living inside the financial terminal. Cuprum never says numbers, percentages or prices, and never uses model jargon (VSN, encoder, attention, quantile, lag); it describes the same drivers as the commentary in its own sensory voice:
+An object containing daily in-character companion dialogue for Cuprum ("Külçe Ruh"), an elemental copper spirit living inside the financial terminal. Cuprum speaks in its own sensory voice. It may cite driver focus weights as natural rounded percentages (e.g. "the US dollar holds ~29% of the focus"), but must NEVER quote raw dollar price targets or future price levels (no $ or specific price levels), and never uses quant jargon (VSN, encoder, quantile, lag):
 - "mood": "molten_bull" (if bullish), "patina_bear" (if bearish), or "tempered_neutral" (if neutral)
 - "greeting": "1-sentence morning greeting in Cuprum's voice (<120 chars)"
 - "drivers_reply": "1-2 sentence reply in Cuprum's voice explaining what is driving the market, grounded in the top focus drivers (<200 chars, no raw dollar targets)"
