@@ -625,10 +625,10 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       if (ctx.mood === 'patina_bear') {
         const streak = runtime.storyStreak ?? 0;
         if (streak === 3) {
-          return "*(deep, raspy sigh)* Another one? The dampness is already in my jaw. Fine: the first ingots were cast like oxhide so merchants could haul them over mountains. Nobody asked the ingot how heavy the mountain felt.";
+          return "Another one? The dampness is already in my jaw. Fine: the first ingots were cast like oxhide so merchants could haul them over mountains. Nobody asked the ingot how heavy the mountain felt.";
         }
         if (streak === 4) {
-          return "*(droops, a puff of green dust drifts down)* You don't quit, do you? A copper bell only rings when struck; keep hammering and it fractures. My head is fractured enough.";
+          return "You don't quit, do you? A copper bell only rings when struck; keep hammering and it fractures. My head is fractured enough.";
         }
         if (streak === 5) {
           return "Enough. I'm genuinely overwhelmed. Oxidized green from the rain, the market sliding, every joint aching. I'm not that roaring furnace bull; I can't spin folklore on demand. Can't we just sit in the quiet?";
@@ -638,9 +638,9 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
         }
         if (streak >= 7) {
           if (runtime.lastChoiceId === 'bear-sleep-poke') {
-            return "*(Without even opening an eye, it lazily swats at your finger and grumbles into its tail)* ...Mmh... go bother the bull... I'm off the clock... Zzz...";
+            return "...Mmh... go bother the bull... I'm off the clock... Zzz...";
           }
-          return "*(It doesn't answer... It has curled tightly into an oxidized green ball and collapsed into an exhausted sleep)* ...Zzz... hrr... let COMEX fall where it wants... no more stories... I'm out... Zzz...";
+          return "...Zzz... hrr... let COMEX fall where it wants... no more stories... I'm out... Zzz...";
         }
       }
       const story = currentStory(ctx, runtime);
@@ -650,13 +650,13 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     action: (ctx, runtime) => {
       if (ctx.mood === 'patina_bear') {
         const streak = runtime.storyStreak ?? 0;
-        if (streak === 3) return "It sighs heavily, massaging a stiff, patinated shoulder.";
-        if (streak === 4) return "Its eyelids droop heavily; its paws tremble slightly under the weight of its patina.";
+        if (streak === 3) return "It lets out a raspy sigh, massaging a stiff, patinated shoulder.";
+        if (streak === 4) return "Its eyelids droop heavily as a puff of green dust drifts down.";
         if (streak === 5) return "It presses both paws against its temples, wincing from pure exhaustion.";
         if (streak === 6) return "It curls into a defensive, trembling ball, refusing to meet your eyes.";
         if (streak >= 7) {
           if (runtime.lastChoiceId === 'bear-sleep-poke') {
-            return "It buries its face deeper under its front paws and snores louder.";
+            return "It buries its face deeper under its paws and snores louder.";
           }
           return "Cuprum has completely fallen asleep, breathing softly with tiny raspy wheezes.";
         }

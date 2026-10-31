@@ -42,7 +42,18 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     },
     ref,
   ) {
-    const text = speech.trim();
+    const rawSpeech = speech.trim();
+    const stageMatch = rawSpeech.match(/^\s*\*\((.*?)\)\*\s*|^\s*\*(.*?)\*\s*/);
+    const text = stageMatch ? rawSpeech.slice(stageMatch[0].length).trim() : rawSpeech;
+    const stageAction = stageMatch ? (stageMatch[1] || stageMatch[2]).trim() : null;
+    const resolvedAction = action
+      ? stageAction
+        ? `${action.replace(/\.?$/, ';')} ${stageAction}.`
+        : action
+      : stageAction
+        ? `${stageAction}.`
+        : null;
+
     const reducedMotion = usePrefersReducedMotion();
     const [visibleCount, setVisibleCount] = useState(() =>
       getPrefersReducedMotion() ? text.length : 0,
@@ -134,7 +145,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     );
 
     const visibleText = text.slice(0, visibleCount);
-    const spokenText = action ? `${action} ${text}` : text;
+    const spokenText = resolvedAction ? `${resolvedAction} ${text}` : text;
 
     return (
       <div
@@ -190,7 +201,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
           )}
 
           <div className="cm-cuprum-copy" key={text}>
-            {action && <p className="cm-cuprum-action">{action}</p>}
+            {resolvedAction && <p className="cm-cuprum-action">{resolvedAction}</p>}
 
             <p className="cm-cuprum-speech" aria-hidden="true">
               {visibleText}
