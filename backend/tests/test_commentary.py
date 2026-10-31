@@ -514,7 +514,7 @@ def test_tft_xai_block_is_injected_into_openrouter_prompt(monkeypatch):
     assert "q90 +0.0500" in prompt
     assert "direction BULLISH" in prompt
     assert "risk level MEDIUM" in prompt
-    assert "HG=F_close" in prompt
+    assert "HG=F_close" not in prompt
     assert "42.3% of encoder focus" in prompt
     assert "recent: +2.10% over 5 sessions" in prompt
     assert "2026-10-14 — 50.0%" in prompt

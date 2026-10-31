@@ -400,12 +400,19 @@ def build_companion_state(
     confidence_band = _resolve_confidence_band(commentary_record, explain_payload)
 
     synthesis = sections.get("synthesis") if isinstance(sections, dict) else ""
+    cuprum_daily = sections.get("cuprum_daily") if isinstance(sections, dict) else None
+    # The LLM writes a dedicated reader-facing headline; the institutional
+    # synthesis paragraph is only a fallback for rows generated before it.
+    llm_headline = (
+        str(cuprum_daily.get("headline") or "").strip()
+        if isinstance(cuprum_daily, dict)
+        else ""
+    )
     headline_quote = (
-        _first_sentences(synthesis or "", 2)
+        llm_headline
+        or _first_sentences(synthesis or "", 2)
         or _DEFAULT_HEADLINE_QUOTE
     )
-
-    cuprum_daily = sections.get("cuprum_daily") if isinstance(sections, dict) else None
     return {
         "character": _CHARACTER,
         "mood": mood,
