@@ -41,6 +41,9 @@ def load_finbert_classifier():
     """
     import os
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -147,7 +150,13 @@ def fit_pca(
 
 def load_pca(path: str) -> "IncrementalPCA":
     import joblib
-    return joblib.load(path)
+    import warnings
+    import joblib
+    from sklearn.exceptions import InconsistentVersionWarning
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+        return joblib.load(path)
 
 
 def reduce_embeddings(

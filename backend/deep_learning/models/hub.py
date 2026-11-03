@@ -235,13 +235,15 @@ def _metadata_contract_valid(metadata_path: Path) -> bool:
         return False
 
 
-def validate_tft_artifact_set(local_dir: str | Path) -> bool:
+def validate_tft_artifact_set(local_dir: str | Path, *, quiet: bool = False) -> bool:
     """Validate the minimum healthy TFT artifact set for weekly inference."""
     local_dir = Path(local_dir)
     missing = [
         name for name in _REQUIRED_ARTIFACTS if not (local_dir / name).exists()
     ]
     if missing:
+        if quiet:
+            return False
         logger.warning(
             "TFT artifact set incomplete in %s: missing %s",
             local_dir,
@@ -343,7 +345,7 @@ def download_tft_artifacts(
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    if validate_tft_artifact_set(local_dir):
+    if validate_tft_artifact_set(local_dir, quiet=True):
         logger.debug("TFT artifact set already present locally: %s", local_dir)
         return True
 

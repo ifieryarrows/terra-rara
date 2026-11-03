@@ -174,6 +174,7 @@ def _clean_json_content(content: str) -> str:
     except Exception:
         pass
 
+    decoder = json.JSONDecoder()
     last_brace = normalized.rfind("}")
     if last_brace != -1:
         # Search backwards for candidate '{' followed by a JSON key
@@ -189,13 +190,30 @@ def _clean_json_content(content: str) -> str:
                 ):
                     return chunk
             except Exception:
+                pass
+            try:
+                parsed, end_idx = decoder.raw_decode(normalized, idx)
+                if isinstance(parsed, dict) and any(
+                    k in parsed for k in ("stance", "commentary", "headline", "cuprum_daily")
+                ):
+                    return normalized[idx:end_idx]
+            except Exception:
+                pass
+            try:
+                repaired = _repair_json_string(chunk)
+                parsed = json.loads(repaired)
+                if isinstance(parsed, dict) and any(
+                    k in parsed for k in ("stance", "commentary", "headline", "cuprum_daily")
+                ):
+                    return repaired
+            except Exception:
                 try:
-                    repaired = _repair_json_string(chunk)
-                    parsed = json.loads(repaired)
+                    repaired_tail = _repair_json_string(normalized[idx:])
+                    parsed, end_idx = decoder.raw_decode(repaired_tail, 0)
                     if isinstance(parsed, dict) and any(
                         k in parsed for k in ("stance", "commentary", "headline", "cuprum_daily")
                     ):
-                        return repaired
+                        return repaired_tail[:end_idx]
                 except Exception:
                     continue
 

@@ -115,3 +115,20 @@ def test_clean_json_content_handles_reasoning_scratchpad_with_braces():
     assert data["headline"] == "Copper cools over five sessions."
     assert data["cuprum_daily"]["mood"] == "patina_bear"
 
+
+
+def test_clean_json_content_handles_trailing_extra_data_after_json_object():
+    import json
+    from app.commentary import _clean_json_content
+
+    trailing_brace_output = (
+        '{"stance":"BEARISH","headline":"Copper softens.",'
+        '"commentary":"RISKS:\\n• a\\nOPPORTUNITIES:\\n• b\\nSYNTHESIS: c\\nBIAS ACKNOWLEDGMENT: d\\nDISCLAIMER:\\nThis is NOT financial advice.",'
+        '"cuprum_daily":{"mood":"patina_bear","greeting":"hi","drivers_reply":"r","outlook_reply":"o","worry_reply":"w","board_read_reply":"b"}}\n'
+        'Note: schema validated against {stance, commentary}.'
+    )
+
+    cleaned = _clean_json_content(trailing_brace_output)
+    data = json.loads(cleaned)
+    assert data["stance"] == "BEARISH"
+    assert data["headline"] == "Copper softens."

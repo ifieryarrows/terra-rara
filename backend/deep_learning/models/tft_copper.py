@@ -1040,7 +1040,7 @@ def _format_prediction_legacy_simple_return(
         np.max(np.abs(raw_pred[..., median_idx] - sorted_pred[..., median_idx]))
     )
     if quantile_crossing_detected:
-        logger.error(
+        logger.info(
             "format_prediction: non-monotonic quantiles detected "
             "(raw_crossing_rate=%.3f, max_median_sort_gap=%.4f); public output "
             "uses the structural monotonic transform and exposes raw_quantiles for audit.",
@@ -1070,7 +1070,7 @@ def _format_prediction_legacy_simple_return(
         or quantile_crossing_detected
     )
     if abs(raw_median_0) > ANOMALY_DAILY_RET or abs(corrected_median_0) > ANOMALY_DAILY_RET:
-        logger.error(
+        logger.info(
             "format_prediction: anomalous return detected at T+1: raw=%.4f corrected=%.4f "
             "(|r| > %.3f). Likely a scaling / target-space bug; the value "
             "will be bounded at +/-%.2f and flagged in the response.",
@@ -1215,7 +1215,7 @@ def format_prediction(
         np.max(np.abs(pred[..., median_idx] - np.sort(pred, axis=-1)[..., median_idx]))
     )
     if quantile_crossing_detected:
-        logger.error(
+        logger.info(
             "format_prediction: non-monotonic quantiles detected "
             "(raw_crossing_rate=%.3f, raw_max_median_sort_gap=%.4f); public output "
             "uses the structural monotonic transform and exposes raw_quantiles for audit.",
@@ -1238,7 +1238,7 @@ def format_prediction(
         or quantile_crossing_detected
     )
     if abs(raw_median_0) > anomaly_bound or abs(corrected_median_0) > anomaly_bound:
-        logger.error(
+        logger.info(
             "format_prediction: anomalous log return detected at T+1: raw=%.4f corrected=%.4f",
             raw_median_0,
             corrected_median_0,
