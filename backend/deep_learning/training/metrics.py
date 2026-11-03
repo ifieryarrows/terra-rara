@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from app.accel import fast_sharpe_ratio_hac, fast_softplus_np
 from deep_learning.models.monotonic_quantiles import (
     DEFAULT_MONOTONIC_GAP_SCALE,
     enforce_monotonic_quantiles,
@@ -67,21 +68,26 @@ def monotonic_quantiles_np(
     pred: np.ndarray,
     median_idx: int | None = None,
 ) -> np.ndarray:
-    """Apply the production monotonic quantile transform to a numpy tensor."""
+    """Apply the production monotonic quantile transform using pure C/NumPy kernels."""
     arr = np.asarray(pred, dtype=np.float64)
     if arr.shape[-1] == 0:
         return arr.copy()
     if median_idx is None:
         median_idx = arr.shape[-1] // 2
-    tensor = torch.as_tensor(arr, dtype=torch.float64)
-    ordered = enforce_monotonic_quantiles(
-        tensor,
-        median_idx=median_idx,
-        min_gap=1e-5,
-        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
-        init_bias=-3.0,
-    )
-    return ordered.detach().cpu().numpy()
+    min_gap = 1e-5
+    gap_scale = DEFAULT_MONOTONIC_GAP_SCALE
+    init_bias = -3.0
+
+    base = arr[..., median_idx : median_idx + 1]
+    lower_raw = arr[..., :median_idx][..., ::-1] + init_bias
+    upper_raw = arr[..., median_idx + 1 :] + init_bias
+
+    lower_steps = min_gap + gap_scale * fast_softplus_np(lower_raw)
+    upper_steps = min_gap + gap_scale * fast_softplus_np(upper_raw)
+
+    lower = (base - np.cumsum(lower_steps, axis=-1))[..., ::-1]
+    upper = base + np.cumsum(upper_steps, axis=-1)
+    return np.concatenate([lower, base, upper], axis=-1)
 
 
 def apply_weekly_median_cap_np(
@@ -329,46 +335,69 @@ def fit_weekly_interval_scale(
     )
     q10_idx = quantiles.index(0.10)
     q90_idx = quantiles.index(0.90)
+
+    # Pre-compute constant components across the candidate grid:
+    # 1) The capped median path never depends on interval scale or conditioning power.
+    # 2) Only channels between q10..median and median..q90 contribute to PI80.
+    pred_h = pred[:n, :horizon, :]
+    raw_median = pred_h[..., median_idx : median_idx + 1]
+    bounded_base, _ = apply_weekly_median_cap_np(
+        pred_h,
+        weekly_median_cap=weekly_median_cap,
+        quantiles=quantiles,
+        horizon=horizon,
+    )
+    weekly_base = bounded_base[:, :horizon, median_idx].sum(axis=1)  # (n,)
+
+    active_idx = list(range(q10_idx, median_idx)) + list(range(median_idx + 1, q90_idx + 1))
+    n_low = median_idx - q10_idx
+    n_high = q90_idx - median_idx
+    centered_active = pred_h[..., active_idx] - raw_median  # (n, horizon, n_active)
+    offset_active = raw_median + (-3.0)  # (n, horizon, 1)
+    min_gap = 1e-5
+    gap_scale = DEFAULT_MONOTONIC_GAP_SCALE
+    base_gap_low = float(horizon * n_low) * min_gap
+    base_gap_high = float(horizon * n_high) * min_gap
+
+    if conditioning_enabled and condition_values is not None and condition_reference is not None:
+        valid_cond = np.isfinite(condition_values) & (condition_values > 1e-12)
+        ratio_cond = np.ones_like(condition_values, dtype=np.float64)
+        ratio_cond[valid_cond] = condition_values[valid_cond] / float(condition_reference)
+        clipped_ratio_cond = np.clip(
+            ratio_cond,
+            float(conditioning_min_factor),
+            float(conditioning_max_factor),
+        )
+    else:
+        clipped_ratio_cond = None
+
+    y_row = actual_weekly[None, :]  # (1, n)
+    inv_alpha_2 = 2.0 / 0.20
+
     for power in power_candidates:
-        coverages: list[float] = []
-        interval_scores: list[float] = []
-        for candidate in candidates:
-            scaled = apply_weekly_interval_scale_np(
-                pred[:n],
-                float(candidate),
-                quantiles=quantiles,
-                conditioning_values=condition_values,
-                conditioning_reference=condition_reference,
-                conditioning_power=float(power),
-                conditioning_min_factor=conditioning_min_factor,
-                conditioning_max_factor=conditioning_max_factor,
-                conditioning_min_scale=conditioning_min_scale,
-                conditioning_max_scale=conditioning_max_scale,
-            )
-            bounded, _ = apply_weekly_median_cap_np(
-                scaled,
-                weekly_median_cap=weekly_median_cap,
-                quantiles=quantiles,
-                horizon=horizon,
-            )
-            ordered = monotonic_quantiles_np(bounded, median_idx=median_idx)
-            weekly = cumulative_quantiles(ordered, horizon=horizon)
-            coverage = prediction_interval_coverage(
-                actual_weekly,
-                weekly[:, q10_idx],
-                weekly[:, q90_idx],
-            )
-            coverages.append(float(coverage))
-            interval_scores.append(
-                float(
-                    interval_score(
-                        actual_weekly,
-                        weekly[:, q10_idx],
-                        weekly[:, q90_idx],
-                        alpha=0.20,
-                    )
-                )
-            )
+        if clipped_ratio_cond is not None:
+            factors = clipped_ratio_cond ** float(power)
+            mult = np.clip(
+                candidates[:, None] * factors[None, :],
+                float(conditioning_min_scale),
+                float(conditioning_max_scale),
+            )[:, :, None, None]  # (C, n, 1, 1)
+        else:
+            mult = candidates[:, None, None, None]  # (C, 1, 1, 1)
+
+        x = offset_active[None, ...] + mult * centered_active[None, ...]  # (C, n, horizon, n_active)
+        sp_horizon_sum = fast_softplus_np(x).sum(axis=2)  # (C, n, n_active)
+        low_offset = base_gap_low + gap_scale * sp_horizon_sum[:, :, :n_low].sum(axis=2)
+        high_offset = base_gap_high + gap_scale * sp_horizon_sum[:, :, n_low:].sum(axis=2)
+
+        lo = weekly_base[None, :] - low_offset  # (C, n)
+        hi = weekly_base[None, :] + high_offset  # (C, n)
+
+        coverages = ((y_row >= lo) & (y_row <= hi)).mean(axis=1)
+        width = hi - lo
+        below = np.maximum(lo - y_row, 0.0)
+        above = np.maximum(y_row - hi, 0.0)
+        interval_scores = (width + inv_alpha_2 * below + inv_alpha_2 * above).mean(axis=1)
 
         eligible = [
             idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
@@ -377,9 +406,9 @@ def fit_weekly_interval_scale(
             chosen_idx = min(
                 eligible,
                 key=lambda idx: (
-                    interval_scores[idx],
-                    abs(coverages[idx] - float(target_coverage)),
-                    candidates[idx],
+                    float(interval_scores[idx]),
+                    abs(float(coverages[idx]) - float(target_coverage)),
+                    float(candidates[idx]),
                 ),
             )
             selection_method = "validation_interval_score_with_one_observation_floor"
@@ -388,7 +417,10 @@ def fit_weekly_interval_scale(
             # target-closest behavior rather than silently widening the interval.
             chosen_idx = min(
                 range(len(candidates)),
-                key=lambda idx: (abs(coverages[idx] - float(target_coverage)), candidates[idx]),
+                key=lambda idx: (
+                    abs(float(coverages[idx]) - float(target_coverage)),
+                    float(candidates[idx]),
+                ),
             )
             selection_method = "coverage_target_fallback"
         candidate_results.append(
@@ -647,25 +679,12 @@ def sharpe_ratio_hac(
     Newey-West (Bartlett kernel) autocorrelation-adjusted Annualised Sharpe Ratio
     for overlapping multi-day cumulative returns (MA(h-1) serial correlation).
     """
-    arr = np.asarray(returns, dtype=np.float64)
-    n = arr.size
-    if n < 2:
-        return 0.0
-    excess = arr - risk_free_rate / annualisation
-    centered = excess - excess.mean()
-    gamma_0 = float(np.dot(centered, centered) / n)
-    if gamma_0 < 1e-18:
-        return 0.0
-    hac_var = gamma_0
-    effective_lag = min(max(int(max_lag), 0), n - 1)
-    for lag in range(1, effective_lag + 1):
-        weight = 1.0 - lag / (effective_lag + 1.0)
-        gamma_lag = float(np.dot(centered[lag:], centered[:-lag]) / n)
-        hac_var += 2.0 * weight * gamma_lag
-    hac_std = np.sqrt(max(hac_var, gamma_0 * 1e-6))
-    if hac_std < 1e-9:
-        return 0.0
-    return float(np.sqrt(annualisation) * excess.mean() / hac_std)
+    return fast_sharpe_ratio_hac(
+        returns,
+        risk_free_rate=risk_free_rate,
+        annualisation=annualisation,
+        max_lag=max_lag,
+    )
 
 
 def sortino_ratio(

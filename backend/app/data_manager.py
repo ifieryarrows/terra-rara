@@ -21,7 +21,7 @@ from typing import Optional
 
 import requests
 import yfinance as yf
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process as rf_process
 from langdetect import detect, LangDetectException
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -228,19 +228,23 @@ def is_fuzzy_duplicate(
 ) -> bool:
     """
     Check if title is too similar to existing titles.
-    Uses token_set_ratio for robust matching.
+    Uses RapidFuzz C++/SIMD extractOne with score_cutoff early pruning.
     """
     if not title or not existing_titles:
         return False
-    
+
     canon = canonical_title(title)
-    
-    for existing in existing_titles:
-        similarity = fuzz.token_set_ratio(canon, existing)
-        if similarity >= threshold:
-            logger.debug(f"Fuzzy duplicate ({similarity}%): '{title[:50]}...'")
-            return True
-    
+    match = rf_process.extractOne(
+        canon,
+        existing_titles,
+        scorer=fuzz.token_set_ratio,
+        score_cutoff=threshold,
+        processor=None,
+    )
+    if match is not None:
+        logger.debug(f"Fuzzy duplicate ({match[1]:.1f}%): '{title[:50]}...'")
+        return True
+
     return False
 
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from bs4 import BeautifulSoup
+from app.accel import fast_canonical_title, fast_strip_html
 
 
 def normalize_whitespace(text: str) -> str:
@@ -21,17 +22,14 @@ def strip_html(text: str) -> str:
     """Remove HTML tags from text."""
     if not text:
         return ""
-    soup = BeautifulSoup(text, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
+    return fast_strip_html(text)
 
 
 def clean_text(text: str) -> str:
     """Clean text by removing HTML and normalizing whitespace."""
     if not text:
         return ""
-    text = strip_html(text)
-    text = normalize_whitespace(text)
-    return text.strip()
+    return fast_strip_html(text)
 
 
 def canonical_title(title: str) -> str:
@@ -41,15 +39,7 @@ def canonical_title(title: str) -> str:
     - Remove punctuation
     - Normalize whitespace
     """
-    if not title:
-        return ""
-    # Lowercase
-    title = title.lower()
-    # Remove punctuation (keep alphanumeric and spaces)
-    title = re.sub(r"[^\w\s]", " ", title)
-    # Normalize whitespace
-    title = normalize_whitespace(title)
-    return title
+    return fast_canonical_title(title)
 
 
 def normalize_url(url: str) -> str:
