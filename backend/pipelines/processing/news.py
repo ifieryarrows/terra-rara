@@ -90,6 +90,9 @@ def process_single_raw(
     session: Session,
     raw: NewsRaw,
     run_id: uuid.UUID,
+    *,
+    canonical_cache: Optional[dict[str, int]] = None,
+    _is_duplicate_out: Optional[list[bool]] = None,
 ) -> Optional[int]:
     """
     Process a single NewsRaw into NewsProcessed.
@@ -123,16 +126,22 @@ def process_single_raw(
         # already processed in this batch.
         with session.begin_nested():
             raw.publisher = publisher
-            canonical = (
-                session.query(NewsProcessed)
-                .filter(
-                    NewsProcessed.dedup_key == dedup,
-                    NewsProcessed.duplicate_of_id.is_(None),
+            if canonical_cache is not None and dedup in canonical_cache:
+                duplicate_of_id = canonical_cache[dedup]
+            else:
+                canonical = (
+                    session.query(NewsProcessed)
+                    .filter(
+                        NewsProcessed.dedup_key == dedup,
+                        NewsProcessed.duplicate_of_id.is_(None),
+                    )
+                    .first()
                 )
-                .first()
-            )
-            duplicate_of_id = canonical.id if canonical is not None else None
-            row_key = dedup if canonical is None else hashlib.sha256(
+                duplicate_of_id = canonical.id if canonical is not None else None
+                if canonical_cache is not None and duplicate_of_id is not None:
+                    canonical_cache[dedup] = duplicate_of_id
+
+            row_key = dedup if duplicate_of_id is None else hashlib.sha256(
                 f"duplicate|{raw.id}|{dedup}".encode("utf-8")
             ).hexdigest()
             processed = NewsProcessed(
@@ -150,6 +159,10 @@ def process_single_raw(
             session.add(processed)
             session.flush()
             processed_id = processed.id
+            if canonical_cache is not None and duplicate_of_id is None and processed_id is not None:
+                canonical_cache[dedup] = processed_id
+            if _is_duplicate_out is not None:
+                _is_duplicate_out.append(duplicate_of_id is not None)
         return processed_id
             
     except Exception as e:
@@ -200,6 +213,8 @@ def process_raw_to_processed(
     if total == 0:
         return stats
     
+    canonical_cache: dict[str, int] = {}
+
     # The query shrinks after every commit. Always consume its first page;
     # offset pagination here used to skip every second batch.
     while True:
@@ -207,15 +222,49 @@ def process_raw_to_processed(
         
         if not batch:
             break
+
+        # Pre-populate canonical_cache for this batch in a single SQL query
+        if isinstance(session, Session):
+            batch_dedup_keys = [
+                compute_content_dedup_key(
+                    raw.title,
+                    normalize_publisher(raw.publisher),
+                    raw.published_at,
+                )
+                for raw in batch
+            ]
+            missing_keys = [k for k in set(batch_dedup_keys) if k not in canonical_cache]
+            if missing_keys:
+                existing_canonicals = (
+                    session.query(NewsProcessed.dedup_key, NewsProcessed.id)
+                    .filter(
+                        NewsProcessed.dedup_key.in_(missing_keys),
+                        NewsProcessed.duplicate_of_id.is_(None),
+                    )
+                    .all()
+                )
+                for d_key, p_id in existing_canonicals:
+                    canonical_cache[d_key] = p_id
         
         for raw in batch:
             stats["processed"] += 1
+            dup_flag: list[bool] = []
             
-            result = process_single_raw(session, raw, run_id)
+            result = process_single_raw(
+                session,
+                raw,
+                run_id,
+                canonical_cache=canonical_cache if isinstance(session, Session) else None,
+                _is_duplicate_out=dup_flag,
+            )
             
             if result:
-                processed = session.get(NewsProcessed, result)
-                if processed is not None and processed.duplicate_of_id is not None:
+                if dup_flag:
+                    is_dup = dup_flag[0]
+                else:
+                    processed = session.get(NewsProcessed, result)
+                    is_dup = processed is not None and processed.duplicate_of_id is not None
+                if is_dup:
                     stats["duplicates"] += 1
                 else:
                     stats["inserted"] += 1

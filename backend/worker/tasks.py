@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db import SessionLocal, get_engine, init_db, get_db_type
+from app.db import SessionLocal, get_engine, init_db, ensure_db_initialized, get_db_type
 from app.settings import get_settings
 from app.models import PipelineRunMetrics
 from adapters.db.lock import (
@@ -267,8 +267,8 @@ async def run_pipeline(
     
     logger.info(f"[run_id={run_id}] Pipeline starting: trigger={trigger_source}, train_model={train_model}")
     
-    # Initialize database
-    init_db()
+    # Initialize database (runs DDL/migrations once per engine instance)
+    ensure_db_initialized()
     
     # Get a dedicated session for this pipeline run
     # IMPORTANT: This session holds the advisory lock
@@ -982,12 +982,16 @@ async def _execute_pipeline_stages_v2(
                     # Graft missing context from the most recent successful XGBoost run.
                     # The report lives in the snapshot payload (report_json); the
                     # ORM row itself carries no sentiment/influencer columns.
-                    snapshot_payloads = [
-                        row.report_json
-                        for row in session.query(AnalysisSnapshot)
+                    snap_query = (
+                        session.query(AnalysisSnapshot)
                         .filter(AnalysisSnapshot.symbol == "HG=F")
                         .order_by(AnalysisSnapshot.generated_at.desc())
-                        .all()
+                    )
+                    if hasattr(snap_query, "limit"):
+                        snap_query = snap_query.limit(10)
+                    snapshot_payloads = [
+                        row.report_json
+                        for row in snap_query.all()
                     ]
                     xgb_context = _xgb_commentary_context(snapshot_payloads)
                     sentiment_index = xgb_context["sentiment_index"]

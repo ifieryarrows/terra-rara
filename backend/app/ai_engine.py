@@ -271,6 +271,50 @@ def get_finbert_pipeline():
     return pipe
 
 
+def _parse_finbert_raw_item(raw_output: Any) -> dict:
+    """Parse a single FinBERT output item into probability and score dict."""
+    results = _normalize_finbert_output(raw_output)
+    if not results:
+        logger.warning("FinBERT output normalized to empty list, using neutral fallback")
+        return _neutral_finbert_score()
+
+    probs: dict[str, float] = {}
+    for row in results:
+        label = row.get("label")
+        score = row.get("score")
+        if not isinstance(label, str):
+            continue
+        try:
+            probs[label.lower()] = float(score)
+        except (TypeError, ValueError):
+            continue
+
+    required_labels = {"positive", "neutral", "negative"}
+    if not required_labels.issubset(probs):
+        global _FINBERT_MISSING_LABELS_WARNED
+        if not _FINBERT_MISSING_LABELS_WARNED:
+            logger.warning(
+                "FinBERT output missing labels. found=%s expected=%s (further repeats suppressed)",
+                sorted(probs.keys()),
+                sorted(required_labels),
+            )
+            _FINBERT_MISSING_LABELS_WARNED = True
+        return _neutral_finbert_score()
+
+    prob_pos = probs["positive"]
+    prob_neu = probs["neutral"]
+    prob_neg = probs["negative"]
+    score = prob_pos - prob_neg
+
+    return {
+        "prob_positive": prob_pos,
+        "prob_neutral": prob_neu,
+        "prob_negative": prob_neg,
+        "score": score,
+        "available": True,
+    }
+
+
 def score_text_with_finbert(
     pipe,
     text: str
@@ -294,52 +338,14 @@ def score_text_with_finbert(
             # Older transformers pipeline signature may not support top_k argument.
             raw_output = pipe(text)
         _log_finbert_output_once(raw_output)
-        results = _normalize_finbert_output(raw_output)
-        if not results:
-            logger.warning("FinBERT output normalized to empty list, using neutral fallback")
-            return _neutral_finbert_score()
-
-        probs: dict[str, float] = {}
-        for row in results:
-            label = row.get("label")
-            score = row.get("score")
-            if not isinstance(label, str):
-                continue
-            try:
-                probs[label.lower()] = float(score)
-            except (TypeError, ValueError):
-                continue
-
-        required_labels = {"positive", "neutral", "negative"}
-        if not required_labels.issubset(probs):
-            global _FINBERT_MISSING_LABELS_WARNED
-            if not _FINBERT_MISSING_LABELS_WARNED:
-                logger.warning(
-                    "FinBERT output missing labels. found=%s expected=%s (further repeats suppressed)",
-                    sorted(probs.keys()),
-                    sorted(required_labels),
-                )
-                _FINBERT_MISSING_LABELS_WARNED = True
-            return _neutral_finbert_score()
-
-        prob_pos = probs["positive"]
-        prob_neu = probs["neutral"]
-        prob_neg = probs["negative"]
-        
-        # Derived score: positive - negative (range: -1 to 1)
-        score = prob_pos - prob_neg
-        
-        return {
-            "prob_positive": prob_pos,
-            "prob_neutral": prob_neu,
-            "prob_negative": prob_neg,
-            "score": score,
-            "available": True,
-        }
+        return _parse_finbert_raw_item(raw_output)
         
     except Exception as e:
         logger.warning(f"FinBERT scoring error: {e}")
         return _neutral_finbert_score()
+
+
+_ORIGINAL_SCORE_TEXT_WITH_FINBERT = score_text_with_finbert
 
 
 # =============================================================================
@@ -1358,6 +1364,57 @@ def score_batch_with_finbert_v2(articles: list[dict]) -> dict[int, dict]:
         }
     results: dict[int, dict] = {}
 
+    is_real_pipeline = (
+        score_text_with_finbert is _ORIGINAL_SCORE_TEXT_WITH_FINBERT
+        and type(pipe).__module__.startswith("transformers")
+        and len(articles) > 1
+    )
+    if is_real_pipeline:
+        valid_ids: list[int] = []
+        valid_texts: list[str] = []
+        for article in articles:
+            article_id = int(article["id"])
+            text = str(
+                article.get("text")
+                or f"{article.get('title', '')} {article.get('description', '')}"
+            )[:1000]
+            if not text or len(text.strip()) < 10:
+                scores = _neutral_finbert_score()
+                results[article_id] = {
+                    "prob_positive": float(scores["prob_positive"]),
+                    "prob_neutral": float(scores["prob_neutral"]),
+                    "prob_negative": float(scores["prob_negative"]),
+                    "tone": float(scores["score"]),
+                    "magnitude": abs(float(scores["prob_positive"]) - float(scores["prob_negative"])),
+                    "available": bool(scores.get("available", False)),
+                }
+            else:
+                valid_ids.append(article_id)
+                valid_texts.append(text)
+
+        if valid_texts:
+            try:
+                try:
+                    raw_batch = pipe(valid_texts, batch_size=16, top_k=None)
+                except TypeError:
+                    raw_batch = pipe(valid_texts, batch_size=16)
+                if isinstance(raw_batch, list) and len(raw_batch) == len(valid_ids):
+                    _log_finbert_output_once(raw_batch[0])
+                    for article_id, raw_item in zip(valid_ids, raw_batch):
+                        scores = _parse_finbert_raw_item(raw_item)
+                        results[article_id] = {
+                            "prob_positive": float(scores["prob_positive"]),
+                            "prob_neutral": float(scores["prob_neutral"]),
+                            "prob_negative": float(scores["prob_negative"]),
+                            "tone": float(scores["score"]),
+                            "magnitude": abs(float(scores["prob_positive"]) - float(scores["prob_negative"])),
+                            "available": bool(scores.get("available", False)),
+                        }
+                    return results
+            except Exception as exc:
+                logger.debug("Batched FinBERT fallback to per-item scoring: %s", exc)
+                results.clear()
+
     for article in articles:
         article_id = int(article["id"])
         text = str(
@@ -1941,18 +1998,38 @@ def aggregate_daily_sentiment_v2(
             row["days_since_last_material_news"] = int((row["market_date"] - last_material).days)
         row["stale_sentiment_flag"] = row["days_since_last_material_news"] > 3
 
+    existing_by_market_date: dict = {}
+    existing_by_date: dict = {}
+    if isinstance(session, Session) and daily_rows:
+        for existing_row in session.query(DailySentimentV2).all():
+            if existing_row.market_date is not None:
+                existing_by_market_date[existing_row.market_date] = existing_row
+            if existing_row.date is not None:
+                dt_key = (
+                    existing_row.date.replace(tzinfo=timezone.utc)
+                    if existing_row.date.tzinfo is None
+                    else existing_row.date
+                )
+                existing_by_date[dt_key] = existing_row
+
     count = 0
+    now_utc = datetime.now(timezone.utc)
     for row in daily_rows:
         date_dt = row["date"].to_pydatetime()
         if date_dt.tzinfo is None:
             date_dt = date_dt.replace(tzinfo=timezone.utc)
 
-        existing = session.query(DailySentimentV2).filter(
-            or_(
-                DailySentimentV2.market_date == row["market_date"],
-                DailySentimentV2.date == date_dt,
-            )
-        ).first()
+        if isinstance(session, Session):
+            existing = existing_by_market_date.get(
+                row["market_date"]
+            ) or existing_by_date.get(date_dt)
+        else:
+            existing = session.query(DailySentimentV2).filter(
+                or_(
+                    DailySentimentV2.market_date == row["market_date"],
+                    DailySentimentV2.date == date_dt,
+                )
+            ).first()
         if existing:
             existing.sentiment_index = row["sentiment_index"]
             existing.news_count = row["news_count"]
@@ -1966,25 +2043,27 @@ def aggregate_daily_sentiment_v2(
             existing.avg_confidence = row["avg_confidence"]
             existing.avg_relevance = row["avg_relevance"]
             existing.source_version = "v2"
-            existing.aggregated_at = datetime.now(timezone.utc)
+            existing.aggregated_at = now_utc
         else:
-            session.add(
-                DailySentimentV2(
-                    date=date_dt,
-                    market_date=row["market_date"],
-                    sentiment_index=row["sentiment_index"],
-                    news_count=row["news_count"],
-                    material_news_count=row["material_news_count"],
-                    after_close_news_count=row["after_close_news_count"],
-                    days_since_last_material_news=row["days_since_last_material_news"],
-                    stale_sentiment_flag=row["stale_sentiment_flag"],
-                    cutoff_version="market_close_v1",
-                    avg_confidence=row["avg_confidence"],
-                    avg_relevance=row["avg_relevance"],
-                    source_version="v2",
-                    aggregated_at=datetime.now(timezone.utc),
-                )
+            new_row = DailySentimentV2(
+                date=date_dt,
+                market_date=row["market_date"],
+                sentiment_index=row["sentiment_index"],
+                news_count=row["news_count"],
+                material_news_count=row["material_news_count"],
+                after_close_news_count=row["after_close_news_count"],
+                days_since_last_material_news=row["days_since_last_material_news"],
+                stale_sentiment_flag=row["stale_sentiment_flag"],
+                cutoff_version="market_close_v1",
+                avg_confidence=row["avg_confidence"],
+                avg_relevance=row["avg_relevance"],
+                source_version="v2",
+                aggregated_at=now_utc,
             )
+            session.add(new_row)
+            if isinstance(session, Session):
+                existing_by_market_date[row["market_date"]] = new_row
+                existing_by_date[date_dt] = new_row
         count += 1
 
     session.commit()
