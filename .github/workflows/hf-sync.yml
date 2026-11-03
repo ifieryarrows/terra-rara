@@ -17,6 +17,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_HUB_ENABLE_HF_TRANSFER: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,8 +32,8 @@ jobs:
           fi
           echo "HF_TOKEN secret is configured"
 
-      - name: Install huggingface_hub
-        run: pip install huggingface_hub
+      - name: Install huggingface_hub with Rust hf_transfer
+        run: pip install "huggingface_hub[hf_transfer]"
 
       - name: Prepare files for upload
         run: |

@@ -15,7 +15,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-from app.accel import fast_sharpe_ratio_hac, fast_softplus_np
+from app.accel import (
+    fast_fit_weekly_interval_grid,
+    fast_monotonic_quantiles_np,
+    fast_quantile_crossing_rate,
+    fast_quantile_median_sort_gap,
+    fast_sharpe_ratio_hac,
+    fast_softplus_np,
+)
 from deep_learning.models.monotonic_quantiles import (
     DEFAULT_MONOTONIC_GAP_SCALE,
     enforce_monotonic_quantiles,
@@ -68,26 +75,14 @@ def monotonic_quantiles_np(
     pred: np.ndarray,
     median_idx: int | None = None,
 ) -> np.ndarray:
-    """Apply the production monotonic quantile transform using pure C/NumPy kernels."""
-    arr = np.asarray(pred, dtype=np.float64)
-    if arr.shape[-1] == 0:
-        return arr.copy()
-    if median_idx is None:
-        median_idx = arr.shape[-1] // 2
-    min_gap = 1e-5
-    gap_scale = DEFAULT_MONOTONIC_GAP_SCALE
-    init_bias = -3.0
-
-    base = arr[..., median_idx : median_idx + 1]
-    lower_raw = arr[..., :median_idx][..., ::-1] + init_bias
-    upper_raw = arr[..., median_idx + 1 :] + init_bias
-
-    lower_steps = min_gap + gap_scale * fast_softplus_np(lower_raw)
-    upper_steps = min_gap + gap_scale * fast_softplus_np(upper_raw)
-
-    lower = (base - np.cumsum(lower_steps, axis=-1))[..., ::-1]
-    upper = base + np.cumsum(upper_steps, axis=-1)
-    return np.concatenate([lower, base, upper], axis=-1)
+    """Apply the production monotonic quantile transform using Rust or C/NumPy kernels."""
+    return fast_monotonic_quantiles_np(
+        pred,
+        median_idx=median_idx,
+        min_gap=1e-5,
+        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
+        init_bias=-3.0,
+    )
 
 
 def apply_weekly_median_cap_np(
@@ -371,33 +366,23 @@ def fit_weekly_interval_scale(
     else:
         clipped_ratio_cond = None
 
-    y_row = actual_weekly[None, :]  # (1, n)
-    inv_alpha_2 = 2.0 / 0.20
-
     for power in power_candidates:
-        if clipped_ratio_cond is not None:
-            factors = clipped_ratio_cond ** float(power)
-            mult = np.clip(
-                candidates[:, None] * factors[None, :],
-                float(conditioning_min_scale),
-                float(conditioning_max_scale),
-            )[:, :, None, None]  # (C, n, 1, 1)
-        else:
-            mult = candidates[:, None, None, None]  # (C, 1, 1, 1)
-
-        x = offset_active[None, ...] + mult * centered_active[None, ...]  # (C, n, horizon, n_active)
-        sp_horizon_sum = fast_softplus_np(x).sum(axis=2)  # (C, n, n_active)
-        low_offset = base_gap_low + gap_scale * sp_horizon_sum[:, :, :n_low].sum(axis=2)
-        high_offset = base_gap_high + gap_scale * sp_horizon_sum[:, :, n_low:].sum(axis=2)
-
-        lo = weekly_base[None, :] - low_offset  # (C, n)
-        hi = weekly_base[None, :] + high_offset  # (C, n)
-
-        coverages = ((y_row >= lo) & (y_row <= hi)).mean(axis=1)
-        width = hi - lo
-        below = np.maximum(lo - y_row, 0.0)
-        above = np.maximum(y_row - hi, 0.0)
-        interval_scores = (width + inv_alpha_2 * below + inv_alpha_2 * above).mean(axis=1)
+        coverages, interval_scores = fast_fit_weekly_interval_grid(
+            actual_weekly=actual_weekly,
+            weekly_base=weekly_base,
+            offset_active=offset_active,
+            centered_active=centered_active,
+            candidates=candidates,
+            clipped_ratio_cond=clipped_ratio_cond,
+            power=float(power),
+            n_low=n_low,
+            n_high=n_high,
+            min_scale=float(conditioning_min_scale),
+            max_scale=float(conditioning_max_scale),
+            min_gap=min_gap,
+            gap_scale=gap_scale,
+            alpha=0.20,
+        )
 
         eligible = [
             idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
@@ -624,13 +609,7 @@ def quantile_crossing_rate(y_pred_quantiles: np.ndarray, eps: float = 1e-12) -> 
     """
     Fraction of adjacent quantile pairs that violate monotonic ordering.
     """
-    arr = np.asarray(y_pred_quantiles, dtype=np.float64)
-    if arr.ndim == 1:
-        arr = arr.reshape(1, -1)
-    if arr.shape[-1] < 2:
-        return 0.0
-    violations = np.diff(arr, axis=-1) < -eps
-    return float(violations.mean())
+    return fast_quantile_crossing_rate(y_pred_quantiles, eps=eps)
 
 
 def quantile_median_sort_gap(
@@ -640,16 +619,7 @@ def quantile_median_sort_gap(
     """
     Mean and max absolute movement of q50 after monotonic sorting.
     """
-    arr = np.asarray(y_pred_quantiles, dtype=np.float64)
-    if arr.ndim == 1:
-        arr = arr.reshape(1, -1)
-    if arr.shape[-1] == 0:
-        return 0.0, 0.0
-    if median_idx is None:
-        median_idx = arr.shape[-1] // 2
-    sorted_arr = np.sort(arr, axis=-1)
-    gap = np.abs(arr[..., median_idx] - sorted_arr[..., median_idx])
-    return float(gap.mean()), float(gap.max())
+    return fast_quantile_median_sort_gap(y_pred_quantiles, median_idx=median_idx)
 
 
 def sharpe_ratio(

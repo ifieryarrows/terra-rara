@@ -67,23 +67,10 @@ def compute_curve_slope(
     if combined.empty:
         return pd.DataFrame()
 
-    ranks = np.arange(len(sorted_keys), dtype=np.float64)
-    rank_mean = ranks.mean()
-    rank_var = ((ranks - rank_mean) ** 2).sum()
+    from app.accel import fast_ols_row_slope
 
     features = pd.DataFrame(index=combined.index)
-
-    def _slope(row):
-        vals = row.values.astype(float)
-        valid = ~np.isnan(vals)
-        if valid.sum() < 2:
-            return np.nan
-        v = vals[valid]
-        r = ranks[valid]
-        rm = r.mean()
-        return ((r - rm) * (v - v.mean())).sum() / ((r - rm) ** 2).sum()
-
-    features["futures_curve_slope"] = combined.apply(_slope, axis=1)
+    features["futures_curve_slope"] = fast_ols_row_slope(combined.to_numpy(dtype=np.float64))
     features["futures_curve_slope_ma5"] = features["futures_curve_slope"].rolling(5, min_periods=1).mean()
 
     return features
