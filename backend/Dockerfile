@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 COPY ./rust_accel /build/rust_accel
-RUN cd /build/rust_accel && maturin build --release --out /wheels
+RUN cd /build/rust_accel && maturin build --release -i python3 --out /wheels
 
 # =============================================================================
 # Stage 2: Lean Production Runtime Image (Zero Rust Toolchain Bloat)
@@ -42,14 +42,15 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/code \
     REDIS_URL=redis://127.0.0.1:6379/0 \
     HF_HOME=/data/hf_cache \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
     HF_HUB_DISABLE_PROGRESS_BARS=1 \
     TRANSFORMERS_VERBOSITY=error \
     TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
     TOKENIZERS_PARALLELISM=false
 
-# Install compiled Rust PyO3 wheel from builder stage (~250 KB)
+# Install compiled Rust PyO3 wheel from builder stage (~250 KB) + Rust hf_transfer
 COPY --from=rust-builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN pip install --no-cache-dir /wheels/*.whl hf_transfer && rm -rf /wheels
 
 # Python deps
 COPY ./requirements.txt /code/requirements.txt

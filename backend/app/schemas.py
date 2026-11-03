@@ -201,6 +201,9 @@ class HealthResponse(BaseModel):
     price_bar_staleness_days: Optional[int] = Field(
         None, description="Calendar days between today and the latest PriceBar"
     )
+    accel_backend: Optional[str] = Field(
+        None, description="Active native compute acceleration backend (rust_pyo3 or native_c_simd)"
+    )
 
     class Config:
         json_schema_extra = {

@@ -562,6 +562,8 @@ async def health_check():
     else:
         status = "healthy"
     
+    from app.accel import ACCEL_BACKEND
+
     return HealthResponse(
         status=status,
         db_type=get_db_type(),
@@ -580,6 +582,7 @@ async def health_check():
         tft_reference_price_date=tft_reference_price_date,
         price_bar_latest_date=price_bar_latest_date,
         price_bar_staleness_days=price_bar_staleness_days,
+        accel_backend=ACCEL_BACKEND,
     )
 
 

@@ -22,6 +22,7 @@ env:
   PYTHONPATH: backend
   MODEL_DIR: /tmp/models
   PYTHONHASHSEED: "42"
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
   CUBLAS_WORKSPACE_CONFIG: ":4096:8"
   OMP_NUM_THREADS: "1"
   MKL_NUM_THREADS: "1"
@@ -49,6 +50,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -c constraints-tft.txt
+          pip install hf_transfer
+
+      - name: Cache and build native Rust acceleration (copper_rust_accel)
+        uses: actions/cache@v4
+        id: rust-wheel-cache
+        with:
+            path: /tmp/rust-wheels
+            key: rust-wheel-${{ runner.os }}-abi3-${{ hashFiles('backend/rust_accel/Cargo.toml', 'backend/rust_accel/Cargo.lock', 'backend/rust_accel/src/**') }}
+
+      - name: Install native Rust acceleration (copper_rust_accel)
+        working-directory: backend
+        run: |
+            if [ "${{ steps.rust-wheel-cache.outputs.cache-hit }}" != "true" ]; then
+              pip install maturin
+              cd rust_accel && maturin build --release -i python --out /tmp/rust-wheels && cd ..
+            fi
+            pip install --no-cache-dir /tmp/rust-wheels/*.whl
 
       - name: Create model directory
         run: |

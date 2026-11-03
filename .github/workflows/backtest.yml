@@ -81,6 +81,22 @@ jobs:
                   pip install -r backend/requirements.txt
                   pip install yfinance xgboost
 
+            - name: Cache and build native Rust acceleration (copper_rust_accel)
+              uses: actions/cache@v4
+              id: rust-wheel-cache
+              with:
+                  path: /tmp/rust-wheels
+                  key: rust-wheel-${{ runner.os }}-abi3-${{ hashFiles('backend/rust_accel/Cargo.toml', 'backend/rust_accel/Cargo.lock', 'backend/rust_accel/src/**') }}
+
+            - name: Install native Rust acceleration (copper_rust_accel)
+              working-directory: backend
+              run: |
+                  if [ "${{ steps.rust-wheel-cache.outputs.cache-hit }}" != "true" ]; then
+                    pip install maturin
+                    cd rust_accel && maturin build --release -i python --out /tmp/rust-wheels && cd ..
+                  fi
+                  pip install --no-cache-dir /tmp/rust-wheels/*.whl
+
             - name: Run backtest
               env:
                   # Inject DATABASE_URL so BacktestReport rows are persisted
