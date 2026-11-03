@@ -20,6 +20,10 @@ on:
                     - "false"
                     - "true"
 
+concurrency:
+    group: daily-pipeline
+    cancel-in-progress: false
+
 jobs:
     trigger-pipeline:
         runs-on: ubuntu-latest

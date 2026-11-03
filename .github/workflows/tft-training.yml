@@ -60,6 +60,10 @@ env:
     TFT_FEATURE_SNAPSHOT_PATH: /tmp/models/tft/feature_snapshot.pkl
     TFT_EXPECTED_DATA_SNAPSHOT_SHA: ${{ github.event.inputs.expected_data_snapshot_sha || '' }}
 
+concurrency:
+    group: tft-training
+    cancel-in-progress: false
+
 jobs:
     # ─────────────────────────────────────────────────────────────────────────
     # JOB 1 — Hyperparameter search (~108 min, own 3 h budget)

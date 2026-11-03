@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: hf-sync
+  cancel-in-progress: false
+
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
@@ -17,7 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Check token exists
         run: |
@@ -62,6 +66,8 @@ jobs:
                   '.pytest_cache/*',
                   'artifacts/*',
                   '*.egg-info/*',
+                  '.mypy_cache/*',
+                  '.ruff_cache/*',
               ],
           )
           print('Upload complete')

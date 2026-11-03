@@ -20,6 +20,10 @@ on:
 env:
   PYTHONPATH: backend
 
+concurrency:
+  group: screener-pipeline
+  cancel-in-progress: false
+
 jobs:
   screener-pipeline:
     runs-on: ubuntu-latest
