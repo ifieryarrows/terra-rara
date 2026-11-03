@@ -8,6 +8,7 @@ they are downloaded if not present locally.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import os
@@ -313,6 +314,34 @@ def upload_tft_artifacts(
         api = HfApi(token=token)
         api.create_repo(repo_id, repo_type="model", exist_ok=True, private=True)
 
+        # Use a single atomic commit when operating against the real HfApi
+        is_real_hf_api = type(api).__module__.startswith("huggingface_hub")
+        if is_real_hf_api and hasattr(api, "create_commit"):
+            try:
+                from huggingface_hub import CommitOperationAdd
+
+                operations = [
+                    CommitOperationAdd(
+                        path_in_repo=fpath.name,
+                        path_or_fileobj=str(fpath),
+                    )
+                    for fpath in files_to_upload
+                ]
+                api.create_commit(
+                    repo_id=repo_id,
+                    repo_type="model",
+                    operations=operations,
+                    commit_message=commit_message,
+                )
+                logger.info(
+                    "Uploaded %d TFT artifacts in a single atomic commit to %s",
+                    len(files_to_upload),
+                    repo_id,
+                )
+                return True
+            except ImportError:
+                pass
+
         for fpath in files_to_upload:
             api.upload_file(
                 path_or_fileobj=str(fpath),
@@ -360,10 +389,14 @@ def download_tft_artifacts(
     try:
         from huggingface_hub import hf_hub_download
 
-        for name in _ARTIFACTS:
+        to_download = [
+            name
+            for name in _ARTIFACTS
+            if not (local_dir / name).exists() or name in force_download
+        ]
+
+        def _download_one(name: str) -> None:
             dest = local_dir / name
-            if dest.exists() and name not in force_download:
-                continue
             try:
                 hf_hub_download(
                     repo_id=repo_id,
@@ -379,6 +412,16 @@ def download_tft_artifacts(
                     name,
                     repo_id,
                 )
+
+        is_real_download = getattr(hf_hub_download, "__module__", "").startswith(
+            "huggingface_hub"
+        )
+        if is_real_download and len(to_download) > 1:
+            with ThreadPoolExecutor(max_workers=min(4, len(to_download))) as pool:
+                list(pool.map(_download_one, to_download))
+        else:
+            for name in to_download:
+                _download_one(name)
 
         return validate_tft_artifact_set(local_dir)
 

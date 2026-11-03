@@ -11,9 +11,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Environment
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/code \
+    REDIS_URL=redis://127.0.0.1:6379/0 \
+    HF_HOME=/data/hf_cache \
+    HF_HUB_DISABLE_PROGRESS_BARS=1 \
+    TRANSFORMERS_VERBOSITY=error \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    TOKENIZERS_PARALLELISM=false
+
 # Python deps
 COPY ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+
+# Pre-cache ProsusAI/finbert weights in image layer to eliminate cold-start download on HF Space
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('ProsusAI/finbert'); AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')" || true; \
+    mkdir -p /data/hf_cache && chmod -R a+rwX /data/hf_cache
 
 # App code
 COPY ./app /code/app
@@ -33,15 +49,6 @@ COPY ./supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # HF Spaces default port: 7860
 EXPOSE 7860
-
-# Environment
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/code \
-    REDIS_URL=redis://127.0.0.1:6379/0 \
-    HF_HUB_DISABLE_PROGRESS_BARS=1 \
-    TRANSFORMERS_VERBOSITY=error \
-    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
-    TOKENIZERS_PARALLELISM=false
 
 # Run supervisord (manages redis + api + worker)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
