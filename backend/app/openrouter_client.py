@@ -79,6 +79,17 @@ def _is_free_tier_daily_quota_exhausted(status: int, body: str, model: str) -> b
     return "openrouter_free_tier_daily" in lowered or "free-models-per-day" in lowered
 
 
+def _is_no_upstreams_available(status: int, body: str) -> bool:
+    """Return True when a 5xx response explicitly states no provider upstreams exist."""
+    if status not in (502, 503, 504):
+        return False
+    lowered = (body or "").lower()
+    return any(
+        token in lowered
+        for token in ("no upstreams available", "no endpoints found", "no available providers")
+    )
+
+
 def _log_rate_limit_headers(response: httpx.Response, model: str) -> None:
     remaining = response.headers.get("X-Ratelimit-Remaining") or response.headers.get("x-ratelimit-remaining")
     limit = response.headers.get("X-Ratelimit-Limit") or response.headers.get("x-ratelimit-limit")
@@ -323,7 +334,8 @@ async def create_chat_completion(
                                 )
 
                     status = response.status_code if response is not None else None
-                    retryable = last_error is not None and last_error.category in retryable_categories
+                    no_upstreams = response is not None and _is_no_upstreams_available(response.status_code, response.text[:1000])
+                    retryable = last_error is not None and last_error.category in retryable_categories and not no_upstreams
                     # When fallback models exist, advance immediately on a timeout instead of
                     # burning a second 45s window on the same unresponsive upstream model.
                     skip_same_model_timeout_retry = (

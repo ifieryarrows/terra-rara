@@ -460,3 +460,40 @@ def test_rate_limit_preserved_when_trailing_fallback_returns_404(monkeypatch):
     assert len(calls) == 2
     assert len(exc_info.value.attempts) == 2
 
+
+
+def test_503_no_upstreams_available_skips_same_model_retry(monkeypatch):
+    no_upstreams_body = (
+        '{"error":{"message":"Provider returned error","code":503,'
+        '"metadata":{"raw":"{\\"error\\":\\"no upstreams available\\"}","provider_name":"Recursive"}}}'
+    )
+    responses = [
+        _make_response(503, text_body=no_upstreams_body),
+        _make_response(200, json_body={"model": "nvidia/nemotron-3.5-super-vl:free", "choices": [{"message": {"content": "ok"}}]}),
+    ]
+    calls = []
+
+    async def fake_sleep(_delay):
+        raise AssertionError("503 'no upstreams available' must advance immediately without retrying same model")
+
+    monkeypatch.setattr(orc.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(orc, "_NEXT_ALLOWED_TS", 0.0)
+    _patch_async_client(monkeypatch, responses, calls)
+
+    result = asyncio.run(
+        orc.create_chat_completion(
+            api_key="test-key",
+            model="recursive/flint-v1.0:free",
+            fallback_models=["nvidia/nemotron-3.5-super-vl:free"],
+            messages=[{"role": "user", "content": "hello"}],
+            rpm=0,
+            max_retries=2,
+        )
+    )
+
+    assert [call["json"]["model"] for call in calls] == [
+        "recursive/flint-v1.0:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+    ]
+    assert result["_coppermind"]["attempts"][0]["retried"] is False
+    assert result["_coppermind"]["actual_model"] == "nvidia/nemotron-3.5-super-vl:free"

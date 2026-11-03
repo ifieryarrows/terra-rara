@@ -1258,7 +1258,13 @@ async def _score_batch_with_llm_v2_unbounded(
 
     reliable_rate_limited = False
     failure_categories = [fast_metrics.get("failure_category")] if fast_metrics.get("failure_category") else []
-    if escalation_ids and not fast_rate_limited:
+    fast_transport_chain = [fast_model, *(getattr(settings, "openrouter_fallback_models_list", None) or [])]
+    redundant_transport_escalation = (
+        not fast_valid
+        and fast_metrics.get("failure_category") in {"timeout", "provider_5xx", "model_unavailable", "network"}
+        and reliable_model in fast_transport_chain
+    )
+    if escalation_ids and not fast_rate_limited and not redundant_transport_escalation:
         missing_id_retry_count = len(missing_retry_ids)
         reliable_subset = [
             article_by_id[article_id]
@@ -1277,6 +1283,12 @@ async def _score_batch_with_llm_v2_unbounded(
         repair_success_count += int(reliable_metrics.get("repair_success_count", 0))
         if reliable_metrics.get("failure_category"):
             failure_categories.append(reliable_metrics["failure_category"])
+    elif redundant_transport_escalation and escalation_ids:
+        logger.info(
+            "Skipping escalation to %s: already attempted in fast model fallback chain (category=%s)",
+            reliable_model,
+            fast_metrics.get("failure_category"),
+        )
     elif fast_rate_limited and escalation_ids:
         logger.info(
             "Skipping escalation to %s: fast model was rate-limited (%d articles → direct FinBERT fallback)",
@@ -1316,7 +1328,7 @@ async def score_batch_with_llm_v2(
 ) -> dict[str, Any]:
     """Run the whole fast/repair/reliable batch under one bounded deadline."""
     deadline = max(
-        float(getattr(get_settings(), "openrouter_chain_deadline_seconds", 120.0)),
+        float(getattr(get_settings(), "openrouter_chain_deadline_seconds", 120.0)) * 1.5,
         1.0,
     )
     try:

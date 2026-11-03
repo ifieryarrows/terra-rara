@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     # once-per-run commentary task and use a small tested model for escalation.
     openrouter_model_scoring: str = "nvidia/nemotron-3.5-super-vl:free"
     openrouter_model_scoring_fast: Optional[str] = "nvidia/nemotron-3.5-lightning:free"
-    openrouter_model_scoring_reliable: Optional[str] = "recursive/flint-v1.0:free"
+    openrouter_model_scoring_reliable: Optional[str] = "nvidia/nemotron-3.5-super-vl:free"
     openrouter_model_commentary: str = "nvidia/nemotron-3.5-super-vl:free"
     # Stay below OpenRouter's free-model per-minute ceiling. The account-wide
     # daily allowance is separate, and bounded fallbacks can still consume it.
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # Comma-separated list of additional OpenRouter model slugs used by the
     # client as transport-level fallbacks when the primary model 429s/5xx's.
     # Example: "google/gemini-flash-1.5:free,meta-llama/llama-3.1-8b-instruct:free"
-    openrouter_fallback_models: Optional[str] = "recursive/flint-v1.0:free"
+    openrouter_fallback_models: Optional[str] = "nvidia/nemotron-3.5-super-vl:free"
 
     @property
     def openrouter_api_keys(self) -> list[str]:
@@ -251,6 +251,16 @@ class Settings(BaseSettings):
         return symbols[0] if symbols else TARGET_SYMBOL
 
     @staticmethod
+    def _sanitize_openrouter_model(model: Optional[str]) -> Optional[str]:
+        """Map retired/dead OpenRouter free endpoints (e.g. recursive/flint-v1.0:free) to active fallbacks."""
+        if not model:
+            return None
+        cleaned = model.strip()
+        if cleaned.lower() == "recursive/flint-v1.0:free":
+            return "nvidia/nemotron-3.5-super-vl:free"
+        return cleaned
+
+    @staticmethod
     def _first_non_empty(*values: Optional[str]) -> Optional[str]:
         """Return first non-empty string value."""
         for value in values:
@@ -281,7 +291,7 @@ class Settings(BaseSettings):
         """Reliable model used for escalation/retry on malformed outputs."""
         return (
             self._first_non_empty(
-                self.openrouter_model_scoring_reliable,
+                self._sanitize_openrouter_model(self.openrouter_model_scoring_reliable),
                 self.openrouter_model,
                 self.llm_sentiment_model,
                 self.openrouter_model_scoring,
@@ -309,7 +319,12 @@ class Settings(BaseSettings):
         """
         if not self.openrouter_fallback_models:
             return []
-        return [m.strip() for m in self.openrouter_fallback_models.split(",") if m.strip()]
+        models: list[str] = []
+        for raw in self.openrouter_fallback_models.split(","):
+            sanitized = self._sanitize_openrouter_model(raw)
+            if sanitized and sanitized not in models:
+                models.append(sanitized)
+        return models
 
 
 @lru_cache
