@@ -119,6 +119,71 @@ def _align_features_to_model(df: pd.DataFrame, expected_features: list[str]) -> 
     return df.reindex(columns=expected_features, fill_value=0.0)
 
 
+_YFINANCE_INFO_BLOCKED_UNTIL: float = 0.0
+_YFINANCE_INFO_COOLDOWN_SECONDS: float = 900.0
+
+
+def _extract_yfinance_live_price(ticker: object) -> Optional[float]:
+    """Extract live price from yfinance Ticker, falling back to chart endpoints on 401/crumb errors."""
+    global _YFINANCE_INFO_BLOCKED_UNTIL
+    import time
+
+    from app.heatmap import _fetch_ticker_info_safely
+
+    now = time.monotonic()
+    if now >= _YFINANCE_INFO_BLOCKED_UNTIL:
+        try:
+            info, auth_blocked = _fetch_ticker_info_safely(ticker)
+            if auth_blocked:
+                _YFINANCE_INFO_BLOCKED_UNTIL = now + _YFINANCE_INFO_COOLDOWN_SECONDS
+            elif isinstance(info, dict):
+                candidate = info.get("regularMarketPrice") or info.get("currentPrice")
+                valid = finite_positive_price(candidate)
+                if valid is not None:
+                    return valid
+        except Exception as exc:
+            logger.debug("yfinance ticker.info failed: %s", exc)
+
+    # Chart-backed fallbacks (/v8/finance/chart) do not require quoteSummary crumb access
+    try:
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info is not None:
+            for key in ("last_price", "lastPrice", "regularMarketPrice", "previous_close"):
+                val = None
+                if isinstance(fast_info, dict):
+                    val = fast_info.get(key)
+                else:
+                    try:
+                        val = getattr(fast_info, key, None)
+                    except Exception:
+                        val = None
+                    if val is None and hasattr(fast_info, "get"):
+                        try:
+                            val = fast_info.get(key)
+                        except Exception:
+                            val = None
+                valid = finite_positive_price(val)
+                if valid is not None:
+                    return valid
+    except Exception as exc:
+        logger.debug("yfinance fast_info fallback failed: %s", exc)
+
+    try:
+        history_fn = getattr(ticker, "history", None)
+        if callable(history_fn):
+            hist = history_fn(period="5d")
+            if isinstance(hist, pd.DataFrame) and not hist.empty and "Close" in hist.columns:
+                closes = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+                if not closes.empty:
+                    valid = finite_positive_price(float(closes.iloc[-1]))
+                    if valid is not None:
+                        return valid
+    except Exception as exc:
+        logger.debug("yfinance history fallback failed: %s", exc)
+
+    return None
+
+
 def get_current_price(session: Session, symbol: str) -> Optional[float]:
     """
     Get the current price for the *exact* symbol requested.
@@ -152,8 +217,8 @@ def get_current_price(session: Session, symbol: str) -> Optional[float]:
     if not is_spot_xcuusd:
         try:
             ticker = yf.Ticker(symbol)
-            info = ticker.info
-            live_price = info.get("regularMarketPrice") or info.get("currentPrice")
+            live_price = _extract_yfinance_live_price(ticker)
+
             if finite_positive_price(live_price) is not None:
                 logger.info(f"Using yfinance price for {symbol}: ${live_price:.4f}")
                 return finite_positive_price(live_price)

@@ -560,3 +560,67 @@ def test_category_context_accepts_only_cached_ids_and_returns_matching_news(monk
     assert "MSFT" not in response.json()["stockNews"]
     unknown = client.get("/api/market-heatmap/context?view=market&category_id=hm-unknown")
     assert unknown.status_code == 404
+
+
+def test_refresh_circuit_breaks_metadata_info_on_401_invalid_crumb(monkeypatch):
+    from app import db, heatmap
+    from app.heatmap import _build_hierarchy
+    from app.models import HeatmapCache
+
+    now = datetime.now(timezone.utc)
+    payload = _build_hierarchy([_leaf("FCX")])
+    cache = HeatmapCache(payload_json=payload, cached_at=now - timedelta(hours=30), expires_at=now)
+    session = _FakeSession(cache)
+    monkeypatch.setattr(db, "SessionLocal", lambda: session)
+    monkeypatch.setattr(db, "get_db_type", lambda: "sqlite")
+    monkeypatch.setattr(heatmap, "_load_universe", lambda: [
+        {"ticker": "FCX", "category": "miner_major", "source_tag": "test"},
+        {"ticker": "SCCO", "category": "miner_major", "source_tag": "test"},
+        {"ticker": "BHP", "category": "miner_major", "source_tag": "test"},
+    ])
+    history = pd.DataFrame(
+        [[10.0, 20.0, 30.0], [11.0, 18.0, 31.0]],
+        index=pd.date_range("2026-01-01", periods=2),
+        columns=pd.MultiIndex.from_tuples([("FCX", "Close"), ("SCCO", "Close"), ("BHP", "Close")]),
+    )
+    info_calls = []
+
+    class _BlockedTicker:
+        def __init__(self, symbol: str):
+            self.symbol = symbol
+
+        @property
+        def info(self):
+            info_calls.append(self.symbol)
+            logging.getLogger("yfinance").error(
+                'HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","description":"Invalid Crumb"}}}'
+            )
+            return {"trailingPegRatio": None}
+
+    fake_yfinance = SimpleNamespace(
+        set_tz_cache_location=lambda _path: None,
+        cache=SimpleNamespace(
+            get_tz_cache=lambda: SimpleNamespace(initialise=lambda: None),
+            get_cookie_cache=lambda: SimpleNamespace(initialise=lambda: None),
+        ),
+        download=lambda **_kwargs: history,
+        Tickers=lambda symbols: SimpleNamespace(
+            tickers={symbol: _BlockedTicker(symbol) for symbol in symbols.split()}
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+
+    heatmap.refresh_market_heatmap()
+
+    # Only the first symbol should probe .info before the circuit breaker trips
+    assert len(info_calls) == 1
+    assert cache.refresh_error is None
+
+
+def test_robots_txt_returns_200():
+    from app import main
+
+    client = TestClient(main.app)
+    response = client.get("/robots.txt")
+    assert response.status_code == 200
+    assert "Disallow: /api/" in response.text

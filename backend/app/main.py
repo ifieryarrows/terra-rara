@@ -17,6 +17,7 @@ from dataclasses import dataclass
 # Suppress httpx request logging to prevent API keys in URLs from appearing in logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -605,6 +606,9 @@ def _fetch_market_prices() -> tuple[dict, bool]:
         result = {}
         had_errors = False
 
+        from app.heatmap import _download_history_batch, _fetch_ticker_info_safely, _history_quotes
+        info_circuit_broken = False
+        history_quotes: dict = {}
         # Fetch all tickers at once for efficiency.
         for symbol in symbols:
             try:
@@ -614,9 +618,24 @@ def _fetch_market_prices() -> tuple[dict, bool]:
                     result[symbol] = {"price": None, "change": None}
                     continue
 
-                info = ticker.info
+                info = {}
+                if not info_circuit_broken:
+                    info, auth_blocked = _fetch_ticker_info_safely(ticker)
+                    if auth_blocked:
+                        info_circuit_broken = True
                 current_price = info.get('regularMarketPrice') or info.get('currentPrice')
                 change_pct = info.get('regularMarketChangePercent')
+                if current_price is None:
+                    if not history_quotes:
+                        try:
+                            history_df, _ = _download_history_batch(yf, symbols)
+                            history_quotes = _history_quotes(history_df, symbols)
+                        except Exception as hist_exc:
+                            logger.debug("Market prices history batch fallback failed: %s", hist_exc)
+                    hist_q = history_quotes.get(symbol, {})
+                    current_price = hist_q.get("price")
+                    if change_pct is None:
+                        change_pct = hist_q.get("changePercent")
 
                 if current_price is not None:
                     result[symbol] = {
@@ -2911,3 +2930,7 @@ async def get_news_item(processed_id: int):
         )
 
 
+@app.get("/robots.txt", include_in_schema=False)
+async def get_robots_txt() -> Response:
+    """Serve robots.txt so crawlers and HF proxy checks do not log 404s."""
+    return Response(content="User-agent: *\nDisallow: /api/\n", media_type="text/plain")

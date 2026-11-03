@@ -520,6 +520,59 @@ def _is_rate_limit_error(error: object) -> bool:
     )
 
 
+def _is_quote_summary_auth_error(error: object) -> bool:
+    message = str(error).casefold()
+    return (
+        "invalid crumb" in message
+        or "unable to access this feature" in message
+        or "http error 401" in message
+        or '"code":"unauthorized"' in message
+    )
+
+
+class _YFinanceQuietAuthFilter(logging.Filter):
+    """Capture yfinance quoteSummary 401/crumb logs without emitting ERROR noise."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        self.messages.append(msg)
+        if _is_quote_summary_auth_error(msg):
+            return False
+        return True
+
+
+def _fetch_ticker_info_safely(ticker: object) -> tuple[dict, bool]:
+    """Read optional ticker.info metadata while detecting 401/crumb/rate-limit blocks."""
+    if not ticker:
+        return {}, False
+    auth_filter = _YFinanceQuietAuthFilter()
+    yfinance_logger = logging.getLogger("yfinance")
+    yfinance_logger.addFilter(auth_filter)
+    try:
+        raw_info = getattr(ticker, "info", None) or {}
+    finally:
+        yfinance_logger.removeFilter(auth_filter)
+
+    blocked = any(
+        _is_quote_summary_auth_error(msg) or _is_rate_limit_error(msg)
+        for msg in auth_filter.messages
+    )
+    if blocked:
+        return {}, True
+
+    if isinstance(raw_info, dict):
+        # yfinance returns {'trailingPegRatio': None} when quoteSummary fails silently.
+        meaningful_keys = {k for k, v in raw_info.items() if k != "trailingPegRatio" and v is not None}
+        if not meaningful_keys and "trailingPegRatio" in raw_info:
+            return {}, False
+        return raw_info, False
+    return {}, False
+
+
 def _coverage_is_healthy(new_count: int, requested_count: int, previous_count: int) -> bool:
     if new_count <= 0:
         return False
@@ -642,18 +695,33 @@ def refresh_market_heatmap() -> None:
                         logger.warning("Heatmap metadata batch failed: %s", metadata_batch_error)
                         metadata_symbols = set()
                         provider_stats["info_skipped"] = len(symbols)
+                metadata_circuit_broken = False
                 for symbol in symbols:
                     info: dict = {}
                     try:
                         history_quote = quote_by_symbol.get(symbol, {})
-                        should_fetch_info = symbol in metadata_symbols
+                        should_fetch_info = symbol in metadata_symbols and not metadata_circuit_broken
+                        if symbol in metadata_symbols and metadata_circuit_broken:
+                            provider_stats["metadata_deferred"] += 1
+                            provider_stats["info_skipped"] += 1
                         if should_fetch_info:
                             try:
                                 ticker = metadata_tickers.get(symbol)
-                                info = (getattr(ticker, "info", None) or {}) if ticker else {}
-                                provider_stats["info_success" if info else "info_empty"] += 1
+                                info, auth_blocked = _fetch_ticker_info_safely(ticker)
+                                if auth_blocked:
+                                    provider_stats["info_error"] += 1
+                                    metadata_circuit_broken = True
+                                    logger.warning(
+                                        "Heatmap metadata quoteSummary blocked by Yahoo (401/crumb/rate-limit) on %s; "
+                                        "circuit-breaking remaining metadata batch",
+                                        symbol,
+                                    )
+                                else:
+                                    provider_stats["info_success" if info else "info_empty"] += 1
                             except Exception as info_error:
                                 provider_stats["info_error"] += 1
+                                if _is_quote_summary_auth_error(info_error) or _is_rate_limit_error(info_error):
+                                    metadata_circuit_broken = True
                                 logger.debug("Heatmap metadata failed for %s: %s", symbol, info_error)
                         info_price = _finite_float(info.get("regularMarketPrice"), info.get("currentPrice"))
                         if info and info_price is None:

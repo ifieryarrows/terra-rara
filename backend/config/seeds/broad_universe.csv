@@ -29,7 +29,7 @@ NEXA,miner_mid,copper_regional
 # Junior Copper/Exploration
 ARIS,miner_junior,copper_junior
 EDV.TO,miner_junior,copper_junior
-FIL.TO,miner_junior,copper_junior
+# FIL.TO,miner_junior,copper_junior (removed: delisted/acquired)
 LAC,miner_junior,copper_junior
 # COP.AX and NOVR were removed: Yahoo returned persistent quote-not-found
 # responses in production on 2026-08-30, so neither could populate the heatmap.
@@ -47,7 +47,7 @@ WPM,miner_diversified,diversified
 COPX,etf_copper,etf_core
 COPJ,etf_copper,etf_core
 CPER,etf_copper,etf_core
-JJC,etf_copper,etf_core
+# JJC,etf_copper,etf_core (removed: delisted/matured ETN)
 
 # Broad Metals/Miners
 XME,etf_metals,etf_broad
@@ -182,12 +182,12 @@ AME,industrial_electrical,industrial_elec
 # Construction
 VMC,industrial_construction,construction
 MLM,industrial_construction,construction
-SUM,industrial_construction,construction
+# SUM,industrial_construction,construction (removed: acquired/delisted)
 
 # ============= STEEL & MATERIALS =============
 
 # Steel
-X,materials_steel,steel_core
+# X,materials_steel,steel_core (removed: acquired/delisted)
 NUE,materials_steel,steel_core
 CLF,materials_steel,steel_core
 STLD,materials_steel,steel_core
@@ -196,12 +196,12 @@ CMC,materials_steel,steel_core
 
 # Aluminum
 AA,materials_aluminum,aluminum
-ARNC,materials_aluminum,aluminum
+# ARNC,materials_aluminum,aluminum (removed: acquired/delisted)
 CENX,materials_aluminum,aluminum
 
 # Specialty Materials
 ATI,materials_specialty,specialty
-HAYN,materials_specialty,specialty
+# HAYN,materials_specialty,specialty (removed: acquired/delisted)
 CRS,materials_specialty,specialty
 
 # Chemicals (Industrial)
@@ -224,7 +224,7 @@ HAL,energy_services,energy_core
 
 # REITs (Industrial)
 PLD,reit_industrial,reit
-DRE,reit_industrial,reit
+# DRE,reit_industrial,reit (removed: acquired/delisted)
 STAG,reit_industrial,reit
 
 # Infrastructure
@@ -356,7 +356,7 @@ EWU,europe_uk,europe
 # Lithium (Battery Metal Peer)
 ALB,lithium,battery_metals
 SQM,lithium,battery_metals
-LTHM,lithium,battery_metals
+# LTHM,lithium,battery_metals (removed: merged/delisted)
 
 # Rare Earths
 MP,rare_earth,battery_metals
