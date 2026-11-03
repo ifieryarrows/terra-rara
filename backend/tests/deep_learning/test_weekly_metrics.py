@@ -203,6 +203,12 @@ def test_compute_weekly_metrics_returns_sample_count():
     assert "weekly_magnitude_ratio" in metrics
     assert "weekly_directional_accuracy_flipped" in metrics
     assert "weekly_sharpe_ratio_flipped" in metrics
+    assert np.isclose(
+        metrics["weekly_sharpe_ratio_flipped"],
+        -metrics["weekly_sharpe_ratio"],
+    )
+    assert "weekly_sharpe_ratio_hac" in metrics
+    assert "weekly_sharpe_ratio_non_overlapping" in metrics
     assert "weekly_tail_capture_rate_flipped" in metrics
     assert "weekly_sign_correlation" in metrics
     assert "weekly_pred_positive_rate" in metrics

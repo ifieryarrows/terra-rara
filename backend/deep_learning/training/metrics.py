@@ -628,13 +628,44 @@ def sharpe_ratio(
     """
     Annualised Sharpe Ratio.
 
-    SR = sqrt(252) * (mean(r - rf) / std(r))
+    SR = sqrt(annualisation) * (mean(r - rf) / std(r))
     """
     excess = returns - risk_free_rate / annualisation
     std = excess.std()
     if std < 1e-9:
         return 0.0
     return float(np.sqrt(annualisation) * excess.mean() / std)
+
+
+def sharpe_ratio_hac(
+    returns: np.ndarray,
+    risk_free_rate: float = 0.0,
+    annualisation: float = 52.0,
+    max_lag: int = 4,
+) -> float:
+    """
+    Newey-West (Bartlett kernel) autocorrelation-adjusted Annualised Sharpe Ratio
+    for overlapping multi-day cumulative returns (MA(h-1) serial correlation).
+    """
+    arr = np.asarray(returns, dtype=np.float64)
+    n = arr.size
+    if n < 2:
+        return 0.0
+    excess = arr - risk_free_rate / annualisation
+    centered = excess - excess.mean()
+    gamma_0 = float(np.dot(centered, centered) / n)
+    if gamma_0 < 1e-18:
+        return 0.0
+    hac_var = gamma_0
+    effective_lag = min(max(int(max_lag), 0), n - 1)
+    for lag in range(1, effective_lag + 1):
+        weight = 1.0 - lag / (effective_lag + 1.0)
+        gamma_lag = float(np.dot(centered[lag:], centered[:-lag]) / n)
+        hac_var += 2.0 * weight * gamma_lag
+    hac_std = np.sqrt(max(hac_var, gamma_0 * 1e-6))
+    if hac_std < 1e-9:
+        return 0.0
+    return float(np.sqrt(annualisation) * excess.mean() / hac_std)
 
 
 def sortino_ratio(
@@ -1133,7 +1164,22 @@ def compute_weekly_metrics(
         -weekly_pred,
     )
     flipped_strategy_returns = np.sign(-weekly_pred) * weekly_actual
-    weekly_metrics["weekly_sharpe_ratio_flipped"] = sharpe_ratio(flipped_strategy_returns)
+    weekly_metrics["weekly_sharpe_ratio_flipped"] = sharpe_ratio(
+        flipped_strategy_returns,
+        annualisation=effective_annualisation,
+    )
+    strategy_returns = np.sign(weekly_pred) * weekly_actual
+    weekly_metrics["weekly_sharpe_ratio_hac"] = sharpe_ratio_hac(
+        strategy_returns,
+        annualisation=effective_annualisation,
+        max_lag=max(horizon - 1, 0),
+    )
+    non_overlapping_returns = strategy_returns[::max(horizon, 1)]
+    weekly_metrics["weekly_sharpe_ratio_non_overlapping"] = (
+        sharpe_ratio(non_overlapping_returns, annualisation=effective_annualisation)
+        if non_overlapping_returns.size >= 2
+        else 0.0
+    )
     weekly_metrics["weekly_tail_capture_rate_flipped"] = tail_capture_rate(
         weekly_actual,
         -weekly_pred,
