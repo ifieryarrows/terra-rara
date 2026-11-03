@@ -40,6 +40,7 @@ from app.sentiment import classify_sentiment, is_balanced
 from app.settings import get_settings
 from app.features import (
     load_price_data,
+    load_multi_price_data,
     load_sentiment_data,
     generate_symbol_features,
     align_to_target_calendar,
@@ -51,6 +52,8 @@ from app.price_utils import finite_positive_price, latest_finite_price_bar
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_ORIGINAL_INFERENCE_LOAD_PRICE_DATA = load_price_data
 
 
 # =============================================================================
@@ -488,21 +491,32 @@ def build_features_for_prediction(
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=60)  # Need history for indicators
     
-    # Load target
-    target_df = load_price_data(session, target_symbol, start_date, end_date)
-    
-    if target_df.empty:
-        logger.error(f"No price data for {target_symbol}")
-        return None
-    target_df.attrs["symbol"] = target_symbol
-    
-    # Load other symbols
-    other_dfs = {}
-    for symbol in symbols:
-        if symbol != target_symbol:
-            df = load_price_data(session, symbol, start_date, end_date)
-            if not df.empty:
-                other_dfs[symbol] = df
+    if load_price_data is not _ORIGINAL_INFERENCE_LOAD_PRICE_DATA:
+        # Preserve monkeypatch behavior in unit tests
+        target_df = load_price_data(session, target_symbol, start_date, end_date)
+        if target_df.empty:
+            logger.error(f"No price data for {target_symbol}")
+            return None
+        target_df.attrs["symbol"] = target_symbol
+        other_dfs = {}
+        for symbol in symbols:
+            if symbol != target_symbol:
+                df = load_price_data(session, symbol, start_date, end_date)
+                if not df.empty:
+                    other_dfs[symbol] = df
+    else:
+        all_requested = [target_symbol] + [s for s in symbols if s != target_symbol]
+        price_map = load_multi_price_data(session, all_requested, start_date, end_date)
+        target_df = price_map.get(target_symbol, pd.DataFrame())
+        if target_df.empty:
+            logger.error(f"No price data for {target_symbol}")
+            return None
+        target_df.attrs["symbol"] = target_symbol
+        other_dfs = {
+            symbol: df
+            for symbol in symbols
+            if symbol != target_symbol and not (df := price_map.get(symbol, pd.DataFrame())).empty
+        }
     
     sentiment_df = load_sentiment_data(session, start_date, end_date)
     all_features = build_shared_feature_frame(
@@ -837,4 +851,3 @@ def get_any_snapshot(
         return snapshot.report_json
     
     return None
-

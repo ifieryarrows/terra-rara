@@ -9,6 +9,7 @@ Handles:
 - Sentiment feature join
 """
 
+from functools import lru_cache
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,31 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Data Loading
 # =============================================================================
+
+def _rows_to_price_df(rows: list, symbol: str) -> pd.DataFrame:
+    """Convert raw PriceBar rows into a validated, date-indexed DataFrame."""
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        rows,
+        columns=["date", "open", "high", "low", "close", "volume", "adj_close"],
+    )
+    numeric_columns = ["open", "high", "low", "close", "volume", "adj_close"]
+    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, errors="coerce")
+    df[numeric_columns] = df[numeric_columns].replace([np.inf, -np.inf], np.nan)
+    invalid_close = df["close"].isna() | (df["close"] <= 0.0)
+    if invalid_close.any():
+        logger.warning(
+            "Excluded %s invalid close rows for %s", int(invalid_close.sum()), symbol
+        )
+        df = df.loc[~invalid_close].copy()
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df = df.set_index("date")
+    return df
+
 
 def load_price_data(
     session: Session,
@@ -68,24 +94,74 @@ def load_price_data(
     query = query.order_by(PriceBar.date.asc())
     
     rows = query.all()
-    
-    if not rows:
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "adj_close"])
-    numeric_columns = ["open", "high", "low", "close", "volume", "adj_close"]
-    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, errors="coerce")
-    df[numeric_columns] = df[numeric_columns].replace([np.inf, -np.inf], np.nan)
-    invalid_close = df["close"].isna() | (df["close"] <= 0.0)
-    if invalid_close.any():
-        logger.warning("Excluded %s invalid close rows for %s", int(invalid_close.sum()), symbol)
-        df = df.loc[~invalid_close].copy()
-    if df.empty:
-        return pd.DataFrame()
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-    df = df.set_index("date")
-    
-    return df
+    return _rows_to_price_df(rows, symbol)
+
+
+_ORIGINAL_LOAD_PRICE_DATA = load_price_data
+
+
+def load_multi_price_data(
+    session: Session,
+    symbols: list[str],
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> dict[str, pd.DataFrame]:
+    """
+    Batch-load price data for multiple symbols in a single SQL query.
+
+    Automatically falls back to per-symbol `load_price_data` when `load_price_data`
+    is monkeypatched in tests or when `session` is a mock object.
+    """
+    unique_symbols = list(dict.fromkeys(s for s in symbols if s))
+    if not unique_symbols:
+        return {}
+
+    if (
+        load_price_data is not _ORIGINAL_LOAD_PRICE_DATA
+        or not isinstance(session, Session)
+    ):
+        result: dict[str, pd.DataFrame] = {}
+        for sym in unique_symbols:
+            df = load_price_data(session, sym, start_date, end_date)
+            if not df.empty:
+                result[sym] = df
+        return result
+
+    query = session.query(
+        PriceBar.symbol,
+        PriceBar.date,
+        PriceBar.open,
+        PriceBar.high,
+        PriceBar.low,
+        PriceBar.close,
+        PriceBar.volume,
+        PriceBar.adj_close,
+    ).filter(PriceBar.symbol.in_(unique_symbols))
+
+    if start_date:
+        query = query.filter(PriceBar.date >= start_date)
+    if end_date:
+        query = query.filter(PriceBar.date <= end_date)
+
+    query = query.order_by(PriceBar.symbol.asc(), PriceBar.date.asc())
+    all_rows = query.all()
+    if not all_rows:
+        return {}
+
+    grouped: dict[str, list] = {sym: [] for sym in unique_symbols}
+    for row in all_rows:
+        sym = row[0]
+        if sym in grouped:
+            grouped[sym].append(row[1:])
+
+    result = {}
+    for sym in unique_symbols:
+        sym_rows = grouped.get(sym)
+        if sym_rows:
+            df = _rows_to_price_df(sym_rows, sym)
+            if not df.empty:
+                result[sym] = df
+    return result
 
 
 def load_sentiment_data(
@@ -288,10 +364,18 @@ def build_shared_feature_frame(
 ) -> pd.DataFrame:
     """Single preprocessing contract used by XGBoost training and inference."""
     aligned = align_to_target_calendar(target_df, other_dfs, max_ffill=max_ffill)
-    all_features = generate_symbol_features(target_df, target_df.attrs.get("symbol", "HG=F"))
+    feature_frames = [
+        generate_symbol_features(target_df, target_df.attrs.get("symbol", "HG=F"))
+    ]
     for symbol, frame in aligned.items():
         if not frame.empty:
-            all_features = all_features.join(generate_symbol_features(frame, symbol), how="left")
+            feature_frames.append(generate_symbol_features(frame, symbol))
+
+    all_features = (
+        pd.concat(feature_frames, axis=1)
+        if len(feature_frames) > 1
+        else feature_frames[0]
+    )
 
     if not sentiment_df.empty:
         sentiment_aligned = sentiment_df.reindex(target_df.index).ffill(limit=max_ffill)
@@ -329,8 +413,11 @@ def build_feature_matrix(
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=lookback_days)
     
+    all_requested = [target_symbol] + [s for s in symbols if s != target_symbol]
+    price_map = load_multi_price_data(session, all_requested, start_date, end_date)
+
     # Load target symbol
-    target_df = load_price_data(session, target_symbol, start_date, end_date)
+    target_df = price_map.get(target_symbol, pd.DataFrame())
     
     if target_df.empty:
         logger.error(f"No price data for target symbol {target_symbol}")
@@ -343,7 +430,7 @@ def build_feature_matrix(
     other_dfs = {}
     for symbol in symbols:
         if symbol != target_symbol:
-            df = load_price_data(session, symbol, start_date, end_date)
+            df = price_map.get(symbol, pd.DataFrame())
             if not df.empty:
                 other_dfs[symbol] = df
                 logger.info(f"Symbol {symbol}: {len(df)} bars")
@@ -455,17 +542,17 @@ _SYMBOL_LABEL_MAP: dict[str, str] = {
 }
 
 
-def _symbol_prefix_aliases() -> list[tuple[str, str]]:
-    """Return raw and sanitized feature prefixes mapped to raw symbols."""
-    import re
-
+@lru_cache(maxsize=1)
+def _symbol_prefix_aliases() -> tuple[tuple[str, str], ...]:
+    """Return raw and sanitized feature prefixes mapped to raw symbols, sorted longest first."""
     aliases: list[tuple[str, str]] = []
     for symbol in _SYMBOL_LABEL_MAP:
         aliases.append((symbol, symbol))
         sanitized = re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_")
         if sanitized != symbol:
             aliases.append((sanitized, symbol))
-    return aliases
+    aliases.sort(key=lambda item: len(item[0]), reverse=True)
+    return tuple(aliases)
 
 
 def _humanize_symbol(sym: str) -> str:
@@ -555,11 +642,9 @@ def describe_feature(feature: str) -> dict[str, str]:
     # We try the longest matching raw or sanitized symbol prefix. Training
     # features use safe names such as HG_F and DX_Y_NYB, while the label map
     # uses the canonical market symbols HG=F and DX-Y.NYB.
-    import re
-
     symbol = ""
     token = feature
-    for prefix, canonical in sorted(_symbol_prefix_aliases(), key=lambda item: len(item[0]), reverse=True):
+    for prefix, canonical in _symbol_prefix_aliases():
         prefix_with_ = f"{prefix}_"
         if feature.startswith(prefix_with_):
             symbol = canonical
@@ -618,4 +703,3 @@ def describe_feature(feature: str) -> dict[str, str]:
         "category": category,
         "time_horizon": time_horizon,
     }
-

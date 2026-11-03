@@ -68,6 +68,26 @@ def get_upsert_stmt(table, values: dict, index_elements: list, update_set: dict 
     return stmt
 
 
+def _build_batch_price_upsert_stmt(rows: list[dict]):
+    """Build a multi-row upsert statement for PriceBar."""
+    db_type = get_db_type()
+    insert_fn = pg_insert if db_type == "postgresql" else sqlite_insert
+    stmt = insert_fn(PriceBar).values(rows)
+    excluded = stmt.excluded
+    return stmt.on_conflict_do_update(
+        index_elements=["symbol", "date"],
+        set_={
+            "open": excluded.open,
+            "high": excluded.high,
+            "low": excluded.low,
+            "close": excluded.close,
+            "volume": excluded.volume,
+            "adj_close": excluded.adj_close,
+            "fetched_at": excluded.fetched_at,
+        },
+    )
+
+
 # =============================================================================
 # NewsAPI Fetching
 # =============================================================================
@@ -523,6 +543,8 @@ def ingest_prices(session: Session) -> dict:
             imported = 0
             updated = 0
             rejected = 0
+            batch_rows: list[dict] = []
+            now_utc = datetime.now(timezone.utc)
             
             for date_idx, row in df.iterrows():
                 try:
@@ -547,10 +569,8 @@ def ingest_prices(session: Session) -> dict:
                     if bar_date.tzinfo is None:
                         bar_date = bar_date.replace(tzinfo=timezone.utc)
                     
-                    # Upsert
-                    stmt = get_upsert_stmt(
-                        PriceBar,
-                        values={
+                    batch_rows.append(
+                        {
                             "symbol": symbol,
                             "date": bar_date,
                             "open": open_price,
@@ -559,30 +579,47 @@ def ingest_prices(session: Session) -> dict:
                             "close": close,
                             "volume": volume,
                             "adj_close": adj_close,
-                            "fetched_at": datetime.now(timezone.utc),
-                        },
-                        index_elements=["symbol", "date"],
-                        update_set={
-                            "open": open_price,
-                            "high": high_price,
-                            "low": low_price,
-                            "close": close,
-                            "volume": volume,
-                            "adj_close": adj_close,
-                            "fetched_at": datetime.now(timezone.utc),
+                            "fetched_at": now_utc,
                         }
                     )
-                    
-                    result = session.execute(stmt)
-                    
-                    if result.rowcount > 0:
-                        imported += 1
-                    else:
-                        updated += 1
-                        
                 except Exception as e:
                     logger.debug(f"Error processing price bar: {e}")
                     continue
+
+            if batch_rows:
+                try:
+                    chunk_size = 500
+                    for start_idx in range(0, len(batch_rows), chunk_size):
+                        chunk = batch_rows[start_idx : start_idx + chunk_size]
+                        stmt = _build_batch_price_upsert_stmt(chunk)
+                        result = session.execute(stmt)
+                        rc = result.rowcount if result is not None and result.rowcount is not None and result.rowcount >= 0 else len(chunk)
+                        imported += rc
+                        updated += max(0, len(chunk) - rc)
+                except Exception as batch_err:
+                    logger.debug("Batch price upsert fallback for %s: %s", symbol, batch_err)
+                    imported = 0
+                    updated = 0
+                    for row_vals in batch_rows:
+                        try:
+                            stmt = get_upsert_stmt(
+                                PriceBar,
+                                values=row_vals,
+                                index_elements=["symbol", "date"],
+                                update_set={
+                                    k: v
+                                    for k, v in row_vals.items()
+                                    if k not in ("symbol", "date")
+                                },
+                            )
+                            result = session.execute(stmt)
+                            if result.rowcount > 0:
+                                imported += 1
+                            else:
+                                updated += 1
+                        except Exception as e:
+                            logger.debug(f"Error processing price bar: {e}")
+                            continue
             
             session.commit()
             
@@ -722,4 +759,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
