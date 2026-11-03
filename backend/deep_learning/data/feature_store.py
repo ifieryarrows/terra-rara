@@ -21,6 +21,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from sqlalchemy.orm import Session as SASession
 
 from deep_learning.config import TFTASROConfig, get_tft_config
 
@@ -340,6 +341,7 @@ def _build_price_features(
     symbol: str,
     start_date,
     end_date,
+    price_df: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load price data and compute technical features for *symbol*.
@@ -348,7 +350,8 @@ def _build_price_features(
     """
     from app.features import load_price_data, generate_symbol_features
 
-    price_df = load_price_data(session, symbol, start_date, end_date)
+    if price_df is None:
+        price_df = load_price_data(session, symbol, start_date, end_date)
     if price_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -373,12 +376,13 @@ def _build_daily_embedding_features(
     from deep_learning.data.embeddings import bytes_to_embedding, aggregate_daily_embeddings
     from pipelines.market_calendar import assign_market_date
     from sqlalchemy import func
+    from sqlalchemy.orm import Session as SASession
 
     start_date = index.min().to_pydatetime()
     end_date = index.max().to_pydatetime()
     available_expr = func.coalesce(NewsRaw.fetched_at, NewsRaw.published_at)
 
-    rows = (
+    query = (
         session.query(
             NewsRaw.published_at,
             NewsRaw.fetched_at,
@@ -387,21 +391,26 @@ def _build_daily_embedding_features(
         .join(NewsProcessed, NewsEmbedding.news_processed_id == NewsProcessed.id)
         .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
         .filter(NewsRaw.published_at <= end_date, available_expr <= end_date)
-        .order_by(NewsRaw.published_at.asc())
-        .all()
     )
+    if isinstance(session, SASession):
+        lower_bound = start_date - timedelta(days=7)
+        query = query.filter(available_expr >= lower_bound)
+
+    rows = query.order_by(NewsRaw.published_at.asc()).all()
 
     if not rows:
         cols = [f"emb_pca_{i}" for i in range(pca_dim)]
         return pd.DataFrame(0.0, index=index, columns=cols)
 
+    start_day = pd.Timestamp(start_date).date()
+    end_day = pd.Timestamp(end_date).date()
     date_groups: dict[str, list[np.ndarray]] = {}
     for r in rows:
         published_market_date = assign_market_date(r.published_at)
         available_at = getattr(r, "fetched_at", None) or r.published_at
         available_market_date = assign_market_date(available_at)
         market_date = max(published_market_date, available_market_date)
-        if not (pd.Timestamp(start_date).date() <= market_date <= pd.Timestamp(end_date).date()):
+        if not (start_day <= market_date <= end_day):
             continue
         d = market_date.isoformat()
         vec = bytes_to_embedding(r.embedding_pca, dim=pca_dim)
@@ -483,27 +492,57 @@ def build_tft_dataframe(
     training_symbols = load_training_symbols()
     logger.info("Building features with %d symbols: %s", len(training_symbols), training_symbols[:5])
 
-    price_df, price_features = _build_price_features(session, target_symbol, start_date, end_date)
+    from app.features import (
+        load_multi_price_data,
+        generate_symbol_features,
+        align_to_target_calendar,
+    )
+
+    correl_symbols = [sym for sym in training_symbols if sym != target_symbol]
+    if isinstance(session, SASession):
+        price_map = load_multi_price_data(
+            session, [target_symbol] + correl_symbols, start_date, end_date
+        )
+    else:
+        price_map = {}
+
+    if target_symbol in price_map:
+        price_df, price_features = _build_price_features(
+            session,
+            target_symbol,
+            start_date,
+            end_date,
+            price_df=price_map[target_symbol],
+        )
+    else:
+        price_df, price_features = _build_price_features(
+            session,
+            target_symbol,
+            start_date,
+            end_date,
+        )
     if price_df.empty:
         raise ValueError(f"No price data for {target_symbol}")
 
-    # Add correlated symbols' features (screener-validated)
-    from app.features import load_price_data, generate_symbol_features, align_to_target_calendar
+    if correl_symbols and not isinstance(session, SASession):
+        price_map.update(
+            load_multi_price_data(session, correl_symbols, start_date, end_date)
+        )
 
-    other_dfs = {}
-    for sym in training_symbols:
-        if sym == target_symbol:
-            continue
-        sym_df = load_price_data(session, sym, start_date, end_date)
-        if not sym_df.empty:
-            other_dfs[sym] = sym_df
+    other_dfs = {
+        sym: sym_df
+        for sym in correl_symbols
+        if not (sym_df := price_map.get(sym, pd.DataFrame())).empty
+    }
 
     if other_dfs:
         aligned = align_to_target_calendar(price_df, other_dfs, max_ffill=cfg.feature_store.max_ffill)
+        feature_frames = [price_features]
         for sym, df in aligned.items():
             if not df.empty:
-                sym_feats = generate_symbol_features(df, sym)
-                price_features = price_features.join(sym_feats, how="left")
+                feature_frames.append(generate_symbol_features(df, sym))
+        if len(feature_frames) > 1:
+            price_features = pd.concat(feature_frames, axis=1)
         logger.info("Added features from %d correlated symbols", len(aligned))
 
     target_index = price_df.index
@@ -574,6 +613,7 @@ def build_tft_dataframe(
         target_symbol,
         cfg.training.lookback_days,
         end_date=end_date,
+        hg_df=price_df,
     )
     if not futures_features.empty:
         futures_features = futures_features.reindex(target_index).ffill(limit=3)

@@ -94,6 +94,7 @@ def build_futures_features_from_yfinance(
     target_symbol: str = "HG=F",
     lookback_days: int = 730,
     end_date=None,
+    hg_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Build futures-curve features using available yfinance price data.
@@ -105,20 +106,23 @@ def build_futures_features_from_yfinance(
     from datetime import timedelta, timezone as tz
     from app.features import load_price_data
 
-    end_date = (
-        pd.Timestamp.now(tz=tz.utc)
-        if end_date is None
-        else pd.Timestamp(end_date)
-    )
-    if end_date.tzinfo is None:
-        end_date = end_date.tz_localize(tz.utc)
+    if hg_df is not None and not hg_df.empty:
+        df = hg_df
     else:
-        end_date = end_date.tz_convert(tz.utc)
-    start_date = end_date - timedelta(days=lookback_days)
+        end_date = (
+            pd.Timestamp.now(tz=tz.utc)
+            if end_date is None
+            else pd.Timestamp(end_date)
+        )
+        if end_date.tzinfo is None:
+            end_date = end_date.tz_localize(tz.utc)
+        else:
+            end_date = end_date.tz_convert(tz.utc)
+        start_date = end_date - timedelta(days=lookback_days)
 
-    df = load_price_data(session, target_symbol, start_date, end_date)
-    if df.empty:
-        return pd.DataFrame()
+        df = load_price_data(session, target_symbol, start_date, end_date)
+        if df.empty:
+            return pd.DataFrame()
 
     close = df["close"]
 

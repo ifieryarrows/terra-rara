@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+import numpy as np
 import pandas as pd
 from sqlalchemy import func
+from sqlalchemy.orm import Session as SASession
 
 from app.models import NewsProcessed, NewsRaw, NewsSentimentV2
 from pipelines.market_calendar import assign_market_date, is_after_close_news
@@ -50,7 +54,12 @@ def build_market_date_sentiment_frame(session, start_date, end_date) -> pd.DataF
     if not hasattr(session, "query"):
         return pd.DataFrame(columns=columns)
 
-    rows = (
+    available_expr = func.coalesce(
+        NewsSentimentV2.available_at,
+        NewsRaw.fetched_at,
+        NewsRaw.published_at,
+    )
+    query = (
         session.query(
             NewsRaw.published_at,
             NewsRaw.fetched_at,
@@ -64,15 +73,14 @@ def build_market_date_sentiment_frame(session, start_date, end_date) -> pd.DataF
         .join(NewsSentimentV2, NewsSentimentV2.news_processed_id == NewsProcessed.id)
         .filter(
             NewsRaw.published_at <= end_date,
-            func.coalesce(
-                NewsSentimentV2.available_at,
-                NewsRaw.fetched_at,
-                NewsRaw.published_at,
-            )
-            <= end_date,
+            available_expr <= end_date,
         )
-        .all()
     )
+    if isinstance(session, SASession) and start_date is not None:
+        lower_bound = pd.Timestamp(start_date).to_pydatetime() - timedelta(days=7)
+        query = query.filter(available_expr >= lower_bound)
+
+    rows = query.all()
 
     if not rows:
         return pd.DataFrame(columns=columns)
@@ -86,11 +94,13 @@ def build_market_date_sentiment_frame(session, start_date, end_date) -> pd.DataF
         confidence = float(r.confidence_calibrated or 0.0)
         material = relevance >= MATERIAL_RELEVANCE_MIN and confidence >= MATERIAL_CONFIDENCE_MIN
         weight = max(relevance, 0.0) * max(confidence, 0.0)
+        score = float(r.final_score or 0.0)
         records.append(
             {
                 "market_date": market_date,
-                "score": float(r.final_score or 0.0),
+                "score": score,
                 "weight": weight,
+                "weighted_score": score * weight,
                 "material": int(material),
                 "after_close": int(is_after_close_news(r.published_at)),
             }
@@ -100,24 +110,28 @@ def build_market_date_sentiment_frame(session, start_date, end_date) -> pd.DataF
     if raw.empty:
         return pd.DataFrame(columns=columns)
 
-    def _weighted_sentiment(g: pd.DataFrame) -> float:
-        denom = g["weight"].sum()
-        if denom <= 1e-9:
-            return float(g["score"].mean())
-        return float((g["score"] * g["weight"]).sum() / denom)
-
-    daily = raw.groupby("market_date").apply(
-        lambda g: pd.Series(
-            {
-                "sentiment_index": _weighted_sentiment(g),
-                "news_count": float(len(g)),
-                "material_news_count": float(g["material"].sum()),
-                "after_close_news_count": float(g["after_close"].sum()),
-            }
-        )
+    grouped = raw.groupby("market_date", sort=True).agg(
+        score_mean=("score", "mean"),
+        weight_sum=("weight", "sum"),
+        weighted_score_sum=("weighted_score", "sum"),
+        news_count=("score", "count"),
+        material_news_count=("material", "sum"),
+        after_close_news_count=("after_close", "sum"),
     )
-    daily.index = pd.to_datetime(daily.index)
-    daily = daily.sort_index()
+    sentiment_idx = np.where(
+        grouped["weight_sum"] <= 1e-9,
+        grouped["score_mean"],
+        grouped["weighted_score_sum"] / grouped["weight_sum"],
+    )
+    daily = pd.DataFrame(
+        {
+            "sentiment_index": sentiment_idx.astype(float),
+            "news_count": grouped["news_count"].astype(float),
+            "material_news_count": grouped["material_news_count"].astype(float),
+            "after_close_news_count": grouped["after_close_news_count"].astype(float),
+        },
+        index=pd.to_datetime(grouped.index),
+    ).sort_index()
 
     days_since = []
     last_material = None
@@ -140,7 +154,12 @@ def build_market_date_event_counts_from_db(session, start_date, end_date) -> pd.
     if not hasattr(session, "query"):
         return pd.DataFrame()
 
-    rows = (
+    available_expr = func.coalesce(
+        NewsSentimentV2.available_at,
+        NewsRaw.fetched_at,
+        NewsRaw.published_at,
+    )
+    query = (
         session.query(
             NewsRaw.published_at,
             NewsRaw.fetched_at,
@@ -151,27 +170,28 @@ def build_market_date_event_counts_from_db(session, start_date, end_date) -> pd.
         .join(NewsRaw, NewsProcessed.raw_id == NewsRaw.id)
         .filter(
             NewsRaw.published_at <= end_date,
-            func.coalesce(
-                NewsSentimentV2.available_at,
-                NewsRaw.fetched_at,
-                NewsRaw.published_at,
-            )
-            <= end_date,
+            available_expr <= end_date,
         )
-        .all()
     )
+    if isinstance(session, SASession) and start_date is not None:
+        lower_bound = pd.Timestamp(start_date).to_pydatetime() - timedelta(days=7)
+        query = query.filter(available_expr >= lower_bound)
+
+    rows = query.all()
     if not rows:
         return pd.DataFrame()
 
-    records = [
-        {
-            "market_date": _effective_market_date(r),
-            "event_type": r.event_type,
-            "count": 1,
-        }
-        for r in rows
-        if _within_window(_effective_market_date(r), start_date, end_date)
-    ]
+    records = []
+    for r in rows:
+        md = _effective_market_date(r)
+        if _within_window(md, start_date, end_date):
+            records.append(
+                {
+                    "market_date": md,
+                    "event_type": r.event_type,
+                    "count": 1,
+                }
+            )
     if not records:
         return pd.DataFrame()
     df = pd.DataFrame(records)
