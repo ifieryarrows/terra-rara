@@ -68,6 +68,7 @@ jobs:
                   '*.egg-info/*',
                   '.mypy_cache/*',
                   '.ruff_cache/*',
+                  'rust_accel/target/*',
               ],
           )
           print('Upload complete')
