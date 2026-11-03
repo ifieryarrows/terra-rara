@@ -160,11 +160,19 @@ def test_neither_driver_installed_behavior():
         assert connect_args == {}
 
 
-def test_supabase_domain_triggers_prepare_threshold_for_psycopg():
+def test_supabase_pooler_vs_direct_prepare_threshold_for_psycopg():
     with patch("importlib.util.find_spec") as mock_find_spec:
         mock_find_spec.side_effect = lambda name: MagicMock() if name == "psycopg" else None
-        supabase_url = "postgresql://postgres:pass@db.xyz.supabase.co:5432/postgres"
-        url, connect_args = normalize_database_url(supabase_url)
+
+        # Direct Supabase connection (:5432 on db.<project>.supabase.co) keeps prepared statements enabled
+        direct_url = "postgresql://postgres:pass@db.xyz.supabase.co:5432/postgres"
+        url, connect_args = normalize_database_url(direct_url)
+        assert url.startswith("postgresql+psycopg://")
+        assert "prepare_threshold" not in connect_args
+
+        # Transaction-mode pooler host or port (:6543 / pooler.supabase.com / pgbouncer) disables prepared statements
+        pooler_host_url = "postgresql://postgres.xyz:pass@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
+        url, connect_args = normalize_database_url(pooler_host_url)
         assert url.startswith("postgresql+psycopg://")
         assert connect_args.get("prepare_threshold") is None
 

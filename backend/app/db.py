@@ -69,12 +69,40 @@ PRODUCTION_FLOW_NEWS_PROCESSED_COLUMNS = (
     ("duplicate_of_id", "BIGINT", "BIGINT"),
 )
 
+PERFORMANCE_COMPOSITE_INDEXES = (
+    (
+        "news_raw",
+        "CREATE INDEX IF NOT EXISTS ix_news_raw_published_fetched ON news_raw(published_at, fetched_at)",
+    ),
+    (
+        "news_raw",
+        "CREATE INDEX IF NOT EXISTS ix_news_raw_source_published ON news_raw(source, published_at)",
+    ),
+    (
+        "news_sentiments_v2",
+        "CREATE INDEX IF NOT EXISTS ix_news_sentiments_v2_filter ON news_sentiments_v2(event_type, label, relevance_score)",
+    ),
+    (
+        "tft_model_metadata",
+        "CREATE INDEX IF NOT EXISTS ix_tft_meta_symbol_gate_trained ON tft_model_metadata(symbol, quality_gate_passed, trained_at)",
+    ),
+    (
+        "tft_prediction_snapshots",
+        "CREATE INDEX IF NOT EXISTS ix_tft_snapshot_symbol_generated ON tft_prediction_snapshots(symbol, generated_at)",
+    ),
+    (
+        "backtest_reports",
+        "CREATE INDEX IF NOT EXISTS ix_backtest_symbol_generated ON backtest_reports(symbol, generated_at)",
+    ),
+)
+
 # SQLAlchemy declarative base
 Base = declarative_base()
 
 # Global engine and session factory (lazy initialized)
 _engine = None
 _SessionLocal = None
+_initialized_engines: set[int] = set()
 
 
 def normalize_database_url(raw_url: str) -> tuple[str, dict]:
@@ -137,12 +165,11 @@ def normalize_database_url(raw_url: str) -> tuple[str, dict]:
             url = "postgresql+psycopg://" + rest
             is_psycopg = True
 
+    url_lower = url.lower()
     if is_psycopg and (
-        ":6543" in url
-        or "pooler.supabase.com" in url
-        or "supabase.co" in url
-        or "supabase.com" in url
-        or "pgbouncer" in url.lower()
+        ":6543" in url_lower
+        or "pooler.supabase.com" in url_lower
+        or "pgbouncer" in url_lower
     ):
         connect_args["prepare_threshold"] = None
 
@@ -174,18 +201,19 @@ def get_engine():
                 "timeout": 30,
             }
         else:
-            # PostgreSQL (Supabase) - connection pooling
+            # PostgreSQL (Supabase) - connection pooling with LIFO reuse
             engine_kwargs["pool_size"] = 5
             engine_kwargs["max_overflow"] = 10
             engine_kwargs["pool_timeout"] = 30
             engine_kwargs["pool_recycle"] = 300
+            engine_kwargs["pool_use_lifo"] = True
             if extra_connect_args:
                 engine_kwargs.setdefault("connect_args", {}).update(extra_connect_args)
         
         _engine = create_engine(database_url, **engine_kwargs)
         
         # SQLite WAL mode and pragmas
-        if is_sqlite:
+        if is_sqlite and hasattr(_engine, "dispatch"):
             @event.listens_for(_engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()
@@ -199,6 +227,9 @@ def get_engine():
                 cursor.execute("PRAGMA foreign_keys=ON")
                 # Memory-mapped I/O (faster reads)
                 cursor.execute("PRAGMA mmap_size=268435456")  # 256MB
+                # Keep temporary tables/indices in RAM and allocate 64MB page cache
+                cursor.execute("PRAGMA temp_store=MEMORY")
+                cursor.execute("PRAGMA cache_size=-64000")
                 cursor.close()
             
             logger.info("SQLite configured with WAL mode and performance pragmas")
@@ -341,6 +372,16 @@ def _ensure_production_flow_schema(conn, is_sqlite: bool) -> None:
         )
     )
 
+
+def _ensure_performance_indexes(conn) -> None:
+    """Ensure composite indexes for high-frequency API and pipeline queries exist."""
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    for table_name, ddl in PERFORMANCE_COMPOSITE_INDEXES:
+        if table_name in existing_tables:
+            conn.execute(text(ddl))
+
+
 def _run_migrations(engine):
     """
     Run necessary database migrations for schema changes.
@@ -352,15 +393,12 @@ def _run_migrations(engine):
         # Migration: Add ai_stance column to ai_commentaries if it doesn't exist
         try:
             if is_sqlite:
-                # SQLite doesn't support IF NOT EXISTS for columns, check manually
-                result = conn.execute(text("PRAGMA table_info(ai_commentaries)"))
-                columns = [row[1] for row in result.fetchall()]
-                if 'ai_stance' not in columns:
+                columns = _sqlite_columns(conn, "ai_commentaries")
+                if "ai_stance" not in columns:
                     conn.execute(text("ALTER TABLE ai_commentaries ADD COLUMN ai_stance VARCHAR(20) DEFAULT 'NEUTRAL'"))
                     conn.commit()
                     logger.info("Migration: Added ai_stance column to ai_commentaries")
             else:
-                # PostgreSQL supports IF NOT EXISTS via DO block
                 conn.execute(text("""
                     ALTER TABLE ai_commentaries 
                     ADD COLUMN IF NOT EXISTS ai_stance VARCHAR(20) DEFAULT 'NEUTRAL'
@@ -370,40 +408,12 @@ def _run_migrations(engine):
         except Exception as e:
             logger.debug(f"Migration check for ai_stance: {e}")
 
-        # Migration: V2 stage-2 metrics columns
-        v2_metric_columns = [
+        # Migration: V2 stage-2 and TFT-ASRO metric columns on pipeline_run_metrics
+        combined_pipeline_metric_columns = [
             ("articles_scored_v2", "INTEGER"),
             ("llm_parse_fail_count", "INTEGER"),
             ("escalation_count", "INTEGER"),
             ("fallback_count", "INTEGER"),
-        ]
-        try:
-            if is_sqlite:
-                result = conn.execute(text("PRAGMA table_info(pipeline_run_metrics)"))
-                columns = [row[1] for row in result.fetchall()]
-                for column_name, column_type in v2_metric_columns:
-                    if column_name not in columns:
-                        conn.execute(
-                            text(
-                                f"ALTER TABLE pipeline_run_metrics ADD COLUMN {column_name} {column_type}"
-                            )
-                        )
-                conn.commit()
-            else:
-                for column_name, column_type in v2_metric_columns:
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE pipeline_run_metrics "
-                            f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
-                        )
-                    )
-                conn.commit()
-            logger.info("Migration: Ensured V2 Stage-2 metric columns exist")
-        except Exception as e:
-            logger.debug(f"Migration check for V2 metric columns: {e}")
-
-        # Migration: TFT-ASRO metric columns on pipeline_run_metrics
-        tft_metric_columns = [
             ("tft_embeddings_computed", "INTEGER"),
             ("tft_trained", "BOOLEAN DEFAULT FALSE"),
             ("tft_val_loss", "FLOAT"),
@@ -413,11 +423,9 @@ def _run_migrations(engine):
         ]
         try:
             if is_sqlite:
-                result = conn.execute(text("PRAGMA table_info(pipeline_run_metrics)"))
-                columns = [row[1] for row in result.fetchall()]
-                for column_name, column_type in tft_metric_columns:
-                    col_name_only = column_name
-                    if col_name_only not in columns:
+                columns = _sqlite_columns(conn, "pipeline_run_metrics")
+                for column_name, column_type in combined_pipeline_metric_columns:
+                    if column_name not in columns:
                         conn.execute(
                             text(
                                 f"ALTER TABLE pipeline_run_metrics ADD COLUMN {column_name} {column_type}"
@@ -425,7 +433,7 @@ def _run_migrations(engine):
                         )
                 conn.commit()
             else:
-                for column_name, column_type in tft_metric_columns:
+                for column_name, column_type in combined_pipeline_metric_columns:
                     conn.execute(
                         text(
                             f"ALTER TABLE pipeline_run_metrics "
@@ -433,9 +441,9 @@ def _run_migrations(engine):
                         )
                     )
                 conn.commit()
-            logger.info("Migration: Ensured TFT-ASRO metric columns exist")
+            logger.info("Migration: Ensured V2 Stage-2 and TFT-ASRO metric columns exist")
         except Exception as e:
-            logger.debug(f"Migration check for TFT metric columns: {e}")
+            logger.debug(f"Migration check for pipeline metric columns: {e}")
 
         try:
             _ensure_weekly_sentiment_schema(conn, is_sqlite)
@@ -483,8 +491,9 @@ def _run_migrations(engine):
 
         try:
             _ensure_production_flow_schema(conn, is_sqlite)
+            _ensure_performance_indexes(conn)
             conn.commit()
-            logger.info("Migration: Ensured production-flow schema exists")
+            logger.info("Migration: Ensured production-flow schema and performance indexes exist")
         except Exception:
             conn.rollback()
             logger.exception("Migration failed for production-flow schema")
@@ -525,6 +534,14 @@ def init_db():
 
     # Run migrations for existing tables
     _run_migrations(engine)
+    _initialized_engines.add(id(engine))
+
+
+def ensure_db_initialized() -> None:
+    """Initialize DB schema/migrations once per engine instance."""
+    engine = get_engine()
+    if id(engine) not in _initialized_engines:
+        init_db()
 
 
 def get_db_type() -> str:
@@ -554,4 +571,3 @@ def check_db_connection() -> bool:
     except Exception as e:
         logger.error(f"Database connection check failed: {e}")
         return False
-

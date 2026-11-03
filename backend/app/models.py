@@ -437,6 +437,11 @@ class NewsRaw(Base):
     
     # Relationship
     processed_items = relationship("NewsProcessed", back_populates="raw")
+
+    __table_args__ = (
+        Index("ix_news_raw_published_fetched", "published_at", "fetched_at"),
+        Index("ix_news_raw_source_published", "source", "published_at"),
+    )
     
     def __repr__(self):
         return f"<NewsRaw(id={self.id}, title='{self.title[:30]}...')>"
@@ -542,6 +547,7 @@ class NewsSentimentV2(Base):
     __table_args__ = (
         UniqueConstraint("news_processed_id", "horizon_days", name="uq_news_sentiments_v2_processed_horizon"),
         Index("ix_news_sentiments_v2_processed_scored", "news_processed_id", "scored_at"),
+        Index("ix_news_sentiments_v2_filter", "event_type", "label", "relevance_score"),
     )
 
     def __repr__(self):
@@ -660,6 +666,15 @@ class TFTModelMetadata(Base):
     # NULL = legacy row persisted before this column was added (treat as unknown).
     quality_gate_passed = Column(Boolean, nullable=True)
 
+    __table_args__ = (
+        Index(
+            "ix_tft_meta_symbol_gate_trained",
+            "symbol",
+            "quality_gate_passed",
+            "trained_at",
+        ),
+    )
+
     def __repr__(self):
         return f"<TFTModelMetadata(symbol={self.symbol}, trained_at={self.trained_at})>"
 
@@ -700,6 +715,10 @@ class TFTPredictionSnapshot(Base):
     # inference time. NULL when explanations are disabled or unavailable;
     # explanations are optional and must never block a snapshot write.
     explain_json = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_tft_snapshot_symbol_generated", "symbol", "generated_at"),
+    )
 
     def __repr__(self):
         return (
@@ -760,6 +779,10 @@ class BacktestReport(Base):
     verdict = Column(String(40), nullable=True)
     generated_at = Column(
         DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+
+    __table_args__ = (
+        Index("ix_backtest_symbol_generated", "symbol", "generated_at"),
     )
 
     def __repr__(self):
