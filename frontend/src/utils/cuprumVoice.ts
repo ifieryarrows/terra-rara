@@ -457,9 +457,6 @@ export function composeCuprumReply(
       return joinWithin(parts);
     }
     case 'drivers': {
-      if (ctx.cuprumDaily?.drivers_reply) {
-        return ctx.cuprumDaily.drivers_reply;
-      }
       const cast = briefing.drivers;
       if (cast.length === 0) {
         return "I don't hear anything loud enough to name yet. Just the hum, and me listening.";

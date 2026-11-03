@@ -739,3 +739,31 @@ def test_parse_commentary_payload_recovers_unescaped_newlines_via_regex():
     assert cuprum["mood"] == "patina_bear"
     assert cuprum["greeting"] == "Morning"
 
+
+
+def test_parse_commentary_payload_rejects_truncated_dialogue_slots_and_cleans_headline():
+    raw = (
+        '{\n'
+        '  "stance": "BEARISH",\n'
+        '  "headline": "Bearish news patina coats a bullish five-day coil; the dollar",\n'
+        '  "commentary": "RISKS:\\n• Line 1\\n• Line 2",\n'
+        '  "cuprum_daily": {\n'
+        '    "greeting": "Good morning, trader; the wires are cool and green.",\n'
+        '    "drivers_reply": "The dollar",\n'
+        '    "outlook_reply": "",\n'
+        '    "worry_reply": "",\n'
+        '    "board_read_reply": ""\n'
+        '  }\n'
+        '}'
+    )
+    stance, commentary, cuprum = commentary_module._parse_commentary_payload(raw)
+    assert stance == "BEARISH"
+    assert cuprum is not None
+    assert cuprum["greeting"] == "Good morning, trader; the wires are cool and green."
+    # Truncated or empty slots are safely omitted
+    assert "drivers_reply" not in cuprum
+    assert "outlook_reply" not in cuprum
+    assert "worry_reply" not in cuprum
+    assert "board_read_reply" not in cuprum
+    # Headline trailing truncated clause is cleaned
+    assert cuprum["headline"] == "Bearish news patina coats a bullish five-day coil."
