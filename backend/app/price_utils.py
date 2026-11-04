@@ -85,7 +85,7 @@ def latest_finite_price_dates(session: Session, symbols: list[str]) -> dict[str,
         )
         rows = (
             session.query(subq.c.symbol, subq.c.date, subq.c.close)
-            .filter(subq.c.rn <= 5)
+            .filter(subq.c.rn <= 10)
             .order_by(subq.c.symbol, subq.c.rn)
             .all()
         )

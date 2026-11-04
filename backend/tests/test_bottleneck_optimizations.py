@@ -26,7 +26,7 @@ def db_session():
     NewsRaw.__table__.create(engine)
     NewsProcessed.__table__.create(engine)
     PriceBar.__table__.create(engine)
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine, autoflush=False)
     session = Session()
     yield session
     session.close()
@@ -244,3 +244,96 @@ def test_predictor_uses_num_workers_zero():
 
     source = inspect.getsource(TFTPredictor.predict)
     assert "to_dataloader(train=False, batch_size=1, num_workers=0)" in source
+
+
+def test_process_raw_to_processed_fallback_recovers_cleanly_on_flush_error(db_session):
+    """Verify that a batch flush failure does not poison canonical_cache with uncommitted IDs."""
+    from pipelines.processing.news import process_raw_to_processed
+
+    run_id = uuid.uuid4()
+    pub = datetime.datetime(2026, 11, 1, 12, tzinfo=datetime.timezone.utc)
+
+    # 1 canonical and 1 intra-batch duplicate
+    r1 = NewsRaw(
+        url="https://example.com/art-a",
+        url_hash="a" * 64,
+        title="Copper Demand Climbs",
+        publisher="Reuters",
+        published_at=pub,
+        run_id=run_id,
+    )
+    r2 = NewsRaw(
+        url="https://example.com/art-b",
+        url_hash="b" * 64,
+        title="Copper Demand Climbs",
+        publisher="Reuters",
+        published_at=pub,
+        run_id=run_id,
+    )
+    db_session.add_all([r1, r2])
+    db_session.commit()
+
+    # Simulate batch flush failing on the second flush (intra_batch_duplicates)
+    orig_flush = db_session.flush
+    calls = [0]
+
+    def flush_with_second_fail():
+        calls[0] += 1
+        if calls[0] == 2:
+            raise RuntimeError("Simulated intra-batch flush crash")
+        return orig_flush()
+
+    db_session.flush = flush_with_second_fail
+
+    stats = process_raw_to_processed(db_session, run_id, batch_size=50)
+
+    # Must cleanly recover via fallback without poisoning cache
+    assert stats["processed"] == 2
+    assert stats["inserted"] == 1
+    assert stats["duplicates"] == 1
+
+    processed_rows = db_session.query(NewsProcessed).order_by(NewsProcessed.id).all()
+    assert len(processed_rows) == 2
+    # The first article should be canonical (duplicate_of_id is None)
+    assert processed_rows[0].duplicate_of_id is None
+    # The second article should be duplicate pointing to the first
+    assert processed_rows[1].duplicate_of_id == processed_rows[0].id
+
+
+def test_process_raw_to_processed_prevents_infinite_loop_on_unhandled_failure(db_session):
+    """Verify that unprocessable raw items do not trigger an infinite loop in the batch while loop."""
+    from pipelines.processing.news import process_raw_to_processed
+
+    run_id = uuid.uuid4()
+    pub = datetime.datetime(2026, 11, 1, 12, tzinfo=datetime.timezone.utc)
+
+    r = NewsRaw(
+        url="https://example.com/bad-article",
+        url_hash="c" * 64,
+        title="Bad Article",
+        publisher="Reuters",
+        published_at=pub,
+        run_id=run_id,
+    )
+    db_session.add(r)
+    db_session.commit()
+
+    # Mock process_single_raw returning None and batch flush failing
+    with patch("pipelines.processing.news.process_single_raw", return_value=None):
+        with patch.object(db_session, "flush", side_effect=RuntimeError("Batch error")):
+            stats = process_raw_to_processed(db_session, run_id, batch_size=10)
+
+    assert stats["processed"] == 1
+    assert stats["inserted"] == 0
+    assert stats["duplicates"] == 1
+
+
+def test_get_db_type_with_session_get_bind():
+    from app.db import get_db_type
+
+    mock_session = MagicMock()
+    mock_session.bind = None
+    mock_session.get_bind.return_value.dialect.name = "postgresql"
+
+    assert get_db_type(mock_session) == "postgresql"
+

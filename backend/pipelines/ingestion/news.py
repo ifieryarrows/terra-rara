@@ -128,27 +128,28 @@ def insert_raw_article(
             return (None, "duplicate")
             
         else:
-            # SQLite fallback: pre-check url_hash for duplicate then flush
+            # SQLite fallback: pre-check url_hash for duplicate then flush inside savepoint
             if url_hash:
                 existing = session.query(NewsRaw.id).filter(NewsRaw.url_hash == url_hash).first()
                 if existing is not None:
                     return (None, "duplicate")
-            article = NewsRaw(
-                url=url,
-                url_hash=url_hash,
-                title=title,
-                description=description[:2000] if description else None,
-                source=source,
-                publisher=publisher,
-                source_feed=source_feed[:500] if source_feed else None,
-                published_at=published_at,
-                fetched_at=fetched_at,
-                run_id=run_id,
-                raw_payload=raw_payload,
-            )
-            session.add(article)
-            session.flush()
-            return (article.id, "inserted")
+            with session.begin_nested():
+                article = NewsRaw(
+                    url=url,
+                    url_hash=url_hash,
+                    title=title,
+                    description=description[:2000] if description else None,
+                    source=source,
+                    publisher=publisher,
+                    source_feed=source_feed[:500] if source_feed else None,
+                    published_at=published_at,
+                    fetched_at=fetched_at,
+                    run_id=run_id,
+                    raw_payload=raw_payload,
+                )
+                session.add(article)
+                session.flush()
+                return (article.id, "inserted")
             
     except Exception as e:
         # Distinguish between duplicate (23505) and other errors

@@ -548,6 +548,11 @@ def get_db_type(session: Optional[Any] = None) -> str:
     """Return the database type (sqlite, postgresql, etc.)."""
     if session is not None:
         bind = getattr(session, "bind", None)
+        if bind is None and hasattr(session, "get_bind"):
+            try:
+                bind = session.get_bind()
+            except Exception:
+                bind = None
         if bind is not None and hasattr(bind, "dialect"):
             return bind.dialect.name
 

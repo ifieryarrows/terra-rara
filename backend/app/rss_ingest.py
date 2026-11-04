@@ -192,6 +192,14 @@ def fetch_google_news_concurrent(
     results: dict[str, list[dict]] = {}
 
     with requests.Session() as session:
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        })
         adapter = HTTPAdapter(
             pool_connections=num_workers,
             pool_maxsize=num_workers,

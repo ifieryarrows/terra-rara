@@ -214,14 +214,25 @@ def process_raw_to_processed(
         return stats
     
     canonical_cache: dict[str, int] = {}
+    failed_raw_ids: set[int] = set()
+    previous_batch_ids: Optional[list[int]] = None
 
     # The query shrinks after every commit. Always consume its first page;
     # offset pagination here used to skip every second batch.
     while True:
-        batch = unprocessed_query.limit(batch_size).all()
+        query = unprocessed_query
+        if failed_raw_ids:
+            query = query.filter(~NewsRaw.id.in_(failed_raw_ids))
+        batch = query.limit(batch_size).all()
         
         if not batch:
             break
+
+        batch_ids = [r.id for r in batch]
+        if previous_batch_ids is not None and batch_ids == previous_batch_ids:
+            logger.error("No progress made processing raw articles batch; terminating loop to avoid hang.")
+            break
+        previous_batch_ids = batch_ids
 
         # Pre-populate canonical_cache for this batch in a single SQL query
         if isinstance(session, Session):
@@ -307,6 +318,7 @@ def process_raw_to_processed(
                 batch_canonical_keys[dedup] = proc
                 stats["inserted"] += 1
 
+        cache_snapshot = dict(canonical_cache)
         try:
             for _, proc, _ in new_canonicals:
                 session.add(proc)
@@ -341,6 +353,8 @@ def process_raw_to_processed(
         except Exception as e:
             logger.warning(f"Batch processing flush failed, falling back to per-row: {e}")
             session.rollback()
+            canonical_cache.clear()
+            canonical_cache.update(cache_snapshot)
             # Rollback stats increment for this batch and run row-by-row fallback
             stats["processed"] -= len(batch)
             stats["inserted"] -= len(new_canonicals)
@@ -355,12 +369,13 @@ def process_raw_to_processed(
                     canonical_cache=canonical_cache if isinstance(session, Session) else None,
                     _is_duplicate_out=dup_flag,
                 )
-                if result:
+                if result is not None:
                     if dup_flag and dup_flag[0]:
                         stats["duplicates"] += 1
                     else:
                         stats["inserted"] += 1
                 else:
+                    failed_raw_ids.add(raw.id)
                     stats["duplicates"] += 1
             session.commit()
     
