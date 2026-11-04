@@ -246,32 +246,123 @@ def process_raw_to_processed(
                 for d_key, p_id in existing_canonicals:
                     canonical_cache[d_key] = p_id
         
+        # Batch accumulation: avoid per-row session.begin_nested() and flush()
+        new_canonicals: list[tuple[NewsRaw, NewsProcessed, str]] = []
+        known_duplicates: list[NewsProcessed] = []
+        intra_batch_duplicates: list[tuple[NewsRaw, str, str, str, str, Optional[str], Optional[float]]] = []
+        batch_canonical_keys: dict[str, NewsProcessed] = {}
+
         for raw in batch:
             stats["processed"] += 1
-            dup_flag: list[bool] = []
-            
-            result = process_single_raw(
-                session,
-                raw,
-                run_id,
-                canonical_cache=canonical_cache if isinstance(session, Session) else None,
-                _is_duplicate_out=dup_flag,
-            )
-            
-            if result:
-                if dup_flag:
-                    is_dup = dup_flag[0]
-                else:
-                    processed = session.get(NewsProcessed, result)
-                    is_dup = processed is not None and processed.duplicate_of_id is not None
-                if is_dup:
-                    stats["duplicates"] += 1
-                else:
-                    stats["inserted"] += 1
-            else:
+            publisher = normalize_publisher(raw.publisher)
+            raw.publisher = publisher
+            dedup = compute_content_dedup_key(raw.title, publisher, raw.published_at)
+
+            canon = canonical_title(raw.title)
+            canon_hash = compute_canonical_title_hash(raw.title)
+            cleaned = clean_text(raw.title)
+            if raw.description:
+                cleaned += " " + clean_text(raw.description)
+            cleaned = cleaned[:5000]
+
+            language = detect_language(cleaned)
+            language_confidence = None
+
+            if dedup in canonical_cache:
+                duplicate_of_id = canonical_cache[dedup]
+                row_key = hashlib.sha256(f"duplicate|{raw.id}|{dedup}".encode("utf-8")).hexdigest()
+                proc = NewsProcessed(
+                    raw_id=raw.id,
+                    canonical_title=canon[:500],
+                    canonical_title_hash=canon_hash,
+                    cleaned_text=cleaned,
+                    dedup_key=row_key,
+                    dedup_version="content_v2",
+                    duplicate_of_id=duplicate_of_id,
+                    language=language,
+                    language_confidence=language_confidence,
+                    run_id=run_id,
+                )
+                known_duplicates.append(proc)
                 stats["duplicates"] += 1
-        
-        session.commit()
+            elif dedup in batch_canonical_keys:
+                intra_batch_duplicates.append(
+                    (raw, canon, canon_hash, cleaned, dedup, language, language_confidence)
+                )
+                stats["duplicates"] += 1
+            else:
+                proc = NewsProcessed(
+                    raw_id=raw.id,
+                    canonical_title=canon[:500],
+                    canonical_title_hash=canon_hash,
+                    cleaned_text=cleaned,
+                    dedup_key=dedup,
+                    dedup_version="content_v2",
+                    duplicate_of_id=None,
+                    language=language,
+                    language_confidence=language_confidence,
+                    run_id=run_id,
+                )
+                new_canonicals.append((raw, proc, dedup))
+                batch_canonical_keys[dedup] = proc
+                stats["inserted"] += 1
+
+        try:
+            for _, proc, _ in new_canonicals:
+                session.add(proc)
+            for proc in known_duplicates:
+                session.add(proc)
+
+            session.flush()
+
+            for _, proc, dedup in new_canonicals:
+                canonical_cache[dedup] = proc.id
+
+            if intra_batch_duplicates:
+                for raw, canon, canon_hash, cleaned, dedup, lang, conf in intra_batch_duplicates:
+                    canonical_id = canonical_cache.get(dedup)
+                    row_key = hashlib.sha256(f"duplicate|{raw.id}|{dedup}".encode("utf-8")).hexdigest()
+                    proc = NewsProcessed(
+                        raw_id=raw.id,
+                        canonical_title=canon[:500],
+                        canonical_title_hash=canon_hash,
+                        cleaned_text=cleaned,
+                        dedup_key=row_key,
+                        dedup_version="content_v2",
+                        duplicate_of_id=canonical_id,
+                        language=lang,
+                        language_confidence=conf,
+                        run_id=run_id,
+                    )
+                    session.add(proc)
+                session.flush()
+
+            session.commit()
+        except Exception as e:
+            logger.warning(f"Batch processing flush failed, falling back to per-row: {e}")
+            session.rollback()
+            # Rollback stats increment for this batch and run row-by-row fallback
+            stats["processed"] -= len(batch)
+            stats["inserted"] -= len(new_canonicals)
+            stats["duplicates"] -= (len(known_duplicates) + len(intra_batch_duplicates))
+            for raw in batch:
+                stats["processed"] += 1
+                dup_flag = []
+                result = process_single_raw(
+                    session,
+                    raw,
+                    run_id,
+                    canonical_cache=canonical_cache if isinstance(session, Session) else None,
+                    _is_duplicate_out=dup_flag,
+                )
+                if result:
+                    if dup_flag and dup_flag[0]:
+                        stats["duplicates"] += 1
+                    else:
+                        stats["inserted"] += 1
+                else:
+                    stats["duplicates"] += 1
+            session.commit()
     
     logger.info(
         f"[run_id={run_id}] Processing complete: "

@@ -3,12 +3,14 @@ RSS feed ingestion with Google News RSS support.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus
 
 import feedparser
 import requests
+from requests.adapters import HTTPAdapter
 from dateutil import parser as dateutil_parser
 
 from app.settings import get_settings
@@ -50,7 +52,8 @@ def parse_rss_date(date_str: str) -> Optional[datetime]:
 
 def fetch_rss_feed(
     url: str,
-    max_items: int = 100
+    max_items: int = 100,
+    session: Optional[requests.Session] = None,
 ) -> list[dict]:
     """
     Fetch and parse an RSS feed.
@@ -58,6 +61,7 @@ def fetch_rss_feed(
     Args:
         url: RSS feed URL
         max_items: Maximum number of items to return
+        session: Optional requests.Session for connection pooling
     
     Returns:
         List of article dicts with keys: title, url, published_at, source, description
@@ -70,7 +74,8 @@ def fetch_rss_feed(
         # pipeline worker and its advisory lock indefinitely. Bound both
         # connection setup and response reads, then give feedparser the
         # downloaded bytes so parsing remains unchanged.
-        response = requests.get(url, timeout=(5.0, 15.0))
+        http_client = session if session is not None else requests
+        response = http_client.get(url, timeout=(5.0, 15.0))
         response.raise_for_status()
         feed = feedparser.parse(
             response.content,
@@ -138,7 +143,8 @@ def fetch_rss_feed(
 def fetch_google_news(
     query: Optional[str] = None,
     language: Optional[str] = None,
-    max_items: int = 100
+    max_items: int = 100,
+    session: Optional[requests.Session] = None,
 ) -> list[dict]:
     """
     Fetch articles from Google News RSS.
@@ -147,6 +153,7 @@ def fetch_google_news(
         query: Search query. If None, uses settings.
         language: Language code. If None, uses settings.
         max_items: Maximum articles to fetch
+        session: Optional requests.Session for connection pooling
     
     Returns:
         List of article dicts
@@ -157,7 +164,61 @@ def fetch_google_news(
     language = language or settings.news_language
     
     url = build_google_news_rss_url(query, language)
-    return fetch_rss_feed(url, max_items)
+    return fetch_rss_feed(url, max_items, session=session)
+
+
+def fetch_google_news_concurrent(
+    queries: list[str],
+    language: Optional[str] = None,
+    max_items: int = 100,
+    max_workers: int = 8,
+) -> dict[str, list[dict]]:
+    """
+    Fetch multiple Google News queries concurrently using a connection pool.
+    
+    Args:
+        queries: List of search queries
+        language: Language code
+        max_items: Max articles per query
+        max_workers: Maximum concurrent workers
+        
+    Returns:
+        Dict mapping query string to list of article dicts
+    """
+    if not queries:
+        return {}
+
+    num_workers = min(len(queries), max_workers)
+    results: dict[str, list[dict]] = {}
+
+    with requests.Session() as session:
+        adapter = HTTPAdapter(
+            pool_connections=num_workers,
+            pool_maxsize=num_workers,
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            future_to_query = {
+                executor.submit(
+                    fetch_google_news,
+                    query=q,
+                    language=language,
+                    max_items=max_items,
+                    session=session,
+                ): q
+                for q in queries
+            }
+            for future in as_completed(future_to_query):
+                q = future_to_query[future]
+                try:
+                    results[q] = future.result()
+                except Exception as e:
+                    logger.warning(f"Error fetching Google News for '{q}': {e}")
+                    results[q] = []
+
+    return results
 
 
 def fetch_custom_rss_feeds(
@@ -184,4 +245,5 @@ def fetch_custom_rss_feeds(
             logger.error(f"Failed to fetch RSS {url}: {e}")
     
     return all_articles
+
 

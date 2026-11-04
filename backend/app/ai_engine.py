@@ -19,10 +19,16 @@ import hashlib
 import json
 import logging
 import os
+from contextlib import nullcontext
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 import numpy as np
 import pandas as pd
@@ -1393,11 +1399,17 @@ def score_batch_with_finbert_v2(articles: list[dict]) -> dict[int, dict]:
                 valid_texts.append(text)
 
         if valid_texts:
+            inference_ctx = (
+                torch.inference_mode()
+                if torch is not None and hasattr(torch, "inference_mode")
+                else (torch.no_grad() if torch is not None else nullcontext())
+            )
             try:
-                try:
-                    raw_batch = pipe(valid_texts, batch_size=16, top_k=None)
-                except TypeError:
-                    raw_batch = pipe(valid_texts, batch_size=16)
+                with inference_ctx:
+                    try:
+                        raw_batch = pipe(valid_texts, batch_size=16, top_k=None)
+                    except TypeError:
+                        raw_batch = pipe(valid_texts, batch_size=16)
                 if isinstance(raw_batch, list) and len(raw_batch) == len(valid_ids):
                     _log_finbert_output_once(raw_batch[0])
                     for article_id, raw_item in zip(valid_ids, raw_batch):

@@ -6,7 +6,7 @@ SQLite with WAL mode for concurrent read/write support.
 import importlib.util
 import logging
 from contextlib import contextmanager
-from typing import Generator
+from typing import Any, Generator, Optional
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
@@ -544,8 +544,13 @@ def ensure_db_initialized() -> None:
         init_db()
 
 
-def get_db_type() -> str:
+def get_db_type(session: Optional[Any] = None) -> str:
     """Return the database type (sqlite, postgresql, etc.)."""
+    if session is not None:
+        bind = getattr(session, "bind", None)
+        if bind is not None and hasattr(bind, "dialect"):
+            return bind.dialect.name
+
     settings = get_settings()
     url = settings.database_url
     if not url:

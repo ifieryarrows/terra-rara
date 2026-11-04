@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.models import NewsRaw
 from app.settings import get_settings
 from app.utils import normalize_url, clean_text
-from app.rss_ingest import fetch_google_news
+from app.rss_ingest import fetch_google_news, fetch_google_news_concurrent
 from app.db import get_db_type
 
 logger = logging.getLogger(__name__)
@@ -98,10 +98,10 @@ def insert_raw_article(
     publisher = normalize_publisher(publisher)
     
     try:
-        db_type = get_db_type()
+        db_type = get_db_type(session)
         
         if db_type == "postgresql":
-            # Use INSERT ... ON CONFLICT for PostgreSQL
+            # Use INSERT ... ON CONFLICT RETURNING id for PostgreSQL in one round trip
             stmt = pg_insert(NewsRaw).values(
                 url=url,
                 url_hash=url_hash,
@@ -120,20 +120,19 @@ def insert_raw_article(
             if url_hash:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["url_hash"])
             
+            stmt = stmt.returning(NewsRaw.id)
             result = session.execute(stmt)
-            
-            if result.rowcount > 0:
-                # Get the inserted ID
-                row = session.execute(
-                    text("SELECT id FROM news_raw WHERE url_hash = :hash ORDER BY id DESC LIMIT 1"),
-                    {"hash": url_hash}
-                ).fetchone()
-                return (row[0] if row else None, "inserted")
-            
+            row = result.fetchone()
+            if row:
+                return (row[0], "inserted")
             return (None, "duplicate")
             
         else:
-            # SQLite fallback - simple insert with error handling
+            # SQLite fallback: pre-check url_hash for duplicate then flush
+            if url_hash:
+                existing = session.query(NewsRaw.id).filter(NewsRaw.url_hash == url_hash).first()
+                if existing is not None:
+                    return (None, "duplicate")
             article = NewsRaw(
                 url=url,
                 url_hash=url_hash,
@@ -154,11 +153,140 @@ def insert_raw_article(
     except Exception as e:
         # Distinguish between duplicate (23505) and other errors
         pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
-        if pgcode == "23505":  # Unique violation
+        err_msg = str(e).lower()
+        if pgcode == "23505" or "unique constraint" in err_msg:
             return (None, "duplicate")
         logger.warning(f"Insert raw article failed (pgcode={pgcode}): {e}")
         session.rollback()
         return (None, "error")
+
+
+def insert_raw_articles_batch(
+    session: Session,
+    articles: list[dict],
+    run_id: uuid.UUID,
+    default_source: str = "google_news",
+    default_source_feed: Optional[str] = None,
+) -> dict[str, int]:
+    """
+    Batch insert raw articles into news_raw in a single database round trip.
+    
+    Deduplicates intra-batch url_hashes in memory and uses
+    INSERT ... ON CONFLICT (url_hash) DO NOTHING RETURNING id.
+    
+    Args:
+        session: Database session
+        articles: List of article dicts
+        run_id: Pipeline run UUID
+        default_source: Fallback source name
+        default_source_feed: Fallback source feed
+        
+    Returns:
+        Dict with keys: inserted, duplicates, errors
+    """
+    stats = {"inserted": 0, "duplicates": 0, "errors": 0}
+    if not articles:
+        return stats
+        
+    fetched_at = datetime.now(timezone.utc)
+    seen_hashes: set[str] = set()
+    to_insert: list[dict] = []
+    
+    for art in articles:
+        url = art.get("url")
+        title = art.get("title")
+        if not title or not str(title).strip():
+            title = "(untitled)"
+        title = clean_text(str(title))[:500]
+        
+        published_at = art.get("published_at") or fetched_at
+        url_hash = compute_url_hash(url)
+        publisher = normalize_publisher(
+            art.get("publisher") or art.get("source") or art.get("author")
+        )
+        source = art.get("source_name") or art.get("source") or default_source
+        source_feed = art.get("source_feed") or default_source_feed
+        raw_payload = art.get("raw_payload")
+        description = art.get("description")
+        
+        if url_hash is not None:
+            if url_hash in seen_hashes:
+                stats["duplicates"] += 1
+                continue
+            seen_hashes.add(url_hash)
+            
+        to_insert.append({
+            "url": url,
+            "url_hash": url_hash,
+            "title": title,
+            "description": description[:2000] if description else None,
+            "source": source,
+            "publisher": publisher,
+            "source_feed": source_feed[:500] if source_feed else None,
+            "published_at": published_at,
+            "fetched_at": fetched_at,
+            "run_id": run_id,
+            "raw_payload": raw_payload,
+        })
+        
+    if not to_insert:
+        return stats
+
+    try:
+        db_type = get_db_type(session)
+        if db_type == "postgresql":
+            stmt = pg_insert(NewsRaw).values(to_insert)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["url_hash"])
+            stmt = stmt.returning(NewsRaw.id)
+            result = session.execute(stmt)
+            inserted_rows = result.fetchall()
+            inserted_count = len(inserted_rows)
+            stats["inserted"] += inserted_count
+            stats["duplicates"] += len(to_insert) - inserted_count
+        else:
+            # SQLite batch: query existing hashes in one IN query and insert remainder
+            batch_hashes = [d["url_hash"] for d in to_insert if d.get("url_hash")]
+            existing_hashes: set[str] = set()
+            if batch_hashes:
+                rows = session.query(NewsRaw.url_hash).filter(NewsRaw.url_hash.in_(batch_hashes)).all()
+                existing_hashes = {r[0] for r in rows if r[0]}
+            new_objects: list[NewsRaw] = []
+            for d in to_insert:
+                h = d.get("url_hash")
+                if h and h in existing_hashes:
+                    stats["duplicates"] += 1
+                else:
+                    new_objects.append(NewsRaw(**d))
+                    if h:
+                        existing_hashes.add(h)
+            if new_objects:
+                session.add_all(new_objects)
+                session.flush()
+                stats["inserted"] += len(new_objects)
+    except Exception as e:
+        logger.warning(f"Batch raw articles insert failed, falling back to per-row insertion: {e}")
+        session.rollback()
+        for item in to_insert:
+            _, status = insert_raw_article(
+                session=session,
+                url=item["url"],
+                title=item["title"],
+                description=item["description"],
+                source=item["source"],
+                source_feed=item["source_feed"],
+                published_at=item["published_at"],
+                run_id=run_id,
+                raw_payload=item["raw_payload"],
+                publisher=item["publisher"],
+            )
+            if status == "inserted":
+                stats["inserted"] += 1
+            elif status == "duplicate":
+                stats["duplicates"] += 1
+            else:
+                stats["errors"] += 1
+
+    return stats
 
 
 def ingest_news_to_raw(
@@ -216,44 +344,40 @@ def ingest_news_to_raw(
     
     for source in sources:
         if source == "google_news":
-            for query in QUERIES:
-                try:
-                    articles = fetch_google_news(
-                        query=query,
-                        language=settings.news_language,
-                    )
-                    
+            try:
+                query_results = fetch_google_news_concurrent(
+                    queries=QUERIES,
+                    language=settings.news_language,
+                )
+                articles_to_batch = []
+                for query, articles in query_results.items():
                     stats["fetched"] += len(articles)
-                    
                     for article in articles:
-                        raw_id, status = insert_raw_article(
-                            session=session,
-                            url=article.get("url"),
-                            title=article.get("title"),
-                            description=article.get("description"),
-                            source="google_news",
-                            source_feed=f"google_news:{query}",
-                            published_at=article.get("published_at"),
-                            run_id=run_id,
-                            raw_payload={"query": query, "source": article.get("source")},
-                            publisher=article.get("source"),
-                        )
-                        
-                        if status == "inserted":
-                            stats["inserted"] += 1
-                        elif status == "duplicate":
-                            stats["duplicates"] += 1
-                        else:
-                            stats["errors"] += 1
-                            
-                except Exception as e:
-                    logger.warning(f"Error fetching {source} for '{query}': {e}")
-                    stats["errors"] += 1
+                        art = dict(article)
+                        art["source_name"] = "google_news"
+                        art["source_feed"] = f"google_news:{query}"
+                        art["raw_payload"] = {"query": query, "source": article.get("source")}
+                        art["publisher"] = article.get("source")
+                        articles_to_batch.append(art)
+                
+                batch_stats = insert_raw_articles_batch(
+                    session=session,
+                    articles=articles_to_batch,
+                    run_id=run_id,
+                    default_source="google_news",
+                )
+                stats["inserted"] += batch_stats["inserted"]
+                stats["duplicates"] += batch_stats["duplicates"]
+                stats["errors"] += batch_stats["errors"]
+            except Exception as e:
+                logger.warning(f"Error in concurrent google_news ingestion: {e}")
+                stats["errors"] += 1
                     
         elif source == "newsapi" and settings.newsapi_key:
             # NewsAPI implementation - reuse existing fetch
             from app.data_manager import fetch_newsapi_articles
             
+            api_articles_to_batch = []
             for query in QUERIES[:3]:  # Limit API calls
                 try:
                     articles = fetch_newsapi_articles(
@@ -266,29 +390,31 @@ def ingest_news_to_raw(
                     stats["fetched"] += len(articles)
                     
                     for article in articles:
-                        raw_id, status = insert_raw_article(
-                            session=session,
-                            url=article.get("url"),
-                            title=article.get("title"),
-                            description=article.get("description"),
-                            source="newsapi",
-                            source_feed=f"newsapi:{query}",
-                            published_at=article.get("published_at"),
-                            run_id=run_id,
-                            raw_payload={"query": query, "author": article.get("author"), "source": article.get("source")},
-                            publisher=(article.get("source") or article.get("author")),
-                        )
-                        
-                        if status == "inserted":
-                            stats["inserted"] += 1
-                        elif status == "duplicate":
-                            stats["duplicates"] += 1
-                        else:
-                            stats["errors"] += 1
+                        art = dict(article)
+                        art["source_name"] = "newsapi"
+                        art["source_feed"] = f"newsapi:{query}"
+                        art["raw_payload"] = {
+                            "query": query,
+                            "author": article.get("author"),
+                            "source": article.get("source"),
+                        }
+                        art["publisher"] = article.get("source") or article.get("author")
+                        api_articles_to_batch.append(art)
                             
                 except Exception as e:
                     logger.warning(f"Error fetching newsapi for '{query}': {e}")
                     stats["errors"] += 1
+            
+            if api_articles_to_batch:
+                batch_stats = insert_raw_articles_batch(
+                    session=session,
+                    articles=api_articles_to_batch,
+                    run_id=run_id,
+                    default_source="newsapi",
+                )
+                stats["inserted"] += batch_stats["inserted"]
+                stats["duplicates"] += batch_stats["duplicates"]
+                stats["errors"] += batch_stats["errors"]
     
     session.commit()
     

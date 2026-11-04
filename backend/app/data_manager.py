@@ -514,13 +514,16 @@ def ingest_prices(session: Session) -> dict:
     # Overlap buffer: re-fetch last 3 days to catch any corrections/adjustments
     OVERLAP_DAYS = 3
     
+    from app.price_utils import finite_number, finite_positive_price, latest_finite_price_dates, latest_finite_price_bar
+    latest_dates = latest_finite_price_dates(session, symbols)
+
     for i, symbol in enumerate(symbols):
         try:
-            # Check latest bar in DB for incremental fetch
-            from app.price_utils import finite_number, finite_positive_price, latest_finite_price_bar
-
-            latest_price_bar = latest_finite_price_bar(session, symbol)
-            latest_bar = latest_price_bar.date if latest_price_bar is not None else None
+            # Check latest bar in DB for incremental fetch (batch map with single-query fallback)
+            latest_bar = latest_dates.get(symbol)
+            if latest_bar is None:
+                latest_price_bar = latest_finite_price_bar(session, symbol)
+                latest_bar = latest_price_bar.date if latest_price_bar is not None else None
             
             if latest_bar:
                 # Incremental: fetch from (latest - overlap) to now

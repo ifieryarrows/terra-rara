@@ -473,8 +473,7 @@ class TFTPredictor:
             logger.error("Failed to create inference dataset: %s", exc)
             return {"error": str(exc)}
 
-        _nw = 0 if os.name == "nt" else 2
-        dl = ds.to_dataloader(train=False, batch_size=1, num_workers=_nw)
+        dl = ds.to_dataloader(train=False, batch_size=1, num_workers=0)
 
         try:
             import torch
