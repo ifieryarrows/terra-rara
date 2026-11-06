@@ -501,7 +501,7 @@ def ingest_prices(session: Session) -> dict:
     # Fetch union of dashboard and training symbols (training may have different symbols)
     dashboard_symbols = set(settings.symbols_list)
     training_symbols = set(settings.training_symbols)
-    symbols = list(dashboard_symbols | training_symbols)
+    symbols = sorted(dashboard_symbols | training_symbols)
     
     logger.info(f"Ingesting prices for {len(symbols)} symbols (dashboard={len(dashboard_symbols)}, training={len(training_symbols)})")
     
@@ -517,42 +517,63 @@ def ingest_prices(session: Session) -> dict:
     from app.price_utils import finite_number, finite_positive_price, latest_finite_price_dates, latest_finite_price_bar
     latest_dates = latest_finite_price_dates(session, symbols)
 
-    for i, symbol in enumerate(symbols):
+    from concurrent.futures import ThreadPoolExecutor
+
+    symbol_params = []
+    for symbol in symbols:
+        # Check latest bar in DB for incremental fetch (batch map with single-query fallback)
+        latest_bar = latest_dates.get(symbol)
+        if latest_bar is None:
+            latest_price_bar = latest_finite_price_bar(session, symbol)
+            latest_bar = latest_price_bar.date if latest_price_bar is not None else None
+
+        if latest_bar:
+            # Incremental: fetch from (latest - overlap) to now
+            latest_date = latest_bar
+            if latest_date.tzinfo is None:
+                latest_date = latest_date.replace(tzinfo=timezone.utc)
+            start_date = latest_date - timedelta(days=OVERLAP_DAYS)
+            mode = "incremental"
+        else:
+            # First time: full lookback
+            start_date = full_start_date
+            mode = "full"
+        symbol_params.append((symbol, start_date, end_date, mode))
+
+    def _fetch_single(params):
+        sym, s_date, e_date, f_mode = params
+        logger.info(f"Fetching prices for {sym} ({f_mode})...")
         try:
-            # Check latest bar in DB for incremental fetch (batch map with single-query fallback)
-            latest_bar = latest_dates.get(symbol)
-            if latest_bar is None:
-                latest_price_bar = latest_finite_price_bar(session, symbol)
-                latest_bar = latest_price_bar.date if latest_price_bar is not None else None
-            
-            if latest_bar:
-                # Incremental: fetch from (latest - overlap) to now
-                latest_date = latest_bar
-                if latest_date.tzinfo is None:
-                    latest_date = latest_date.replace(tzinfo=timezone.utc)
-                start_date = latest_date - timedelta(days=OVERLAP_DAYS)
-                mode = "incremental"
-            else:
-                # First time: full lookback
-                start_date = full_start_date
-                mode = "full"
-            
-            logger.info(f"Fetching prices for {symbol} ({mode})...")
-            
-            # Fetch with retry mechanism
-            df = fetch_symbol_with_retry(symbol, start_date, end_date)
-            
+            df = fetch_symbol_with_retry(sym, s_date, e_date)
+            return sym, df, f_mode, None
+        except Exception as exc:
+            return sym, None, f_mode, exc
+
+    max_workers = min(4, max(1, len(symbol_params)))
+    if max_workers > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            fetched_results = list(executor.map(_fetch_single, symbol_params))
+    else:
+        fetched_results = [_fetch_single(p) for p in symbol_params]
+
+    for symbol, df, mode, error in fetched_results:
+        try:
+            if error is not None:
+                logger.error(f"Failed to fetch {symbol}: {error}")
+                stats[symbol] = {"imported": 0, "updated": 0, "error": str(error)}
+                continue
+
             if df is None or df.empty:
                 logger.warning(f"No data returned for {symbol}")
                 stats[symbol] = {"imported": 0, "updated": 0, "error": "no_data"}
                 continue
-            
+
             imported = 0
             updated = 0
             rejected = 0
             batch_rows: list[dict] = []
             now_utc = datetime.now(timezone.utc)
-            
+
             for date_idx, row in df.iterrows():
                 try:
                     close = finite_positive_price(row.get("Close"))
@@ -571,11 +592,11 @@ def ingest_prices(session: Session) -> dict:
                         bar_date = date_idx.to_pydatetime()
                     else:
                         bar_date = date_idx
-                    
+
                     # Ensure timezone
                     if bar_date.tzinfo is None:
                         bar_date = bar_date.replace(tzinfo=timezone.utc)
-                    
+
                     batch_rows.append(
                         {
                             "symbol": symbol,
@@ -627,20 +648,20 @@ def ingest_prices(session: Session) -> dict:
                         except Exception as e:
                             logger.debug(f"Error processing price bar: {e}")
                             continue
-            
+
             session.commit()
-            
+
             stats[symbol] = {"imported": imported, "updated": updated, "rejected": rejected, "mode": mode}
             logger.info(f"{symbol}: {imported} bars imported, {updated} unchanged ({mode}, {len(df)} fetched)")
-            
-            # Add delay between symbols to avoid rate limiting
-            if i < len(symbols) - 1:
-                time.sleep(2)  # 2 second delay between symbols
-            
+
         except Exception as e:
-            logger.error(f"Failed to fetch {symbol}: {e}")
+            logger.error(f"Failed to process {symbol}: {e}")
+            try:
+                session.rollback()
+            except Exception:
+                pass
             stats[symbol] = {"imported": 0, "updated": 0, "error": str(e)}
-    
+
     return stats
 
 

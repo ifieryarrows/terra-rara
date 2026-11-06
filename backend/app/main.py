@@ -2691,7 +2691,8 @@ async def get_news_feed(
 
     with SessionLocal() as session:
         now = datetime.now(timezone.utc)
-        stable_as_of = as_of or now.replace(microsecond=0)
+        # Bucket omitted as_of to a 60-second window so subsequent requests share cache hits
+        stable_as_of = as_of or now.replace(second=0, microsecond=0)
         if stable_as_of.tzinfo is None:
             stable_as_of = stable_as_of.replace(tzinfo=timezone.utc)
         cutoff = stable_as_of - timedelta(hours=since_hours)

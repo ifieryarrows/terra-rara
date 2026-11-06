@@ -93,25 +93,35 @@ def is_lock_held(session: Session, lock_key: str) -> bool:
     """
     Check if lock is currently held by ANY session.
     
-    This is a weak check - another session could acquire between check and use.
-    Use try_acquire_lock for actual locking.
+    Non-intrusively queries PostgreSQL's pg_locks view without acquiring
+    or releasing locks.
     """
     lock_id = _lock_key_to_id(lock_key)
+    classid = (lock_id >> 32) & 0xFFFFFFFF
+    objid = lock_id & 0xFFFFFFFF
     
-    # Try to acquire, then immediately release if successful
-    acquired = session.execute(
-        text("SELECT pg_try_advisory_lock(:lock_id)"),
-        {"lock_id": lock_id}
-    ).scalar()
-    
-    if acquired:
-        session.execute(
-            text("SELECT pg_advisory_unlock(:lock_id)"),
-            {"lock_id": lock_id}
+    try:
+        result = session.execute(
+            text(
+                """
+                SELECT 1 FROM pg_locks
+                WHERE locktype = 'advisory'
+                  AND objsubid = 1
+                  AND classid::bigint = :classid
+                  AND objid::bigint = :objid
+                  AND granted = true
+                LIMIT 1
+                """
+            ),
+            {"classid": classid, "objid": objid},
+        ).scalar()
+        return result is not None
+    except Exception as exc:
+        logger.warning(
+            "pg_locks check failed for %s (id=%s): %s",
+            lock_key, lock_id, exc,
         )
-        return False  # Was NOT held
-    else:
-        return True  # IS held by another
+        return False
 
 
 @contextmanager

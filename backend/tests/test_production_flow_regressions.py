@@ -315,6 +315,29 @@ def test_news_api_uses_current_horizon_publisher_filter_and_stable_as_of(monkeyp
     engine.dispose()
 
 
+def test_news_feed_omitted_as_of_shares_cache_hit(monkeypatch):
+    from app import main
+    engine, session = _session_for(NewsRaw, NewsProcessed, NewsSentimentV2, PipelineRunMetrics)
+    Session = sessionmaker(bind=engine)
+    monkeypatch.setattr(main, "SessionLocal", Session)
+    monkeypatch.setattr(main, "get_settings", lambda: SimpleNamespace(sentiment_horizon_days=5))
+    main._news_list_cache.clear()
+
+    feed1 = asyncio.run(main.get_news_feed(
+        limit=20, offset=0, since_hours=48, label="all", event_type="all",
+        min_relevance=0.0, channel="all", publisher=None, search=None, as_of=None,
+    ))
+    assert len(main._news_list_cache) == 1
+
+    feed2 = asyncio.run(main.get_news_feed(
+        limit=20, offset=0, since_hours=48, label="all", event_type="all",
+        min_relevance=0.0, channel="all", publisher=None, search=None, as_of=None,
+    ))
+    assert len(main._news_list_cache) == 1
+    assert feed1["as_of"] == feed2["as_of"]
+    engine.dispose()
+
+
 def test_shared_feature_preprocessing_has_bounded_fill_and_no_nonfinite_values():
     from app.features import build_shared_feature_frame
 
