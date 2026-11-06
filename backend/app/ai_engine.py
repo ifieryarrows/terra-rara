@@ -753,20 +753,21 @@ async def score_batch_with_llm(
     data = await _request_scoring(max_tokens=LLM_SCORING_MAX_TOKENS_PRIMARY)
 
     content = _extract_chat_message_content(data)
-    if not content:
+    finish_reason = _extract_finish_reason(data)
+    if finish_reason == "length":
+        logger.warning(
+            "LLM response ended with finish_reason=length (content_len=%s); "
+            "retrying with max_tokens=%s",
+            len(content) if content else 0,
+            LLM_SCORING_MAX_TOKENS_RETRY,
+        )
+        data = await _request_scoring(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+        content = _extract_chat_message_content(data)
         finish_reason = _extract_finish_reason(data)
-        if finish_reason == "length":
-            logger.warning(
-                "LLM response ended with finish_reason=length and empty content; "
-                "retrying with max_tokens=%s",
-                LLM_SCORING_MAX_TOKENS_RETRY,
-            )
-            data = await _request_scoring(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
-            content = _extract_chat_message_content(data)
-        if not content:
-            raise OpenRouterError(
-                f"Empty response content from LLM scoring (finish_reason={finish_reason or 'unknown'})"
-            )
+    if not content:
+        raise OpenRouterError(
+            f"Empty response content from LLM scoring (finish_reason={finish_reason or 'unknown'})"
+        )
 
     try:
         return _parse_and_validate(content, repair_used=False)
@@ -1141,13 +1142,30 @@ async def _score_subset_with_model_v2(
     content = _extract_chat_message_content(data)
     response_meta = data.get("_coppermind", {})
     actual_model_name = response_meta.get("actual_model") or data.get("model") or model_name
-    if not content:
-        finish_reason = _extract_finish_reason(data)
-        if finish_reason == "length":
+    finish_reason = _extract_finish_reason(data)
+
+    # When a model hits the token ceiling (finish_reason=length), whether content
+    # is completely empty or truncated mid-JSON, retry once with expanded max_tokens
+    # before resorting to JSON repair or falling back.
+    if finish_reason == "length":
+        logger.warning(
+            "V2 scoring response ended with finish_reason=length (model=%s, content_len=%d); "
+            "retrying with max_tokens=%s",
+            model_name,
+            len(content) if content else 0,
+            LLM_SCORING_MAX_TOKENS_RETRY,
+        )
+        try:
             data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
             content = _extract_chat_message_content(data)
-        if not content:
-            return {}, expected_ids, _metrics(raw_parse_fail=len(expected_ids), final_unresolved=len(expected_ids), failure_category="empty_response"), False
+            finish_reason = _extract_finish_reason(data)
+            response_meta = data.get("_coppermind", {})
+            actual_model_name = response_meta.get("actual_model") or data.get("model") or actual_model_name
+        except Exception as retry_exc:
+            logger.warning("V2 length retry failed for model=%s: %s", model_name, retry_exc)
+
+    if not content:
+        return {}, expected_ids, _metrics(raw_parse_fail=len(expected_ids), final_unresolved=len(expected_ids), failure_category="empty_response"), False
 
     try:
         raw_results = json.loads(_clean_json_content(content))
@@ -1162,6 +1180,30 @@ async def _score_subset_with_model_v2(
             "V2 JSON parse failed for model=%s: %s | response_preview=%.500s",
             model_name, exc, content,
         )
+
+    # If the provider did not explicitly flag finish_reason=length, but the JSON decode
+    # failed (e.g. truncated mid-string/object), try one expanded retry before falling back to repair:
+    if finish_reason != "length":
+        try:
+            logger.info(
+                "V2 JSON parse failed for model=%s; attempting retry with max_tokens=%s before repair",
+                model_name,
+                LLM_SCORING_MAX_TOKENS_RETRY,
+            )
+            retry_data = await _request(max_tokens=LLM_SCORING_MAX_TOKENS_RETRY)
+            retry_content = _extract_chat_message_content(retry_data)
+            if retry_content:
+                retry_raw_results = json.loads(_clean_json_content(retry_content))
+                retry_response_meta = retry_data.get("_coppermind", {})
+                retry_actual_model_name = retry_response_meta.get("actual_model") or retry_data.get("model") or actual_model_name
+                valid, failed = _parse_llm_v2_items(
+                    raw_results=retry_raw_results,
+                    expected_ids=expected_ids,
+                    model_name=retry_actual_model_name,
+                )
+                return valid, failed, _metrics(final_unresolved=len(failed)), False
+        except Exception:
+            pass  # Fall through to _repair_json_response_v2
 
     try:
         repaired = await _repair_json_response_v2(
@@ -1535,13 +1577,15 @@ def _build_article_fallback_v2(
 def score_unscored_processed_articles(
     session: Session,
     *,
-    chunk_size: int = 12,
+    chunk_size: Optional[int] = None,
     backfill_days: Optional[int] = None,
 ) -> dict[str, int]:
     """
     Score unscored `news_processed` articles into `news_sentiments_v2`.
     """
     settings = get_settings()
+    if chunk_size is None:
+        chunk_size = max(1, int(getattr(settings, "sentiment_chunk_size", 6)))
     horizon_days = max(1, int(getattr(settings, "sentiment_horizon_days", 5)))
     relevance_min = _clip(float(getattr(settings, "sentiment_relevance_min", 0.35)), 0.0, 1.0)
 
@@ -2100,7 +2144,7 @@ def backfill_sentiment_v2(
 
 def score_unscored_articles(
     session: Session,
-    chunk_size: int = 12
+    chunk_size: Optional[int] = None,
 ) -> int:
     """
     Score all articles that don't have sentiment scores yet.
@@ -2110,13 +2154,15 @@ def score_unscored_articles(
     - Intensity: FinBERT probabilities for every article
     - Non-neutral boost: (0.7*llm_conf + 0.3*finbert_strength) * boost
     - Soft neutral: NEUTRAL labels can emit small directional score from FinBERT polarity
-    - Chunk size: 12 articles for lower free-tier rate-limit pressure
+    - Chunk size: default from settings (6 articles) to prevent free-tier token truncation
     - Run budget: cap LLM-scored articles per run, overflow uses FinBERT
     
     Returns:
         Number of articles scored
     """
     settings = get_settings()
+    if chunk_size is None:
+        chunk_size = max(1, int(getattr(settings, "sentiment_chunk_size", 6)))
     
     # Find unscored articles
     unscored = session.query(NewsArticle).outerjoin(

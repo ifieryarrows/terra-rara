@@ -1295,3 +1295,134 @@ class TestSentimentV2Aggregation:
         assert len(session.added) == 1
         assert np.isfinite(session.added[0].sentiment_index)
         assert not any("overflow encountered in exp" in str(w.message) for w in caught)
+
+class TestV2LengthRetryAndChunking:
+    """Test V2 token truncation recovery and chunk size defaults."""
+
+    def test_v2_retries_with_higher_max_tokens_when_truncated_length(self, monkeypatch):
+        from app import ai_engine
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="sk-test",
+            resolved_scoring_fast_model="fast-model",
+            resolved_scoring_reliable_model="reliable-model",
+            openrouter_max_retries=1,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(ai_engine, "get_configured_api_keys", lambda s: ["sk-test"])
+
+        call_tokens = []
+
+        async def fake_create_chat_completion(**kwargs):
+            call_tokens.append(kwargs.get("max_tokens"))
+            if len(call_tokens) == 1:
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "content": '[{"id": 101, "label": "BULLISH", "impact_score": 0.4, "confidence": 0.8, "relevance": 0.9, "event_type": "supply_disruption", "reasoning": "Strike at'
+                            },
+                        }
+                    ],
+                    "_coppermind": {"actual_model": "fast-model"},
+                }
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '[{"id": 101, "label": "BULLISH", "impact_score": 0.4, "confidence": 0.8, "relevance": 0.9, "event_type": "supply_disruption", "reasoning": "Strike at Escondida copper mine."}]'
+                        },
+                    }
+                ],
+                "_coppermind": {"actual_model": "fast-model"},
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        valid, failed, metrics, rate_limited = asyncio.run(
+            ai_engine._score_subset_with_model_v2(
+                settings=fake_settings,
+                model_name="fast-model",
+                articles=[{"id": 101, "title": "Copper Strike", "description": "Mine strike", "text": "Details"}],
+                horizon_days=5,
+            )
+        )
+
+        assert 101 in valid
+        assert valid[101]["impact_score"] == 0.4
+        assert failed == []
+        assert len(call_tokens) == 2
+        assert call_tokens[0] == ai_engine.LLM_SCORING_MAX_TOKENS_PRIMARY
+        assert call_tokens[1] == ai_engine.LLM_SCORING_MAX_TOKENS_RETRY
+        assert rate_limited is False
+
+    def test_v2_retries_with_higher_max_tokens_on_json_parse_error_before_repair(self, monkeypatch):
+        from app import ai_engine
+
+        fake_settings = SimpleNamespace(
+            openrouter_api_key="sk-test",
+            resolved_scoring_fast_model="fast-model",
+            resolved_scoring_reliable_model="reliable-model",
+            openrouter_max_retries=1,
+            openrouter_rpm=18,
+            openrouter_fallback_models_list=[],
+        )
+        monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(ai_engine, "get_configured_api_keys", lambda s: ["sk-test"])
+
+        call_tokens = []
+
+        async def fake_create_chat_completion(**kwargs):
+            call_tokens.append(kwargs.get("max_tokens"))
+            # Provider reports finish_reason=stop or none, but JSON is cut off mid-string
+            if len(call_tokens) == 1:
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": '[{"id": 102, "label": "NEUTRAL", "impact_score": 0.0, "confidence": 0.5, "relevance": 0.5, "event_type": "mixed_unclear", "reasoning": "Incomplete text'
+                            },
+                        }
+                    ],
+                    "_coppermind": {"actual_model": "fast-model"},
+                }
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '[{"id": 102, "label": "NEUTRAL", "impact_score": 0.0, "confidence": 0.5, "relevance": 0.5, "event_type": "mixed_unclear", "reasoning": "Complete neutral text."}]'
+                        },
+                    }
+                ],
+                "_coppermind": {"actual_model": "fast-model"},
+            }
+
+        monkeypatch.setattr(ai_engine, "create_chat_completion", fake_create_chat_completion)
+
+        valid, failed, metrics, rate_limited = asyncio.run(
+            ai_engine._score_subset_with_model_v2(
+                settings=fake_settings,
+                model_name="fast-model",
+                articles=[{"id": 102, "title": "Neutral news", "description": "Desc", "text": "Details"}],
+                horizon_days=5,
+            )
+        )
+
+        assert 102 in valid
+        assert valid[102]["reasoning"] == "Complete neutral text."
+        assert failed == []
+        assert len(call_tokens) == 2
+        assert call_tokens[1] == ai_engine.LLM_SCORING_MAX_TOKENS_RETRY
+
+    def test_settings_has_sentiment_chunk_size_default_of_6(self):
+        from app.settings import Settings
+
+        s = Settings()
+        assert s.sentiment_chunk_size == 6
+

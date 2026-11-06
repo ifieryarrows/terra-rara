@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     sentiment_relevance_min: float = 0.35
     sentiment_escalate_conflict_threshold: float = 0.55
     sentiment_horizon_days: int = 5
+    sentiment_chunk_size: int = 6
     scoring_source: str = "news_processed"
     
     # API settings
