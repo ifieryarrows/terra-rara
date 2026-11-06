@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from bs4 import BeautifulSoup
-from app.accel import fast_canonical_title, fast_strip_html
+from app.accel import fast_canonical_title, fast_canonical_title_batch, fast_strip_html
 
 
 def normalize_whitespace(text: str) -> str:
@@ -40,6 +40,11 @@ def canonical_title(title: str) -> str:
     - Normalize whitespace
     """
     return fast_canonical_title(title)
+
+
+def canonical_title_batch(titles: list[str]) -> list[str]:
+    """Batch canonicalize titles for fuzzy dedup comparison."""
+    return fast_canonical_title_batch(titles)
 
 
 def normalize_url(url: str) -> str:

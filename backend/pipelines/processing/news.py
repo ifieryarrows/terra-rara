@@ -16,24 +16,25 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models import NewsRaw, NewsProcessed
-from app.utils import canonical_title, clean_text
+from app.utils import canonical_title, canonical_title_batch, clean_text
 from app.data_manager import detect_language
 from app.db import get_db_type
 
 logger = logging.getLogger(__name__)
 
 
-def compute_canonical_title_hash(title: str) -> str:
+def compute_canonical_title_hash(title: str, *, canonical_title_str: Optional[str] = None) -> str:
     """
     Compute hash of canonical title.
     
     Args:
         title: Raw title string
+        canonical_title_str: Optional precomputed canonical title string
         
     Returns:
-        sha256 hex64 of canonical_title(title)
+        sha256 hex64 of canonical title
     """
-    canon = canonical_title(title)
+    canon = canonical_title_str if canonical_title_str is not None else canonical_title(title)
     return hashlib.sha256(canon.encode()).hexdigest()
 
 
@@ -71,14 +72,21 @@ def normalize_publisher(value: Optional[str]) -> Optional[str]:
     return normalized[:300] or None
 
 
-def compute_content_dedup_key(title: str, publisher: Optional[str], published_at: datetime) -> str:
+def compute_content_dedup_key(
+    title: str,
+    publisher: Optional[str],
+    published_at: datetime,
+    *,
+    canonical_title_str: Optional[str] = None,
+) -> str:
     """Content identity that is stable across Google wrapper/query URLs."""
     if published_at.tzinfo is None:
         published_at = published_at.replace(tzinfo=timezone.utc)
     publication_date = published_at.astimezone(timezone.utc).date().isoformat()
+    c_title = canonical_title_str if canonical_title_str is not None else canonical_title(title)
     identity = "|".join(
         (
-            canonical_title(title),
+            c_title,
             (normalize_publisher(publisher) or "unknown").casefold(),
             publication_date,
         )
@@ -105,9 +113,9 @@ def process_single_raw(
     Returns:
         processed_id if inserted, None if duplicate
     """
-    # Canonicalize
+    # Canonicalize once
     canon = canonical_title(raw.title)
-    canon_hash = compute_canonical_title_hash(raw.title)
+    canon_hash = compute_canonical_title_hash(raw.title, canonical_title_str=canon)
     
     # Clean text (title + description)
     cleaned = clean_text(raw.title)
@@ -116,7 +124,7 @@ def process_single_raw(
     cleaned = cleaned[:5000]  # Reasonable limit
     
     publisher = normalize_publisher(raw.publisher)
-    dedup = compute_content_dedup_key(raw.title, publisher, raw.published_at)
+    dedup = compute_content_dedup_key(raw.title, publisher, raw.published_at, canonical_title_str=canon)
     
     language = detect_language(cleaned)
     language_confidence = None
@@ -234,16 +242,25 @@ def process_raw_to_processed(
             break
         previous_batch_ids = batch_ids
 
+        # Batch-canonicalize titles using fast Rayon-parallel Rust kernel
+        batch_canons = canonical_title_batch([r.title for r in batch])
+        batch_canon_hashes = [
+            compute_canonical_title_hash(r.title, canonical_title_str=c)
+            for r, c in zip(batch, batch_canons)
+        ]
+        batch_publishers = [normalize_publisher(r.publisher) for r in batch]
+        batch_dedup_keys = [
+            compute_content_dedup_key(
+                raw.title,
+                pub,
+                raw.published_at,
+                canonical_title_str=canon,
+            )
+            for raw, pub, canon in zip(batch, batch_publishers, batch_canons)
+        ]
+
         # Pre-populate canonical_cache for this batch in a single SQL query
         if isinstance(session, Session):
-            batch_dedup_keys = [
-                compute_content_dedup_key(
-                    raw.title,
-                    normalize_publisher(raw.publisher),
-                    raw.published_at,
-                )
-                for raw in batch
-            ]
             missing_keys = [k for k in set(batch_dedup_keys) if k not in canonical_cache]
             if missing_keys:
                 existing_canonicals = (
@@ -263,14 +280,12 @@ def process_raw_to_processed(
         intra_batch_duplicates: list[tuple[NewsRaw, str, str, str, str, Optional[str], Optional[float]]] = []
         batch_canonical_keys: dict[str, NewsProcessed] = {}
 
-        for raw in batch:
+        for raw, publisher, canon, canon_hash, dedup in zip(
+            batch, batch_publishers, batch_canons, batch_canon_hashes, batch_dedup_keys
+        ):
             stats["processed"] += 1
-            publisher = normalize_publisher(raw.publisher)
             raw.publisher = publisher
-            dedup = compute_content_dedup_key(raw.title, publisher, raw.published_at)
 
-            canon = canonical_title(raw.title)
-            canon_hash = compute_canonical_title_hash(raw.title)
             cleaned = clean_text(raw.title)
             if raw.description:
                 cleaned += " " + clean_text(raw.description)

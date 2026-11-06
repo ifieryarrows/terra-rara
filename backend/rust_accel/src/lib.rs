@@ -300,7 +300,42 @@ fn fit_weekly_interval_grid_rs(
     (coverages, scores)
 }
 
-/// Fast single-pass HTML tag stripping and whitespace normalization.
+#[inline]
+fn decode_entity_str(entity: &str) -> Option<char> {
+    match entity {
+        "amp" => Some('&'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "nbsp" => Some(' '),
+        "copy" => Some('©'),
+        "reg" => Some('®'),
+        "trade" => Some('™'),
+        "mdash" => Some('—'),
+        "ndash" => Some('–'),
+        "hellip" => Some('…'),
+        "lsquo" => Some('‘'),
+        "rsquo" => Some('’'),
+        "ldquo" => Some('“'),
+        "rdquo" => Some('”'),
+        "bull" => Some('•'),
+        "cent" => Some('¢'),
+        "pound" => Some('£'),
+        "yen" => Some('¥'),
+        "euro" => Some('€'),
+        "deg" => Some('°'),
+        s if s.starts_with("#x") || s.starts_with("#X") => {
+            u32::from_str_radix(&s[2..], 16).ok().and_then(char::from_u32)
+        }
+        s if s.starts_with('#') => {
+            s[1..].parse::<u32>().ok().and_then(char::from_u32)
+        }
+        _ => None,
+    }
+}
+
+/// Fast single-pass HTML tag stripping, entity decoding, and whitespace normalization.
 #[pyfunction]
 fn clean_text_rs(text: &str) -> String {
     if text.is_empty() {
@@ -309,31 +344,75 @@ fn clean_text_rs(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_tag = false;
     let mut last_was_space = true;
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
 
-    for ch in text.chars() {
-        match ch {
-            '<' => {
+    while i < len {
+        let b = bytes[i];
+        match b {
+            b'<' => {
                 in_tag = true;
                 if !last_was_space {
                     out.push(' ');
                     last_was_space = true;
                 }
+                i += 1;
             }
-            '>' => {
+            b'>' => {
                 in_tag = false;
+                i += 1;
             }
-            c if !in_tag => {
-                if c.is_whitespace() {
+            _ if in_tag => {
+                i += 1;
+            }
+            b'&' => {
+                let mut found_semi = false;
+                let end = (i + 12).min(len);
+                for j in (i + 1)..end {
+                    let c = bytes[j];
+                    if c == b';' {
+                        if let Ok(cand) = std::str::from_utf8(&bytes[i + 1..j]) {
+                            if let Some(decoded_char) = decode_entity_str(cand) {
+                                if decoded_char.is_whitespace() {
+                                    if !last_was_space {
+                                        out.push(' ');
+                                        last_was_space = true;
+                                    }
+                                } else {
+                                    out.push(decoded_char);
+                                    last_was_space = false;
+                                }
+                                i = j + 1;
+                                found_semi = true;
+                                break;
+                            }
+                        }
+                        break;
+                    } else if c.is_ascii_whitespace() || c == b'<' || c == b'&' {
+                        break;
+                    }
+                }
+                if !found_semi {
+                    out.push('&');
+                    last_was_space = false;
+                    i += 1;
+                }
+            }
+            _ => {
+                let remaining = &text[i..];
+                let ch = remaining.chars().next().unwrap_or(' ');
+                if ch.is_whitespace() {
                     if !last_was_space {
                         out.push(' ');
                         last_was_space = true;
                     }
                 } else {
-                    out.push(c);
+                    out.push(ch);
                     last_was_space = false;
                 }
+                i += ch.len_utf8();
             }
-            _ => {}
         }
     }
     if out.ends_with(' ') {

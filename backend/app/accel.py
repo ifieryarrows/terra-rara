@@ -255,7 +255,7 @@ def fast_strip_html(text: str) -> str:
 
         soup = BeautifulSoup(text, "html.parser")
         return soup.get_text(separator=" ", strip=True)
-    if HAS_RUST_EXT and "&" not in text:
+    if HAS_RUST_EXT:
         return _rust_ext.clean_text_rs(text)
     stripped = _HTML_TAG_RE.sub(" ", text)
     if "&" in stripped:
@@ -270,6 +270,15 @@ def fast_canonical_title(title: str) -> str:
     if HAS_RUST_EXT:
         return _rust_ext.canonical_title_rs(title)
     return " ".join(_NON_WORD_RE.sub(" ", title.lower()).split())
+
+
+def fast_canonical_title_batch(titles: list[str]) -> list[str]:
+    """Batch lowercase, strip punctuation, and collapse whitespace using Rust Rayon."""
+    if not titles:
+        return []
+    if HAS_RUST_EXT and hasattr(_rust_ext, "canonical_title_batch_rs"):
+        return _rust_ext.canonical_title_batch_rs([str(t or "") for t in titles])
+    return [fast_canonical_title(t) for t in titles]
 
 
 def fast_sharpe_ratio_hac(

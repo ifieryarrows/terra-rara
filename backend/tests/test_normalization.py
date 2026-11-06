@@ -57,6 +57,13 @@ class TestCleanText:
         result = clean_text("Copper prices rose 3.5% today")
         assert "3.5%" in result
 
+    def test_decodes_html_entities(self):
+        assert clean_text("<p>Copper &amp; Gold</p>") == "Copper & Gold"
+        assert clean_text("Fish&#39;s scale &quot;quoted&quot;") == "Fish's scale \"quoted\""
+        assert clean_text("Copper&#x27;s rally") == "Copper's rally"
+        assert clean_text("AT&T and S&P 500") == "AT&T and S&P 500"
+        assert clean_text("More&nbsp;&nbsp;Spaces") == "More Spaces"
+
 
 class TestCanonicalTitle:
     def test_lowercase(self):
@@ -71,6 +78,18 @@ class TestCanonicalTitle:
     def test_whitespace_normalized(self):
         result = canonical_title("Hello   World")
         assert result == "hello world"
+
+    def test_canonical_title_batch_matches_single(self):
+        from app.utils import canonical_title_batch
+        titles = [
+            "Copper Surplus in 2026!",
+            "BHP, Rio Tinto & Glencore: Q1 Earnings",
+            "China's Demand Spike",
+        ]
+        batch_res = canonical_title_batch(titles)
+        single_res = [canonical_title(t) for t in titles]
+        assert batch_res == single_res
+        assert batch_res[0] == "copper surplus in 2026"
 
 
 class TestNormalizeUrl:
