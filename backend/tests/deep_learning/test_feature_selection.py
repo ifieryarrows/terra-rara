@@ -50,6 +50,11 @@ def test_mrmr_skip_when_fewer_than_top_k(sample_df):
     assert len(selected) == 2
 
 
+def test_mrmr_zero_or_negative_top_k(sample_df):
+    assert mrmr_select(sample_df, target_col="target", top_k=0) == []
+    assert mrmr_select(sample_df, target_col="target", top_k=-1) == []
+
+
 def test_vsn_prune_respects_min_features():
     importance = {f"feat_{i}": 1.0 / (i + 1) for i in range(100)}
     features = list(importance.keys())

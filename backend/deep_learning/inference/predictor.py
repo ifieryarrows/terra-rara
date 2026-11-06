@@ -343,10 +343,9 @@ class TFTPredictor:
         """
         Generate a TFT-ASRO prediction for the given symbol.
 
-        Lazily triggers price ingestion when the most recent PriceBar for
-        the target is older than the configured freshness threshold. This
-        prevents the frontend from showing a forecast anchored to a stale
-        close when the weekend scheduler hasn't run or failed to catch up.
+        Non-intrusively checks PriceBar freshness for the target. If older
+        than the freshness threshold, flags the forecast as stale/unhealthy
+        without triggering inline ingestion (preserving HTTP API worker separation).
 
         When ``include_explain`` is true the result additionally carries an
         ``explain`` key with the per-forecast VSN/attention payload for the
@@ -370,8 +369,8 @@ class TFTPredictor:
         from deep_learning.models.tft_copper import format_prediction
         from pytorch_forecasting import TimeSeriesDataSet
 
-        # 1. Pre-flight: check PriceBar freshness and lazy-ingest if stale
-        staleness_days, ingest_triggered = self._check_price_freshness(session, symbol)
+        # 1. Pre-flight: check PriceBar freshness
+        staleness_days, is_stale = self._check_price_freshness(session, symbol)
 
         # A TFT checkpoint is fitted against an exact feature order, category
         # encoder and set of scalers.  Re-running MRMR on a rolling live window
@@ -624,7 +623,8 @@ class TFTPredictor:
         # baseline unambiguously ("Futures HG=F, close of 2026-04-16").
         result["instrument"] = self._describe_instrument(symbol)
         result["baseline_staleness_days"] = staleness_days
-        result["lazy_ingest_triggered"] = bool(ingest_triggered)
+        result["lazy_ingest_triggered"] = False
+        result["is_forecast_healthy"] = not is_stale
 
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["symbol"] = symbol
@@ -791,12 +791,10 @@ class TFTPredictor:
 
     def _check_price_freshness(self, session, symbol: str) -> tuple[int, bool]:
         """
-        Compute staleness in calendar days for the target symbol and, when
-        the latest bar is older than `FRESHNESS_THRESHOLD_DAYS`, trigger a
-        best-effort incremental price ingest.
+        Compute staleness in calendar days for the target symbol.
 
         Returns:
-            (staleness_days, ingest_triggered)
+            (staleness_days, is_stale)
         """
         try:
             from app.price_utils import latest_finite_price_bar
@@ -807,8 +805,8 @@ class TFTPredictor:
             return (0, False)
 
         if latest is None or latest.date is None:
-            logger.warning("No PriceBar rows for %s — triggering ingest", symbol)
-            return self._trigger_lazy_ingest(session, reason="no-bars")
+            logger.warning("No PriceBar rows for %s", symbol)
+            return (999, True)
 
         last_date = latest.date
         if last_date.tzinfo is None:
@@ -816,50 +814,13 @@ class TFTPredictor:
         staleness = (datetime.now(timezone.utc) - last_date).days
         staleness = max(int(staleness), 0)
 
-        if staleness >= self.FRESHNESS_THRESHOLD_DAYS:
+        is_stale = staleness >= self.FRESHNESS_THRESHOLD_DAYS
+        if is_stale:
             logger.warning(
-                "PriceBar for %s is %sd stale (last=%s) — lazy ingest",
+                "PriceBar for %s is %sd stale (last=%s)",
                 symbol, staleness, last_date,
             )
-            fresh_staleness, triggered = self._trigger_lazy_ingest(
-                session, reason=f"stale-{staleness}d"
-            )
-            # After ingest, prefer the newly-computed staleness if it
-            # improved; otherwise fall back to the pre-ingest value.
-            if triggered and fresh_staleness < staleness:
-                return (fresh_staleness, True)
-            return (staleness, triggered)
-
-        return (staleness, False)
-
-    def _trigger_lazy_ingest(self, session, *, reason: str) -> tuple[int, bool]:
-        """Run a short incremental price fetch and return updated staleness."""
-        try:
-            from app.data_manager import ingest_prices
-            from app.price_utils import latest_finite_price_bar
-
-            logger.info("Lazy price ingest triggered (reason=%s)", reason)
-            ingest_prices(session)
-            session.commit()
-
-            latest = latest_finite_price_bar(
-                session, self.cfg.feature_store.target_symbol
-            )
-            if latest is None or latest.date is None:
-                return (0, True)
-            last_date = latest.date
-            if last_date.tzinfo is None:
-                last_date = last_date.replace(tzinfo=timezone.utc)
-            updated = max(int((datetime.now(timezone.utc) - last_date).days), 0)
-            logger.info("Lazy ingest complete — staleness now %sd", updated)
-            return (updated, True)
-        except Exception as exc:
-            logger.error("Lazy ingest failed: %s", exc)
-            try:
-                session.rollback()
-            except Exception:
-                pass
-            return (0, False)
+        return (staleness, is_stale)
 
     def get_model_metadata(self, session) -> Optional[Dict]:
         """Load persisted TFT model metadata from DB."""
@@ -1034,12 +995,14 @@ def generate_tft_analysis(
             return type(obj)(_sanitize_floats(v) for v in obj)
         return obj
 
+    is_forecast_healthy = bool(prediction.get("is_forecast_healthy", True))
+
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
-        "model_state": "ok",
-        "quality_state": "ok",
-        "is_forecast_healthy": True,
+        "model_state": "ok" if is_forecast_healthy else "stale",
+        "quality_state": "ok" if is_forecast_healthy else "degraded",
+        "is_forecast_healthy": is_forecast_healthy,
         "direction": direction,
         "weekly_trend": direction,
         "primary_horizon": "5D",

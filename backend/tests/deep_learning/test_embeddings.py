@@ -40,3 +40,11 @@ def test_aggregate_weighted():
     weights = np.array([0.75, 0.25])
     result = aggregate_daily_embeddings(vecs, weights=weights)
     np.testing.assert_array_almost_equal(result, [0.75, 0.25])
+
+
+def test_extract_embeddings_batch_empty():
+    from deep_learning.data.embeddings import extract_embeddings_batch
+    result = extract_embeddings_batch([])
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (0, 768)
+    assert result.dtype == np.float32

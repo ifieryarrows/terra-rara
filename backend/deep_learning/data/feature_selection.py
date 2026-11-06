@@ -81,6 +81,9 @@ def mrmr_select(
     meta_cols = {target_col, "time_idx", "group_id"} | set(exclude_cols)
     feature_cols = [c for c in df.columns if c not in meta_cols]
 
+    if top_k <= 0:
+        return []
+
     if len(feature_cols) <= top_k:
         logger.info("MRMR: %d features <= top_k=%d, skipping selection", len(feature_cols), top_k)
         return feature_cols
@@ -99,37 +102,40 @@ def mrmr_select(
     relevance = _mutual_info_relevance(X, y)
     corr_matrix = _pairwise_correlation(X)
 
-    selected: list[str] = []
-    remaining = set(feature_cols)
+    # Vectorized running-sum MRMR: update running correlation sum in O(N) per step
+    n_feats = len(feature_cols)
+    rel_arr = np.nan_to_num(
+        relevance.reindex(feature_cols).to_numpy(dtype=np.float64),
+        nan=0.0,
+    )
+    corr_arr = np.nan_to_num(
+        corr_matrix.reindex(index=feature_cols, columns=feature_cols).to_numpy(dtype=np.float64),
+        nan=0.0,
+    )
 
-    first = relevance.idxmax()
-    selected.append(first)
-    remaining.discard(first)
+    selected_indices: list[int] = []
+    selected_mask = np.zeros(n_feats, dtype=bool)
+    running_corr_sum = np.zeros(n_feats, dtype=np.float64)
 
-    for _ in range(top_k - 1):
-        if not remaining:
+    first_idx = int(np.argmax(rel_arr))
+    selected_indices.append(first_idx)
+    selected_mask[first_idx] = True
+    running_corr_sum += corr_arr[:, first_idx]
+
+    for k in range(1, top_k):
+        redundancy = running_corr_sum / k
+        scores = rel_arr - redundancy
+        scores[selected_mask] = -np.inf
+
+        best_idx = int(np.argmax(scores))
+        if scores[best_idx] == -np.inf:
             break
 
-        best_score = -np.inf
-        best_feat = None
+        selected_indices.append(best_idx)
+        selected_mask[best_idx] = True
+        running_corr_sum += corr_arr[:, best_idx]
 
-        for feat in remaining:
-            rel = relevance[feat]
-            if not selected:
-                score = rel
-            else:
-                redundancy = corr_matrix.loc[feat, selected].mean()
-                score = rel - redundancy
-
-            if score > best_score:
-                best_score = score
-                best_feat = feat
-
-        if best_feat is None:
-            break
-
-        selected.append(best_feat)
-        remaining.discard(best_feat)
+    selected = [feature_cols[i] for i in selected_indices]
 
     logger.info(
         "MRMR selected %d/%d features (top relevance=%.4f, bottom=%.4f)",

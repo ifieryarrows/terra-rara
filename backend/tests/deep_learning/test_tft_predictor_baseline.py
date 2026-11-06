@@ -215,3 +215,52 @@ def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):
     assert result["is_forecast_healthy"] is False
     assert result["primary_forecast_return"] is None
     assert result["reference_price_date"] is None
+
+
+def test_predict_staleness_marks_forecast_unhealthy_without_lazy_ingest(monkeypatch, price_session):
+    fake_pf = types.ModuleType("pytorch_forecasting")
+    fake_pf.TimeSeriesDataSet = _FakeTimeSeriesDataSet
+    monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
+
+    def fake_build_tft_dataframe(*_args, **_kwargs):
+        index = pd.to_datetime(["2026-04-22", "2026-04-23", "2026-04-24"])
+        master = pd.DataFrame(
+            {
+                "feat": [1.0, 1.1, 1.2],
+                "target": [0.001, -0.002, 0.0],
+                "target_1d_log_return": [0.001, -0.002, 0.0],
+                "target_5d_log_return": [0.01, 0.02, 0.0],
+                "realized_vol_20d": [0.01, 0.01, 0.0],
+                "material_move_5d": [0.0, 1.0, 0.0],
+                "group_id": ["copper", "copper", "copper"],
+                "time_idx": [0, 1, 2],
+            },
+            index=index,
+        )
+        return master, ["feat"], [], ["target"], 6.0235
+
+    monkeypatch.setattr(
+        "deep_learning.data.feature_store.build_tft_dataframe",
+        fake_build_tft_dataframe,
+    )
+
+    cfg = TFTASROConfig(
+        model=TFTModelConfig(max_encoder_length=60, max_prediction_length=5),
+        training=TrainingConfig(best_model_path="unused.ckpt"),
+        feature_store=FeatureStoreConfig(target_symbol="HG=F", mrmr_top_k=0),
+    )
+    predictor = TFTPredictor(cfg=cfg)
+    predictor._model = _FakeModel()
+    monkeypatch.setattr(
+        predictor,
+        "_check_price_freshness",
+        lambda _session, _symbol: (5, True),
+    )
+
+    result = predictor.predict(price_session, "HG=F")
+
+    assert "error" not in result
+    assert result["is_forecast_healthy"] is False
+    assert result["baseline_staleness_days"] == 5
+    assert result["lazy_ingest_triggered"] is False
+    assert not hasattr(predictor, "_trigger_lazy_ingest")

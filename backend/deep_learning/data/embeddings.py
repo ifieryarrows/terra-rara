@@ -80,7 +80,7 @@ def extract_embedding(text: str, *, max_length: int = 512) -> np.ndarray:
         max_length=max_length,
         padding=True,
     )
-    with torch.no_grad():
+    with torch.inference_mode():
         outputs = model(**inputs)
     cls_vec: np.ndarray = outputs.last_hidden_state[:, 0, :].squeeze(0).cpu().numpy()
     return cls_vec.astype(np.float32)
@@ -98,6 +98,9 @@ def extract_embeddings_batch(
     Returns:
         ndarray of shape (N, 768) with float32 CLS vectors.
     """
+    if not texts:
+        return np.empty((0, 768), dtype=np.float32)
+
     import torch
 
     tokenizer, model = _load_finbert_encoder()
@@ -112,7 +115,7 @@ def extract_embeddings_batch(
             max_length=max_length,
             padding=True,
         )
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**inputs)
         cls_vecs = outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
         all_vecs.append(cls_vecs)
