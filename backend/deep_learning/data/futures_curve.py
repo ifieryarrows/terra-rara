@@ -132,6 +132,19 @@ def build_futures_features_from_yfinance(
     zscore_std = features["futures_spread_pct"].rolling(60, min_periods=10).std().replace(0, np.nan)
     features["futures_spread_zscore"] = (features["futures_spread_pct"] - zscore_mean) / zscore_std
 
-    features["futures_curve_slope"] = (spread_20_60 / ma_60.replace(0, np.nan)).rolling(5, min_periods=1).mean()
+    # Utilize Rust-accelerated fast_ols_row_slope via compute_curve_slope across term-structure maturities
+    curve_df = compute_curve_slope({
+        "1_spot": close,
+        "2_5d": ma_5,
+        "3_20d": ma_20,
+        "4_60d": ma_60,
+    })
+    if not curve_df.empty and "futures_curve_slope" in curve_df.columns:
+        features["futures_curve_slope"] = curve_df["futures_curve_slope"]
+        features["futures_curve_slope_ma5"] = curve_df["futures_curve_slope_ma5"]
+    else:
+        fallback_slope = (spread_20_60 / ma_60.replace(0, np.nan)).rolling(5, min_periods=1).mean()
+        features["futures_curve_slope"] = fallback_slope
+        features["futures_curve_slope_ma5"] = fallback_slope
 
     return features

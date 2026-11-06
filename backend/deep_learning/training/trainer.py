@@ -284,10 +284,41 @@ def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig)
         )
 
 
-def _predict_quantiles_to_np(mdl, dataloader, cfg: TFTASROConfig) -> np.ndarray:
-    pred = mdl.predict(dataloader, mode="quantiles")
+def _predict_quantiles_to_np(
+    mdl,
+    dataloader,
+    cfg: TFTASROConfig,
+    return_y: bool = False,
+):
+    y_actual_np = None
+    pred = None
+    try:
+        pred_out = mdl.predict(dataloader, mode="quantiles", return_y=True)
+        if hasattr(pred_out, "output") and hasattr(pred_out, "y"):
+            pred = pred_out.output
+            y_val = pred_out.y[0] if isinstance(pred_out.y, (list, tuple)) else pred_out.y
+            y_actual_np = y_val.cpu().numpy() if hasattr(y_val, "cpu") else np.asarray(y_val)
+        elif isinstance(pred_out, (list, tuple)) and len(pred_out) == 2:
+            pred, y_val = pred_out
+            y_val = y_val[0] if isinstance(y_val, (list, tuple)) else y_val
+            y_actual_np = y_val.cpu().numpy() if hasattr(y_val, "cpu") else np.asarray(y_val)
+        else:
+            pred = pred_out
+    except TypeError:
+        pred = mdl.predict(dataloader, mode="quantiles")
+
+    if return_y and y_actual_np is None:
+        y_parts = []
+        for batch in dataloader:
+            y_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
+        if y_parts:
+            import torch
+            y_actual_np = torch.cat(y_parts).cpu().numpy()
+
     pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
     _validate_quantile_prediction_shape(pred_np, cfg)
+    if return_y:
+        return pred_np, y_actual_np
     return pred_np
 
 
@@ -836,16 +867,10 @@ def train_tft_model(
             fit_weekly_interval_scale,
         )
 
-        val_actual_parts = []
-        for batch in val_dl:
-            val_actual_parts.append(
-                batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
-            )
-        if val_actual_parts:
-            import torch
-
-            val_actual_path = torch.cat(val_actual_parts).cpu().numpy()
-            val_pred_np = _predict_quantiles_to_np(evaluation_model, val_dl, cfg)
+        val_pred_np, val_actual_path = _predict_quantiles_to_np(
+            evaluation_model, val_dl, cfg, return_y=True
+        )
+        if val_actual_path is not None and len(val_actual_path) > 0:
             direction_calibration = fit_direction_sign_calibration(
                 val_actual_path,
                 val_pred_np,
@@ -965,14 +990,10 @@ def train_tft_model(
             apply_weekly_sign_correction_np,
         )
 
-        # Collect actual values (same regardless of which model predicts)
-        y_actual_parts = []
-        for batch in test_dl:
-            y_actual_parts.append(
-                batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
-            )
-        y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
-        pred_np = _predict_quantiles_to_np(evaluation_model, test_dl, cfg)
+        # Single-pass prediction and target extraction (eliminates dataloader double-iteration)
+        pred_np, y_actual_path = _predict_quantiles_to_np(
+            evaluation_model, test_dl, cfg, return_y=True
+        )
         ensemble_size = 1
         logger.info("Promoted checkpoint evaluation: 1 model")
 
@@ -1198,15 +1219,12 @@ def _write_conformal_calibration_artifact(
             monotonic_quantiles_np,
         )
 
-        y_parts = []
-        for batch in val_dl:
-            y_parts.append(batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1])
-        if not y_parts:
+        # Single-pass prediction and target extraction to avoid DataLoader double iteration
+        pred_np, y_actual_path = _predict_quantiles_to_np(
+            model, val_dl, cfg, return_y=True
+        )
+        if y_actual_path is None or len(y_actual_path) == 0:
             return None
-
-        y_actual_path = torch.cat(y_parts).cpu().numpy()
-        pred = model.predict(val_dl, mode="quantiles")
-        pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
         pred_np = pred_np * int(direction_sign_multiplier)
         pred_np = apply_weekly_sign_correction_np(
             pred_np,

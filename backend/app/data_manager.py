@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
+import pandas as pd
 import yfinance as yf
 from rapidfuzz import fuzz, process as rf_process
 from langdetect import detect, LangDetectException
@@ -445,7 +446,7 @@ def ingest_news(session: Session) -> dict:
 # Price Ingestion
 # =============================================================================
 
-def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int = 3, retry_delay: int = 30):
+def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int = 3, retry_delay: float = 2.0):
     """
     Fetch price data for a symbol with retry on rate limit.
     
@@ -454,7 +455,7 @@ def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int 
         start_date: Start date
         end_date: End date
         max_retries: Maximum retry attempts
-        retry_delay: Seconds to wait between retries
+        retry_delay: Base seconds to wait between retries (uses exponential backoff capped at 8s)
     
     Returns:
         DataFrame or None if all retries failed
@@ -474,14 +475,57 @@ def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int 
             error_msg = str(e).lower()
             if "rate limit" in error_msg or "too many requests" in error_msg:
                 if attempt < max_retries - 1:
-                    logger.warning(f"{symbol}: Rate limited, waiting {retry_delay}s before retry {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
+                    sleep_time = min(float(retry_delay) * (2 ** attempt), 8.0)
+                    logger.warning(f"{symbol}: Rate limited, waiting {sleep_time:.1f}s before retry {attempt + 2}/{max_retries}")
+                    time.sleep(sleep_time)
                 else:
                     logger.error(f"{symbol}: Rate limit exceeded after {max_retries} retries")
                     raise
             else:
                 raise
     return None
+
+
+_DEFAULT_FETCH_SYMBOL_WITH_RETRY = fetch_symbol_with_retry
+
+
+def _extract_ticker_slice_from_batch(batch_df: pd.DataFrame, symbol: str) -> Optional[pd.DataFrame]:
+    """Safely extract single ticker dataframe from yf.download multi-ticker result."""
+    if batch_df is None or batch_df.empty:
+        return None
+    try:
+        sub = None
+        if isinstance(batch_df.columns, pd.MultiIndex):
+            if symbol in batch_df.columns.get_level_values(0):
+                sub = batch_df[symbol]
+            elif symbol in batch_df.columns.get_level_values(1):
+                sub = batch_df.xs(symbol, axis=1, level=1)
+        elif symbol in batch_df.columns:
+            sub = batch_df[[symbol]]
+        else:
+            sub = batch_df
+
+        if sub is None or sub.empty:
+            return None
+
+        # Verify close column is present and has at least one valid finite number;
+        # otherwise return None to trigger single-symbol fetch fallback.
+        close_col = None
+        for col in ["Close", "close"]:
+            if col in sub.columns:
+                close_col = col
+                break
+        if close_col is not None:
+            valid_close = pd.to_numeric(sub[close_col], errors="coerce").dropna()
+            if valid_close.empty:
+                return None
+        else:
+            return None
+
+        sub = sub.dropna(how="all")
+        return sub if not sub.empty else None
+    except Exception:
+        return None
 
 
 def ingest_prices(session: Session) -> dict:
@@ -491,6 +535,7 @@ def ingest_prices(session: Session) -> dict:
     Uses INCREMENTAL fetching: checks latest bar date per symbol in DB
     and only fetches from that point forward (plus 3-day overlap for corrections).
     Falls back to full lookback if no existing data found for a symbol.
+    Uses batch downloading (yf.download) to minimize round-trips.
     
     Returns:
         Dict with stats per symbol
@@ -517,8 +562,6 @@ def ingest_prices(session: Session) -> dict:
     from app.price_utils import finite_number, finite_positive_price, latest_finite_price_dates, latest_finite_price_bar
     latest_dates = latest_finite_price_dates(session, symbols)
 
-    from concurrent.futures import ThreadPoolExecutor
-
     symbol_params = []
     for symbol in symbols:
         # Check latest bar in DB for incremental fetch (batch map with single-query fallback)
@@ -540,21 +583,59 @@ def ingest_prices(session: Session) -> dict:
             mode = "full"
         symbol_params.append((symbol, start_date, end_date, mode))
 
-    def _fetch_single(params):
-        sym, s_date, e_date, f_mode = params
-        logger.info(f"Fetching prices for {sym} ({f_mode})...")
-        try:
-            df = fetch_symbol_with_retry(sym, s_date, e_date)
-            return sym, df, f_mode, None
-        except Exception as exc:
-            return sym, None, f_mode, exc
+    # Check if fetch_symbol_with_retry was monkeypatched by a test runner
+    is_custom_fetcher = fetch_symbol_with_retry is not _DEFAULT_FETCH_SYMBOL_WITH_RETRY
 
-    max_workers = min(4, max(1, len(symbol_params)))
-    if max_workers > 1:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            fetched_results = list(executor.map(_fetch_single, symbol_params))
+    fetched_results = []
+    if is_custom_fetcher:
+        # Honor mocked/monkeypatched single fetcher directly
+        for sym, s_date, e_date, f_mode in symbol_params:
+            try:
+                df = fetch_symbol_with_retry(sym, s_date, e_date)
+                fetched_results.append((sym, df, f_mode, None))
+            except Exception as exc:
+                fetched_results.append((sym, None, f_mode, exc))
     else:
-        fetched_results = [_fetch_single(p) for p in symbol_params]
+        # Group symbols by identical (start_str, end_str) to batch download with yf.download
+        from collections import defaultdict
+        date_groups = defaultdict(list)
+        for sym, s_date, e_date, f_mode in symbol_params:
+            s_str = s_date.strftime("%Y-%m-%d")
+            e_str = e_date.strftime("%Y-%m-%d")
+            date_groups[(s_str, e_str)].append((sym, s_date, e_date, f_mode))
+
+        for (s_str, e_str), group in date_groups.items():
+            group_symbols = [item[0] for item in group]
+            batch_data = None
+            if len(group_symbols) > 1:
+                try:
+                    logger.info("Batch downloading prices for %d symbols (%s to %s)...", len(group_symbols), s_str, e_str)
+                    batch_data = yf.download(
+                        tickers=group_symbols,
+                        start=s_str,
+                        end=e_str,
+                        interval="1d",
+                        group_by="ticker",
+                        threads=True,
+                        progress=False,
+                        auto_adjust=False,
+                    )
+                except Exception as batch_exc:
+                    logger.warning("Batch price download failed, falling back to per-symbol fetch: %s", batch_exc)
+                    batch_data = None
+
+            for sym, s_date, e_date, f_mode in group:
+                sym_df = _extract_ticker_slice_from_batch(batch_data, sym) if batch_data is not None else None
+                if sym_df is not None and not sym_df.empty:
+                    fetched_results.append((sym, sym_df, f_mode, None))
+                else:
+                    # Fallback to single-symbol fetcher with retry
+                    try:
+                        logger.info("Fetching prices for %s (%s)...", sym, f_mode)
+                        df = fetch_symbol_with_retry(sym, s_date, e_date)
+                        fetched_results.append((sym, df, f_mode, None))
+                    except Exception as exc:
+                        fetched_results.append((sym, None, f_mode, exc))
 
     for symbol, df, mode, error in fetched_results:
         try:

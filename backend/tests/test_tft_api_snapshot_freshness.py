@@ -70,7 +70,7 @@ def _seed_snapshot_and_price(Session, *, snapshot_date: str, price_date: str) ->
         session.commit()
 
 
-def test_new_price_bar_bypasses_previous_forecast_vintage(
+def test_tft_endpoint_serves_snapshot_and_never_invokes_inline_inference(
     monkeypatch,
     tft_api_session_factory,
 ):
@@ -80,22 +80,12 @@ def test_new_price_bar_bypasses_previous_forecast_vintage(
         snapshot_date="2026-09-01",
         price_date="2026-09-02",
     )
-    main._tft_cache["HG=F:live:2026-09-01"] = {
-        "data": {**_snapshot_payload("2026-09-01"), "source": "live"},
-        "ts": datetime.now(timezone.utc),
-    }
 
     calls: list[str] = []
 
     def fake_generate(_session, symbol):
         calls.append(symbol)
-        return {
-            **_snapshot_payload("2026-09-02"),
-            "prediction": {
-                **_snapshot_payload("2026-09-02")["prediction"],
-                "reference_price_date": "2026-09-02",
-            },
-        }
+        pytest.fail("Inline live TFT inference must never be called by HTTP handlers")
 
     import deep_learning.inference.predictor as predictor_module
 
@@ -104,11 +94,12 @@ def test_new_price_bar_bypasses_previous_forecast_vintage(
     response = TestClient(main.app).get("/api/analysis/tft/HG=F")
 
     assert response.status_code == 200
-    assert response.json()["source"] == "live"
-    assert response.json()["prediction"]["reference_price_date"] == "2026-09-02"
-    assert calls == ["HG=F"]
-    assert "HG=F:live:2026-09-01" not in main._tft_cache
-    assert "HG=F:live:2026-09-02" in main._tft_cache
+    assert response.json()["source"] == "snapshot"
+    assert response.json()["prediction"]["reference_price_date"] == "2026-09-01"
+    assert calls == []
+
+    response_live = TestClient(main.app).get("/api/analysis/tft/HG=F?source=live")
+    assert response_live.status_code == 400
 
 
 def test_matching_market_bar_keeps_snapshot_across_weekend_or_holiday(

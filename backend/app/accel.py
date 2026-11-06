@@ -256,7 +256,10 @@ def fast_strip_html(text: str) -> str:
         soup = BeautifulSoup(text, "html.parser")
         return soup.get_text(separator=" ", strip=True)
     if HAS_RUST_EXT:
-        return _rust_ext.clean_text_rs(text)
+        cleaned = _rust_ext.clean_text_rs(text)
+        if "&" in cleaned:
+            cleaned = html.unescape(cleaned)
+        return cleaned
     stripped = _HTML_TAG_RE.sub(" ", text)
     if "&" in stripped:
         stripped = html.unescape(stripped)

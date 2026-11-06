@@ -231,3 +231,62 @@ class TestDataValidation:
         scores = [0.5, -0.3, 0.8, -0.9, 0.0]
         
         assert all(-1 <= s <= 1 for s in scores)
+
+
+class TestBatchExtraction:
+    """Tests for multi-ticker yfinance batch extraction."""
+
+    def test_extract_ticker_multiindex_levels(self):
+        import numpy as np
+        import pandas as pd
+        from app.data_manager import _extract_ticker_slice_from_batch
+
+        dates = pd.date_range("2026-01-01", periods=3)
+        cols = pd.MultiIndex.from_tuples([
+            ("HG=F", "Close"), ("HG=F", "Volume"),
+            ("ALI=F", "Close"), ("ALI=F", "Volume"),
+        ])
+        data = [
+            [4.5, 100, 2500.0, 50],
+            [4.6, 120, 2510.0, 60],
+            [4.55, 110, 2505.0, 55],
+        ]
+        df = pd.DataFrame(data, index=dates, columns=cols)
+
+        hg_slice = _extract_ticker_slice_from_batch(df, "HG=F")
+        assert hg_slice is not None
+        assert "Close" in hg_slice.columns
+        assert len(hg_slice) == 3
+        assert np.isclose(hg_slice["Close"].iloc[0], 4.5)
+
+    def test_extract_ticker_all_nan_close_returns_none(self):
+        """When yfinance returns all-NaN close for a failed ticker in batch, return None to trigger retry."""
+        import numpy as np
+        import pandas as pd
+        from app.data_manager import _extract_ticker_slice_from_batch
+
+        dates = pd.date_range("2026-01-01", periods=3)
+        cols = pd.MultiIndex.from_tuples([
+            ("HG=F", "Close"), ("HG=F", "Volume"),
+            ("FAIL=F", "Close"), ("FAIL=F", "Volume"),
+        ])
+        data = [
+            [4.5, 100, np.nan, 0],
+            [4.6, 120, np.nan, 0],
+            [4.55, 110, np.nan, 0],
+        ]
+        df = pd.DataFrame(data, index=dates, columns=cols)
+
+        fail_slice = _extract_ticker_slice_from_batch(df, "FAIL=F")
+        assert fail_slice is None
+
+    def test_extract_ticker_missing_symbol_returns_none(self):
+        import pandas as pd
+        from app.data_manager import _extract_ticker_slice_from_batch
+
+        dates = pd.date_range("2026-01-01", periods=3)
+        cols = pd.MultiIndex.from_tuples([("HG=F", "Close")])
+        df = pd.DataFrame([[4.5]], index=dates[:1], columns=cols)
+
+        assert _extract_ticker_slice_from_batch(df, "MISSING") is None
+        assert _extract_ticker_slice_from_batch(None, "HG=F") is None

@@ -24,6 +24,8 @@ def test_fast_strip_html_and_canonical_title():
     assert fast_strip_html("<div><p>Hello <b>World</b></p></div>") == "Hello World"
     assert fast_strip_html("Plain   text\nwith\ttabs") == "Plain text with tabs"
     assert fast_strip_html("<script>alert(1)</script><p>Safe</p>") == "Safe"
+    assert fast_strip_html("Caf&eacute; &amp; Cr&egrave;me &plusmn; 5&times; &uuml;") == "Café & Crème ± 5× ü"
+    assert fast_strip_html("<p>Price &frac12; &deg;C &ndash; &mdash; &trade;</p>") == "Price ½ °C – — ™"
     assert fast_canonical_title("Copper Futures: +3.5% in Q1!") == "copper futures 3 5 in q1"
 
 

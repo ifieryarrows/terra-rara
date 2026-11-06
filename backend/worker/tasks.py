@@ -891,6 +891,8 @@ async def _execute_pipeline_stages_v2(
                             if isinstance(prediction_block, dict)
                             else None
                         ),
+                        "is_stale": bool(tft_report.get("is_stale", False)),
+                        "baseline_staleness_days": tft_report.get("baseline_staleness_days", 0),
                     }
                     update_run_metrics(session, run_id, tft_snapshot_generated=True)
                     session.commit()

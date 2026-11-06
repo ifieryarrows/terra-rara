@@ -28,6 +28,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy import func, desc
+from sqlalchemy.orm import Session
 
 from app.db import init_db, SessionLocal, get_db_type
 from app.models import NewsArticle, PriceBar, DailySentiment, DailySentimentV2, AnalysisSnapshot, NewsSentimentV2, NewsProcessed, NewsRaw, PipelineRunMetrics
@@ -394,6 +395,30 @@ async def get_history(
         )
 
 
+_HEALTH_COUNTS_CACHE: dict[str, Any] = {"ts": 0.0, "news_count": None, "price_count": None}
+_HEALTH_COUNTS_TTL_S = 30.0
+
+
+def _get_health_counts(session: Session) -> tuple[Optional[int], Optional[int]]:
+    now = time.monotonic()
+    if (
+        now - _HEALTH_COUNTS_CACHE["ts"] < _HEALTH_COUNTS_TTL_S
+        and _HEALTH_COUNTS_CACHE["news_count"] is not None
+    ):
+        return _HEALTH_COUNTS_CACHE["news_count"], _HEALTH_COUNTS_CACHE["price_count"]
+
+    try:
+        news_count = session.query(func.count(NewsArticle.id)).scalar()
+        price_count = session.query(func.count(PriceBar.id)).scalar()
+        _HEALTH_COUNTS_CACHE["ts"] = now
+        _HEALTH_COUNTS_CACHE["news_count"] = news_count
+        _HEALTH_COUNTS_CACHE["price_count"] = price_count
+        return news_count, price_count
+    except Exception as exc:
+        logger.warning("Failed to query table counts for /api/health: %s", exc)
+        return _HEALTH_COUNTS_CACHE["news_count"], _HEALTH_COUNTS_CACHE["price_count"]
+
+
 @app.get(
     "/api/health",
     response_model=HealthResponse,
@@ -419,6 +444,7 @@ async def health_check():
     news_count = None
     price_count = None
     last_snapshot_age = None
+    pipeline_locked = None
 
     # Freshness metadata for the System page. Each field answers a distinct
     # question — see HealthResponse for the exact definitions.
@@ -440,8 +466,8 @@ async def health_check():
 
     try:
         with SessionLocal() as session:
-            news_count = session.query(func.count(NewsArticle.id)).scalar()
-            price_count = session.query(func.count(PriceBar.id)).scalar()
+            news_count, price_count = _get_health_counts(session)
+            pipeline_locked = is_pipeline_locked(session)
 
             from app.models import (
                 AnalysisSnapshot,
@@ -551,7 +577,8 @@ async def health_check():
         redis_ok = False
     
     # Determine status
-    pipeline_locked = is_pipeline_locked()
+    if pipeline_locked is None:
+        pipeline_locked = is_pipeline_locked()
     
     if models_found == 0:
         status = "degraded"
@@ -1257,53 +1284,7 @@ async def get_commentary(
 
 _tft_cache: dict = {}
 _TFT_CACHE_TTL_S = 300  # 5 minutes
-_TFT_CACHE_MAX_ENTRIES = 128  # hard cap; live keys are also pruned per symbol
-_tft_live_inflight: dict[str, asyncio.Task[dict]] = {}
-_tft_live_inflight_lock = asyncio.Lock()
 
-
-def _tft_entry_age_seconds(entry: dict, now: datetime) -> float:
-    """Age of a TFT cache entry in seconds, tolerating naive/legacy timestamps."""
-    ts = entry.get("ts")
-    if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return (now - ts).total_seconds()
-    try:
-        return now.timestamp() - float(ts)
-    except (TypeError, ValueError):
-        return float("inf")
-
-
-def _tft_entry_sort_key(entry: dict) -> float:
-    """Oldest-first sort key; unparsable timestamps sort first (evicted first)."""
-    ts = entry.get("ts")
-    if isinstance(ts, datetime):
-        return ts.timestamp()
-    try:
-        return float(ts)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _remember_tft_entry(cache_key: str, data: dict) -> None:
-    """Store a TFT response and evict the oldest entries beyond the cap."""
-    _tft_cache[cache_key] = {"data": data, "ts": datetime.now(timezone.utc)}
-    overflow = len(_tft_cache) - _TFT_CACHE_MAX_ENTRIES
-    if overflow > 0:
-        for stale_key, _ in sorted(_tft_cache.items(), key=lambda item: _tft_entry_sort_key(item[1]))[:overflow]:
-            _tft_cache.pop(stale_key, None)
-
-
-def _forget_tft_live_task(cache_key: str, task: asyncio.Task[dict]) -> None:
-    """Drop a completed inference task and retrieve unobserved exceptions."""
-    if _tft_live_inflight.get(cache_key) is task:
-        _tft_live_inflight.pop(cache_key, None)
-    if not task.cancelled():
-        try:
-            task.exception()
-        except BaseException:
-            pass
 
 
 def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
@@ -1422,16 +1403,13 @@ def _tft_snapshot_invalid_reasons(
     summary="Get TFT-ASRO deep learning analysis",
     description=(
         "Returns probabilistic multi-quantile prediction from the Temporal "
-        "Fusion Transformer model. By default reads the latest TFT snapshot "
-        "produced by the daily pipeline worker while it matches the newest "
-        "PriceBar (persistent, cheap). A newer market bar automatically rolls "
-        "the five-day forecast forward. Pass `source=live` to force a fresh "
-        "inference run — useful for diagnostics."
+        "Fusion Transformer model. Serves the latest TFT snapshot produced by "
+        "the daily pipeline worker. Snapshot-only: never runs inline live inference."
     ),
     responses={
         200: {"description": "TFT-ASRO analysis with quantile predictions"},
-        404: {"description": "TFT model not available"},
-        500: {"description": "Prediction failed"},
+        400: {"description": "Live inference request rejected"},
+        404: {"description": "TFT snapshot not available"},
     },
 )
 async def get_tft_analysis(
@@ -1442,147 +1420,56 @@ async def get_tft_analysis(
     Get TFT-ASRO analysis for the given symbol.
 
     `source` semantics:
-      * `snapshot` (default) — serve the latest persisted TFTPredictionSnapshot
-        only while it is anchored to the newest available PriceBar. When a new
-        market bar arrives, transparently generate a new rolling five-day
-        forecast instead of truncating the previous forecast vintage.
-      * `live`                — always run a fresh inference. In-memory cached
-        per PriceBar date for 5 minutes to protect the worker against the 60s
-        polling loop.
+      * `snapshot` (default) — serve the latest persisted TFTPredictionSnapshot.
+      * `live`                — rejected with 400 (heavy PyTorch inference belongs
+        in background pipeline workers, not inline HTTP request handlers).
     """
     source = (source or "snapshot").strip().lower()
-    if source not in {"snapshot", "live"}:
+    if source == "live":
+        raise HTTPException(
+            status_code=400,
+            detail="Live TFT inference on HTTP handlers is prohibited by architecture contract. Use the pipeline worker.",
+        )
+    if source != "snapshot":
         raise HTTPException(
             status_code=400,
             detail="source must be one of: snapshot, live",
         )
 
-    latest_price_date: Optional[date] = None
+    from app.models import TFTPredictionSnapshot
 
-    # --- 1. Try persisted snapshot ------------------------------------------
-    if source == "snapshot":
-        try:
-            from app.models import TFTPredictionSnapshot
-
-            with SessionLocal() as session:
-                latest_price_date = _latest_price_bar_date(session, symbol)
-                latest = (
-                    session.query(TFTPredictionSnapshot)
-                    .filter(TFTPredictionSnapshot.symbol == symbol)
-                    .order_by(TFTPredictionSnapshot.generated_at.desc())
-                    .first()
-                )
-                if latest is not None and isinstance(latest.payload_json, dict):
-                    payload = dict(latest.payload_json)
-                    gen_at = _as_utc(latest.generated_at)
-                    fallback_reasons = _tft_snapshot_invalid_reasons(
-                        session, symbol, latest, latest_price_date=latest_price_date
-                    )
-
-                    if not fallback_reasons:
-                        prediction = (
-                            payload.get("prediction")
-                            if isinstance(payload.get("prediction"), dict)
-                            else {}
-                        )
-                        payload.setdefault("primary_horizon", "5D")
-                        payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
-                        payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
-                        payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
-                        payload.setdefault("t1_return", prediction.get("predicted_return_median"))
-                        payload.setdefault("t1_impulse", payload.get("t1_impulse"))
-                        payload.setdefault("return_space", prediction.get("return_space"))
-                        payload["source"] = "snapshot"
-                        payload["snapshot_generated_at"] = (
-                            gen_at.isoformat() if gen_at else None
-                        )
-                        return payload
-
-                    logger.info(
-                        "TFT snapshot bypassed for %s; using live inference (%s)",
-                        symbol,
-                        "; ".join(fallback_reasons),
-                    )
-        except Exception as exc:
-            logger.warning(
-                "TFT snapshot read failed, falling back to live inference: %s",
-                exc,
+    with SessionLocal() as session:
+        latest = (
+            session.query(TFTPredictionSnapshot)
+            .filter(TFTPredictionSnapshot.symbol == symbol)
+            .order_by(TFTPredictionSnapshot.generated_at.desc())
+            .first()
+        )
+        if latest is None or not isinstance(latest.payload_json, dict):
+            raise HTTPException(
+                status_code=404,
+                detail=f"No TFT prediction snapshot found for {symbol}. Run the pipeline worker to generate a forecast.",
             )
-        # No snapshot yet — silently fall through to live inference so the
-        # UI can still show something on first deployment.
 
-    # --- 2. Live inference (explicit request or snapshot miss) --------------
-    now = datetime.now(timezone.utc)
-    if latest_price_date is None:
-        try:
-            with SessionLocal() as session:
-                latest_price_date = _latest_price_bar_date(session, symbol)
-        except Exception as exc:
-            logger.warning("Latest PriceBar date lookup failed for %s: %s", symbol, exc)
-
-    price_vintage = latest_price_date.isoformat() if latest_price_date else "unknown"
-    cache_key = f"{symbol}:live:{price_vintage}"
-    cache_prefix = f"{symbol}:live:"
-    for stale_key in tuple(_tft_cache):
-        if stale_key.startswith(cache_prefix) and stale_key != cache_key:
-            _tft_cache.pop(stale_key, None)
-    cached = _tft_cache.get(cache_key)
-    if cached and _tft_entry_age_seconds(cached, now) < _TFT_CACHE_TTL_S:
-        return cached["data"]
-
-    def _generate_live_tft_sync() -> dict:
-        from deep_learning.inference.predictor import generate_tft_analysis
-
-        with SessionLocal() as session:
-            generated = generate_tft_analysis(session, symbol)
-
-        if "error" in generated:
-            raise HTTPException(status_code=500, detail=generated["error"])
-
-        generated = dict(generated)
-        generated["source"] = "live"
-        return generated
-
-    async def _generate_and_cache_live_tft() -> dict:
-        generated = await run_in_threadpool(_generate_live_tft_sync)
-        _remember_tft_entry(cache_key, generated)
-        return generated
-
-    async def _get_or_start_live_tft() -> dict:
-        async with _tft_live_inflight_lock:
-            recheck = _tft_cache.get(cache_key)
-            if recheck and _tft_entry_age_seconds(recheck, datetime.now(timezone.utc)) < _TFT_CACHE_TTL_S:
-                return recheck["data"]
-
-            task = _tft_live_inflight.get(cache_key)
-            if task is None:
-                task = asyncio.create_task(_generate_and_cache_live_tft())
-                _tft_live_inflight[cache_key] = task
-                task.add_done_callback(
-                    lambda completed: _forget_tft_live_task(cache_key, completed)
-                )
-
-        # A cancelled request must not cancel inference shared with other callers.
-        return await asyncio.shield(task)
-
-    try:
-        return await _get_or_start_live_tft()
-
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail="TFT-ASRO model not trained yet. Run training pipeline first.",
+        payload = dict(latest.payload_json)
+        gen_at = _as_utc(latest.generated_at)
+        prediction = (
+            payload.get("prediction")
+            if isinstance(payload.get("prediction"), dict)
+            else {}
         )
-    except ImportError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"TFT-ASRO module not available: {exc}",
+        payload.setdefault("primary_horizon", "5D")
+        payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
+        payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
+        payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
+        payload.setdefault("t1_return", prediction.get("predicted_return_median"))
+        payload.setdefault("t1_impulse", payload.get("t1_impulse"))
+        payload.setdefault("return_space", prediction.get("return_space"))
+        payload["source"] = "snapshot"
+        payload["snapshot_generated_at"] = (
+            gen_at.isoformat() if gen_at else None
         )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("TFT analysis failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc))
+        return payload
 
 
 @app.get(

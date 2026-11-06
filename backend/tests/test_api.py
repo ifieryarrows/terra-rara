@@ -48,6 +48,30 @@ class TestHealthEndpoint:
         assert response.status == "degraded"
         assert response.models_found == 0
 
+    def test_health_counts_cached_within_ttl(self):
+        """Test that health table counts are cached within TTL."""
+        import app.main as main
+
+        main._HEALTH_COUNTS_CACHE["ts"] = 0.0
+        main._HEALTH_COUNTS_CACHE["news_count"] = None
+        main._HEALTH_COUNTS_CACHE["price_count"] = None
+
+        mock_session = MagicMock()
+        mock_scalar = MagicMock(side_effect=[42, 108])
+        mock_session.query.return_value.scalar = mock_scalar
+
+        # First call queries DB
+        n1, p1 = main._get_health_counts(mock_session)
+        assert n1 == 42
+        assert p1 == 108
+        assert mock_scalar.call_count == 2
+
+        # Second call immediately within TTL reuses cached counts without querying DB
+        n2, p2 = main._get_health_counts(mock_session)
+        assert n2 == 42
+        assert p2 == 108
+        assert mock_scalar.call_count == 2
+
 
 class TestAnalysisSchema:
     """Tests for analysis report schema."""

@@ -217,7 +217,7 @@ def test_incompatible_checkpoint_metadata_returns_degraded_payload(tmp_path):
     assert result["reference_price_date"] is None
 
 
-def test_predict_staleness_marks_forecast_unhealthy_without_lazy_ingest(monkeypatch, price_session):
+def test_predict_staleness_preserves_healthy_forecast_without_lazy_ingest(monkeypatch, price_session):
     fake_pf = types.ModuleType("pytorch_forecasting")
     fake_pf.TimeSeriesDataSet = _FakeTimeSeriesDataSet
     monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
@@ -260,7 +260,8 @@ def test_predict_staleness_marks_forecast_unhealthy_without_lazy_ingest(monkeypa
     result = predictor.predict(price_session, "HG=F")
 
     assert "error" not in result
-    assert result["is_forecast_healthy"] is False
+    assert result["is_forecast_healthy"] is True
+    assert result["is_stale"] is True
     assert result["baseline_staleness_days"] == 5
     assert result["lazy_ingest_triggered"] is False
     assert not hasattr(predictor, "_trigger_lazy_ingest")

@@ -623,8 +623,9 @@ class TFTPredictor:
         # baseline unambiguously ("Futures HG=F, close of 2026-04-16").
         result["instrument"] = self._describe_instrument(symbol)
         result["baseline_staleness_days"] = staleness_days
+        result["is_stale"] = is_stale
         result["lazy_ingest_triggered"] = False
-        result["is_forecast_healthy"] = not is_stale
+        result["is_forecast_healthy"] = True
 
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["symbol"] = symbol
@@ -996,13 +997,16 @@ def generate_tft_analysis(
         return obj
 
     is_forecast_healthy = bool(prediction.get("is_forecast_healthy", True))
+    is_stale = bool(prediction.get("is_stale", False))
 
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
-        "model_state": "ok" if is_forecast_healthy else "stale",
+        "model_state": "ok" if is_forecast_healthy else "retrain_required",
         "quality_state": "ok" if is_forecast_healthy else "degraded",
         "is_forecast_healthy": is_forecast_healthy,
+        "is_stale": is_stale,
+        "baseline_staleness_days": prediction.get("baseline_staleness_days", 0),
         "direction": direction,
         "weekly_trend": direction,
         "primary_horizon": "5D",

@@ -746,7 +746,23 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_interval_score_96 = 0.0
 
         try:
-            pred_tensor = model.predict(fold_val_dl, mode="quantiles")
+            # Single-pass prediction + target extraction to avoid DataLoader double iteration
+            y_actual_path = None
+            try:
+                pred_out = model.predict(fold_val_dl, mode="quantiles", return_y=True)
+                if hasattr(pred_out, "output") and hasattr(pred_out, "y"):
+                    pred_tensor = pred_out.output
+                    y_val = pred_out.y[0] if isinstance(pred_out.y, (list, tuple)) else pred_out.y
+                    y_actual_path = y_val.cpu().numpy() if hasattr(y_val, "cpu") else np.asarray(y_val)
+                elif isinstance(pred_out, (list, tuple)) and len(pred_out) == 2:
+                    pred_tensor, y_val = pred_out
+                    y_val = y_val[0] if isinstance(y_val, (list, tuple)) else y_val
+                    y_actual_path = y_val.cpu().numpy() if hasattr(y_val, "cpu") else np.asarray(y_val)
+                else:
+                    pred_tensor = pred_out
+            except TypeError:
+                pred_tensor = model.predict(fold_val_dl, mode="quantiles")
+
             if hasattr(pred_tensor, "cpu"):
                 pred_np = pred_tensor.cpu().numpy()
             else:
@@ -768,12 +784,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
             raw_ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
 
-            y_actual_parts = []
-            for batch in fold_val_dl:
-                y_actual_parts.append(
-                    batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
-                )
-            y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
+            if y_actual_path is None:
+                y_actual_parts = []
+                for batch in fold_val_dl:
+                    y_actual_parts.append(
+                        batch[1][0] if isinstance(batch[1], (list, tuple)) else batch[1]
+                    )
+                y_actual_path = torch.cat(y_actual_parts).cpu().numpy()
             n_path = min(len(y_actual_path), len(pred_np))
             metrics = evaluate_quantile_predictions(
                 y_actual_path[:n_path],

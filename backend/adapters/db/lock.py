@@ -95,6 +95,11 @@ def is_lock_held(session: Session, lock_key: str) -> bool:
     
     Non-intrusively queries PostgreSQL's pg_locks view without acquiring
     or releasing locks.
+
+    Raises:
+        Exception: If the pg_locks query fails (e.g. transient DB timeout or
+        connectivity failure). Callers must never interpret an inconclusive
+        error as an unheld lock.
     """
     lock_id = _lock_key_to_id(lock_key)
     classid = (lock_id >> 32) & 0xFFFFFFFF
@@ -107,8 +112,8 @@ def is_lock_held(session: Session, lock_key: str) -> bool:
                 SELECT 1 FROM pg_locks
                 WHERE locktype = 'advisory'
                   AND objsubid = 1
-                  AND classid::bigint = :classid
-                  AND objid::bigint = :objid
+                  AND CAST(classid AS bigint) = CAST(:classid AS bigint)
+                  AND CAST(objid AS bigint) = CAST(:objid AS bigint)
                   AND granted = true
                 LIMIT 1
                 """
@@ -121,7 +126,7 @@ def is_lock_held(session: Session, lock_key: str) -> bool:
             "pg_locks check failed for %s (id=%s): %s",
             lock_key, lock_id, exc,
         )
-        return False
+        raise
 
 
 @contextmanager

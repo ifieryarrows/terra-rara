@@ -107,10 +107,10 @@ class PipelineLock:
         return False
 
 
-def is_pipeline_locked() -> bool:
+def is_pipeline_locked(session: Optional[object] = None) -> bool:
     """
     Check if the pipeline is currently locked.
-    Non-blocking check.
+    Non-blocking check. Optionally reuses an existing SQLAlchemy session.
     """
     # The API and ARQ worker are separate processes in production, so a local
     # file lock cannot describe the worker's PostgreSQL advisory lock. Use the
@@ -121,8 +121,10 @@ def is_pipeline_locked() -> bool:
         from adapters.db.lock import PIPELINE_LOCK_KEY, is_lock_held
 
         try:
-            with SessionLocal() as session:
+            if session is not None:
                 return is_lock_held(session, PIPELINE_LOCK_KEY)
+            with SessionLocal() as s:
+                return is_lock_held(s, PIPELINE_LOCK_KEY)
         except Exception as exc:
             # This is only a preflight visibility check. The worker still uses
             # try_acquire_lock as the race-safe authority.

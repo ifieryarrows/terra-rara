@@ -190,3 +190,44 @@ def test_interval_coverage_improves_after_symmetric_widening_without_median_chan
         lower,
         upper,
     )
+
+
+def test_predict_quantiles_to_np_single_pass_avoids_double_iteration():
+    """Verify single-pass prediction and target extraction avoids iterating dataloader twice."""
+    from collections import namedtuple
+    from deep_learning.training.trainer import _predict_quantiles_to_np
+
+    Prediction = namedtuple("Prediction", ["output", "y"])
+
+    pred_tensor = torch.zeros((10, 5, 7))
+    y_tensor = torch.ones((10, 5))
+
+    class _SinglePassModel:
+        def predict(self, _dl, mode=None, return_y=False):
+            assert mode == "quantiles"
+            if return_y:
+                return Prediction(output=pred_tensor, y=[y_tensor])
+            return pred_tensor
+
+    class _SingleIterationDataLoader:
+        """Dataloader that can only be iterated once."""
+        def __init__(self):
+            self.iter_count = 0
+
+        def __iter__(self):
+            self.iter_count += 1
+            if self.iter_count > 1:
+                raise RuntimeError("DataLoader was iterated more than once!")
+            yield (None, (y_tensor, None))
+
+    cfg = get_tft_config()
+    model = _SinglePassModel()
+    dl = _SingleIterationDataLoader()
+
+    # Should succeed without raising RuntimeError from double iteration
+    pred_np, y_np = _predict_quantiles_to_np(model, dl, cfg, return_y=True)
+
+    assert pred_np.shape == (10, 5, 7)
+    assert y_np.shape == (10, 5)
+    # dl was never iterated because return_y=True handled target extraction in model.predict
+    assert dl.iter_count == 0
