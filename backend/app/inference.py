@@ -122,8 +122,13 @@ def _align_features_to_model(df: pd.DataFrame, expected_features: list[str]) -> 
     return df.reindex(columns=expected_features, fill_value=0.0)
 
 
+from app.state_machines import YFinanceCrumbCircuitBreaker
+
 _YFINANCE_INFO_BLOCKED_UNTIL: float = 0.0
 _YFINANCE_INFO_COOLDOWN_SECONDS: float = 900.0
+_YFINANCE_CRUMB_CIRCUIT = YFinanceCrumbCircuitBreaker(
+    cooldown_seconds=_YFINANCE_INFO_COOLDOWN_SECONDS
+)
 
 
 def _extract_yfinance_live_price(ticker: object) -> Optional[float]:
@@ -134,11 +139,13 @@ def _extract_yfinance_live_price(ticker: object) -> Optional[float]:
     from app.heatmap import _fetch_ticker_info_safely
 
     now = time.monotonic()
-    if now >= _YFINANCE_INFO_BLOCKED_UNTIL:
+    _YFINANCE_CRUMB_CIRCUIT.blocked_until = _YFINANCE_INFO_BLOCKED_UNTIL
+    _YFINANCE_CRUMB_CIRCUIT.cooldown_seconds = _YFINANCE_INFO_COOLDOWN_SECONDS
+    if not _YFINANCE_CRUMB_CIRCUIT.is_open(now):
         try:
             info, auth_blocked = _fetch_ticker_info_safely(ticker)
             if auth_blocked:
-                _YFINANCE_INFO_BLOCKED_UNTIL = now + _YFINANCE_INFO_COOLDOWN_SECONDS
+                _YFINANCE_INFO_BLOCKED_UNTIL = _YFINANCE_CRUMB_CIRCUIT.trip(now)
             elif isinstance(info, dict):
                 candidate = info.get("regularMarketPrice") or info.get("currentPrice")
                 valid = finite_positive_price(candidate)

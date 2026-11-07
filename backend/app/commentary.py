@@ -1197,11 +1197,12 @@ An object containing daily in-character companion dialogue for Cuprum ("Külçe 
                 else:
                     raise
 
+            from app.state_machines import CommentaryGenerationMode
             logger.info("IFM commentary generated successfully (%s chars)", len(commentary))
             return CommentaryGenerationResult(
                 commentary,
                 _resolve_stance(stance, deterministic_stance),
-                "ifm_k2",
+                CommentaryGenerationMode.IFM_K2.value,
                 settings.ifm_model,
                 None,
                 [],
@@ -1215,10 +1216,16 @@ An object containing daily in-character companion dialogue for Cuprum ("Külçe 
             )
 
     # 2. Try OpenRouter as secondary provider
+    from app.state_machines import CommentaryGenerationMode
     if not get_configured_api_keys(settings):
         logger.warning("No LLM API keys configured (IFM or OpenRouter), using template commentary fallback")
         return CommentaryGenerationResult(
-            fallback_commentary, deterministic_stance, "deterministic_fallback", None, "auth", []
+            fallback_commentary,
+            deterministic_stance,
+            CommentaryGenerationMode.DETERMINISTIC_FALLBACK.value,
+            None,
+            "auth",
+            [],
         )
 
     base_request_kwargs = {
@@ -1272,7 +1279,7 @@ An object containing daily in-character companion dialogue for Cuprum ("Külçe 
             return CommentaryGenerationResult(
                 commentary,
                 _resolve_stance(stance, deterministic_stance),
-                "llm",
+                CommentaryGenerationMode.LLM.value,
                 actual_model,
                 None,
                 attempts,
@@ -1293,7 +1300,7 @@ An object containing daily in-character companion dialogue for Cuprum ("Külçe 
             return CommentaryGenerationResult(
                 commentary,
                 _resolve_stance(stance, deterministic_stance),
-                "llm_repaired",
+                CommentaryGenerationMode.LLM_REPAIRED.value,
                 actual_model,
                 None,
                 attempts,
@@ -1304,7 +1311,7 @@ An object containing daily in-character companion dialogue for Cuprum ("Külçe 
         return CommentaryGenerationResult(
             fallback_commentary,
             deterministic_stance,
-            "deterministic_fallback",
+            CommentaryGenerationMode.DETERMINISTIC_FALLBACK.value,
             None,
             getattr(exc, "category", "parse_invalid"),
             getattr(exc, "attempts", None) or attempts,

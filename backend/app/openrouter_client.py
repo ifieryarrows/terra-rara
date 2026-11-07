@@ -333,6 +333,11 @@ async def create_chat_completion(
                                     key_slot,
                                 )
 
+                    from app.state_machines import (
+                        TransportAction,
+                        decide_openrouter_transport_action,
+                    )
+
                     status = response.status_code if response is not None else None
                     no_upstreams = response is not None and _is_no_upstreams_available(response.status_code, response.text[:1000])
                     retryable = last_error is not None and last_error.category in retryable_categories and not no_upstreams
@@ -343,6 +348,13 @@ async def create_chat_completion(
                         and last_error.category == "timeout"
                         and len(models) > 1
                     )
+                    has_more_keys = key_index < len(configured_keys) - 1
+                    should_rotate_key = bool(
+                        last_error is not None
+                        and last_error.category in key_rotation_categories
+                        and has_more_keys
+                        and not daily_quota_exhausted
+                    )
                     will_retry = (
                         retryable
                         and not skip_same_model_timeout_retry
@@ -350,12 +362,20 @@ async def create_chat_completion(
                         and not (
                             last_error
                             and last_error.category == "rate_limit"
-                            and key_index < len(configured_keys) - 1
+                            and has_more_keys
                         )
                         and attempt_index < max(0, int(max_retries))
                     )
+                    action = decide_openrouter_transport_action(
+                        category=last_error.category if last_error else "network",
+                        rotate_key=should_rotate_key,
+                        no_upstreams=no_upstreams,
+                        skip_same_model_timeout_retry=skip_same_model_timeout_retry,
+                        has_more_attempts=will_retry,
+                        has_more_keys=has_more_keys,
+                    )
                     attempts.append(
-                        _attempt(candidate, attempt_index + 1, last_error.category if last_error else "network", status, will_retry)
+                        _attempt(candidate, attempt_index + 1, last_error.category if last_error else "network", status, action == TransportAction.RETRY_SAME_KEY)
                         | {"key_slot": key_slot}
                         | response_details
                     )
@@ -364,16 +384,16 @@ async def create_chat_completion(
                         raise last_error
                     if daily_quota_exhausted:
                         break
-                    if last_error and last_error.category in key_rotation_categories and key_index < len(configured_keys) - 1:
+                    if action == TransportAction.ROTATE_KEY:
                         logger.warning(
                             "OpenRouter key quota/spend limit reached; advancing to backup key model=%s category=%s key_slot=%s",
                             candidate,
-                            last_error.category,
+                            last_error.category if last_error else "unknown",
                             key_slot,
                         )
                         rotate_key = True
                         break
-                    if will_retry:
+                    if action == TransportAction.RETRY_SAME_KEY:
                         retry_after = _parse_retry_after_seconds(response) if response is not None else None
                         delay = min(retry_after if retry_after is not None else (2 ** attempt_index) + random.uniform(0.0, 0.5), 30.0)
                         remaining = max(deadline - time.monotonic(), 0.0)

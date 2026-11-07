@@ -134,18 +134,39 @@ class TFTPredictor:
         checkpoint_path: Optional[str] = None,
         cfg: Optional[TFTASROConfig] = None,
     ):
+        from app.state_machines import TFTPredictorLifecycleMachine
+
         self.cfg = cfg or get_tft_config()
         self._checkpoint_path = checkpoint_path or self.cfg.training.best_model_path
         self._model = None
         self._pca = None
-        self._hub_checked = False
-        self._metadata_checked = False
+        self._lifecycle = TFTPredictorLifecycleMachine()
         self._direction_sign_multiplier = 1
         self._daily_sign_multiplier = 1
         self._weekly_sign_threshold = 0.0
         self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
         self._weekly_interval_conditioning: dict = {}
+
+    @property
+    def _hub_checked(self) -> bool:
+        return self._lifecycle.hub_checked
+
+    @_hub_checked.setter
+    def _hub_checked(self, value: bool) -> None:
+        self._lifecycle.hub_checked = bool(value)
+
+    @property
+    def _metadata_checked(self) -> bool:
+        return self._lifecycle.metadata_checked
+
+    @_metadata_checked.setter
+    def _metadata_checked(self, value: bool) -> None:
+        self._lifecycle.metadata_checked = bool(value)
+
+    @property
+    def lifecycle_state(self) -> str:
+        return self._lifecycle.state.value
 
     def _ensure_local_artifacts(self) -> None:
         """Download checkpoint from HF Hub if not present locally."""
@@ -157,6 +178,7 @@ class TFTPredictor:
             from deep_learning.models.hub import validate_tft_artifact_set
 
             if validate_tft_artifact_set(Path(self._checkpoint_path).parent):
+                self._lifecycle.mark_artifacts_ready()
                 return
         except Exception as exc:
             logger.debug("TFT artifact validation skipped before Hub download: %s", exc)
@@ -177,11 +199,14 @@ class TFTPredictor:
                 repo_id=self.cfg.training.hf_model_repo,
             )
             if downloaded:
+                self._lifecycle.mark_artifacts_ready()
                 logger.info("TFT artifact set downloaded/refreshed from HF Hub")
             else:
+                self._lifecycle.mark_degraded("hub_artifacts_unavailable")
                 logger.warning("TFT artifact set not available on HF Hub")
             return
         except Exception as exc:
+            self._lifecycle.mark_degraded(str(exc))
             logger.warning("HF Hub download attempt failed: %s", exc)
 
     @property
@@ -189,12 +214,14 @@ class TFTPredictor:
         if self._model is None:
             self._ensure_local_artifacts()
             if not Path(self._checkpoint_path).exists():
+                self._lifecycle.mark_degraded("checkpoint_missing")
                 raise FileNotFoundError(
                     f"TFT checkpoint not found: {self._checkpoint_path}"
                 )
             self._validate_checkpoint_contract()
             from deep_learning.models.tft_copper import load_tft_model
             self._model = load_tft_model(self._checkpoint_path)
+            self._lifecycle.mark_model_loaded()
         return self._model
 
     def _validate_checkpoint_contract(self) -> None:

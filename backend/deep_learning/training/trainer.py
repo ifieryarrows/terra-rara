@@ -1344,10 +1344,12 @@ def _write_conformal_calibration_artifact(
             (target_min_pi80_width - validation_pi80_width) / 2.0,
         )
 
-        calibration_status = "fit"
+        from app.state_machines import TFTCalibrationStatus
+
+        calibration_status = TFTCalibrationStatus.FIT.value
         if validation_pi80_coverage >= 0.90:
             conformal_adj = 0.0
-            calibration_status = "skipped_interval_already_overcovered"
+            calibration_status = TFTCalibrationStatus.SKIPPED_OVERCOVERED.value
         else:
             conformal_adj = rolling_conformal_adjustment(
                 weekly_actual,
@@ -1357,7 +1359,7 @@ def _write_conformal_calibration_artifact(
             )
         global_adj = max(float(conformal_adj), float(width_floor_adjustment))
         if width_floor_adjustment > conformal_adj and width_floor_adjustment > 0.0:
-            calibration_status = "fit_width_floor"
+            calibration_status = TFTCalibrationStatus.FIT_WIDTH_FLOOR.value
         calibrated_lower, calibrated_upper = apply_conformal_interval(
             raw_lower,
             raw_upper,

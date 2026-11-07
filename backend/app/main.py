@@ -190,11 +190,12 @@ async def get_analysis(
         
         if snapshot is None:
             # No snapshot at all - return minimal response for UI compatibility
+            from app.state_machines import ModelServingState, SnapshotQualityState
             logger.warning(f"No snapshot found for {symbol}")
             return {
                 "symbol": symbol,
-                "quality_state": "missing",
-                "model_state": "offline",
+                "quality_state": SnapshotQualityState.MISSING.value,
+                "model_state": ModelServingState.OFFLINE.value,
                 "current_price": 0.0,
                 "predicted_return": 0.0,
                 "predicted_price": 0.0,
@@ -212,26 +213,26 @@ async def get_analysis(
                 "message": "No analysis available. Pipeline may not have run yet.",
             }
         
-        # Calculate snapshot age
+        # Calculate snapshot age and state via explicit state machine
+        from app.state_machines import evaluate_xgb_snapshot_state
         now = datetime.now(timezone.utc)
         generated_at = snapshot.generated_at
         if generated_at.tzinfo is None:
             generated_at = generated_at.replace(tzinfo=timezone.utc)
-        
-        age_hours = (now - generated_at).total_seconds() / 3600
-        
-        # Determine quality state
-        if age_hours > STALE_THRESHOLD_HOURS:
-            quality_state = "stale"
-        else:
-            quality_state = "ok"
+        snapshot_eval = evaluate_xgb_snapshot_state(
+            generated_at=generated_at,
+            now=now,
+            stale_threshold_hours=STALE_THRESHOLD_HOURS,
+        )
+        age_hours = snapshot_eval.age_hours
+        quality_state = snapshot_eval.quality_state
         
         # Build response from snapshot
         report = snapshot.report_json.copy() if snapshot.report_json else {}
         
         # Add/override metadata
         report["quality_state"] = quality_state
-        report["model_state"] = "ok" if quality_state == "ok" else "degraded"
+        report["model_state"] = snapshot_eval.model_state
         report["snapshot_age_hours"] = round(age_hours, 1)
         report["generated_at"] = generated_at.isoformat()
         
@@ -486,19 +487,10 @@ async def health_check():
                 .first()
             )
             if latest_run is not None:
+                from app.state_machines import map_pipeline_status_to_external
                 ended = latest_run.run_completed_at or latest_run.run_started_at
                 last_pipeline_run_at = _iso(ended)
-                # Map internal run.status → external pipeline_status.
-                #   running  → running
-                #   success  → ok
-                #   failed   → failed
-                raw_status = (latest_run.status or "").lower()
-                if raw_status == "success":
-                    last_pipeline_status = "ok"
-                elif raw_status in {"running", "failed"}:
-                    last_pipeline_status = raw_status
-                else:
-                    last_pipeline_status = raw_status or None
+                last_pipeline_status = map_pipeline_status_to_external(latest_run.status)
 
             # --- XGBoost snapshot age ---------------------------------------
             latest_snapshot = (
@@ -757,17 +749,18 @@ def _render_heatmap_http_response(
 ) -> Response:
     """Serialize one snapshot once and attach cache/performance diagnostics."""
     from app.heatmap import flatten_heatmap_leaves, hierarchy_for_view
+    from app.state_machines import resolve_heatmap_external_state
 
     now = datetime.now(timezone.utc)
     hierarchy_started = time.perf_counter()
     payload = hierarchy_for_view(persisted, view)
     hierarchy_ms = (time.perf_counter() - hierarchy_started) * 1000
     rendered_payload_count = len(flatten_heatmap_leaves(payload))
-    cache_state = (
-        "empty" if payload_count == 0 else
-        "refreshing" if refresh_in_progress else
-        "stale" if is_stale else "fresh"
-    )
+    cache_state = resolve_heatmap_external_state(
+        payload_count=payload_count,
+        is_stale=is_stale,
+        refresh_in_progress=refresh_in_progress,
+    ).value
     if cached_at and cached_at.tzinfo is None:
         cached_at = cached_at.replace(tzinfo=timezone.utc)
     if expires_at and expires_at.tzinfo is None:
@@ -853,32 +846,35 @@ async def get_market_heatmap(
             session.add(cache)
             session.flush()
 
+        from app.state_machines import evaluate_heatmap_cache_state
+
         persisted = cache.payload_json if isinstance(cache.payload_json, dict) else {}
         persisted_leaves = flatten_heatmap_leaves(persisted)
         payload_count = len(persisted_leaves)
         needs_enrichment = any(not leaf.get("instrumentType") for leaf in persisted_leaves)
-        refresh_in_progress = cache.refresh_started_at is not None
-        if refresh_in_progress:
-            refresh_started = cache.refresh_started_at
-            if refresh_started.tzinfo is None:
-                refresh_started = refresh_started.replace(tzinfo=timezone.utc)
-            if (now - refresh_started).total_seconds() > 180:
-                logger.warning("Heatmap refresh appears stuck; clearing in-flight marker")
-                cache.refresh_started_at = None
-                refresh_in_progress = False
+        decision = evaluate_heatmap_cache_state(
+            payload_count=payload_count,
+            needs_enrichment=needs_enrichment,
+            expires_at=cache.expires_at,
+            refresh_started_at=cache.refresh_started_at,
+            refresh_error=cache.refresh_error,
+            now=now,
+        )
+        if decision.stuck_lock_expired:
+            logger.warning("Heatmap refresh appears stuck; clearing in-flight marker")
+            cache.refresh_started_at = None
 
         expires_at = cache.expires_at
         if expires_at and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        retry_backoff = bool(cache.refresh_error) and bool(expires_at) and now < expires_at
-        is_stale = not expires_at or now >= expires_at or needs_enrichment or bool(cache.refresh_error)
-        if (payload_count == 0 or is_stale) and not refresh_in_progress and not retry_backoff:
+        is_stale = decision.is_stale
+        refresh_in_progress = decision.refresh_in_progress
+        if decision.should_trigger_refresh:
             # Persist before enqueueing so concurrent empty-cache requests do
             # not each schedule a provider refresh.
             cache.refresh_started_at = now
             session.commit()
             background_tasks.add_task(refresh_market_heatmap)
-            refresh_in_progress = True
         elif session.dirty or session.new:
             session.commit()
         db_ms = (time.perf_counter() - db_started) * 1000
@@ -1037,7 +1033,10 @@ async def websocket_live_price(
     import websockets
     import yfinance as yf
 
+    from app.state_machines import LivePriceWsPhase, LivePriceWsStateMachine
+
     await websocket.accept()
+    ws_machine = LivePriceWsStateMachine()
     canonical_symbol = canonicalize_instrument_symbol(symbol)
     yahoo_symbol = resolve_provider_symbol(canonical_symbol, "yahoo_websocket")
     yahoo_ws_url = "wss://streamer.finance.yahoo.com/?version=2"
@@ -1073,6 +1072,7 @@ async def websocket_live_price(
 
         price = await asyncio.to_thread(read_price)
         if price is not None:
+            ws_machine.transition(LivePriceWsPhase.INITIAL_SNAPSHOT)
             await send_payload(
                 {
                     "price": round(float(price), 4),
@@ -1099,9 +1099,10 @@ async def websocket_live_price(
                     close_timeout=5,
                 ) as yahoo_ws:
                     await yahoo_ws.send(json.dumps({"subscribe": [yahoo_symbol]}))
+                    ws_machine.transition(LivePriceWsPhase.SUBSCRIBED)
                     await send_payload(
                         {
-                            "status": "subscribed",
+                            "status": LivePriceWsPhase.SUBSCRIBED.value,
                             "source": "yahoo_finance_websocket",
                             "error": None,
                         }
@@ -1121,6 +1122,7 @@ async def websocket_live_price(
                         if price is None:
                             continue
 
+                        ws_machine.transition(LivePriceWsPhase.STREAMING)
                         await send_payload(
                             {
                                 "price": price,
@@ -1142,11 +1144,12 @@ async def websocket_live_price(
             except WebSocketDisconnect:
                 raise
             except Exception as e:
+                ws_machine.transition(LivePriceWsPhase.RECONNECTING)
                 logger.warning("Yahoo websocket stream interrupted for %s: %s", yahoo_symbol, e)
                 try:
                     await send_payload(
                         {
-                            "status": "reconnecting",
+                            "status": LivePriceWsPhase.RECONNECTING.value,
                             "source": "yahoo_finance_websocket",
                             "error": "stream reconnecting",
                         }
@@ -1341,8 +1344,8 @@ def _tft_snapshot_invalid_reasons(
     design (there is nothing newer to compare against).
     """
     from app.models import TFTModelMetadata
+    from app.state_machines import evaluate_tft_snapshot_freshness
 
-    reasons: list[str] = []
     gen_at = _as_utc(snapshot.generated_at)
 
     # Only a quality-gate-passed model should invalidate the snapshot. A
@@ -1358,11 +1361,6 @@ def _tft_snapshot_invalid_reasons(
         .first()
     )
     trained_at = _as_utc(model_meta.trained_at) if model_meta else None
-    if trained_at and gen_at and trained_at > gen_at:
-        reasons.append(
-            "model trained after snapshot "
-            f"(trained_at={trained_at.isoformat()} > snapshot_at={gen_at.isoformat()})"
-        )
 
     payload = snapshot.payload_json if isinstance(snapshot.payload_json, dict) else {}
     prediction = (
@@ -1377,25 +1375,15 @@ def _tft_snapshot_invalid_reasons(
     ref_date = _parse_ref_date(reference_price_date)
     if latest_price_date is None:
         latest_price_date = _latest_price_bar_date(session, symbol)
-    if ref_date is None:
-        reasons.append("snapshot reference_price_date missing")
-    elif latest_price_date is not None and ref_date != latest_price_date:
-        reasons.append(
-            "snapshot is not anchored to latest PriceBar "
-            f"(snapshot={ref_date.isoformat()}, "
-            f"latest_price_bar={latest_price_date.isoformat()})"
-        )
-    elif latest_price_date is None:
-        # Defensive fallback for installations where PriceBar is temporarily
-        # unavailable. Normally the exact market-bar comparison above is
-        # authoritative and naturally handles weekends and exchange holidays.
-        staleness_days = (datetime.now(timezone.utc).date() - ref_date).days
-        if staleness_days >= 3:
-            reasons.append(
-                f"reference_price_date stale ({reference_price_date}, {staleness_days}d)"
-            )
 
-    return reasons
+    return evaluate_tft_snapshot_freshness(
+        snapshot_generated_at=gen_at,
+        promoted_model_trained_at=trained_at,
+        reference_price_date_raw=reference_price_date,
+        parsed_ref_date=ref_date,
+        latest_price_date=latest_price_date,
+        today_utc=datetime.now(timezone.utc).date(),
+    )
 
 
 @app.get(
@@ -1690,6 +1678,11 @@ async def trigger_pipeline(
     
     try:
         from adapters.queue.jobs import enqueue_pipeline_job
+        from app.state_machines import (
+            PipelineRunEvent,
+            PipelineRunStatus,
+            transition_pipeline_run,
+        )
         import uuid
 
         now = datetime.now(timezone.utc)
@@ -1697,25 +1690,32 @@ async def trigger_pipeline(
         orphan_cutoff = now - timedelta(minutes=get_settings().pipeline_orphan_timeout_minutes)
         with SessionLocal() as session:
             orphans = session.query(PipelineRunMetrics).filter(
-                PipelineRunMetrics.status.in_(("queued", "running")),
+                PipelineRunMetrics.status.in_((
+                    PipelineRunStatus.QUEUED.value,
+                    PipelineRunStatus.RUNNING.value,
+                )),
                 PipelineRunMetrics.run_started_at < orphan_cutoff,
             ).all()
             for orphan in orphans:
-                orphan.status = "failed"
-                orphan.quality_state = "failed"
-                orphan.error_message = "worker_interrupted"
-                orphan.run_completed_at = now
-            session.add(
-                PipelineRunMetrics(
-                    run_id=run_id,
-                    run_started_at=now,
-                    enqueued_at=now,
-                    trigger_source=trigger_source,
-                    train_model_requested=train_model,
-                    status="queued",
-                    quality_state="queued",
+                transition_pipeline_run(
+                    orphan,
+                    PipelineRunEvent.EXPIRE_ORPHAN,
+                    now=now,
+                    error_message="worker_interrupted",
                 )
+            queued_metrics = PipelineRunMetrics(
+                run_id=run_id,
+                run_started_at=now,
+                enqueued_at=now,
+                trigger_source=trigger_source,
+                train_model_requested=train_model,
             )
+            transition_pipeline_run(
+                queued_metrics,
+                PipelineRunEvent.ENQUEUE,
+                now=now,
+            )
+            session.add(queued_metrics)
             session.commit()
 
         result = await enqueue_pipeline_job(
@@ -1743,13 +1743,16 @@ async def trigger_pipeline(
     except Exception as e:
         logger.error(f"Failed to enqueue pipeline job: {e}")
         if "run_id" in locals():
+            from app.state_machines import PipelineRunEvent, transition_pipeline_run
             with SessionLocal() as session:
                 queued = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
                 if queued is not None:
-                    queued.status = "failed"
-                    queued.quality_state = "failed"
-                    queued.error_message = f"enqueue_failed: {str(e)[:800]}"
-                    queued.run_completed_at = datetime.now(timezone.utc)
+                    transition_pipeline_run(
+                        queued,
+                        PipelineRunEvent.ENQUEUE_FAILED,
+                        now=datetime.now(timezone.utc),
+                        error_message=f"enqueue_failed: {str(e)[:800]}",
+                    )
                     session.commit()
         raise HTTPException(
             status_code=503,
@@ -1765,6 +1768,12 @@ async def get_pipeline_run_status(
     run_id: str,
     _auth: None = Depends(verify_pipeline_secret),
 ):
+    from app.state_machines import (
+        PipelineRunEvent,
+        PipelineRunStatus,
+        transition_pipeline_run,
+    )
+
     with SessionLocal() as session:
         record = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
         if record is None:
@@ -1778,7 +1787,7 @@ async def get_pipeline_run_status(
         # for the worker's startup/lock-acquisition window and only fail it
         # when PostgreSQL confirms that no worker owns the global lock.
         if (
-            record.status == "running"
+            record.status == PipelineRunStatus.RUNNING.value
             and record.worker_started_at is not None
             and get_db_type() == "postgresql"
         ):
@@ -1802,10 +1811,12 @@ async def get_pipeline_run_status(
 
                 if not lock_held:
                     completed_at = datetime.now(timezone.utc)
-                    record.status = "failed"
-                    record.quality_state = "failed"
-                    record.error_message = "worker_lost_lock_before_finalizing"
-                    record.run_completed_at = completed_at
+                    transition_pipeline_run(
+                        record,
+                        PipelineRunEvent.LOST_LOCK,
+                        now=completed_at,
+                        error_message="worker_lost_lock_before_finalizing",
+                    )
                     record.duration_seconds = run_age.total_seconds()
                     session.commit()
                     logger.error(
@@ -2251,15 +2262,16 @@ async def get_sentiment_summary(
         )
 
         # ---- 3) Pick the freshest possible index ----
+        from app.state_machines import SentimentSummarySource
         index_val: float = 0.0
-        source = "none"
+        source = SentimentSummarySource.NONE.value
         avg_confidence: Optional[float] = None
 
         if v2_rows:
             latest_v2 = v2_rows[-1]
             index_val = float(latest_v2.sentiment_index or 0.0)
             avg_confidence = float(latest_v2.avg_confidence or 0.0) if latest_v2.avg_confidence is not None else None
-            source = "daily_v2"
+            source = SentimentSummarySource.DAILY_V2.value
         elif component_rows and component_rows.n and component_rows.n > 0:
             # No daily aggregate yet — fall back to rolling per-article avg
             llm = float(component_rows.avg_llm or 0.0)
@@ -2267,7 +2279,7 @@ async def get_sentiment_summary(
             rule = float(component_rows.avg_rule or 0.0)
             index_val = 0.5 * llm + 0.3 * fb + 0.2 * rule
             avg_confidence = float(component_rows.avg_conf or 0.0)
-            source = "rolling_v2"
+            source = SentimentSummarySource.ROLLING_V2.value
         else:
             # Last-ditch fallback: legacy DailySentiment
             legacy = (
@@ -2277,7 +2289,7 @@ async def get_sentiment_summary(
             )
             if legacy is not None:
                 index_val = float(legacy.sentiment_index or 0.0)
-                source = "legacy_v1"
+                source = SentimentSummarySource.LEGACY_V1.value
 
         # ---- 4) Build trend series for sparkline ----
         trend_7d = [

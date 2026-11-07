@@ -695,13 +695,14 @@ def refresh_market_heatmap() -> None:
                         logger.warning("Heatmap metadata batch failed: %s", metadata_batch_error)
                         metadata_symbols = set()
                         provider_stats["info_skipped"] = len(symbols)
-                metadata_circuit_broken = False
+                from app.state_machines import HeatmapMetadataCircuitBreaker
+                metadata_circuit = HeatmapMetadataCircuitBreaker()
                 for symbol in symbols:
                     info: dict = {}
                     try:
                         history_quote = quote_by_symbol.get(symbol, {})
-                        should_fetch_info = symbol in metadata_symbols and not metadata_circuit_broken
-                        if symbol in metadata_symbols and metadata_circuit_broken:
+                        should_fetch_info = symbol in metadata_symbols and not metadata_circuit.is_open
+                        if symbol in metadata_symbols and metadata_circuit.is_open:
                             provider_stats["metadata_deferred"] += 1
                             provider_stats["info_skipped"] += 1
                         if should_fetch_info:
@@ -710,7 +711,7 @@ def refresh_market_heatmap() -> None:
                                 info, auth_blocked = _fetch_ticker_info_safely(ticker)
                                 if auth_blocked:
                                     provider_stats["info_error"] += 1
-                                    metadata_circuit_broken = True
+                                    metadata_circuit.trip_rate_limit("quoteSummary_auth_blocked")
                                     logger.warning(
                                         "Heatmap metadata quoteSummary blocked by Yahoo (401/crumb/rate-limit) on %s; "
                                         "circuit-breaking remaining metadata batch",
@@ -721,7 +722,9 @@ def refresh_market_heatmap() -> None:
                             except Exception as info_error:
                                 provider_stats["info_error"] += 1
                                 if _is_quote_summary_auth_error(info_error) or _is_rate_limit_error(info_error):
-                                    metadata_circuit_broken = True
+                                    metadata_circuit.trip_rate_limit(str(info_error))
+                                else:
+                                    metadata_circuit.record_provider_error(str(info_error))
                                 logger.debug("Heatmap metadata failed for %s: %s", symbol, info_error)
                         info_price = _finite_float(info.get("regularMarketPrice"), info.get("currentPrice"))
                         if info and info_price is None:

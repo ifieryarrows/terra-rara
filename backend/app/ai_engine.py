@@ -1696,18 +1696,22 @@ def score_unscored_processed_articles(
         llm_results_by_id: dict[int, dict] = {}
         llm_candidates: list[dict] = []
 
-        # Per-model rate-limit tracking (keyed by UTC date). A specific model
-        # is considered exhausted for today if its entry equals today's date.
+        # Per-model rate-limit tracking (keyed by UTC date) via DailyModelQuotaTracker.
+        # A specific model is considered exhausted for today if its entry equals today's date.
         # LLM scoring is skipped for the chunk only when BOTH fast and reliable
         # models have been flagged today — otherwise we still attempt (fallback
         # chain inside `score_batch_with_llm_v2` handles partial exhaustion).
+        from app.state_machines import DailyModelQuotaTracker
         today_utc = datetime.now(timezone.utc).date().isoformat()
-        rate_limited_by_model: dict[str, str] = getattr(
-            score_unscored_processed_articles, "_rate_limited_by_model", {}
-        ) or {}
-        fast_exhausted = rate_limited_by_model.get(fast_model) == today_utc
-        reliable_exhausted = rate_limited_by_model.get(reliable_model) == today_utc
-        both_exhausted = fast_exhausted and reliable_exhausted
+        existing_tracker = getattr(
+            score_unscored_processed_articles, "_rate_limited_by_model", None
+        )
+        rate_limited_by_model = DailyModelQuotaTracker(existing_tracker or {})
+        fast_exhausted = rate_limited_by_model.is_exhausted_today(fast_model, today_utc)
+        reliable_exhausted = rate_limited_by_model.is_exhausted_today(reliable_model, today_utc)
+        both_exhausted = rate_limited_by_model.are_both_exhausted(
+            fast_model, reliable_model, today_utc
+        )
 
         if get_configured_api_keys(settings) and llm_budget_remaining > 0 and not both_exhausted:
             eligible_items = [item for item in chunk_items if item["id"] in llm_eligible_ids]
@@ -1757,14 +1761,14 @@ def score_unscored_processed_articles(
                 # warning when both are flagged.
                 updated = False
                 if llm_bundle.get("rate_limited_fast"):
-                    rate_limited_by_model[fast_model] = today_utc
+                    rate_limited_by_model.mark_exhausted(fast_model, today_utc)
                     updated = True
                     logger.warning(
                         "V2 fast model %s hit daily rate limit; will be skipped for rest of UTC day %s.",
                         fast_model, today_utc,
                     )
                 if llm_bundle.get("rate_limited_reliable"):
-                    rate_limited_by_model[reliable_model] = today_utc
+                    rate_limited_by_model.mark_exhausted(reliable_model, today_utc)
                     updated = True
                     logger.warning(
                         "V2 reliable model %s hit daily rate limit; will be skipped for rest of UTC day %s.",
@@ -2522,10 +2526,12 @@ def _promote_xgb_artifact(
         "feature_count": len(features),
         "data_window_fingerprint": data_window_fingerprint,
     }
+    from app.state_machines import XGBArtifactStatus
+
     candidate = ModelArtifact(
         symbol=symbol,
         version=version,
-        status="candidate",
+        status=XGBArtifactStatus.CANDIDATE.value,
         model_blob=blob,
         sha256=digest,
         features_json=json.dumps(features, ensure_ascii=True),
@@ -2538,9 +2544,9 @@ def _promote_xgb_artifact(
     session.flush()
     session.query(ModelArtifact).filter(
         ModelArtifact.symbol == symbol,
-        ModelArtifact.status == "active",
-    ).update({"status": "archived"}, synchronize_session=False)
-    candidate.status = "active"
+        ModelArtifact.status == XGBArtifactStatus.ACTIVE.value,
+    ).update({"status": XGBArtifactStatus.ARCHIVED.value}, synchronize_session=False)
+    candidate.status = XGBArtifactStatus.ACTIVE.value
     candidate.promoted_at = datetime.now(timezone.utc)
     session.flush()
     return version
@@ -2548,12 +2554,17 @@ def _promote_xgb_artifact(
 
 def load_active_model_bundle(target_symbol: str = "HG=F") -> tuple[Optional[xgb.Booster], dict]:
     """Load model and metadata from the same active row to prevent split-brain."""
+    from app.state_machines import XGBArtifactStatus
+
     settings = get_settings()
     try:
         with SessionLocal() as session:
             artifact = (
                 session.query(ModelArtifact)
-                .filter(ModelArtifact.symbol == target_symbol, ModelArtifact.status == "active")
+                .filter(
+                    ModelArtifact.symbol == target_symbol,
+                    ModelArtifact.status == XGBArtifactStatus.ACTIVE.value,
+                )
                 .order_by(ModelArtifact.promoted_at.desc(), ModelArtifact.id.desc())
                 .first()
             )

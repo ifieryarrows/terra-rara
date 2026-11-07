@@ -58,13 +58,17 @@ def create_run_metrics(
     started_at: datetime,
 ) -> PipelineRunMetrics:
     """Create initial pipeline_run_metrics record."""
+    from app.state_machines import PipelineRunEvent, transition_pipeline_run
+
     metrics = session.query(PipelineRunMetrics).filter(PipelineRunMetrics.run_id == run_id).first()
     if metrics is None:
         metrics = PipelineRunMetrics(run_id=run_id, run_started_at=started_at)
         session.add(metrics)
-    metrics.run_started_at = started_at
-    metrics.worker_started_at = started_at
-    metrics.status = "running"
+    transition_pipeline_run(
+        metrics,
+        PipelineRunEvent.WORKER_START,
+        now=started_at,
+    )
     session.flush()
     return metrics
 
@@ -94,6 +98,12 @@ def finalize_run_metrics(
     error_message: Optional[str] = None,
 ) -> None:
     """Finalize run metrics with completion status."""
+    from app.state_machines import (
+        PipelineRunEvent,
+        PipelineRunStatus,
+        transition_pipeline_run,
+    )
+
     completed_at = datetime.now(timezone.utc)
     
     metrics = session.query(PipelineRunMetrics).filter(
@@ -101,13 +111,20 @@ def finalize_run_metrics(
     ).first()
     
     if metrics:
-        metrics.run_completed_at = completed_at
-        metrics.status = status
-        metrics.quality_state = quality_state
-        if metrics.run_started_at:
-            metrics.duration_seconds = (completed_at - metrics.run_started_at).total_seconds()
-        if error_message:
-            metrics.error_message = error_message
+        event_by_status = {
+            PipelineRunStatus.SKIPPED_LOCKED.value: PipelineRunEvent.SKIP_LOCKED,
+            PipelineRunStatus.SUCCESS.value: PipelineRunEvent.COMPLETE_SUCCESS,
+            PipelineRunStatus.DEGRADED.value: PipelineRunEvent.COMPLETE_DEGRADED,
+            PipelineRunStatus.FAILED.value: PipelineRunEvent.COMPLETE_FAILED,
+        }
+        event = event_by_status.get(status, PipelineRunEvent.COMPLETE_FAILED)
+        transition_pipeline_run(
+            metrics,
+            event,
+            now=completed_at,
+            error_message=error_message,
+            quality_state_override=quality_state,
+        )
         session.flush()
 
 
@@ -1070,20 +1087,31 @@ async def startup(ctx: dict) -> None:
     """Called when worker starts."""
     logger.info("Worker starting up...")
     init_db()
+    from app.state_machines import (
+        PipelineRunEvent,
+        PipelineRunStatus,
+        transition_pipeline_run,
+    )
+
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(
         minutes=get_settings().pipeline_orphan_timeout_minutes
     )
     with SessionLocal() as session:
         orphans = session.query(PipelineRunMetrics).filter(
-            PipelineRunMetrics.status.in_(("queued", "running")),
+            PipelineRunMetrics.status.in_((
+                PipelineRunStatus.QUEUED.value,
+                PipelineRunStatus.RUNNING.value,
+            )),
             PipelineRunMetrics.run_started_at < cutoff,
         ).all()
         for orphan in orphans:
-            orphan.status = "failed"
-            orphan.quality_state = "failed"
-            orphan.error_message = "worker_interrupted"
-            orphan.run_completed_at = now
+            transition_pipeline_run(
+                orphan,
+                PipelineRunEvent.EXPIRE_ORPHAN,
+                now=now,
+                error_message="worker_interrupted",
+            )
         if orphans:
             session.commit()
             logger.warning("Closed %s orphaned pipeline run(s)", len(orphans))
