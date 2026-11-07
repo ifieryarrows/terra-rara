@@ -24,21 +24,34 @@ export function getCinematicParticleProgress(scrollProgress: number, revealProgr
     : scroll;
 }
 
+export type CinematicEntryPhase = 'idle' | 'revealed';
+
+export function advanceCinematicEntry(
+  phase: CinematicEntryPhase,
+  progress: number,
+): { phase: CinematicEntryPhase; changed: boolean; target: 0 | 1 } {
+  if (phase === 'idle' && progress >= CINEMATIC_ENTRY_TRIGGER) {
+    return { phase: 'revealed', changed: true, target: 1 };
+  }
+  if (phase === 'revealed' && progress < CINEMATIC_ENTRY_RESET) {
+    return { phase: 'idle', changed: true, target: 0 };
+  }
+  return { phase, changed: false, target: phase === 'revealed' ? 1 : 0 };
+}
+
 export function useCinematicEntryReveal(progress: MotionValue<number>) {
   const reveal = useMotionValue(0);
   const animation = useRef<ReturnType<typeof animate> | null>(null);
-  const triggered = useRef(false);
+  const phaseRef = useRef<CinematicEntryPhase>('idle');
   useEffect(() => {
     const update = (value: number) => {
-      if (value >= CINEMATIC_ENTRY_TRIGGER && !triggered.current) {
-        triggered.current = true;
-        animation.current?.stop();
-        animation.current = animate(reveal, 1, { duration: 2, ease: [0.22, 0.61, 0.36, 1] });
-      } else if (value < CINEMATIC_ENTRY_RESET && triggered.current) {
-        triggered.current = false;
-        animation.current?.stop();
-        animation.current = animate(reveal, 0, { duration: .62, ease: [0.4, 0, 0.2, 1] });
-      }
+      const step = advanceCinematicEntry(phaseRef.current, value);
+      if (!step.changed) return;
+      phaseRef.current = step.phase;
+      animation.current?.stop();
+      animation.current = step.target === 1
+        ? animate(reveal, 1, { duration: 2, ease: [0.22, 0.61, 0.36, 1] })
+        : animate(reveal, 0, { duration: .62, ease: [0.4, 0, 0.2, 1] });
     };
     update(progress.get());
     const unsubscribe = progress.on('change', update);

@@ -235,14 +235,51 @@ function isAboutDashboardPair(from: string, to: string) {
   return (source === '/' && destination === '/dashboard') || (source === '/dashboard' && destination === '/');
 }
 
+export interface LogoTransitionState {
+  active: boolean;
+  phase: TransitionPhase;
+  reducedMotion: boolean;
+  origin: TransitionOrigin | null;
+}
+
+export type LogoTransitionEvent =
+  | { type: 'start'; reducedMotion: boolean; origin: TransitionOrigin | null }
+  | { type: 'advance'; phase: TransitionPhase }
+  | { type: 'reset' };
+
+export const INITIAL_LOGO_TRANSITION_STATE: LogoTransitionState = {
+  active: false,
+  phase: 'scatter',
+  reducedMotion: true,
+  origin: null,
+};
+
+export function advanceLogoTransition(
+  state: LogoTransitionState,
+  event: LogoTransitionEvent,
+): LogoTransitionState {
+  switch (event.type) {
+    case 'start':
+      return {
+        active: true,
+        phase: event.reducedMotion ? 'hold' : 'scatter',
+        reducedMotion: event.reducedMotion,
+        origin: event.origin,
+      };
+    case 'advance':
+      if (!state.active) return state;
+      return { ...state, phase: event.phase };
+    case 'reset':
+      return INITIAL_LOGO_TRANSITION_STATE;
+  }
+}
+
 export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { pathname, key } = useLocation();
   const reducedMotionPreference = useReducedMotion();
-  const [active, setActive] = useState(false);
-  const [phase, setPhase] = useState<TransitionPhase>('scatter');
-  const [reducedMotion, setReducedMotion] = useState(true);
-  const [origin, setOrigin] = useState<TransitionOrigin | null>(null);
+  const [machine, setMachine] = useState<LogoTransitionState>(INITIAL_LOGO_TRANSITION_STATE);
+  const { active, phase, reducedMotion, origin } = machine;
   const started = useRef(false);
   const navigationStarted = useRef(false);
   const destination = useRef('/dashboard');
@@ -271,14 +308,11 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       root.dataset.cmLogoTransition = 'true';
       root.dataset.cmRouteTransition = 'leaving';
       destination.current = to;
-      setOrigin(source ?? null);
-      setReducedMotion(useStaticMotion);
-      setActive(true);
-      if (useStaticMotion) {
-        setPhase('hold');
-      } else {
-        setPhase('scatter');
-      }
+      setMachine(prev => advanceLogoTransition(prev, {
+        type: 'start',
+        reducedMotion: useStaticMotion,
+        origin: source ?? null,
+      }));
     });
   }, [navigate, reducedMotionPreference]);
 
@@ -374,7 +408,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!active || phase !== 'scatter') return;
-    const timer = window.setTimeout(() => setPhase('assemble'), SCATTER_MS);
+    const timer = window.setTimeout(() => setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: 'assemble' })), SCATTER_MS);
     return () => window.clearTimeout(timer);
   }, [active, phase]);
 
@@ -386,7 +420,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!active || phase !== 'assemble') return;
-    const timer = window.setTimeout(() => setPhase('hold'), ASSEMBLE_MS);
+    const timer = window.setTimeout(() => setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: 'hold' })), ASSEMBLE_MS);
     return () => window.clearTimeout(timer);
   }, [active, phase]);
 
@@ -413,7 +447,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       completed = true;
       observer.disconnect();
       finishTimer = window.setTimeout(
-        () => setPhase(reducedMotion ? 'reveal' : 'release'),
+        () => setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: reducedMotion ? 'reveal' : 'release' })),
         reducedMotion ? 120 : SETTLE_MS,
       );
     };
@@ -429,7 +463,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       if (completed) return;
       completed = true;
       observer.disconnect();
-      setPhase(reducedMotion ? 'reveal' : 'release');
+      setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: reducedMotion ? 'reveal' : 'release' }));
     }, DASHBOARD_READY_TIMEOUT_MS);
     return () => {
       observer.disconnect();
@@ -440,7 +474,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!active || phase !== 'release') return;
-    const timer = window.setTimeout(() => setPhase('reveal'), RELEASE_MS);
+    const timer = window.setTimeout(() => setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: 'reveal' })), RELEASE_MS);
     return () => window.clearTimeout(timer);
   }, [active, phase]);
 
@@ -449,9 +483,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
     const targetPath = canonicalPath(new URL(destination.current, window.location.origin).pathname);
     const revealDuration = targetPath === '/' ? ABOUT_REVEAL_MS : REVEAL_MS;
     const timer = window.setTimeout(() => {
-      setActive(false);
-      setPhase('scatter');
-      setOrigin(null);
+      setMachine(prev => advanceLogoTransition(prev, { type: 'reset' }));
       destination.current = '/dashboard';
       started.current = false;
       navigationStarted.current = false;

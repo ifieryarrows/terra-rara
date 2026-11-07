@@ -75,6 +75,32 @@ function isSamePayload(previous: unknown, next: unknown): boolean {
   }
 }
 
+export type DeferredPanelKey = 'companion' | 'news' | 'map';
+export type DeferredPanelsState = Record<DeferredPanelKey, boolean>;
+export type DeferredPanelsEvent =
+  | { type: 'reveal'; key: DeferredPanelKey }
+  | { type: 'reveal-all' };
+
+export const INITIAL_DEFERRED_PANELS_STATE: DeferredPanelsState = {
+  companion: false,
+  news: false,
+  map: false,
+};
+
+export function advanceDeferredPanels(
+  state: DeferredPanelsState,
+  event: DeferredPanelsEvent,
+): DeferredPanelsState {
+  switch (event.type) {
+    case 'reveal':
+      if (state[event.key]) return state;
+      return { ...state, [event.key]: true };
+    case 'reveal-all':
+      if (state.companion && state.news && state.map) return state;
+      return { companion: true, news: true, map: true };
+  }
+}
+
 export const OverviewPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeOverviewSection, setActiveOverviewSection] = useState('price-forecast');
@@ -83,7 +109,7 @@ export const OverviewPage = () => {
   const busyCount = useRef(0);
   // Below-fold panels mount as the reader approaches them (or on the first Tab),
   // keeping entry work proportional to what is actually on screen.
-  const [deferredPanels, setDeferredPanels] = useState<Record<'companion' | 'news' | 'map', boolean>>({ companion: false, news: false, map: false });
+  const [deferredPanels, setDeferredPanels] = useState<DeferredPanelsState>(INITIAL_DEFERRED_PANELS_STATE);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
@@ -234,12 +260,12 @@ export const OverviewPage = () => {
   // Mount the below-fold panels once their section approaches the viewport.
   // Re-armed when the entry skeleton is replaced by the real layout.
   useEffect(() => {
-    const panels: Array<[keyof typeof deferredPanels, string]> = [
+    const panels: Array<[DeferredPanelKey, string]> = [
       ['companion', 'neural-analysis'],
       ['news', 'news-intelligence'],
       ['map', 'market-map'],
     ];
-    const revealAll = () => setDeferredPanels({ companion: true, news: true, map: true });
+    const revealAll = () => setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
     if (typeof IntersectionObserver === 'undefined') {
       revealAll();
       return;
@@ -250,9 +276,8 @@ export const OverviewPage = () => {
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
           const key = panels.find(([, id]) => id === (entry.target as HTMLElement).id)?.[0];
-          if (!key || next[key]) continue;
-          if (next === previous) next = { ...previous };
-          next[key] = true;
+          if (!key) continue;
+          next = advanceDeferredPanels(next, { type: 'reveal', key });
           observer.unobserve(entry.target);
         }
         return next;

@@ -73,6 +73,20 @@ function observeLogoVisibility(element: Element, onVisible: () => void): () => v
   };
 }
 
+export type LogoLoadPhase = 'deferred' | 'loading' | 'loaded' | 'failed';
+
+export function resolveLogoLoadPhase(
+  src: string | null,
+  visible: boolean,
+  loadedSrc: string | null,
+  failedSrc: string | null,
+): LogoLoadPhase {
+  if (!src || failedSrc === src || hasFailedLogo(src)) return 'failed';
+  if (loadedSrc === src || hasLoadedLogo(src)) return 'loaded';
+  if (!visible) return 'deferred';
+  return 'loading';
+}
+
 export const CompanyLogo = memo(function CompanyLogo({
   ticker,
   label,
@@ -86,8 +100,9 @@ export const CompanyLogo = memo(function CompanyLogo({
   const [visible, setVisible] = useState(!defer);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(() => src && hasLoadedLogo(src) ? src : null);
   const [failedSrc, setFailedSrc] = useState<string | null>(() => src && hasFailedLogo(src) ? src : null);
-  const loaded = !!src && (loadedSrc === src || hasLoadedLogo(src));
-  const failed = !src || failedSrc === src || hasFailedLogo(src);
+  const phase = resolveLogoLoadPhase(src, visible, loadedSrc, failedSrc);
+  const loaded = phase === 'loaded';
+  const failed = phase === 'failed';
 
   useEffect(() => {
     if (!defer || visible || !holderRef.current) {

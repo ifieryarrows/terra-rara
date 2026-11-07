@@ -71,14 +71,66 @@ interface HeatmapFocusEntry {
   name: string;
 }
 
+export type HeatmapPopoverMode = 'idle' | 'hovered' | 'pinned';
+
+export interface HeatmapPopoverState {
+  mode: HeatmapPopoverMode;
+  anchor: CategoryAnchor | null;
+  leaf: HeatmapData | null;
+}
+
+export type HeatmapPopoverEvent =
+  | { type: 'hover-open'; anchor: CategoryAnchor }
+  | { type: 'hover-close' }
+  | { type: 'leaf-hover'; leaf: HeatmapData | null }
+  | { type: 'click-anchor'; anchor: CategoryAnchor }
+  | { type: 'clear' };
+
+export const INITIAL_HEATMAP_POPOVER_STATE: HeatmapPopoverState = {
+  mode: 'idle',
+  anchor: null,
+  leaf: null,
+};
+
+export function advanceHeatmapPopover(
+  state: HeatmapPopoverState,
+  event: HeatmapPopoverEvent,
+): HeatmapPopoverState {
+  switch (event.type) {
+    case 'hover-open':
+      if (state.mode === 'pinned') return state;
+      return { ...state, mode: 'hovered', anchor: event.anchor };
+    case 'hover-close':
+      if (state.mode === 'pinned') return state;
+      return INITIAL_HEATMAP_POPOVER_STATE;
+    case 'leaf-hover':
+      if (state.mode === 'pinned') return state;
+      return { ...state, leaf: event.leaf };
+    case 'click-anchor': {
+      if (!event.anchor.isLeafTap && state.mode === 'pinned' && state.anchor?.id === event.anchor.id) {
+        return INITIAL_HEATMAP_POPOVER_STATE;
+      }
+      const nextLeaf = event.anchor.isLeafTap ? (event.anchor.tappedLeaf ?? state.leaf) : null;
+      return {
+        mode: 'pinned',
+        anchor: event.anchor,
+        leaf: nextLeaf,
+      };
+    }
+    case 'clear':
+      return INITIAL_HEATMAP_POPOVER_STATE;
+  }
+}
+
 export const HeatmapPanel: React.FC = () => {
   const [view, setView] = useState<'market' | 'themes'>('market');
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [hoveredAnchor, setHoveredAnchor] = useState<CategoryAnchor | null>(null);
-  const [hoveredLeaf, setHoveredLeaf] = useState<HeatmapData | null>(null);
-  const [pinnedAnchor, setPinnedAnchor] = useState<CategoryAnchor | null>(null);
+  const [popover, setPopover] = useState<HeatmapPopoverState>(INITIAL_HEATMAP_POPOVER_STATE);
+  const hoveredAnchor = popover.mode !== 'idle' ? popover.anchor : null;
+  const pinnedAnchor = popover.mode === 'pinned' ? popover.anchor : null;
+  const hoveredLeaf = popover.leaf;
   const [focusedPath, setFocusedPath] = useState<HeatmapFocusEntry[]>([]);
   const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -169,8 +221,7 @@ export const HeatmapPanel: React.FC = () => {
     clearTimer(openTimer);
     clearTimer(closeTimer);
     closeTimer.current = window.setTimeout(() => {
-      setHoveredAnchor(null);
-      setHoveredLeaf(null);
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
     }, CLOSE_DELAY_MS);
   }, []);
   const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
@@ -191,7 +242,8 @@ export const HeatmapPanel: React.FC = () => {
       return;
     }
     openTimer.current = window.setTimeout(() => {
-      setHoveredAnchor(pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor);
+      const nextAnchor = pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor;
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-open', anchor: nextAnchor }));
     }, OPEN_DELAY_MS);
   }, [scheduleClose]);
 
@@ -204,9 +256,7 @@ export const HeatmapPanel: React.FC = () => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (pinnedAnchor || hoveredAnchor) {
-        setPinnedAnchor(null);
-        setHoveredAnchor(null);
-        setHoveredLeaf(null);
+        setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
       } else if (isFullscreen) {
         setIsFullscreen(false);
       }
@@ -217,9 +267,7 @@ export const HeatmapPanel: React.FC = () => {
 
   useEffect(() => {
     setGroupFilter('ALL');
-    setHoveredAnchor(null);
-    setHoveredLeaf(null);
-    setPinnedAnchor(null);
+    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
     setFocusedPath([]);
   }, [view]);
 
@@ -282,7 +330,9 @@ export const HeatmapPanel: React.FC = () => {
     if (!hoverStateRef.current.pinnedAnchor) categoryPanelRef.current?.move(x, y);
   }, []);
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
-    if (!hoverStateRef.current.pinnedAnchor) setHoveredLeaf(leaf);
+    if (!hoverStateRef.current.pinnedAnchor) {
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'leaf-hover', leaf }));
+    }
   }, []);
   // A page scroll invalidates the pointer anchor: close the hover card at once
   // instead of leaving it floating over unrelated sections. A pinned card is a
@@ -291,13 +341,10 @@ export const HeatmapPanel: React.FC = () => {
     if (hoverStateRef.current.pinnedAnchor) return;
     clearTimer(openTimer);
     clearTimer(closeTimer);
-    setHoveredAnchor(null);
-    setHoveredLeaf(null);
+    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
   }, []);
   const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
-    setPinnedAnchor(null);
-    setHoveredAnchor(null);
-    setHoveredLeaf(null);
+    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
     setFocusedPath((current) => {
       const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
       if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
@@ -307,27 +354,12 @@ export const HeatmapPanel: React.FC = () => {
   }, [renderTree, sourceTree]);
   const handleMapNavigateBack = useCallback(() => {
     setFocusedPath((current) => current.length ? current.slice(0, -1) : current);
-    setPinnedAnchor(null);
-    setHoveredAnchor(null);
-    setHoveredLeaf(null);
+    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
   }, []);
   const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
     clearTimer(openTimer);
     clearTimer(closeTimer);
-    if (anchor.isLeafTap) {
-      if (anchor.tappedLeaf) setHoveredLeaf(anchor.tappedLeaf);
-    } else {
-      setHoveredLeaf(null);
-    }
-    setPinnedAnchor((current) => {
-      if (!anchor.isLeafTap && current?.id === anchor.id) {
-        setHoveredAnchor(null);
-        setHoveredLeaf(null);
-        return null;
-      }
-      setHoveredAnchor(anchor);
-      return anchor;
-    });
+    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'click-anchor', anchor }));
   }, []);
 
   const content = (
@@ -433,7 +465,7 @@ export const HeatmapPanel: React.FC = () => {
               onPointerEnter={cancelClose}
               onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
               onDrillDown={canDrillActiveAnchor ? () => handleCategoryDrillDown(activeAnchor) : undefined}
-              onClose={() => { setPinnedAnchor(null); setHoveredAnchor(null); setHoveredLeaf(null); }}
+              onClose={() => setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }))}
             />
           )}
         </div>

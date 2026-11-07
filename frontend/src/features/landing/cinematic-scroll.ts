@@ -50,6 +50,13 @@ const STEP_KEY_DIRECTION: Record<string, 1 | -1 | undefined> = {
   ArrowUp: -1, PageUp: -1,
 };
 
+export type CinematicStepperPhase = 'idle' | 'gliding' | 'burst_cooldown';
+
+export interface CinematicStepperState {
+  phase: CinematicStepperPhase;
+  lastWheelAt: number;
+}
+
 export function createCinematicSceneStepper(options: {
   getGeometry: () => CinematicSceneGeometry | null;
   scrollTo?: (top: number) => void;
@@ -57,13 +64,16 @@ export function createCinematicSceneStepper(options: {
 }): CinematicSceneStepper {
   const scrollTo = options.scrollTo ?? ((top: number) => window.scrollTo({ top, behavior: 'smooth' }));
   const lockTimeoutMs = options.lockTimeoutMs ?? CINEMATIC_STEP_LOCK_MS;
-  let locked = false;
+  const state: CinematicStepperState = {
+    phase: 'idle',
+    lastWheelAt: 0,
+  };
   let releaseTimer = 0;
-  let burstOwned = false;
-  let lastWheelAt = 0;
 
   const release = () => {
-    locked = false;
+    if (state.phase === 'gliding') {
+      state.phase = state.lastWheelAt > 0 ? 'burst_cooldown' : 'idle';
+    }
     if (releaseTimer) { window.clearTimeout(releaseTimer); releaseTimer = 0; }
   };
   window.addEventListener('scrollend', release);
@@ -84,7 +94,7 @@ export function createCinematicSceneStepper(options: {
   const step = (direction: 1 | -1): boolean => {
     const target = findTarget(direction);
     if (target === null) return false;
-    locked = true;
+    state.phase = 'gliding';
     if (releaseTimer) window.clearTimeout(releaseTimer);
     releaseTimer = window.setTimeout(release, lockTimeoutMs);
     scrollTo(target);
@@ -94,17 +104,20 @@ export function createCinematicSceneStepper(options: {
   const handleWheel = (event: WheelEvent): boolean => {
     if (!event.cancelable || event.defaultPrevented || event.ctrlKey) return false;
     if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
-    if (locked) { event.preventDefault(); return true; }
+    if (state.phase === 'gliding') { event.preventDefault(); return true; }
     const direction: 1 | -1 = event.deltaY > 0 ? 1 : -1;
     const now = Date.now();
-    if (burstOwned && now - lastWheelAt < WHEEL_GESTURE_GAP_MS && findTarget(direction) !== null) {
-      lastWheelAt = now;
+    if (state.phase === 'burst_cooldown' && now - state.lastWheelAt < WHEEL_GESTURE_GAP_MS && findTarget(direction) !== null) {
+      state.lastWheelAt = now;
       event.preventDefault();
       return true;
     }
-    if (!step(direction)) { burstOwned = false; return false; }
-    burstOwned = true;
-    lastWheelAt = now;
+    if (!step(direction)) {
+      state.phase = 'idle';
+      state.lastWheelAt = 0;
+      return false;
+    }
+    state.lastWheelAt = now;
     event.preventDefault();
     return true;
   };
@@ -117,7 +130,7 @@ export function createCinematicSceneStepper(options: {
     if (!direction) return false;
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && (focused.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A|SUMMARY)$/.test(focused.tagName))) return false;
-    if ((locked || event.repeat) && findTarget(direction) !== null) {
+    if ((state.phase === 'gliding' || event.repeat) && findTarget(direction) !== null) {
       event.preventDefault();
       return true;
     }
@@ -133,7 +146,8 @@ export function createCinematicSceneStepper(options: {
       window.removeEventListener('scrollend', release);
       if (releaseTimer) window.clearTimeout(releaseTimer);
       releaseTimer = 0;
-      locked = false;
+      state.phase = 'idle';
+      state.lastWheelAt = 0;
     },
   };
 }
