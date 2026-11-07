@@ -83,6 +83,60 @@ function initialVisibility(): boolean {
   return typeof document === 'undefined' || document.visibilityState !== 'hidden';
 }
 
+export interface CuprumSessionState {
+  mode: 'idle' | 'dialogue';
+  activeNodeId: string | null;
+  idleLine: CuprumIdleLine | null;
+  isTyping: boolean;
+}
+
+export type CuprumSessionEvent =
+  | { type: 'show-idle'; line: CuprumIdleLine }
+  | { type: 'dismiss-idle' }
+  | { type: 'open-dialogue'; nodeId: string }
+  | { type: 'advance-dialogue'; nodeId: string }
+  | { type: 'close-dialogue' }
+  | { type: 'set-typing'; typing: boolean };
+
+export const INITIAL_CUPRUM_SESSION_STATE: CuprumSessionState = {
+  mode: 'idle',
+  activeNodeId: null,
+  idleLine: null,
+  isTyping: false,
+};
+
+export function advanceCuprumSession(
+  state: CuprumSessionState,
+  event: CuprumSessionEvent,
+): CuprumSessionState {
+  switch (event.type) {
+    case 'show-idle':
+      if (state.mode !== 'idle') return state;
+      return { ...state, idleLine: event.line };
+    case 'dismiss-idle':
+      return { ...state, idleLine: null, isTyping: false };
+    case 'open-dialogue':
+      return {
+        mode: 'dialogue',
+        activeNodeId: event.nodeId,
+        idleLine: null,
+        isTyping: false,
+      };
+    case 'advance-dialogue':
+      return {
+        ...state,
+        mode: 'dialogue',
+        activeNodeId: event.nodeId,
+        idleLine: null,
+        isTyping: false,
+      };
+    case 'close-dialogue':
+      return INITIAL_CUPRUM_SESSION_STATE;
+    case 'set-typing':
+      return { ...state, isTyping: event.typing };
+  }
+}
+
 export function CuprumCompanionPanel({
   commentary,
   explain,
@@ -90,11 +144,9 @@ export function CuprumCompanionPanel({
   loading = false,
   error,
 }: Props) {
-  const [mode, setMode] = useState<'idle' | 'dialogue'>('idle');
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [session, setSession] = useState<CuprumSessionState>(INITIAL_CUPRUM_SESSION_STATE);
+  const { mode, activeNodeId, idleLine, isTyping } = session;
   const [runtime, setRuntime] = useState<CuprumRuntime>(() => createCuprumRuntime());
-  const [idleLine, setIdleLine] = useState<CuprumIdleLine | null>(null);
-  const [isTyping, setIsTyping] = useState(false);
   const [inView, setInView] = useState(true);
   const [visible, setVisible] = useState(initialVisibility);
   const [interactionEpoch, setInteractionEpoch] = useState(0);
@@ -253,7 +305,7 @@ export function CuprumCompanionPanel({
       const line = pickIdleLine(ctx, runtime, recentIdleIdsRef.current);
       recentIdleIdsRef.current = [...recentIdleIdsRef.current, line.id].slice(-4);
       hasShownIdleRef.current = true;
-      setIdleLine(line);
+      setSession((prev) => advanceCuprumSession(prev, { type: 'show-idle', line }));
     }, delay);
     ambientTimerRef.current = timer;
     return () => {
@@ -263,17 +315,18 @@ export function CuprumCompanionPanel({
   }, [mode, idleLine, inView, visible, interactionEpoch, ctx, runtime]);
 
   const dismissIdle = useCallback(() => {
-    setIdleLine(null);
-    setIsTyping(false);
+    setSession((prev) => advanceCuprumSession(prev, { type: 'dismiss-idle' }));
+  }, []);
+
+  const setIsTyping = useCallback((typing: boolean) => {
+    setSession((prev) => advanceCuprumSession(prev, { type: 'set-typing', typing }));
   }, []);
 
   const closeConversation = useCallback(
     (restoreFocus = false) => {
       noteInteraction();
       modeRef.current = 'idle';
-      setMode('idle');
-      setActiveNodeId(null);
-      setIsTyping(false);
+      setSession((prev) => advanceCuprumSession(prev, { type: 'close-dialogue' }));
       if (restoreFocus) {
         window.setTimeout(() => petButtonRef.current?.focus({ preventScroll: true }), 0);
       }
@@ -291,8 +344,6 @@ export function CuprumCompanionPanel({
       ambientTimerRef.current = null;
     }
     modeRef.current = 'dialogue';
-    setIdleLine(null);
-    setActiveNodeId(ROOT_NODE_ID);
     // Read the flag before clearing it: the state updater below can run later,
     // during render, and would otherwise see an already-cleared ref.
     const fresh = freshDataRef.current;
@@ -305,7 +356,7 @@ export function CuprumCompanionPanel({
       lastChoiceId: null,
       storyStreak: 0,
     }));
-    setMode('dialogue');
+    setSession((prev) => advanceCuprumSession(prev, { type: 'open-dialogue', nodeId: ROOT_NODE_ID }));
     dispatchSpriteRef.current('alert-start');
   }, []);
 
@@ -326,8 +377,12 @@ export function CuprumCompanionPanel({
         return;
       }
       setRuntime((previous) => applyCuprumChoice(previous, choice));
-      if (choice.next) setActiveNodeId(choice.next);
-      setIsTyping(false);
+      if (choice.next) {
+        const nextId = choice.next;
+        setSession((prev) => advanceCuprumSession(prev, { type: 'advance-dialogue', nodeId: nextId }));
+      } else {
+        setSession((prev) => advanceCuprumSession(prev, { type: 'set-typing', typing: false }));
+      }
     },
     [noteInteraction, closeConversation],
   );

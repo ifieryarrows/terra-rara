@@ -623,24 +623,9 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     id: 'story',
     speech: (ctx, runtime) => {
       if (ctx.mood === 'patina_bear') {
-        const streak = runtime.storyStreak ?? 0;
-        if (streak === 3) {
-          return "Another one? The dampness is already in my jaw. Fine: the first ingots were cast like oxhide so merchants could haul them over mountains. Nobody asked the ingot how heavy the mountain felt.";
-        }
-        if (streak === 4) {
-          return "You don't quit, do you? A copper bell only rings when struck; keep hammering and it fractures. My head is fractured enough.";
-        }
-        if (streak === 5) {
-          return "Enough. I'm genuinely overwhelmed. Oxidized green from the rain, the market sliding, every joint aching. I'm not that roaring furnace bull; I can't spin folklore on demand. Can't we just sit in the quiet?";
-        }
-        if (streak === 6) {
-          return "I told you, I'm completely drained. My voice is turning into green powder, and I'm still holding this bubble open while you treat me like a coin-operated jukebox. Please. No more.";
-        }
-        if (streak >= 7) {
-          if (runtime.lastChoiceId === 'bear-sleep-poke') {
-            return "...Mmh... go bother the bull... I'm off the clock... Zzz...";
-          }
-          return "...Zzz... hrr... let COMEX fall where it wants... no more stories... I'm out... Zzz...";
+        const stage = resolveBearExhaustionStage(runtime);
+        if (stage !== 'normal') {
+          return BEAR_EXHAUSTION_SPEECH[stage];
         }
       }
       const story = currentStory(ctx, runtime);
@@ -649,16 +634,9 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
     },
     action: (ctx, runtime) => {
       if (ctx.mood === 'patina_bear') {
-        const streak = runtime.storyStreak ?? 0;
-        if (streak === 3) return "It lets out a raspy sigh, massaging a stiff, patinated shoulder.";
-        if (streak === 4) return "Its eyelids droop heavily as a puff of green dust drifts down.";
-        if (streak === 5) return "It presses both paws against its temples, wincing from pure exhaustion.";
-        if (streak === 6) return "It curls into a defensive, trembling ball, refusing to meet your eyes.";
-        if (streak >= 7) {
-          if (runtime.lastChoiceId === 'bear-sleep-poke') {
-            return "It buries its face deeper under its paws and snores louder.";
-          }
-          return "Cuprum has completely fallen asleep, breathing softly with tiny raspy wheezes.";
+        const stage = resolveBearExhaustionStage(runtime);
+        if (stage !== 'normal') {
+          return BEAR_EXHAUSTION_ACTION[stage];
         }
       }
       const told = runtime.storiesTold ?? 0;
@@ -669,12 +647,15 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       return 'The ember in its chest dims to a listening red.';
     },
     choices: (ctx, runtime) => {
-      if (ctx.mood === 'patina_bear' && (runtime?.storyStreak ?? 0) >= 7) {
-        return [
-          { id: 'bear-sleep-tuck', label: '[Tuck him in] Rest well, little one.', close: true, effect: 'warm' },
-          { id: 'bear-sleep-quiet', label: '[Step away quietly] Sleep.', close: true },
-          { id: 'bear-sleep-poke', label: '[Poke him gently] ...Cuprum?', next: 'story', effect: 'tease' },
-        ];
+      if (ctx.mood === 'patina_bear') {
+        const stage = resolveBearExhaustionStage(runtime);
+        if (stage === 'asleep' || stage === 'asleep_poked') {
+          return [
+            { id: 'bear-sleep-tuck', label: '[Tuck him in] Rest well, little one.', close: true, effect: 'warm' },
+            { id: 'bear-sleep-quiet', label: '[Step away quietly] Sleep.', close: true },
+            { id: 'bear-sleep-poke', label: '[Poke him gently] ...Cuprum?', next: 'story', effect: 'tease' },
+          ];
+        }
       }
       if (ctx.mood === 'tempered_neutral' && !currentStory(ctx, runtime)) {
         // The story is spent, but the question stays so it repeats the same answer.
@@ -698,6 +679,45 @@ export const CUPRUM_NODES: Record<string, CuprumNode> = {
       leaveChoice(),
     ],
   },
+};
+
+export type CuprumBearExhaustionStage =
+  | 'normal'
+  | 'reluctant'
+  | 'irritated'
+  | 'overwhelmed'
+  | 'drained'
+  | 'asleep'
+  | 'asleep_poked';
+
+export function resolveBearExhaustionStage(runtime?: CuprumRuntime): CuprumBearExhaustionStage {
+  const streak = runtime?.storyStreak ?? 0;
+  if (streak === 3) return 'reluctant';
+  if (streak === 4) return 'irritated';
+  if (streak === 5) return 'overwhelmed';
+  if (streak === 6) return 'drained';
+  if (streak >= 7) {
+    return runtime?.lastChoiceId === 'bear-sleep-poke' ? 'asleep_poked' : 'asleep';
+  }
+  return 'normal';
+}
+
+const BEAR_EXHAUSTION_SPEECH: Record<Exclude<CuprumBearExhaustionStage, 'normal'>, string> = {
+  reluctant: "Another one? The dampness is already in my jaw. Fine: the first ingots were cast like oxhide so merchants could haul them over mountains. Nobody asked the ingot how heavy the mountain felt.",
+  irritated: "You don't quit, do you? A copper bell only rings when struck; keep hammering and it fractures. My head is fractured enough.",
+  overwhelmed: "Enough. I'm genuinely overwhelmed. Oxidized green from the rain, the market sliding, every joint aching. I'm not that roaring furnace bull; I can't spin folklore on demand. Can't we just sit in the quiet?",
+  drained: "I told you, I'm completely drained. My voice is turning into green powder, and I'm still holding this bubble open while you treat me like a coin-operated jukebox. Please. No more.",
+  asleep: "...Zzz... hrr... let COMEX fall where it wants... no more stories... I'm out... Zzz...",
+  asleep_poked: "...Mmh... go bother the bull... I'm off the clock... Zzz...",
+};
+
+const BEAR_EXHAUSTION_ACTION: Record<Exclude<CuprumBearExhaustionStage, 'normal'>, string> = {
+  reluctant: "It lets out a raspy sigh, massaging a stiff, patinated shoulder.",
+  irritated: "Its eyelids droop heavily as a puff of green dust drifts down.",
+  overwhelmed: "It presses both paws against its temples, wincing from pure exhaustion.",
+  drained: "It curls into a defensive, trembling ball, refusing to meet your eyes.",
+  asleep: "Cuprum has completely fallen asleep, breathing softly with tiny raspy wheezes.",
+  asleep_poked: "It buries its face deeper under its paws and snores louder.",
 };
 
 export const IDLE_LINE_COUNT =

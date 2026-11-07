@@ -27,6 +27,69 @@ export interface CuprumSpeechBubbleProps {
   onTypingChange?: (typing: boolean) => void;
 }
 
+export type SpeechBubblePhase = 'typing' | 'revealed' | 'paused';
+
+export interface SpeechBubbleMachineState {
+  phase: SpeechBubblePhase;
+  visibleCount: number;
+  paused: boolean;
+}
+
+export type SpeechBubbleEvent =
+  | { type: 'reset'; length: number; reducedMotion: boolean }
+  | { type: 'tick'; length: number }
+  | { type: 'reveal-all'; length: number }
+  | { type: 'set-paused'; paused: boolean };
+
+export function createInitialSpeechBubbleState(
+  length: number,
+  reducedMotion: boolean,
+): SpeechBubbleMachineState {
+  const skip = reducedMotion || length === 0;
+  return {
+    phase: skip ? 'revealed' : 'typing',
+    visibleCount: skip ? length : 0,
+    paused: false,
+  };
+}
+
+export function advanceSpeechBubble(
+  state: SpeechBubbleMachineState,
+  event: SpeechBubbleEvent,
+): SpeechBubbleMachineState {
+  switch (event.type) {
+    case 'reset': {
+      const skip = event.reducedMotion || event.length === 0;
+      return {
+        phase: skip ? (state.paused ? 'paused' : 'revealed') : 'typing',
+        visibleCount: skip ? event.length : 0,
+        paused: state.paused,
+      };
+    }
+    case 'tick': {
+      const nextCount = Math.min(event.length, state.visibleCount + 1);
+      const finished = nextCount >= event.length;
+      return {
+        ...state,
+        visibleCount: nextCount,
+        phase: finished ? (state.paused ? 'paused' : 'revealed') : 'typing',
+      };
+    }
+    case 'reveal-all':
+      return {
+        ...state,
+        visibleCount: event.length,
+        phase: state.paused ? 'paused' : 'revealed',
+      };
+    case 'set-paused':
+      return {
+        ...state,
+        paused: event.paused,
+        phase: state.phase === 'typing' ? 'typing' : event.paused ? 'paused' : 'revealed',
+      };
+  }
+}
+
 export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleProps>(
   function CuprumSpeechBubble(
     {
@@ -55,11 +118,11 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         : null;
 
     const reducedMotion = usePrefersReducedMotion();
-    const [visibleCount, setVisibleCount] = useState(() =>
-      getPrefersReducedMotion() ? text.length : 0,
+    const [bubbleState, setBubbleState] = useState<SpeechBubbleMachineState>(() =>
+      createInitialSpeechBubbleState(text.length, getPrefersReducedMotion()),
     );
-    const [typing, setTyping] = useState(() => !getPrefersReducedMotion() && text.length > 0);
-    const [paused, setPaused] = useState(false);
+    const { visibleCount, paused } = bubbleState;
+    const typing = bubbleState.phase === 'typing';
     const typingCallbackRef = useRef(onTypingChange);
 
     useEffect(() => {
@@ -78,21 +141,19 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     );
 
     useEffect(() => {
+      setBubbleState((prev) =>
+        advanceSpeechBubble(prev, { type: 'reset', length: text.length, reducedMotion }),
+      );
       if (reducedMotion || text.length === 0) {
-        setVisibleCount(text.length);
-        setTyping(false);
         return;
       }
 
-      setVisibleCount(0);
-      setTyping(true);
       let index = 0;
       const interval = window.setInterval(() => {
         index += 1;
-        setVisibleCount(index);
+        setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'tick', length: text.length }));
         if (index >= text.length) {
           window.clearInterval(interval);
-          setTyping(false);
         }
       }, TYPE_INTERVAL_MS);
 
@@ -111,9 +172,12 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     }, [mode, typing, paused, text.length, onClose]);
 
     const revealAll = useCallback(() => {
-      setVisibleCount(text.length);
-      setTyping(false);
+      setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'reveal-all', length: text.length }));
     }, [text.length]);
+
+    const setPaused = useCallback((nextPaused: boolean) => {
+      setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'set-paused', paused: nextPaused }));
+    }, []);
 
     const handleClick = useCallback(() => {
       if (mode === 'dialogue') {
