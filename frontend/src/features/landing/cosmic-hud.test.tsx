@@ -3,7 +3,9 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { useMotionValue } from 'framer-motion';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CinematicLanding } from './CinematicLanding';
 import { CosmicHud } from './CosmicHud';
 
 function HudHarness({ initialProgress = 0, onStep = vi.fn() }: { initialProgress?: number; onStep?: (target: number) => void }) {
@@ -13,6 +15,8 @@ function HudHarness({ initialProgress = 0, onStep = vi.fn() }: { initialProgress
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('CosmicHud observatory scale ruler and sensory controls', () => {
@@ -83,5 +87,54 @@ describe('CosmicHud observatory scale ruler and sensory controls', () => {
     render(<HudHarness initialProgress={0} onStep={onStep} />);
     await user.click(screen.getByRole('button', { name: 'Advance to next observatory milestone' }));
     expect(onStep).toHaveBeenCalledWith(0.24);
+
+    cleanup();
+    const onFlybyStep = vi.fn();
+    render(<HudHarness initialProgress={0.69} onStep={onFlybyStep} />);
+    await user.click(screen.getByRole('button', { name: 'Advance to next observatory milestone' }));
+    expect(onFlybyStep).toHaveBeenCalledWith(0.79);
+  });
+
+  it('keeps the sound toggle above the finale entry overlay rather than inside the sticky world stacking context', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }));
+    vi.stubGlobal('IntersectionObserver', class { observe = vi.fn(); unobserve = vi.fn(); disconnect = vi.fn(); });
+    vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); unobserve = vi.fn(); disconnect = vi.fn(); });
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(null);
+
+    const { container } = render(
+      <MemoryRouter>
+        <CinematicLanding
+          quality="balanced"
+          entry={() => (
+            <section className="cm-enter cm-enter--cinematic cm-cinematic-entry" style={{ pointerEvents: 'auto' }}>
+              <button type="button">Enter CopperMind</button>
+            </section>
+          )}
+        />
+      </MemoryRouter>,
+    );
+
+    const stickyWorld = container.querySelector('.cm-cinematic-sticky');
+    const entryLayer = container.querySelector('.cm-cinematic-entry-layer');
+    const hudContainer = container.querySelector('.cm-cosmic-hud-container');
+    expect(stickyWorld).not.toBeNull();
+    expect(entryLayer).not.toBeNull();
+    expect(hudContainer).not.toBeNull();
+    expect(stickyWorld!.contains(hudContainer)).toBe(false);
+    expect(entryLayer!.compareDocumentPosition(hudContainer!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    const user = userEvent.setup();
+    const soundBtn = screen.getByRole('button', { name: /Observatory sound effects on/i });
+    await user.click(soundBtn);
+    expect(soundBtn).toHaveTextContent('SOUND: OFF');
+    await user.click(soundBtn);
+    expect(soundBtn).toHaveTextContent('SOUND: ON');
   });
 });

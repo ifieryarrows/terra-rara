@@ -115,7 +115,7 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   </article>;
 }
 
-function StickyWorld({ progress, releaseProgress, quality, onStepToProgress }: { progress: MotionValue<number>; releaseProgress: MotionValue<number>; quality: ParticleQuality; onStepToProgress: (targetProgress: number) => void }) {
+function StickyWorld({ progress, releaseProgress, quality }: { progress: MotionValue<number>; releaseProgress: MotionValue<number>; quality: ParticleQuality }) {
   const signalOpacity = useTransform(progress, [0, .09, .18], [1, .82, 0]);
   const signalScale = useTransform(progress, [0, .14, .19], [1, 1.02, 1.06]);
   const signalY = useTransform(progress, [0, .19], [0, -18]);
@@ -133,7 +133,6 @@ function StickyWorld({ progress, releaseProgress, quality, onStepToProgress }: {
     <ParticleWorld progress={progress} releaseProgress={entryRevealProgressOrFallback(releaseProgress)} quality={quality}/>
     <motion.div className="cm-cinematic-symbol" style={{ opacity: signalOpacity, visibility: signalVisibility, scale: signalScale, y: signalY }} aria-hidden="true"><div data-cm-route-reveal="surface" className="cm-cinematic-symbol-reveal"><CopperSignal progress={signalPath}/></div></motion.div>
     <DashboardComposition progress={progress}/>
-    <CosmicHud progress={progress} onStepToProgress={onStepToProgress}/>
     <div className="cm-cinematic-progress" aria-hidden="true"><motion.span style={{ scaleX: progress }}/></div>
   </div>;
 }
@@ -205,11 +204,12 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     };
   }, []);
   return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
-    <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality} onStepToProgress={scrollToSceneProgress}/>
+    <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality}/>
     <div className="cm-cinematic-copy">
       <HeroCopy progress={scrollYProgress} onNavigateAnchor={handleNavigateAnchor}/>
       {beats.map(beat => <StoryCopy key={beat.id} progress={scrollYProgress} beat={beat}/>) }
     </div>
     {entry ? <div className="cm-cinematic-entry-layer">{entry(scrollYProgress, entryRevealProgress)}</div> : null}
+    <CosmicHud progress={scrollYProgress} onStepToProgress={scrollToSceneProgress}/>
   </section>;
 }

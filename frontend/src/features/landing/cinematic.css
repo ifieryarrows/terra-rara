@@ -3,7 +3,8 @@
 .cm-landing--cinematic { background: var(--cm-bg, #060a11); }
 .cm-cinematic.cm-story--enhanced { --pointer-x: 72%; --pointer-y: 46%; position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); max-width: none; min-height: 500svh; margin: 0; padding: 0; overflow: clip; }
 .cm-cinematic-sticky,
-.cm-cinematic-copy { grid-area: 1 / 1; }
+.cm-cinematic-copy,
+.cm-cosmic-hud-container { grid-area: 1 / 1; }
 .cm-cinematic-sticky { position: sticky; top: 0; align-self: start; width: 100%; height: 100vh; height: 100lvh; overflow: hidden; background: var(--cm-bg); contain: layout paint style; }
 .cm-background-typography { position: absolute; inset: 0; display: grid; align-items: center; overflow: hidden; pointer-events: none; }
 .cm-background-word { grid-area: 1 / 1; display: block; width: max-content; margin-left: clamp(1rem, 5vw, 5rem); color: transparent; -webkit-text-stroke: 1px #d9e0e80d; font-size: clamp(8rem, 22vw, 22rem); font-weight: 560; line-height: .74; letter-spacing: -.085em; white-space: nowrap; transform-origin: center; }
@@ -52,7 +53,8 @@
 .cm-landing--cinematic .cm-enter::before { display: none; }
 
 /* Minimal Cosmic Observatory Controls, Scroll-Activated Scale Ruler & Target Reticle */
-.cm-cosmic-hud-container { position: absolute; inset: 0; pointer-events: none; z-index: 8; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+/* Sticky top HUD layer sits above .cm-cinematic-entry-layer (z-index: 7) instead of inside .cm-cinematic-sticky's contain stacking context. */
+.cm-cosmic-hud-container { position: sticky; top: 0; align-self: start; width: 100%; height: 100vh; height: 100svh; pointer-events: none; z-index: 8; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .cm-cosmic-hud-top { position: absolute; top: clamp(.85rem, 2.2vh, 1.5rem); right: clamp(1rem, 2.6vw, 2.25rem); display: flex; align-items: center; justify-content: flex-end; pointer-events: auto; user-select: none; }
 .cm-hud-toggle { display: inline-flex; align-items: center; gap: .38rem; padding: .3rem .68rem; border-radius: 9999px; border: 1px solid #ede6d829; background: #060a11cc; backdrop-filter: blur(10px); color: #cfc6b8; font-size: .62rem; font-weight: 500; letter-spacing: .12em; cursor: pointer; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease; white-space: nowrap; }
 .cm-hud-toggle:hover { border-color: var(--cm-copper); color: #fff3e2; }
