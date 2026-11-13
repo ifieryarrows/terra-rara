@@ -593,6 +593,46 @@ def load_cached_xgb_importance(session, symbol: str) -> list[dict]:
     except Exception as exc:
         logger.warning("Could not load XGBoost importance artifact: %s", exc)
 
+    try:
+        from app.models import ModelArtifact
+
+        artifact = (
+            session.query(ModelArtifact)
+            .filter(
+                ModelArtifact.symbol == symbol,
+                ModelArtifact.importance_json.isnot(None),
+                ModelArtifact.importance_json != "[]",
+            )
+            .order_by(ModelArtifact.trained_at.desc())
+            .first()
+        )
+        if artifact and artifact.importance_json:
+            importance = json.loads(artifact.importance_json)
+            if isinstance(importance, list) and importance:
+                return importance[:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance from ModelArtifact: %s", exc)
+
+    try:
+        from app.models import AnalysisSnapshot
+
+        snaps = (
+            session.query(AnalysisSnapshot)
+            .filter(AnalysisSnapshot.symbol == symbol)
+            .order_by(AnalysisSnapshot.generated_at.desc())
+            .limit(10)
+            .all()
+        )
+        for snap in snaps:
+            if (
+                snap.report_json
+                and isinstance(snap.report_json.get("top_influencers"), list)
+                and snap.report_json["top_influencers"]
+            ):
+                return snap.report_json["top_influencers"][:10]
+    except Exception as exc:
+        logger.warning("Could not load XGBoost importance from previous snapshots: %s", exc)
+
     return []
 
 

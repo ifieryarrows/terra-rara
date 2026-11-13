@@ -181,6 +181,64 @@ class TestMarketDriverRecovery:
 
         assert recovered == [{"feature": "HG=F_RSI_14", "importance": 0.75}]
 
+    def test_cached_importance_falls_back_to_model_artifact_table(self, tmp_path, monkeypatch):
+        from app import inference, main
+        from app.models import ModelArtifact, ModelMetadata
+
+        monkeypatch.setattr(
+            inference,
+            "get_settings",
+            lambda: SimpleNamespace(model_dir=str(tmp_path)),
+        )
+
+        session = MagicMock()
+
+        def _query_side_effect(model_cls):
+            mock_query = MagicMock()
+            if model_cls is ModelMetadata:
+                mock_query.filter.return_value.first.return_value = SimpleNamespace(importance_json="[]")
+            elif model_cls is ModelArtifact:
+                mock_query.filter.return_value.order_by.return_value.first.return_value = SimpleNamespace(
+                    importance_json='[{"feature": "BHP_EMA_10", "importance": 0.4}]'
+                )
+            else:
+                mock_query.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
+            return mock_query
+
+        session.query.side_effect = _query_side_effect
+
+        recovered = main._load_cached_xgb_importance(session, "HG=F")
+        assert recovered == [{"feature": "BHP_EMA_10", "importance": 0.4}]
+
+    def test_cached_importance_falls_back_to_previous_snapshots(self, tmp_path, monkeypatch):
+        from app import inference, main
+        from app.models import AnalysisSnapshot, ModelArtifact, ModelMetadata
+
+        monkeypatch.setattr(
+            inference,
+            "get_settings",
+            lambda: SimpleNamespace(model_dir=str(tmp_path)),
+        )
+
+        session = MagicMock()
+
+        def _query_side_effect(model_cls):
+            mock_query = MagicMock()
+            if model_cls is ModelMetadata:
+                mock_query.filter.return_value.first.return_value = SimpleNamespace(importance_json="[]")
+            elif model_cls is ModelArtifact:
+                mock_query.filter.return_value.order_by.return_value.first.return_value = None
+            elif model_cls is AnalysisSnapshot:
+                mock_query.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [
+                    SimpleNamespace(report_json={"top_influencers": [{"feature": "VALE_SMA_5", "importance": 0.3}]})
+                ]
+            return mock_query
+
+        session.query.side_effect = _query_side_effect
+
+        recovered = main._load_cached_xgb_importance(session, "HG=F")
+        assert recovered == [{"feature": "VALE_SMA_5", "importance": 0.3}]
+
 
 class TestHistorySchema:
     """Tests for history response schema."""

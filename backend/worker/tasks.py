@@ -683,9 +683,35 @@ async def _execute_pipeline_stages_v2(
     # -------------------------------------------------------------------------
     logger.info(f"[run_id={run_id}] Stage 3.5: FinBERT embedding extraction")
     try:
+        from pathlib import Path
+        from deep_learning.config import get_tft_config
         from deep_learning.data.embeddings import backfill_embeddings
 
-        emb_stats = backfill_embeddings(days=30, pca_dim=32, batch_size=64)
+        tft_cfg = get_tft_config()
+        pca_path = Path(tft_cfg.embedding.pca_model_path)
+        if not pca_path.exists():
+            try:
+                from deep_learning.models.hub import download_tft_artifacts
+
+                tft_dir = Path(tft_cfg.training.best_model_path).parent
+                logger.info(
+                    f"[run_id={run_id}] PCA artifact missing at {pca_path} before Stage 3.5 - "
+                    "attempting HF Hub artifact sync"
+                )
+                download_tft_artifacts(
+                    local_dir=tft_dir,
+                    repo_id=tft_cfg.training.hf_model_repo,
+                )
+            except Exception as hub_exc:
+                logger.debug(
+                    f"[run_id={run_id}] Pre-Stage 3.5 HF Hub sync skipped/failed: {hub_exc}"
+                )
+
+        emb_stats = backfill_embeddings(
+            days=settings.tft_embedding_backfill_days,
+            pca_dim=tft_cfg.embedding.pca_dim,
+            batch_size=settings.tft_embedding_batch_size,
+        )
         session.commit()
 
         result["tft_embeddings_computed"] = emb_stats.get("embedded", 0)
