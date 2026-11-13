@@ -9,11 +9,87 @@ import {
 } from 'react';
 import clsx from 'clsx';
 import type { CuprumChoice } from '../utils/cuprumDialogue';
+import { playCuprumSpeakBlip, playCuprumTap } from '../utils/cosmicVision';
 
 const TYPE_INTERVAL_MS = 17;
 const IDLE_BASE_MS = 4600;
 const IDLE_PER_CHAR_MS = 34;
 const IDLE_MAX_MS = 9000;
+
+export type BubbleVerticalPlacement = 'above' | 'below';
+export type BubbleHorizontalPlacement = 'left' | 'right';
+
+export interface BubbleAnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BubblePlacement {
+  vertical: BubbleVerticalPlacement;
+  horizontal: BubbleHorizontalPlacement;
+  offsetX: number;
+  width: number;
+  maxHeight: number;
+  tailX: number;
+}
+
+const DEFAULT_BUBBLE_MARGIN = 12;
+const DEFAULT_BUBBLE_GAP = 12;
+
+export function computeBubblePlacement(
+  anchorRect: BubbleAnchorRect,
+  viewport: { width: number; height: number },
+  mode: 'idle' | 'dialogue',
+  bubbleSize?: { width?: number; height?: number },
+  margin: number = DEFAULT_BUBBLE_MARGIN,
+  gap: number = DEFAULT_BUBBLE_GAP,
+): BubblePlacement {
+  const vpW = viewport.width > 0 ? viewport.width : 1280;
+  const vpH = viewport.height > 0 ? viewport.height : 800;
+
+  const estWidth = bubbleSize?.width && bubbleSize.width > 0 ? bubbleSize.width : mode === 'idle' ? 280 : 336;
+  const estHeight = bubbleSize?.height && bubbleSize.height > 0 ? bubbleSize.height : mode === 'idle' ? 96 : 290;
+
+  const effWidth = Math.round(Math.min(estWidth, Math.max(200, vpW - margin * 2)));
+  const spaceAbove = anchorRect.y - margin - gap;
+  const spaceBelow = vpH - (anchorRect.y + anchorRect.height) - margin - gap;
+
+  let vertical: BubbleVerticalPlacement = 'above';
+  if (spaceAbove < estHeight && spaceBelow > spaceAbove) {
+    vertical = 'below';
+  } else if (spaceAbove < 140 && spaceBelow >= spaceAbove) {
+    vertical = 'below';
+  }
+
+  const availableVertical = vertical === 'above' ? spaceAbove : spaceBelow;
+  const maxHeight = Math.round(Math.max(120, Math.min(vpH - margin * 2, availableVertical)));
+
+  const anchorCenterX = anchorRect.x + anchorRect.width / 2;
+  const horizontal: BubbleHorizontalPlacement = anchorCenterX >= vpW * 0.5 ? 'left' : 'right';
+
+  const idealLeft =
+    horizontal === 'left'
+      ? anchorRect.x + anchorRect.width - effWidth
+      : anchorRect.x;
+
+  const maxLeft = Math.max(margin, vpW - effWidth - margin);
+  const clampedLeft = Math.round(Math.min(Math.max(idealLeft, margin), maxLeft));
+  const offsetX = Math.round(clampedLeft - anchorRect.x);
+
+  const rawTailX = anchorCenterX - clampedLeft;
+  const tailX = Math.round(Math.min(Math.max(rawTailX, 24), effWidth - 24));
+
+  return {
+    vertical,
+    horizontal,
+    offsetX,
+    width: effWidth,
+    maxHeight,
+    tailX,
+  };
+}
 
 export interface CuprumSpeechBubbleProps {
   mode: 'idle' | 'dialogue';
@@ -22,6 +98,7 @@ export interface CuprumSpeechBubbleProps {
   choices?: CuprumChoice[];
   accent: string;
   coreColor: string;
+  placement?: BubblePlacement;
   onChoose?: (choice: CuprumChoice) => void;
   onClose: () => void;
   onTypingChange?: (typing: boolean) => void;
@@ -99,6 +176,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       choices,
       accent,
       coreColor,
+      placement,
       onChoose,
       onClose,
       onTypingChange,
@@ -149,8 +227,18 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       }
 
       let index = 0;
+      let spokenCount = 0;
+      let syllableStep = 0;
       const interval = window.setInterval(() => {
         index += 1;
+        const ch = text.charAt(index - 1);
+        if (mode === 'dialogue' && /\S/.test(ch)) {
+          if (spokenCount % 3 === 0) {
+            void playCuprumSpeakBlip({ pitchStep: syllableStep });
+            syllableStep += 1;
+          }
+          spokenCount += 1;
+        }
         setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'tick', length: text.length }));
         if (index >= text.length) {
           window.clearInterval(interval);
@@ -160,7 +248,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       return () => {
         window.clearInterval(interval);
       };
-    }, [text, reducedMotion]);
+    }, [text, reducedMotion, mode]);
 
     useEffect(() => {
       if (mode !== 'idle' || typing || paused) return;
@@ -210,6 +298,21 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
 
     const visibleText = text.slice(0, visibleCount);
     const spokenText = resolvedAction ? `${resolvedAction} ${text}` : text;
+    const vertical = placement?.vertical ?? 'above';
+    const horizontal = placement?.horizontal ?? 'left';
+
+    const bubbleStyle: CSSProperties = {
+      '--cuprum-accent': accent,
+      '--cuprum-core': coreColor,
+      ...(placement
+        ? {
+            '--cuprum-bubble-offset-x': `${placement.offsetX}px`,
+            '--cuprum-bubble-width': `${placement.width}px`,
+            '--cuprum-bubble-max-h': `${placement.maxHeight}px`,
+            '--cuprum-tail-x': `${placement.tailX}px`,
+          }
+        : {}),
+    } as CSSProperties;
 
     return (
       <div
@@ -219,30 +322,29 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         aria-label={mode === 'dialogue' ? 'Cuprum conversation' : 'Cuprum is speaking'}
         tabIndex={-1}
         className={clsx(
-          'cm-cuprum-bubble relative w-full',
+          'cm-cuprum-bubble',
           mode === 'dialogue' ? 'cm-cuprum-bubble--dialogue' : 'cm-cuprum-bubble--idle',
+          vertical === 'below' ? 'cm-cuprum-bubble--below' : 'cm-cuprum-bubble--above',
+          horizontal === 'right' ? 'cm-cuprum-bubble--open-right' : 'cm-cuprum-bubble--open-left',
         )}
-        style={
-          {
-            '--cuprum-accent': accent,
-            '--cuprum-core': coreColor,
-          } as CSSProperties
-        }
+        style={bubbleStyle}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
         onFocus={() => setPaused(true)}
         onBlur={() => setPaused(false)}
+        data-placement-vertical={vertical}
+        data-placement-horizontal={horizontal}
         data-testid={mode === 'dialogue' ? 'cuprum-dialogue-bubble' : 'cuprum-idle-bubble'}
       >
         <span className="cm-cuprum-tail" aria-hidden="true">
-          <svg viewBox="0 0 16 24" width="16" height="24" focusable="false">
+          <svg viewBox="0 0 24 12" width="24" height="12" focusable="false">
             <path
-              d="M16 1 H8 V7 H2 V13 H8 V23 H16"
+              d="M1 0 V5 H7 V10 H12 V12 H14 V10 H17 V5 H23 V0"
               fill="var(--cuprum-bubble-bg)"
               stroke="var(--cuprum-accent)"
-              strokeOpacity="0.38"
+              strokeOpacity="0.42"
               strokeWidth="1"
               vectorEffect="non-scaling-stroke"
             />
@@ -254,9 +356,11 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
             <button
               type="button"
               className="cm-cuprum-dismiss"
+              data-cm-click-sound="off"
               aria-label="Close conversation"
               onClick={(event) => {
                 event.stopPropagation();
+                void playCuprumTap({ volume: 0.36 }).catch(() => {});
                 onClose();
               }}
             >
@@ -283,6 +387,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
                   key={choice.id}
                   type="button"
                   className="cm-cuprum-choice"
+                  data-cm-click-sound="off"
                   style={
                     reducedMotion ? undefined : { animationDelay: `${60 + index * 55}ms` }
                   }

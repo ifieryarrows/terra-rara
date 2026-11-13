@@ -64,6 +64,17 @@ export interface CuprumBriefing {
   horizonPhrase: string | null;
 }
 
+export interface CuprumTelemetrySnapshot {
+  activeSymbol?: string | null;
+  trendPct?: number | null;
+  conviction?: number | string | null;
+  confidenceScore?: number | null;
+  sentimentScore?: number | null;
+  regime?: string | null;
+  isStale?: boolean;
+  hasError?: boolean;
+}
+
 /** The slice of dialogue state the local voice needs. */
 export interface CuprumVoiceContext {
   mood: CuprumMood;
@@ -74,6 +85,7 @@ export interface CuprumVoiceContext {
   opportunityCount: number;
   briefing: CuprumBriefing;
   cuprumDaily?: CuprumDailyDialogue | null;
+  telemetry?: CuprumTelemetrySnapshot | null;
 }
 
 export interface CuprumVoiceRuntime {
@@ -267,6 +279,7 @@ export function buildCuprumBriefing(
   commentary: CommentaryResponse | null,
   explain: ExplainResponse | null,
   tftAnalysis: TFTAnalysisResponse | null,
+  telemetry: CuprumTelemetrySnapshot | null = null,
 ): CuprumBriefing {
   const companion = commentary?.companion_state ?? null;
   const highlights = companion?.xai_highlights ?? null;
@@ -333,7 +346,15 @@ export function buildCuprumBriefing(
     synthesis: narrative ? synthesisClause(narrative) : null,
     biasWarning: Boolean(sections?.bias_warning),
     freshness:
-      typeof staleness === 'number' ? (staleness <= 2 ? 'fresh' : 'stale') : 'unknown',
+      typeof staleness === 'number'
+        ? staleness <= 2
+          ? 'fresh'
+          : 'stale'
+        : telemetry?.isStale !== undefined
+          ? telemetry.isStale
+            ? 'stale'
+            : 'fresh'
+          : 'unknown',
     anomaly: Boolean(tftAnalysis?.prediction?.anomaly_detected),
     horizon,
     horizonPhrase: horizonPhrase(horizon),
@@ -807,4 +828,114 @@ function joinWithin(
     speech = candidate;
   }
   return speech;
+}
+
+/**
+ * Synthesizes a non-numeric CommentaryResponse shadow when live workspace telemetry
+ * is available without full commentary so Cuprum keeps live mood and freshness.
+ */
+export function synthesizeCommentaryFromTelemetry(
+  telemetry: CuprumTelemetrySnapshot | null | undefined,
+  tftAnalysis: TFTAnalysisResponse | null = null,
+): CommentaryResponse | null {
+  if (!telemetry) return null;
+  const hasTrend = typeof telemetry.trendPct === 'number' && Number.isFinite(telemetry.trendPct);
+  const hasSentiment =
+    typeof telemetry.sentimentScore === 'number' && Number.isFinite(telemetry.sentimentScore);
+  const hasConf =
+    typeof telemetry.confidenceScore === 'number' && Number.isFinite(telemetry.confidenceScore);
+  const hasRegime = typeof telemetry.regime === 'string' && telemetry.regime.trim().length > 0;
+  const hasConviction = telemetry.conviction !== null && telemetry.conviction !== undefined && telemetry.conviction !== '';
+  const hasForecast = Boolean(tftAnalysis?.prediction);
+
+  if (!hasTrend && !hasSentiment && !hasConf && !hasRegime && !hasConviction && !hasForecast) {
+    return null;
+  }
+
+  const predMedian = tftAnalysis?.prediction?.predicted_return_median;
+  const signalBias =
+    typeof predMedian === 'number' && Number.isFinite(predMedian)
+      ? predMedian
+      : hasTrend
+        ? (telemetry.trendPct as number) / 100
+        : hasSentiment
+          ? (telemetry.sentimentScore as number)
+          : 0;
+
+  let mood: CuprumMood = 'tempered_neutral';
+  let stance: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  if (signalBias >= 0.004) {
+    mood = 'molten_bull';
+    stance = 'BULLISH';
+  } else if (signalBias <= -0.004) {
+    mood = 'patina_bear';
+    stance = 'BEARISH';
+  }
+
+  const regimeLower = (telemetry.regime ?? '').toLowerCase();
+  let energy: CuprumEnergy = 'calm';
+  if (
+    regimeLower.includes('volat') ||
+    regimeLower.includes('turbul') ||
+    regimeLower.includes('stress') ||
+    (hasTrend && Math.abs(telemetry.trendPct as number) >= 1.8)
+  ) {
+    energy = 'volatile';
+  } else if (
+    regimeLower.includes('trend') ||
+    regimeLower.includes('charged') ||
+    mood !== 'tempered_neutral'
+  ) {
+    energy = 'charged';
+  }
+
+  let confidenceBand: CuprumConfidence = 'medium';
+  if (hasConf) {
+    const score = telemetry.confidenceScore as number;
+    confidenceBand = score >= 0.65 || score >= 65 ? 'high' : score <= 0.35 ? 'low' : 'medium';
+  } else if (typeof telemetry.conviction === 'number') {
+    confidenceBand =
+      telemetry.conviction >= 0.65 ? 'high' : telemetry.conviction <= 0.35 ? 'low' : 'medium';
+  } else if (typeof telemetry.conviction === 'string') {
+    const conv = telemetry.conviction.toLowerCase();
+    if (conv.includes('high') || conv.includes('strong')) confidenceBand = 'high';
+    else if (conv.includes('low') || conv.includes('weak')) confidenceBand = 'low';
+  }
+
+  const moodSynthesis =
+    mood === 'molten_bull'
+      ? 'Warmth runs steady through the red metal while the weekly window leans higher.'
+      : mood === 'patina_bear'
+        ? 'A cool draft gathers over the cathode tray while near-term pressure weighs softly.'
+        : 'The forge settles into balanced ember heat with both sides testing the rim.';
+
+  const staleRisk = telemetry.isStale
+    ? 'Live wire sync is lagging behind the session clock.'
+    : null;
+
+  return {
+    symbol: telemetry.activeSymbol?.trim() || tftAnalysis?.symbol || 'HG=F',
+    commentary: null,
+    error: null,
+    generated_at: null,
+    ai_stance: stance,
+    generation_mode: 'deterministic_fallback',
+    sections: {
+      synthesis: moodSynthesis,
+      bias_warning: null,
+      xai_brief: tftAnalysis?.primary_horizon || 'weekly horizon pulse',
+      risks: staleRisk ? [staleRisk] : [],
+      opportunities: [],
+    },
+    companion_state: {
+      character: 'Cuprum',
+      mood,
+      stance,
+      energy,
+      confidence_band: confidenceBand,
+      headline_quote: moodSynthesis,
+      xai_highlights: null,
+      cuprum_daily: null,
+    },
+  };
 }

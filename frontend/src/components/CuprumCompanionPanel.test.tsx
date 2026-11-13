@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CuprumCompanionPanel } from './CuprumCompanionPanel';
+import { computeBubblePlacement } from './CuprumSpeechBubble';
+import {
+  CuprumProvider,
+  CUPRUM_KEY_STEP_PX,
+  CUPRUM_SAFE_MARGIN,
+  CUPRUM_STORAGE_KEYS,
+  clampCuprumPosition,
+} from '../contexts/CuprumContext';
+import * as cosmicVision from '../utils/cosmicVision';
 import type { CommentaryResponse } from '../types';
 
 afterEach(() => {
@@ -63,12 +72,14 @@ const COMMENTARY_FIXTURE: CommentaryResponse = {
 };
 
 describe('CuprumCompanionPanel', () => {
-  it('renders the living pet and opens a three-choice dialogue tree on click', () => {
+  it('renders the living pet without patina badge and opens a three-choice dialogue tree on click', () => {
     render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
 
     expect(screen.getByTestId('cuprum-companion-stage')).toBeInTheDocument();
-    expect(screen.getByText('Molten Resonance')).toBeInTheDocument();
-    expect(screen.getByText('humming')).toBeInTheDocument();
+    expect(document.querySelector('.cm-cuprum-identity')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-patina-status')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-patina-toggle')).not.toBeInTheDocument();
+    expect(document.querySelector('.cm-cuprum-action-bar .cm-cuprum-controls')).toBeInTheDocument();
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     expect(screen.queryByText(/CUPRUM EXECUTIVE THESIS/i)).not.toBeInTheDocument();
 
@@ -332,5 +343,218 @@ describe('CuprumCompanionPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Let me ask something else.' }));
     expect(screen.getByTestId('cuprum-spoken-text')).not.toHaveTextContent('You came back');
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('The fire is still hot. What else do you want to ask?');
+  });
+});
+
+describe('CuprumCompanionPanel draggable dock, clamping, keyboard control & edge-aware bubble', () => {
+  const originalPointerEvent = window.PointerEvent;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: 800 });
+    if (typeof window.PointerEvent === 'undefined') {
+      class JsdomPointerEvent extends MouseEvent {
+        readonly pointerId: number;
+        constructor(type: string, params: PointerEventInit = {}) {
+          super(type, params);
+          this.pointerId = params.pointerId ?? 1;
+        }
+      }
+      window.PointerEvent = JsdomPointerEvent as unknown as typeof PointerEvent;
+    }
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    if (originalPointerEvent === undefined) {
+      delete (window as { PointerEvent?: typeof PointerEvent }).PointerEvent;
+    } else {
+      window.PointerEvent = originalPointerEvent;
+    }
+  });
+
+  it('clamps positions within safe viewport bounds and falls back cleanly', () => {
+    const size = { width: 112, height: 122 };
+    const viewport = { width: 1000, height: 700 };
+
+    expect(clampCuprumPosition({ x: -50, y: -30 }, size, viewport)).toEqual({
+      x: CUPRUM_SAFE_MARGIN,
+      y: CUPRUM_SAFE_MARGIN,
+    });
+    expect(clampCuprumPosition({ x: 5000, y: 5000 }, size, viewport)).toEqual({
+      x: 1000 - 112 - CUPRUM_SAFE_MARGIN,
+      y: 700 - 122 - CUPRUM_SAFE_MARGIN,
+    });
+    expect(clampCuprumPosition({ x: 240, y: 310 }, size, viewport)).toEqual({ x: 240, y: 310 });
+  });
+
+  it('flips speech bubble below and right when docked near the top-left corner', () => {
+    const topLeft = computeBubblePlacement(
+      { x: 16, y: 16, width: 112, height: 122 },
+      { width: 1280, height: 800 },
+      'dialogue',
+    );
+    expect(topLeft.vertical).toBe('below');
+    expect(topLeft.horizontal).toBe('right');
+    expect(topLeft.offsetX).toBeGreaterThanOrEqual(0);
+
+    const bottomRight = computeBubblePlacement(
+      { x: 1140, y: 650, width: 112, height: 122 },
+      { width: 1280, height: 800 },
+      'dialogue',
+    );
+    expect(bottomRight.vertical).toBe('above');
+    expect(bottomRight.horizontal).toBe('left');
+    expect(bottomRight.offsetX).toBeLessThan(0);
+  });
+
+  it('supports >= 4px pointer dragging with clamping & persistence while preserving < 4px click', async () => {
+    render(
+      <CuprumProvider isolated>
+        <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />
+      </CuprumProvider>,
+    );
+
+    const stage = screen.getByTestId('cuprum-companion-stage');
+    const startX = Number(stage.getAttribute('data-pos-x'));
+    const startY = Number(stage.getAttribute('data-pos-y'));
+
+    // Tiny micro-jitter (< 4px) on pet button must NOT drag or suppress click
+    const petBtn = screen.getByRole('button', { name: 'Talk to Cuprum' });
+    fireEvent.pointerDown(petBtn, { button: 0, pointerId: 1, clientX: startX + 20, clientY: startY + 20 });
+    fireEvent.pointerMove(petBtn, { pointerId: 1, clientX: startX + 22, clientY: startY + 21 });
+    fireEvent.pointerUp(petBtn, { pointerId: 1, clientX: startX + 22, clientY: startY + 21 });
+    expect(stage).toHaveAttribute('data-dragging', 'false');
+    expect(Number(stage.getAttribute('data-pos-x'))).toBe(startX);
+
+    // Real pointer click opens dialogue cleanly
+    fireEvent.click(petBtn);
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Cuprum conversation' }));
+
+    // Drag via grip button beyond viewport top-left should clamp to safe margin (16, 16)
+    const grip = screen.getByRole('button', { name: 'Reposition Cuprum pet. Use arrow keys to move.' });
+    fireEvent.pointerDown(grip, { button: 0, pointerId: 2, clientX: startX + 10, clientY: startY + 10 });
+    fireEvent.pointerMove(grip, { pointerId: 2, clientX: -400, clientY: -400 });
+    expect(stage).toHaveAttribute('data-dragging', 'true');
+    fireEvent.pointerUp(grip, { pointerId: 2, clientX: -400, clientY: -400 });
+
+    expect(stage).toHaveAttribute('data-dragging', 'false');
+    expect(stage).toHaveAttribute('data-pos-x', String(CUPRUM_SAFE_MARGIN));
+    expect(stage).toHaveAttribute('data-pos-y', String(CUPRUM_SAFE_MARGIN));
+    expect(screen.getByTestId('cuprum-position-announcement')).toHaveTextContent(
+      `Cuprum moved to left ${CUPRUM_SAFE_MARGIN}, top ${CUPRUM_SAFE_MARGIN}.`,
+    );
+
+    // Persisted position in localStorage includes docked: false flag
+    const saved = JSON.parse(window.localStorage.getItem(CUPRUM_STORAGE_KEYS.position) || '{}');
+    expect(saved).toEqual({ x: CUPRUM_SAFE_MARGIN, y: CUPRUM_SAFE_MARGIN, docked: false });
+
+    // Canceling an active drag with Escape preserves previous position
+    fireEvent.pointerDown(grip, { button: 0, pointerId: 3, clientX: 40, clientY: 40 });
+    fireEvent.pointerMove(grip, { pointerId: 3, clientX: 280, clientY: 280 });
+    expect(stage).toHaveAttribute('data-dragging', 'true');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(stage).toHaveAttribute('data-dragging', 'false');
+    expect(stage).toHaveAttribute('data-pos-x', String(CUPRUM_SAFE_MARGIN));
+    expect(screen.getByTestId('cuprum-position-announcement')).toHaveTextContent('Cuprum move canceled.');
+
+    // Next macrotask clears drag click-suppression lock so pet click opens dialogue normally
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    });
+
+    // Opening dialogue while clamped top-left renders bubble below & open-right
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    const bubble = screen.getByTestId('cuprum-dialogue-bubble');
+    expect(bubble).toHaveAttribute('data-placement-vertical', 'below');
+    expect(bubble).toHaveAttribute('data-placement-horizontal', 'right');
+  });
+
+  it('moves in 15px arrow increments on the grip handle, cancels drag on Escape, resets on Esc, and toggles pill', () => {
+    render(
+      <CuprumProvider isolated>
+        <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />
+      </CuprumProvider>,
+    );
+
+    const stage = screen.getByTestId('cuprum-companion-stage');
+    const initialX = Number(stage.getAttribute('data-pos-x'));
+    const initialY = Number(stage.getAttribute('data-pos-y'));
+    const grip = screen.getByRole('button', { name: 'Reposition Cuprum pet. Use arrow keys to move.' });
+
+    fireEvent.keyDown(grip, { key: 'ArrowLeft' });
+    fireEvent.keyDown(grip, { key: 'ArrowUp' });
+    expect(stage).toHaveAttribute('data-pos-x', String(initialX - CUPRUM_KEY_STEP_PX));
+    expect(stage).toHaveAttribute('data-pos-y', String(initialY - CUPRUM_KEY_STEP_PX));
+    expect(screen.getByTestId('cuprum-position-announcement')).toHaveTextContent(
+      `Cuprum moved to left ${initialX - CUPRUM_KEY_STEP_PX}, top ${initialY - CUPRUM_KEY_STEP_PX}.`,
+    );
+
+    // Escape while idle resets back to docked corner
+    fireEvent.keyDown(grip, { key: 'Escape' });
+    expect(stage).toHaveAttribute('data-pos-x', String(initialX));
+    expect(stage).toHaveAttribute('data-pos-y', String(initialY));
+    expect(screen.getByTestId('cuprum-position-announcement')).toHaveTextContent(
+      'Cuprum reset to bottom-right corner.',
+    );
+
+    // Shrink viewport & dispatch resize to assert live re-clamping
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 480 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: 500 });
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(Number(stage.getAttribute('data-pos-x'))).toBeLessThanOrEqual(480 - 112 - CUPRUM_SAFE_MARGIN);
+    expect(Number(stage.getAttribute('data-pos-y'))).toBeLessThanOrEqual(500 - 122 - CUPRUM_SAFE_MARGIN);
+
+    // Minimize into pill and expand back
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(stage).toHaveAttribute('data-minimized', 'true');
+    expect(screen.getByTestId('cuprum-minimized-pill')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Cuprum' }));
+    expect(stage).toHaveAttribute('data-minimized', 'false');
+    expect(screen.queryByTestId('cuprum-minimized-pill')).not.toBeInTheDocument();
+  });
+
+  it('omits halo rings & patina bar, aligns inline controls, plays mimimimi speak blips while typing, and splits pet vs button audio', () => {
+    vi.useFakeTimers();
+    const chirpSpy = vi.spyOn(cosmicVision, 'playCuprumChirp').mockResolvedValue(true);
+    const tapSpy = vi.spyOn(cosmicVision, 'playCuprumTap').mockResolvedValue(true);
+    const speakSpy = vi.spyOn(cosmicVision, 'playCuprumSpeakBlip').mockResolvedValue(true);
+    const chimeSpy = vi.spyOn(cosmicVision, 'playObservatoryChime').mockResolvedValue(true);
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    // No halo SVG or patina section
+    expect(document.querySelector('.cm-cuprum-halo')).not.toBeInTheDocument();
+    expect(document.querySelector('.cm-cuprum-identity')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cuprum-patina-status')).not.toBeInTheDocument();
+    expect(document.querySelector('.cm-cuprum-action-bar .cm-cuprum-controls')).toBeInTheDocument();
+
+    // Clicking pet plays playCuprumChirp (never playObservatoryChime or playCuprumTap)
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(chirpSpy).toHaveBeenCalledTimes(1);
+    expect(tapSpy).not.toHaveBeenCalled();
+    expect(chimeSpy).not.toHaveBeenCalled();
+
+    // Advancing typewriter ticks emits Cuprum's mimimimi speech blips
+    act(() => {
+      vi.advanceTimersByTime(160);
+    });
+    expect(speakSpy).toHaveBeenCalled();
+
+    // Clicking a dialogue reply button, dismiss X, or minimize/expand plays playCuprumTap
+    fireEvent.click(screen.getByRole('button', { name: "How's your spark today?" }));
+    expect(tapSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+    expect(tapSpy).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(tapSpy).toHaveBeenCalledTimes(3);
+    expect(chirpSpy).toHaveBeenCalledTimes(1);
   });
 });

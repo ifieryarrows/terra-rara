@@ -1,4 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import {
+  CUPRUM_DRAG_THRESHOLD_PX,
+  CUPRUM_KEY_STEP_PX,
+  CUPRUM_STORAGE_KEYS,
+  DEFAULT_CUPRUM_SIZE,
+  DEFAULT_PILL_SIZE,
+  clampCuprumPosition,
+  getDefaultDockedPosition,
+  getViewportSize,
+  useOptionalCuprumContext,
+  type CuprumPosition,
+  type CuprumSize,
+  type CuprumViewport,
+} from '../contexts/CuprumContext';
 import type {
   CommentaryResponse,
   ExplainResponse,
@@ -12,7 +35,6 @@ import {
   resolveCuprumNode,
   ROOT_NODE_ID,
   type CuprumChoice,
-  type CuprumEnergy,
   type CuprumIdleLine,
   type CuprumMood,
   type CuprumRuntime,
@@ -26,12 +48,18 @@ import {
   type CuprumSpriteFrame,
   type CuprumSpriteState,
 } from '../utils/cuprumSpriteMachine';
-import { CuprumSpeechBubble } from './CuprumSpeechBubble';
+import {
+  buildCuprumBriefing,
+  synthesizeCommentaryFromTelemetry,
+  type CuprumTelemetrySnapshot,
+} from '../utils/cuprumVoice';
+import { playCuprumChirp, playCuprumTap } from '../utils/cosmicVision';
+import { CuprumSpeechBubble, computeBubblePlacement } from './CuprumSpeechBubble';
 import './CuprumCompanionPanel.css';
 
-interface Props {
-  commentary: CommentaryResponse | null;
-  explain: ExplainResponse | null;
+export interface CuprumCompanionPanelProps {
+  commentary?: CommentaryResponse | null;
+  explain?: ExplainResponse | null;
   tftAnalysis?: TFTAnalysisResponse | null;
   loading?: boolean;
   error?: string;
@@ -50,29 +78,23 @@ const MOOD_META: Record<CuprumMood, MoodConfig> = {
     title: 'Molten Resonance',
     subtitle: 'A small forge with a big opinion.',
     prefix: 'cuprum-bull',
-    ringColor: '#f43f5e',
-    coreColor: '#fb923c',
+    ringColor: 'var(--cm-copper, #dda174)',
+    coreColor: 'var(--cm-positive, #74c7a9)',
   },
   patina_bear: {
     title: 'Patina Resonance',
     subtitle: 'Green around the edges, soft in the middle.',
     prefix: 'cuprum-bear',
-    ringColor: '#10b981',
-    coreColor: '#2dd4bf',
+    ringColor: 'var(--cm-positive, #74c7a9)',
+    coreColor: 'var(--cm-forecast, #8eadde)',
   },
   tempered_neutral: {
     title: 'Harmonic Core',
     subtitle: 'Listening to the quiet between prices.',
     prefix: 'cuprum-neutral',
-    ringColor: '#e08b56',
-    coreColor: '#fbbf24',
+    ringColor: 'var(--cm-forecast, #8eadde)',
+    coreColor: 'var(--cm-copper, #dda174)',
   },
-};
-
-const ENERGY_META: Record<CuprumEnergy, string> = {
-  calm: 'quiet embers',
-  charged: 'humming',
-  volatile: 'sparking',
 };
 
 const IDLE_FIRST_DELAY_MS = 6500;
@@ -114,7 +136,8 @@ export function advanceCuprumSession(
       if (state.mode !== 'idle') return state;
       return { ...state, idleLine: event.line };
     case 'dismiss-idle':
-      return { ...state, idleLine: null, isTyping: false };
+      if (!state.idleLine) return state;
+      return { ...state, idleLine: null };
     case 'open-dialogue':
       return {
         mode: 'dialogue',
@@ -123,32 +146,236 @@ export function advanceCuprumSession(
         isTyping: false,
       };
     case 'advance-dialogue':
+      if (state.mode !== 'dialogue') return state;
       return {
         ...state,
-        mode: 'dialogue',
         activeNodeId: event.nodeId,
+      };
+    case 'close-dialogue':
+      return {
+        mode: 'idle',
+        activeNodeId: null,
         idleLine: null,
         isTyping: false,
       };
-    case 'close-dialogue':
-      return INITIAL_CUPRUM_SESSION_STATE;
     case 'set-typing':
+      if (state.isTyping === event.typing) return state;
       return { ...state, isTyping: event.typing };
   }
+}
+
+interface DragSession {
+  pointerId: number;
+  target: HTMLElement;
+  startClientX: number;
+  startClientY: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
+  startPos: CuprumPosition;
+  moved: boolean;
+  source: 'handle' | 'pet';
 }
 
 export function CuprumCompanionPanel({
   commentary,
   explain,
-  tftAnalysis = null,
-  loading = false,
+  tftAnalysis,
+  loading,
   error,
-}: Props) {
+}: CuprumCompanionPanelProps) {
+  const cuprumCtx = useOptionalCuprumContext();
+
+  // Resolve effective market inputs: explicit props override context feed so standalone unit
+  // tests and isolated previews work without requiring CuprumProvider.
+  const propCommentary = commentary;
+  const propExplain = explain;
+  const propTftAnalysis = tftAnalysis;
+  const propLoading = loading;
+  const propError = error;
+
+  const effectiveExplain =
+    propExplain !== undefined ? propExplain : (cuprumCtx?.feed.explain ?? null);
+  const effectiveTftAnalysis =
+    propTftAnalysis !== undefined ? propTftAnalysis : (cuprumCtx?.feed.tftAnalysis ?? null);
+  const effectiveLoading =
+    propLoading !== undefined ? propLoading : (cuprumCtx?.feed.loading ?? false);
+  const effectiveError =
+    propError !== undefined
+      ? propError
+      : (cuprumCtx?.feed.error ??
+        (cuprumCtx?.feed.hasError ? 'Market feed unavailable' : undefined)) ?? undefined;
+
+  const feed = cuprumCtx?.feed;
+  const telemetry = useMemo<CuprumTelemetrySnapshot | null>(() => {
+    if (!feed) return null;
+    const quotePct =
+      typeof feed.quote?.change_pct === 'number' && Number.isFinite(feed.quote.change_pct)
+        ? feed.quote.change_pct
+        : null;
+    const trendPct =
+      typeof feed.trendPct === 'number' && Number.isFinite(feed.trendPct)
+        ? feed.trendPct
+        : quotePct;
+    const hasSignal =
+      feed.activeSymbol != null ||
+      trendPct != null ||
+      feed.conviction != null ||
+      feed.confidenceScore != null ||
+      feed.sentimentScore != null ||
+      feed.regime != null ||
+      feed.isStale ||
+      feed.hasError;
+    if (!hasSignal) return null;
+    return {
+      activeSymbol: feed.activeSymbol ?? null,
+      trendPct,
+      conviction: feed.conviction ?? null,
+      confidenceScore: feed.confidenceScore ?? null,
+      sentimentScore: feed.sentimentScore ?? null,
+      regime: feed.regime ?? null,
+      isStale: Boolean(feed.isStale),
+      hasError: Boolean(feed.hasError),
+    };
+  }, [feed]);
+
+  const rawCommentary =
+    propCommentary !== undefined ? propCommentary : (cuprumCtx?.feed.commentary ?? null);
+
+  const effectiveCommentary = useMemo(() => {
+    if (rawCommentary !== null) return rawCommentary;
+    if (effectiveLoading || effectiveError) return null;
+    return synthesizeCommentaryFromTelemetry(telemetry, effectiveTftAnalysis);
+  }, [rawCommentary, effectiveLoading, effectiveError, telemetry, effectiveTftAnalysis]);
+
+  // Standalone dock state fallback when rendered outside CuprumProvider.
+  const [localViewport, setLocalViewport] = useState<CuprumViewport>(() => getViewportSize());
+  const [localMinimized, setLocalMinimized] = useState(false);
+  const [localSize, setLocalSize] = useState<CuprumSize>(DEFAULT_CUPRUM_SIZE);
+  const [localDocked, setLocalDocked] = useState(true);
+  const [localPos, setLocalPos] = useState<CuprumPosition>(() =>
+    getDefaultDockedPosition(DEFAULT_CUPRUM_SIZE, getViewportSize()),
+  );
+
+  useEffect(() => {
+    if (cuprumCtx || typeof window === 'undefined') return undefined;
+    const onResize = () => {
+      const vp = getViewportSize();
+      setLocalViewport((prev) => (prev.width === vp.width && prev.height === vp.height ? prev : vp));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [cuprumCtx]);
+
+  useEffect(() => {
+    if (cuprumCtx) return;
+    setLocalPos((prev) => {
+      const target = localDocked
+        ? getDefaultDockedPosition(localSize, localViewport)
+        : clampCuprumPosition(prev, localSize, localViewport);
+      return target.x === prev.x && target.y === prev.y ? prev : target;
+    });
+  }, [cuprumCtx, localDocked, localSize, localViewport]);
+
+  const viewport = cuprumCtx ? cuprumCtx.viewport : localViewport;
+  const minimized = cuprumCtx ? cuprumCtx.minimized : localMinimized;
+  const isVisible = cuprumCtx ? cuprumCtx.visible : true;
+  const currentSize = cuprumCtx
+    ? cuprumCtx.widgetSize
+    : localSize;
+  const persistedPos = cuprumCtx ? cuprumCtx.position : localPos;
+
+  const commitPosition = useCallback(
+    (next: CuprumPosition) => {
+      if (cuprumCtx) {
+        cuprumCtx.setPosition(next);
+      } else {
+        setLocalDocked(false);
+        setLocalPos(clampCuprumPosition(next, localSize, localViewport));
+      }
+    },
+    [cuprumCtx, localSize, localViewport],
+  );
+
+  const commitResetPosition = useCallback(() => {
+    if (cuprumCtx) {
+      cuprumCtx.resetPosition();
+    } else {
+      setLocalDocked(true);
+      setLocalPos(getDefaultDockedPosition(localSize, localViewport));
+      try {
+        window.localStorage.removeItem(CUPRUM_STORAGE_KEYS.position);
+      } catch {
+        // Ignore storage errors in restricted environments.
+      }
+    }
+  }, [cuprumCtx, localSize, localViewport]);
+
+  const handleToggleMinimized = useCallback(() => {
+    void playCuprumTap({ volume: 0.4 }).catch(() => {});
+    if (cuprumCtx) {
+      cuprumCtx.toggleMinimized();
+    } else {
+      setLocalMinimized((prev) => !prev);
+    }
+  }, [cuprumCtx]);
+
+  const updateMeasuredSize = useCallback(
+    (size: CuprumSize) => {
+      if (!(size.width > 0 && size.height > 0)) return;
+      if (cuprumCtx) {
+        cuprumCtx.setWidgetSize(size);
+      } else {
+        const rounded = { width: Math.ceil(size.width), height: Math.ceil(size.height) };
+        setLocalSize((prev) =>
+          prev.width === rounded.width && prev.height === rounded.height ? prev : rounded,
+        );
+      }
+    },
+    [cuprumCtx],
+  );
+
+  // Measure dock size for responsive clamping & bubble auto-flipping.
+  const stageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const fallback = minimized ? DEFAULT_PILL_SIZE : DEFAULT_CUPRUM_SIZE;
+    const node = stageRef.current;
+    if (!node) {
+      updateMeasuredSize(fallback);
+      return undefined;
+    }
+
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        updateMeasuredSize({ width: rect.width, height: rect.height });
+      } else {
+        updateMeasuredSize(fallback);
+      }
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [minimized, updateMeasuredSize]);
+
+  // Dragging & keyboard repositioning state
+  const [dragPreviewPos, setDragPreviewPos] = useState<CuprumPosition | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
+  const dragSessionRef = useRef<DragSession | null>(null);
+  const suppressClickRef = useRef(false);
+  const dragHandleRef = useRef<HTMLButtonElement>(null);
+
+  const effectivePos = dragPreviewPos ?? persistedPos;
+
   const [session, setSession] = useState<CuprumSessionState>(INITIAL_CUPRUM_SESSION_STATE);
   const { mode, activeNodeId, idleLine, isTyping } = session;
   const [runtime, setRuntime] = useState<CuprumRuntime>(() => createCuprumRuntime());
   const [inView, setInView] = useState(true);
-  const [visible, setVisible] = useState(initialVisibility);
+  const [docVisible, setDocVisible] = useState(initialVisibility);
   const [interactionEpoch, setInteractionEpoch] = useState(0);
   const [frame, setFrame] = useState<CuprumSpriteFrame>(() =>
     cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
@@ -157,7 +384,6 @@ export function CuprumCompanionPanel({
 
   const modeRef = useRef<'idle' | 'dialogue'>('idle');
   const ambientTimerRef = useRef<number | null>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
   const petButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
   const dispatchSpriteRef = useRef<(event: CuprumSpriteEvent) => void>(() => {});
@@ -165,15 +391,37 @@ export function CuprumCompanionPanel({
   const hasShownIdleRef = useRef(false);
   const freshDataRef = useRef(false);
   const hasMountedRef = useRef(false);
-  const generatedAt = commentary?.generated_at ?? null;
+  const generatedAt = effectiveCommentary?.generated_at ?? null;
   const lastGeneratedAtRef = useRef<string | null>(generatedAt);
 
-  const ctx = useMemo(
-    () => buildCuprumContext(commentary, explain, tftAnalysis, loading, error),
-    [commentary, explain, tftAnalysis, loading, error],
-  );
+  const ctx = useMemo(() => {
+    const built = buildCuprumContext(
+      effectiveCommentary,
+      effectiveExplain,
+      effectiveTftAnalysis,
+      effectiveLoading,
+      effectiveError,
+    );
+    const briefing = buildCuprumBriefing(
+      effectiveCommentary,
+      effectiveExplain,
+      effectiveTftAnalysis,
+      telemetry,
+    );
+    return {
+      ...built,
+      briefing,
+      telemetry,
+    };
+  }, [
+    effectiveCommentary,
+    effectiveExplain,
+    effectiveTftAnalysis,
+    effectiveLoading,
+    effectiveError,
+    telemetry,
+  ]);
   const moodMeta = MOOD_META[ctx.mood];
-  const energyLabel = ENERGY_META[ctx.energy];
 
   const noteInteraction = useCallback(() => {
     setInteractionEpoch((value) => value + 1);
@@ -269,7 +517,7 @@ export function CuprumCompanionPanel({
     lastGeneratedAtRef.current = generatedAt;
   }, [generatedAt]);
 
-  // Pause ambient chatter when the card is off-screen or the tab is hidden.
+  // Pause ambient chatter when the pet is off-screen, minimized, or the tab is hidden.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || typeof IntersectionObserver === 'undefined') return;
@@ -283,7 +531,7 @@ export function CuprumCompanionPanel({
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const onChange = () => setVisible(document.visibilityState !== 'hidden');
+    const onChange = () => setDocVisible(document.visibilityState !== 'hidden');
     document.addEventListener('visibilitychange', onChange);
     return () => document.removeEventListener('visibilitychange', onChange);
   }, []);
@@ -292,10 +540,11 @@ export function CuprumCompanionPanel({
     modeRef.current = mode;
   }, [mode]);
 
-  // Ambient speech bubbles: first after a short welcome, then a long, irregular
-  // cadence. Any interaction resets the clock, and dialogue always wins.
+  // Ambient speech bubbles: first after a short welcome, then a long, irregular cadence.
   useEffect(() => {
-    if (mode !== 'idle' || idleLine || !inView || !visible) return;
+    if (minimized || !isVisible || isDragging || mode !== 'idle' || idleLine || !inView || !docVisible) {
+      return;
+    }
     const delay = hasShownIdleRef.current
       ? IDLE_DELAY_MIN_MS + Math.random() * IDLE_DELAY_RANGE_MS
       : IDLE_FIRST_DELAY_MS;
@@ -312,7 +561,7 @@ export function CuprumCompanionPanel({
       window.clearTimeout(timer);
       if (ambientTimerRef.current === timer) ambientTimerRef.current = null;
     };
-  }, [mode, idleLine, inView, visible, interactionEpoch, ctx, runtime]);
+  }, [minimized, isVisible, isDragging, mode, idleLine, inView, docVisible, interactionEpoch, ctx, runtime]);
 
   const dismissIdle = useCallback(() => {
     setSession((prev) => advanceCuprumSession(prev, { type: 'dismiss-idle' }));
@@ -344,8 +593,6 @@ export function CuprumCompanionPanel({
       ambientTimerRef.current = null;
     }
     modeRef.current = 'dialogue';
-    // Read the flag before clearing it: the state updater below can run later,
-    // during render, and would otherwise see an already-cleared ref.
     const fresh = freshDataRef.current;
     freshDataRef.current = false;
     setRuntime((previous) => ({
@@ -361,7 +608,12 @@ export function CuprumCompanionPanel({
   }, []);
 
   const handlePetClick = useCallback(() => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     noteInteraction();
+    void playCuprumChirp({ volume: mode === 'dialogue' ? 0.34 : 0.48 }).catch(() => {});
     if (mode === 'dialogue') {
       closeConversation(false);
       return;
@@ -372,6 +624,7 @@ export function CuprumCompanionPanel({
   const handleChoose = useCallback(
     (choice: CuprumChoice) => {
       noteInteraction();
+      void playCuprumTap({ volume: 0.42 }).catch(() => {});
       if (choice.close) {
         closeConversation(false);
         return;
@@ -392,26 +645,265 @@ export function CuprumCompanionPanel({
     [activeNodeId, ctx, runtime],
   );
 
-  // Esc closes the conversation. The pet and the × stay deliberate exits; a
-  // stray dashboard click must not yank the reader out of an answer.
+  const windowFallbackCleanupRef = useRef<(() => void) | null>(null);
+
+  // Pointer drag lifecycle (shared by dedicated drag handle AND pet sprite with >=4px threshold).
+  const finishDrag = useCallback(
+    (commit: boolean, finalClient?: { x: number; y: number }) => {
+      windowFallbackCleanupRef.current?.();
+      windowFallbackCleanupRef.current = null;
+
+      const drag = dragSessionRef.current;
+      if (!drag) return;
+      dragSessionRef.current = null;
+
+      try {
+        if (drag.target.hasPointerCapture?.(drag.pointerId)) {
+          drag.target.releasePointerCapture(drag.pointerId);
+        }
+      } catch {
+        // Ignore release errors when pointer already left capture.
+      }
+
+      if (drag.moved) {
+        suppressClickRef.current = true;
+        if (typeof document !== 'undefined') {
+          document.documentElement.dataset.cmSuppressClickSound = '1';
+          window.setTimeout(() => {
+            delete document.documentElement.dataset.cmSuppressClickSound;
+          }, 25);
+        }
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+
+        if (commit) {
+          const targetPos = finalClient
+            ? clampCuprumPosition(
+                {
+                  x: finalClient.x - drag.pointerOffsetX,
+                  y: finalClient.y - drag.pointerOffsetY,
+                },
+                currentSize,
+                viewport,
+              )
+            : (dragPreviewPos ?? drag.startPos);
+          commitPosition(targetPos);
+          setLiveAnnouncement(`Cuprum moved to left ${targetPos.x}, top ${targetPos.y}.`);
+        } else {
+          setLiveAnnouncement('Cuprum move canceled.');
+        }
+      }
+
+      setDragPreviewPos(null);
+      setIsDragging(false);
+    },
+    [commitPosition, currentSize, dragPreviewPos, viewport],
+  );
+
+  const startDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, source: 'handle' | 'pet') => {
+      if (event.button !== 0) return;
+      noteInteraction();
+      suppressClickRef.current = false;
+
+      const dockRect = stageRef.current?.getBoundingClientRect();
+      const anchorX = dockRect && dockRect.width > 0 ? dockRect.left : effectivePos.x;
+      const anchorY = dockRect && dockRect.height > 0 ? dockRect.top : effectivePos.y;
+
+      let captured = false;
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        captured = event.currentTarget.hasPointerCapture?.(event.pointerId) ?? false;
+      } catch {
+        // Ignore capture errors when pointer capture isn't supported in test environments.
+      }
+
+      dragSessionRef.current = {
+        pointerId: event.pointerId,
+        target: event.currentTarget,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        pointerOffsetX: event.clientX - anchorX,
+        pointerOffsetY: event.clientY - anchorY,
+        startPos: effectivePos,
+        moved: false,
+        source,
+      };
+
+      if (!captured && typeof window !== 'undefined') {
+        const onWindowMove = (moveEvt: PointerEvent) => {
+          const active = dragSessionRef.current;
+          if (!active || active.pointerId !== moveEvt.pointerId) return;
+          const dist = Math.hypot(moveEvt.clientX - active.startClientX, moveEvt.clientY - active.startClientY);
+          if (!active.moved) {
+            if (dist < CUPRUM_DRAG_THRESHOLD_PX) return;
+            active.moved = true;
+            suppressClickRef.current = true;
+            setIsDragging(true);
+          }
+          setDragPreviewPos(
+            clampCuprumPosition(
+              {
+                x: moveEvt.clientX - active.pointerOffsetX,
+                y: moveEvt.clientY - active.pointerOffsetY,
+              },
+              currentSize,
+              viewport,
+            ),
+          );
+        };
+        const onWindowUp = (upEvt: PointerEvent) => {
+          const active = dragSessionRef.current;
+          if (!active || active.pointerId !== upEvt.pointerId) return;
+          finishDrag(true, { x: upEvt.clientX, y: upEvt.clientY });
+        };
+        const onWindowCancel = (cancelEvt: PointerEvent) => {
+          const active = dragSessionRef.current;
+          if (!active || active.pointerId !== cancelEvt.pointerId) return;
+          finishDrag(false);
+        };
+        window.addEventListener('pointermove', onWindowMove);
+        window.addEventListener('pointerup', onWindowUp);
+        window.addEventListener('pointercancel', onWindowCancel);
+        windowFallbackCleanupRef.current = () => {
+          window.removeEventListener('pointermove', onWindowMove);
+          window.removeEventListener('pointerup', onWindowUp);
+          window.removeEventListener('pointercancel', onWindowCancel);
+        };
+      }
+    },
+    [effectivePos, noteInteraction, currentSize, viewport, finishDrag],
+  );
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = dragSessionRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      const distance = Math.hypot(
+        event.clientX - drag.startClientX,
+        event.clientY - drag.startClientY,
+      );
+
+      if (!drag.moved) {
+        if (distance < CUPRUM_DRAG_THRESHOLD_PX) return;
+        drag.moved = true;
+        suppressClickRef.current = true;
+        setIsDragging(true);
+      }
+
+      const nextPos = clampCuprumPosition(
+        {
+          x: event.clientX - drag.pointerOffsetX,
+          y: event.clientY - drag.pointerOffsetY,
+        },
+        currentSize,
+        viewport,
+      );
+      setDragPreviewPos(nextPos);
+    },
+    [currentSize, viewport],
+  );
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = dragSessionRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      finishDrag(true, { x: event.clientX, y: event.clientY });
+    },
+    [finishDrag],
+  );
+
+  const handleLostPointerCapture = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = dragSessionRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      finishDrag(true);
+    },
+    [finishDrag],
+  );
+
+  // Cancel active drag or close open conversation on Escape.
   useEffect(() => {
-    if (mode !== 'dialogue') return;
+    if (!isDragging && mode !== 'dialogue') return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      event.preventDefault();
-      closeConversation(true);
+      if (dragSessionRef.current) {
+        event.preventDefault();
+        finishDrag(false);
+        return;
+      }
+      if (mode === 'dialogue') {
+        event.preventDefault();
+        closeConversation(true);
+      }
     };
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [mode, closeConversation]);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isDragging, mode, finishDrag, closeConversation]);
 
-  // Move focus into the new bubble so screen readers get the whole turn and
-  // the 1/2/3 shortcuts work without hunting for the menu. preventScroll keeps
-  // the dashboard exactly where the reader left it.
+  // Keyboard repositioning on dedicated drag handle button (15px arrow steps, Escape reset).
+  const handleDragHandleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      let nextPos: CuprumPosition;
+      switch (event.key) {
+        case 'ArrowLeft':
+          nextPos = { x: effectivePos.x - CUPRUM_KEY_STEP_PX, y: effectivePos.y };
+          break;
+        case 'ArrowRight':
+          nextPos = { x: effectivePos.x + CUPRUM_KEY_STEP_PX, y: effectivePos.y };
+          break;
+        case 'ArrowUp':
+          nextPos = { x: effectivePos.x, y: effectivePos.y - CUPRUM_KEY_STEP_PX };
+          break;
+        case 'ArrowDown':
+          nextPos = { x: effectivePos.x, y: effectivePos.y + CUPRUM_KEY_STEP_PX };
+          break;
+        case 'Escape':
+          if (mode === 'dialogue' && !dragSessionRef.current) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          if (dragSessionRef.current) {
+            finishDrag(false);
+            return;
+          }
+          commitResetPosition();
+          setLiveAnnouncement('Cuprum reset to bottom-right corner.');
+          return;
+        default:
+          return;
+      }
+
+      event.preventDefault();
+      noteInteraction();
+      const clamped = clampCuprumPosition(nextPos, currentSize, viewport);
+      commitPosition(clamped);
+      setLiveAnnouncement(`Cuprum moved to left ${clamped.x}, top ${clamped.y}.`);
+    },
+    [
+      effectivePos.x,
+      effectivePos.y,
+      currentSize,
+      viewport,
+      noteInteraction,
+      commitPosition,
+      commitResetPosition,
+      finishDrag,
+      mode,
+    ],
+  );
+
+  useEffect(() => () => {
+    windowFallbackCleanupRef.current?.();
+    windowFallbackCleanupRef.current = null;
+  }, []);
+
+  // Move focus into dialogue bubble on open/turn without scrolling the dashboard.
   useEffect(() => {
-    if (mode !== 'dialogue') return;
+    if (mode !== 'dialogue' || minimized) return;
     const timer = window.setTimeout(
       () => bubbleRef.current?.focus({ preventScroll: true }),
       0,
@@ -419,9 +911,9 @@ export function CuprumCompanionPanel({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [mode, activeNodeId, runtime.turn]);
+  }, [mode, activeNodeId, runtime.turn, minimized]);
 
-  // Talking animation rhythm: gentle mouth flapping in retro RPG style while text types out
+  // Talking mouth flap rhythm while text types out.
   useEffect(() => {
     if (!isTyping) {
       setTalkFlap(true);
@@ -435,88 +927,152 @@ export function CuprumCompanionPanel({
     };
   }, [isTyping]);
 
+  const anchorRect = useMemo(
+    () => ({
+      x: effectivePos.x,
+      y: effectivePos.y,
+      width: currentSize.width,
+      height: currentSize.height,
+    }),
+    [effectivePos.x, effectivePos.y, currentSize.width, currentSize.height],
+  );
+
+  const bubblePlacement = useMemo(
+    () =>
+      computeBubblePlacement(
+        anchorRect,
+        viewport,
+        mode === 'dialogue' ? 'dialogue' : 'idle',
+      ),
+    [anchorRect, viewport, mode],
+  );
+
+  if (!isVisible) return null;
+
   const currentFrame: CuprumSpriteFrame | 'talk' = isTyping && talkFlap ? 'talk' : frame;
   const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-v7`;
   const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-v7`;
 
+  const dockStyle = {
+    '--cuprum-ring': moodMeta.ringColor,
+    '--cuprum-core': moodMeta.coreColor,
+    transform: `translate3d(${effectivePos.x}px, ${effectivePos.y}px, 0)`,
+  } as CSSProperties;
+
   return (
-    <div
+    <aside
       ref={stageRef}
-      className="w-full relative transition-colors"
-      style={{ '--cuprum-ring': moodMeta.ringColor } as CSSProperties}
+      className={`cm-cuprum-dock ${minimized ? 'cm-cuprum-dock--minimized' : 'cm-cuprum-dock--expanded'}${isDragging ? ' cm-cuprum-dock--dragging' : ''}`}
+      style={dockStyle}
+      aria-label="Cuprum companion"
       data-testid="cuprum-companion-stage"
-      onPointerDown={noteInteraction}
+      data-minimized={minimized ? 'true' : 'false'}
+      data-dragging={isDragging ? 'true' : 'false'}
+      data-pos-x={effectivePos.x}
+      data-pos-y={effectivePos.y}
     >
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          opacity: 0.14,
-          filter: 'blur(26px)',
-          transition: 'all 700ms ease',
-          background: `radial-gradient(circle at 20% 48%, ${moodMeta.ringColor} 0%, transparent 62%)`,
-        }}
-        aria-hidden="true"
-      />
+      <p className="sr-only" aria-live="polite" data-testid="cuprum-position-announcement">
+        {liveAnnouncement}
+      </p>
 
-      <div className="relative z-10 cm-cuprum-stage">
-        <div className="cm-cuprum-pet" style={{ minWidth: 170 }}>
+      {!minimized && (
+        <div className="cm-cuprum-bubble-anchor">
+          {mode === 'dialogue' ? (
+            resolvedNode ? (
+              <CuprumSpeechBubble
+                ref={bubbleRef}
+                key="dialogue"
+                mode="dialogue"
+                speech={resolvedNode.speech}
+                action={resolvedNode.action}
+                choices={resolvedNode.choices}
+                accent={moodMeta.ringColor}
+                coreColor={moodMeta.coreColor}
+                placement={bubblePlacement}
+                onChoose={handleChoose}
+                onClose={closeDialogue}
+                onTypingChange={setIsTyping}
+              />
+            ) : null
+          ) : idleLine ? (
+            <CuprumSpeechBubble
+              key={`idle-${idleLine.id}`}
+              mode="idle"
+              speech={idleLine.text}
+              accent={moodMeta.ringColor}
+              coreColor={moodMeta.coreColor}
+              placement={bubblePlacement}
+              onClose={dismissIdle}
+              onTypingChange={setIsTyping}
+            />
+          ) : null}
+        </div>
+      )}
+
+      {minimized ? (
+        <div className="cm-cuprum-pill" data-testid="cuprum-minimized-pill">
           <button
-            ref={petButtonRef}
+            ref={dragHandleRef}
             type="button"
-            onClick={handlePetClick}
-            className="relative flex flex-col items-center justify-center rounded-xl p-3 focus:outline-none"
-            style={{ cursor: 'pointer', transition: 'transform 200ms ease' }}
-            aria-expanded={mode === 'dialogue'}
-            aria-controls="cuprum-bubble"
-            aria-label={mode === 'dialogue' ? 'Close Cuprum conversation' : 'Talk to Cuprum'}
-            title={mode === 'dialogue' ? 'Close the conversation' : 'Talk to Cuprum'}
+            className="cm-cuprum-drag-handle cm-cuprum-drag-handle--pill"
+            data-cm-click-sound="off"
+            aria-label="Reposition Cuprum pet. Use arrow keys to move."
+            aria-roledescription="movable widget"
+            onPointerDown={(e) => startDrag(e, 'handle')}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => finishDrag(false)}
+            onLostPointerCapture={handleLostPointerCapture}
+            onKeyDown={handleDragHandleKeyDown}
+            onDoubleClick={commitResetPosition}
+            title="Drag or use arrow keys to move Cuprum (Esc resets)"
           >
-            <svg
-              viewBox="0 0 200 200"
-              className="pointer-events-none absolute inset-0 h-full w-full"
-              style={{ animation: 'spin 40s linear infinite', opacity: 0.55 }}
-              aria-hidden="true"
-            >
-              <circle
-                cx="100"
-                cy="100"
-                r="90"
-                fill="none"
-                stroke={moodMeta.ringColor}
-                strokeOpacity="0.25"
-                strokeWidth="1.2"
-                strokeDasharray="6 8"
-              />
-              <circle
-                cx="100"
-                cy="100"
-                r="78"
-                fill="none"
-                stroke={moodMeta.coreColor}
-                strokeOpacity="0.3"
-                strokeWidth="1.5"
-                strokeDasharray="16 12"
-              />
-            </svg>
+            <GripIcon />
+          </button>
 
-            <div
-              className="relative flex items-center justify-center"
-              style={{
-                width: 140,
-                height: 140,
-                filter: `drop-shadow(0 0 16px ${moodMeta.ringColor}55)`,
-                willChange: 'filter',
-                transform: 'translateZ(0)',
-              }}
-            >
+          <button
+            type="button"
+            className="cm-cuprum-pill-expand"
+            data-cm-click-sound="off"
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+              }
+              handleToggleMinimized();
+            }}
+            aria-label="Expand Cuprum"
+          >
+            <span
+              className="cm-cuprum-pet-dot"
+              style={{ backgroundColor: moodMeta.ringColor }}
+              aria-hidden="true"
+            />
+            <span>Cuprum</span>
+          </button>
+
+          <div className="sr-only">
+            <span>{moodMeta.title}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="cm-cuprum-pet-shell">
+          <div
+            className="cm-cuprum-sprite-stage"
+            onClick={handlePetClick}
+            onPointerDown={(e) => startDrag(e, 'pet')}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => finishDrag(false)}
+            onLostPointerCapture={handleLostPointerCapture}
+            aria-hidden="true"
+          >
+            <span className="cm-cuprum-sprite-frame">
               <img
                 src={currentWebp}
                 alt={`Cuprum — ${moodMeta.title}`}
-                className="h-full w-full select-none"
-                style={{
-                  imageRendering: 'pixelated',
-                  objectFit: 'contain',
-                }}
+                className="cm-cuprum-sprite-img"
+                draggable={false}
                 decoding="sync"
                 onError={(e) => {
                   if (!e.currentTarget.src.endsWith('.png')) {
@@ -524,67 +1080,82 @@ export function CuprumCompanionPanel({
                   }
                 }}
               />
-            </div>
-
-            <span className="cm-cuprum-talk mt-1 inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-300">
-              <span
-                className="cm-cuprum-pet-dot"
-                style={{
-                  backgroundColor: moodMeta.ringColor,
-                  animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                }}
-                aria-hidden="true"
-              />
-              {mode === 'dialogue' ? 'Close conversation' : 'Talk to Cuprum'}
             </span>
-          </button>
-
-          <div className="cm-cuprum-identity" title={moodMeta.subtitle}>
-            <p className="text-sm font-medium text-slate-100">{moodMeta.title}</p>
-            <p className="text-xs text-slate-400">{energyLabel}</p>
           </div>
-        </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="cm-cuprum-bubble-slot">
-            {mode === 'dialogue' ? (
-              resolvedNode ? (
-                <CuprumSpeechBubble
-                  ref={bubbleRef}
-                  key="dialogue"
-                  mode="dialogue"
-                  speech={resolvedNode.speech}
-                  action={resolvedNode.action}
-                  choices={resolvedNode.choices}
-                  accent={moodMeta.ringColor}
-                  coreColor={moodMeta.coreColor}
-                  onChoose={handleChoose}
-                  onClose={closeDialogue}
-                  onTypingChange={setIsTyping}
+          <div className="cm-cuprum-action-bar">
+            <button
+              ref={petButtonRef}
+              type="button"
+              data-cm-click-sound="off"
+              onClick={handlePetClick}
+              onPointerDown={(e) => startDrag(e, 'pet')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={() => finishDrag(false)}
+              onLostPointerCapture={handleLostPointerCapture}
+              className="cm-cuprum-pet-btn"
+              aria-expanded={mode === 'dialogue'}
+              aria-controls="cuprum-bubble"
+              aria-label={mode === 'dialogue' ? 'Close Cuprum conversation' : 'Talk to Cuprum'}
+              title={mode === 'dialogue' ? 'Close the conversation' : 'Talk to Cuprum'}
+            >
+              <span className="cm-cuprum-talk">
+                <span
+                  className="cm-cuprum-pet-dot"
+                  style={{ backgroundColor: moodMeta.ringColor }}
+                  aria-hidden="true"
                 />
-              ) : null
-            ) : idleLine ? (
-              <CuprumSpeechBubble
-                key={`idle-${idleLine.id}`}
-                mode="idle"
-                speech={idleLine.text}
-                accent={moodMeta.ringColor}
-                coreColor={moodMeta.coreColor}
-                onClose={dismissIdle}
-                onTypingChange={setIsTyping}
-              />
-            ) : (
-              <div className="cm-cuprum-idle-wire" aria-hidden="true">
-                <span className="cm-cuprum-idle-wire-dot" />
-              </div>
-            )}
-          </div>
+                <span>{mode === 'dialogue' ? 'Close' : 'Talk to Cuprum'}</span>
+              </span>
+            </button>
 
-          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            Cuprum is a companion, not a financial advisor.
-          </p>
+            <div className="cm-cuprum-controls">
+              <button
+                ref={dragHandleRef}
+                type="button"
+                className="cm-cuprum-drag-handle"
+                data-cm-click-sound="off"
+                aria-label="Reposition Cuprum pet. Use arrow keys to move."
+                aria-roledescription="movable widget"
+                onPointerDown={(e) => startDrag(e, 'handle')}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onLostPointerCapture={handleLostPointerCapture}
+                onKeyDown={handleDragHandleKeyDown}
+                onDoubleClick={commitResetPosition}
+                title="Drag or use arrow keys to move Cuprum (Esc resets)"
+              >
+                <GripIcon />
+              </button>
+
+              <button
+                type="button"
+                className="cm-cuprum-min-btn"
+                data-cm-click-sound="off"
+                onClick={handleToggleMinimized}
+                aria-label="Minimize Cuprum"
+                title="Minimize Cuprum"
+              >
+                –
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </aside>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+      <circle cx="3.5" cy="2.5" r="1" />
+      <circle cx="8.5" cy="2.5" r="1" />
+      <circle cx="3.5" cy="6" r="1" />
+      <circle cx="8.5" cy="6" r="1" />
+      <circle cx="3.5" cy="9.5" r="1" />
+      <circle cx="8.5" cy="9.5" r="1" />
+    </svg>
   );
 }
