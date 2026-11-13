@@ -215,10 +215,10 @@ describe('heatmap interaction primitives', () => {
     expect(hover).toHaveBeenLastCalledWith(expect.objectContaining({ shortName: 'Second EWZ' }));
   });
 
-  it('uses a vivid continuous red-neutral-green market scale', () => {
-    expect(getColorForChange(-5)).toBe('rgb(255,48,72)');
-    expect(getColorForChange(0)).toBe('#414852');
-    expect(getColorForChange(5)).toBe('rgb(18,196,91)');
+  it('uses a Milky Way rose-neutral-sage continuous market scale', () => {
+    expect(getColorForChange(-5)).toBe('rgb(201,98,121)');
+    expect(getColorForChange(0)).toBe('#2d3645');
+    expect(getColorForChange(5)).toBe('rgb(82,184,150)');
   });
 
   it('supports category hover and Enter pinning through delegated handlers', () => {

@@ -9,7 +9,7 @@ import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 const StatusDot = ({ tone }: { tone: 'good' | 'bad' | 'neutral' }) => (
   <span
     className={`inline-block w-2 h-2 rounded-full ${
-      tone === 'good' ? 'bg-emerald-400' : tone === 'bad' ? 'bg-rose-400' : 'bg-amber-400'
+      tone === 'good' ? 'bg-[#74c7a9]' : tone === 'bad' ? 'bg-[#db8296]' : 'bg-[#dda174]'
     }`}
   />
 );
@@ -106,7 +106,7 @@ export const SystemPage = () => {
         <Row label="Price bars" value={d.price_bars_count ?? '—'} />
         <Row
           label="Server timestamp"
-          value={d.timestamp ? new Date(d.timestamp).toLocaleString() : '—'}
+          value={d.timestamp ? new Date(d.timestamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
         />
       </section>
       </div>
@@ -117,7 +117,7 @@ export const SystemPage = () => {
           label="Pipeline run (worker) completed"
           value={
             d.last_pipeline_run_at
-              ? new Date(d.last_pipeline_run_at).toLocaleString()
+              ? new Date(d.last_pipeline_run_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
               : '—'
           }
           tone={
@@ -143,7 +143,7 @@ export const SystemPage = () => {
           label="XGBoost snapshot generated"
           value={
             d.last_snapshot_generated_at
-              ? new Date(d.last_snapshot_generated_at).toLocaleString()
+              ? new Date(d.last_snapshot_generated_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
               : '—'
           }
         />
@@ -151,7 +151,7 @@ export const SystemPage = () => {
           label="TFT prediction persisted"
           value={
             d.last_tft_prediction_at
-              ? new Date(d.last_tft_prediction_at).toLocaleString()
+              ? new Date(d.last_tft_prediction_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
               : '—'
           }
           tone={d.last_tft_prediction_at ? 'good' : 'neutral'}
@@ -164,7 +164,7 @@ export const SystemPage = () => {
           label="TFT model trained"
           value={
             d.tft_model_trained_at
-              ? new Date(d.tft_model_trained_at).toLocaleString()
+              ? new Date(d.tft_model_trained_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
               : '—'
           }
         />

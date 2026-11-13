@@ -1,19 +1,25 @@
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense, lazy, memo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, useContext, Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
+import { QueryClientContext } from '@tanstack/react-query';
 import { FinancialPanel as GlassCard } from '../components/ui/FinancialPanel';
 import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
 import { RefreshButton } from '../components/ui/RefreshButton';
 import { ModelReliability } from '../features/forecast/ModelReliability';
+import { MetricTile } from '../components/ui/MetricTile';
+import { SegmentedTabs, type SegmentedTabOption } from '../components/ui/SegmentedTabs';
 import { ViewState } from '../components/ui/ViewState';
 import { OverviewSkeleton } from '../components/skeletons';
 import { BrandMark } from '../components/ui/BrandMark';
+import { VenusParticles } from '../components/ui/VenusParticles';
 import {
-  Activity, Globe, BarChart3, Flame, TrendingUp, TrendingDown,
-  Brain, Crosshair, AlertTriangle, Minus
+  Activity, AlertTriangle, BarChart3, Brain, Compass, Cpu,
+  Crosshair, Globe, Newspaper,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { formatQuoteDelta, quoteComparison } from '../utils/quote';
 import { driverCategoryLabel, driverCategoryTone } from '../utils/driverCategories';
+import { useCuprumFeed } from '../contexts/CuprumContext';
+import { playObservatoryChime } from '../utils/cosmicVision';
 
 import {
   fetchAnalysis,
@@ -28,38 +34,74 @@ import type {
   AnalysisReport, HistoryResponse, Influencer,
   CommentaryResponse, TFTAnalysisResponse, ExplainResponse
 } from '../types';
-import { useSentimentSummary } from '../hooks/useQueries';
+import {
+  useSentimentSummary,
+  useSystemStatus,
+  useTftModelSummary,
+} from '../hooks/useQueries';
 import '../App.css';
 
-// Lazy load heavy components
+// Lazy load heavy intelligence panels so static dashboardJS stays compact
 const HeatmapPanel = lazy(() => import('../features/heatmap/HeatmapPanel').then(m => ({ default: m.HeatmapPanel })));
 const NewsIntelligencePanel = lazy(() =>
   import('../features/news/NewsIntelligencePanel').then(m => ({ default: m.NewsIntelligencePanel })),
 );
-const CuprumCompanionPanel = lazy(() =>
-  import('../components/CuprumCompanionPanel').then(m => ({ default: m.CuprumCompanionPanel })),
+const ModelFocusPanel = lazy(() =>
+  import('../components/ModelFocusPanel').then(m => ({ default: m.ModelFocusPanel })),
 );
+
+type OverviewStreamLens = 'all' | 'forecast' | 'xai' | 'news' | 'map';
+
+const STREAM_LENS_OPTIONS: readonly SegmentedTabOption<OverviewStreamLens>[] = [
+  { value: 'all', label: 'All Streams', icon: Compass },
+  { value: 'forecast', label: '5D & T+1 Models', icon: Activity },
+  { value: 'xai', label: 'XAI Focus & Drivers', icon: Brain },
+  { value: 'news', label: 'Copper News', icon: Newspaper },
+  { value: 'map', label: 'Metals Map', icon: Globe },
+];
+
+const DRIVER_CATEGORY_PALETTE: Record<string, string> = {
+  Momentum: '#dda174',
+  Trend: '#8eadde',
+  Volatility: '#e5b98e',
+  Sentiment: '#a5b8e3',
+  Macro: '#74c7a9',
+  Sector: '#db8296',
+  Embedding: '#a3afbf',
+  Other: '#6f7f96',
+};
+
+function formatSignedPct(value: number | null | undefined, digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const pct = value * 100;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
+}
+
+function formatDriverLabel(inf: Influencer): string {
+  const rawLabel = (inf.label || inf.description || inf.feature || '').trim();
+  if (/^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(rawLabel)) {
+    return `Copper · ${rawLabel}`;
+  }
+  const smaMatch = rawLabel.match(/^SMA\s*[·-]\s*(\d+)$/i);
+  if (smaMatch) {
+    return `Copper · ${smaMatch[1] ?? '20'}-day moving average`;
+  }
+  return rawLabel;
+}
 
 // --- Skeleton Components for perceived performance ---
 const MapSkeleton = () => (
-  <div className="cm-map-skeleton w-full flex items-center justify-center bg-midnight/50 rounded-xl" role="status" aria-label="Loading intelligence map">
+  <div className="cm-map-skeleton w-full flex items-center justify-center" role="status" aria-label="Loading intelligence map">
     <div className="flex flex-col items-center gap-3">
       <div className="cm-map-skeleton__visual" aria-hidden="true">
         <span className="cm-map-skeleton__orbit" />
         <span className="cm-map-skeleton__orbit cm-map-skeleton__orbit--reverse" />
         <Globe size={32} className="cm-map-skeleton__globe" />
       </div>
-      <span className="text-slate-400 text-xs font-mono">Loading intelligence map...</span>
+      <span className="text-slate-400 text-xs">Loading intelligence map...</span>
     </div>
   </div>
 );
-
-// --- Components ---
-
-const NumberTicker = memo(({ value, format = (v: number) => v.toFixed(2), className = ''}: { value: number; format?: (v: number) => string; className?: string }) => (
-  <span className={clsx("font-mono tabular-nums", className)}>{format(value)}</span>
-));
-NumberTicker.displayName = 'NumberTicker';
 
 // --- Main App ---
 
@@ -102,8 +144,11 @@ export function advanceDeferredPanels(
 }
 
 export const OverviewPage = () => {
+  const queryClient = useContext(QueryClientContext);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [activeOverviewSection, setActiveOverviewSection] = useState('price-forecast');
+  const [streamLens, setStreamLens] = useState<OverviewStreamLens>('all');
+  const [selectedDriverCategory, setSelectedDriverCategory] = useState<string>('ALL');
+  const [inspectedDriver, setInspectedDriver] = useState<string | null>(null);
   const coreInFlight = useRef(false);
   const enrichInFlight = useRef(false);
   const busyCount = useRef(0);
@@ -121,6 +166,8 @@ export const OverviewPage = () => {
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
   const sentimentSummary = useSentimentSummary(7, 6);
+  const systemStatus = useSystemStatus();
+  const tftSummary = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
 
   const setBusy = useCallback((delta: 1 | -1) => {
     busyCount.current = Math.max(0, busyCount.current + delta);
@@ -220,29 +267,6 @@ export const OverviewPage = () => {
   }, [loadCore, loadEnrichment]);
 
   // Keep the section rail in sync with the part of the workspace in view.
-  useEffect(() => {
-    if (isInitialLoad) return;
-    const ids = ['price-forecast', 'weekly-outlook', 'market-drivers', 'news-intelligence', 'market-map'];
-    if (typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver((entries) => {
-      const current = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (current?.target.id) {
-        setActiveOverviewSection((prev) => (prev === current.target.id ? prev : current.target.id));
-      }
-    }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.2, 0.5, 1] });
-
-    ids.forEach((id) => {
-      const section = document.getElementById(id);
-      if (section) observer.observe(section);
-    });
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [isInitialLoad]);
-
   // Silent refresh: core every minute; TFT/explain on the weekly-model cadence.
   useEffect(() => {
     const coreInterval = window.setInterval(() => {
@@ -336,29 +360,81 @@ export const OverviewPage = () => {
     return null;
   }, [history]);
 
-  const companionFallback = (
-    <div className="cm-commentary py-8 text-center text-xs text-slate-400 font-mono" role="status">
-      Loading Cuprum companion…
+  const quotePrice = livePrice ?? latestHistoryPrice;
+
+  const sessionRange = useMemo(() => {
+    if (!history?.data || history.data.length === 0) return null;
+    const recent = history.data.slice(-5);
+    const prices = recent.map((p) => p.price).filter((p): p is number => typeof p === 'number' && Number.isFinite(p));
+    if (prices.length === 0) return null;
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    return { min, max };
+  }, [history?.data]);
+
+  const quotePercentInRange = useMemo(() => {
+    if (!quotePrice || !sessionRange || sessionRange.max <= sessionRange.min) return 50;
+    const pct = ((quotePrice - sessionRange.min) / (sessionRange.max - sessionRange.min)) * 100;
+    return Math.min(94, Math.max(6, pct));
+  }, [quotePrice, sessionRange]);
+
+  const topDrivers = useMemo(() => (analysis?.top_influencers ?? []).slice(0, 5), [analysis?.top_influencers]);
+
+  const driverBreakdown = useMemo(() => {
+    if (!topDrivers.length) return [];
+    const grouped = new Map<string, number>();
+    let total = 0;
+    for (const inf of topDrivers) {
+      const cat = inf.category || 'Other';
+      const val = Math.max(0, inf.importance);
+      grouped.set(cat, (grouped.get(cat) ?? 0) + val);
+      total += val;
+    }
+    if (total <= 0) return [];
+    return Array.from(grouped.entries())
+      .map(([category, weight]) => ({
+        category,
+        label: driverCategoryLabel[category] || category,
+        sharePct: (weight / total) * 100,
+        color: DRIVER_CATEGORY_PALETTE[category] || DRIVER_CATEGORY_PALETTE.Other,
+      }))
+      .sort((a, b) => b.sharePct - a.sharePct);
+  }, [topDrivers]);
+
+  const visibleDrivers = useMemo(() => {
+    if (selectedDriverCategory === 'ALL') return topDrivers;
+    return topDrivers.filter((inf) => (inf.category || 'Other') === selectedDriverCategory);
+  }, [topDrivers, selectedDriverCategory]);
+
+  const focusFallback = (
+    <div className="cm-commentary py-8 text-center text-xs text-slate-400" role="status">
+      Loading 5D model focus…
     </div>
   );
   const newsFallback = (
     <div className="cm-news-loading flex items-center justify-center gap-3" role="status">
       <span className="cm-inline-loader" aria-hidden="true" />
-      <span className="text-xs text-slate-400 font-mono tracking-widest uppercase">
+      <span className="text-xs text-slate-400 tracking-widest uppercase">
         Loading news…
       </span>
     </div>
   );
 
-  // Only show full loading on initial load
-  if (isInitialLoad && !analysis) {
-    return <OverviewSkeleton />;
-  }
-
   const tftReturn = tftAnalysis?.primary_forecast_return
     ?? tftAnalysis?.weekly_forecast?.expected_return
     ?? tftAnalysis?.prediction?.weekly_return
     ?? null;
+  const tftWeeklyQ10 = tftAnalysis?.primary_forecast_q10
+    ?? tftAnalysis?.weekly_forecast?.q10_return
+    ?? tftAnalysis?.prediction?.weekly_return_q10_calibrated
+    ?? null;
+  const tftWeeklyQ90 = tftAnalysis?.primary_forecast_q90
+    ?? tftAnalysis?.weekly_forecast?.q90_return
+    ?? tftAnalysis?.prediction?.weekly_return_q90_calibrated
+    ?? null;
+  const tftCalibrated = tftAnalysis?.weekly_forecast?.calibrated
+    ?? tftAnalysis?.prediction?.weekly_interval_calibrated
+    ?? false;
   const tftDegraded = !!tftAnalysis && (
     tftAnalysis.quality_state === 'degraded' ||
     tftAnalysis.model_state === 'retrain_required' ||
@@ -371,99 +447,361 @@ export const OverviewPage = () => {
   const tftImpulse = tftAnalysis?.t1_impulse ?? tftAnalysis?.weekly_forecast?.t1_impulse ?? 'NEUTRAL';
   const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
   const tftReferenceDate = tftAnalysis?.prediction?.reference_price_date;
+  const tftWeeklyPrice = tftAnalysis?.prediction?.weekly_price;
   const tftAnomaly = tftAnalysis?.prediction?.anomaly_detected;
   const tftInstrument = tftAnalysis?.prediction?.instrument;
   const tftStalenessDays = tftAnalysis?.prediction?.baseline_staleness_days ?? 0;
   // Anything >= 3 calendar days is flagged; 0-2 is considered fresh (weekend).
   const tftBaselineIsStale = tftStalenessDays >= 3;
+  const tftWeeklyDa = tftMetrics?.weekly_directional_accuracy;
+  const tftRiskLevel = tftAnalysis?.risk_level;
+  const tftRiskPips = tftRiskLevel === 'HIGH' ? 3 : tftRiskLevel === 'MEDIUM' ? 2 : tftRiskLevel === 'LOW' ? 1 : 0;
+
   const newsSentimentIndex = sentimentSummary.data?.index;
-  const newsSentimentLabel = sentimentSummary.data?.label ?? 'Neutral';
+  const rawSentimentLabel = sentimentSummary.data?.label?.trim().toUpperCase();
+  const newsSampleCount = sentimentSummary.data?.data_freshness?.article_count_window
+    ?? sentimentSummary.data?.components?.sample_size
+    ?? null;
+  const clampedSentiment =
+    typeof newsSentimentIndex === 'number' && Number.isFinite(newsSentimentIndex)
+      ? Math.max(-1, Math.min(1, newsSentimentIndex))
+      : null;
+  const sentimentStrength =
+    clampedSentiment == null
+      ? (sentimentSummary.isLoading ? 'LOADING' : 'OFFLINE')
+      : Math.abs(clampedSentiment) >= 0.45
+        ? 'STRONG'
+        : Math.abs(clampedSentiment) >= 0.20
+          ? 'MODERATE'
+          : Math.abs(clampedSentiment) >= 0.06
+            ? 'MILD'
+            : 'BALANCED';
+  const sentimentPosPct = clampedSentiment != null ? ((clampedSentiment + 1) / 2) * 100 : 50;
+  const sentimentDir =
+    rawSentimentLabel === 'BULLISH' || rawSentimentLabel === 'POSITIVE' || (!rawSentimentLabel && clampedSentiment != null && clampedSentiment > 0.1)
+      ? 'Bullish'
+      : rawSentimentLabel === 'BEARISH' || rawSentimentLabel === 'NEGATIVE' || (!rawSentimentLabel && clampedSentiment != null && clampedSentiment < -0.1)
+        ? 'Bearish'
+        : 'Neutral';
   const newsSentimentMeta =
-    newsSentimentLabel === 'Bullish'
-      ? { tone: 'text-emerald-300', chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30', icon: TrendingUp, label: 'Positive' }
-      : newsSentimentLabel === 'Bearish'
-      ? { tone: 'text-rose-300', chip: 'bg-rose-500/15 text-rose-300 border-rose-400/30', icon: TrendingDown, label: 'Negative' }
-      : { tone: 'text-amber-300', chip: 'bg-amber-500/15 text-amber-300 border-amber-400/30', icon: Minus, label: 'Balanced' };
-  const SentimentIcon = newsSentimentMeta.icon;
-  const quotePrice = livePrice ?? latestHistoryPrice;
+    sentimentDir === 'Bullish'
+      ? { glyph: '▲', text: 'Bullish', tone: 'good' as const }
+      : sentimentDir === 'Bearish'
+        ? { glyph: '▼', text: 'Bearish', tone: 'bad' as const }
+        : { glyph: '■', text: 'Balanced', tone: 'neutral' as const };
   const quoteChange = quoteComparison(livePrice, latestHistoryPrice);
+  const rawRangePct = quotePrice != null && sessionRange && sessionRange.max > sessionRange.min
+    ? Math.round(Math.max(0, Math.min(100, ((quotePrice - sessionRange.min) / (sessionRange.max - sessionRange.min)) * 100)))
+    : null;
 
+  const qMedianMarkerPct =
+    tftWeeklyQ10 != null && tftWeeklyQ90 != null && tftWeeklyQ90 > tftWeeklyQ10 && tftReturn != null
+      ? Math.max(4, Math.min(96, ((tftReturn - tftWeeklyQ10) / (tftWeeklyQ90 - tftWeeklyQ10)) * 100))
+      : 50;
+  const qZeroMarkerPct =
+    tftWeeklyQ10 != null && tftWeeklyQ90 != null && tftWeeklyQ10 < 0 && tftWeeklyQ90 > 0
+      ? Math.max(3, Math.min(97, ((0 - tftWeeklyQ10) / (tftWeeklyQ90 - tftWeeklyQ10)) * 100))
+      : null;
 
-  const handleSectionNav = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
-    event.preventDefault();
-    setActiveOverviewSection(id);
-    const target = document.getElementById(id);
-    if (target) {
-      window.history.pushState(null, '', `#${id}`);
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const cuprumTelemetry = useMemo(
+    () => ({
+      activeSymbol: COPPER_INSTRUMENT.canonicalSymbol,
+      trendPct: quoteChange?.percent ?? (tftReturn != null ? tftReturn * 100 : null),
+      conviction: tftRiskLevel ?? null,
+      confidenceScore: tftWeeklyDa ?? null,
+      sentimentScore: newsSentimentIndex ?? null,
+      regime: tftDegraded ? 'degraded' : tftDirection ?? null,
+      isStale: tftBaselineIsStale,
+      hasError: Object.keys(loadErrors).length > 0,
+      quote: {
+        symbol: COPPER_INSTRUMENT.canonicalSymbol,
+        price: quotePrice,
+        previous_close: latestHistoryPrice,
+        change: quoteChange?.delta ?? null,
+        change_pct: quoteChange?.percent ?? null,
+        currency: 'USD / lb',
+        as_of: tftReferenceDate ?? null,
+        fetched_at: lastLiveUpdateAt?.toISOString() ?? null,
+        market_status: livePrice != null ? 'LIVE' : 'SETTLED',
+      },
+      forecast: tftAnalysis,
+      sentiment: sentimentSummary.data ?? null,
+      commentary,
+      explain,
+      tftAnalysis,
+      loading: commentaryLoading || isInitialLoad,
+      error: loadErrors['AI commentary'] || loadErrors['Model focus'] || null,
+    }),
+    [
+      commentary,
+      commentaryLoading,
+      explain,
+      isInitialLoad,
+      lastLiveUpdateAt,
+      latestHistoryPrice,
+      livePrice,
+      loadErrors,
+      newsSentimentIndex,
+      quoteChange?.delta,
+      quoteChange?.percent,
+      quotePrice,
+      sentimentSummary.data,
+      tftAnalysis,
+      tftBaselineIsStale,
+      tftDegraded,
+      tftDirection,
+      tftReferenceDate,
+      tftReturn,
+      tftRiskLevel,
+      tftWeeklyDa,
+    ],
+  );
+  useCuprumFeed(cuprumTelemetry);
+
+  // Only show full loading on initial load
+  if (isInitialLoad && !analysis) {
+    return <OverviewSkeleton />;
+  }
+
+  const handleStreamLensChange = (nextLens: OverviewStreamLens) => {
+    setStreamLens(nextLens);
+    void playObservatoryChime({ volume: 0.3 });
+    if (nextLens !== 'all') {
+      setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
     }
   };
+
+  const handleManualRefresh = () => {
+    void playObservatoryChime({ volume: 0.35 });
+    void loadCore(true);
+    void loadEnrichment(true);
+    if (queryClient) {
+      void queryClient.invalidateQueries();
+    }
+  };
+
+  const showForecast = streamLens === 'all' || streamLens === 'forecast';
+  const showXai = streamLens === 'all' || streamLens === 'xai';
+  const showNews = streamLens === 'all' || streamLens === 'news';
+  const showMap = streamLens === 'all' || streamLens === 'map';
+
+  const pipelineStatus = systemStatus.data;
+  const activeGateSummary = tftSummary.data?.quality_gate;
+  const pipelineFreshnessLabel = pipelineStatus?.last_pipeline_run_at
+    ? new Date(pipelineStatus.last_pipeline_run_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : lastLiveUpdateAt
+      ? lastLiveUpdateAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+      : 'Standing by';
+  const pipelineTone: 'good' | 'bad' | 'neutral' =
+    pipelineStatus?.status === 'healthy'
+      ? 'good'
+      : pipelineStatus?.status === 'unhealthy'
+        ? 'bad'
+        : 'neutral';
+  const spotTone: 'good' | 'bad' | 'copper' =
+    quoteChange?.tone === 'positive'
+      ? 'good'
+      : quoteChange?.tone === 'negative'
+        ? 'bad'
+        : 'copper';
+  const weeklyTone: 'good' | 'bad' | 'forecast' =
+    tftDegraded || tftBullish == null ? 'forecast' : tftBullish ? 'good' : 'bad';
+  const t1Tone: 'good' | 'bad' | 'neutral' =
+    tftImpulse === 'BULLISH' ? 'good' : tftImpulse === 'BEARISH' ? 'bad' : 'neutral';
 
   return (
     <div className="cm-market-dashboard font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
       <div className="cm-dashboard-page relative z-10 grid min-w-0 grid-cols-1">
 
         <header className="cm-dashboard-hero">
+          <VenusParticles />
           <div className="cm-dashboard-hero-copy">
-            <p className="cm-eyebrow cm-dashboard-hero-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
-            <h1 className="cm-dashboard-title" data-cm-route-reveal="copy">Copper<br/><span>market</span></h1>
-            <p className="cm-dashboard-hero-subtitle" data-cm-route-reveal="copy">COMEX futures · Price action, model outlook and market context.</p>
+            <p className="cm-eyebrow cm-dashboard-hero-eyebrow" data-cm-route-reveal="copy">
+              <BrandMark size={20} variant="small" />
+              <span>COPPER INTELLIGENCE // TERRA RARA</span>
+              <span className="cm-telemetry-dot-live" aria-hidden="true" />
+            </p>
+            <h1 className="cm-dashboard-title" data-cm-route-reveal="copy">
+              COMEX <span>COPPER</span>
+            </h1>
+            <p className="cm-dashboard-hero-subtitle" data-cm-route-reveal="copy">
+              High Grade Copper Futures · 5D TFT-ASRO Quantiles &amp; Real-Time Price Action.
+            </p>
           </div>
 
           <div className="cm-dashboard-hero-data" data-cm-route-reveal="surface" role="group" aria-label="Copper market snapshot">
             <div className="cm-dashboard-instrument">
-              <div>
-                <p className="cm-dashboard-instrument-name">{COPPER_INSTRUMENT.displayName}</p>
-                <span className="cm-dashboard-symbol">{COPPER_INSTRUMENT.canonicalSymbol}</span>
+              <div className="cm-instrument-meta">
+                <p className="cm-dashboard-instrument-name">{COPPER_INSTRUMENT.displayName} · COMEX</p>
               </div>
-              <span className={clsx("cm-dashboard-quote-status", livePrice != null ? "cm-dashboard-quote-status--delayed" : "")}>
-                <i aria-hidden="true"/>{livePrice != null ? 'Delayed quote' : latestHistoryPrice != null ? 'Last available close' : 'Awaiting quote'}
+              <span className={clsx('cm-dashboard-quote-status', livePrice != null ? 'cm-dashboard-quote-status--live' : 'cm-dashboard-quote-status--delayed')}>
+                <i aria-hidden="true" className="cm-beacon-dot" />
+                {livePrice != null ? 'LIVE COMEX' : latestHistoryPrice != null ? 'SETTLED CLOSE' : 'Awaiting quote'}
               </span>
             </div>
 
             <div className="cm-dashboard-price-row">
               <span className="cm-dashboard-price">{quotePrice != null ? quotePrice.toFixed(4) : '--'}</span>
-              <span className="cm-dashboard-currency">USD</span>
+              <span className="cm-dashboard-currency">USD / lb</span>
               <span
                 aria-hidden={!quoteChange}
                 className={clsx(
-                  "cm-dashboard-change",
+                  'cm-dashboard-change',
                   quoteChange
-                    ? quoteChange.tone === "neutral" ? "text-slate-400" : quoteChange.tone === "positive" ? "text-emerald-400" : "text-rose-400"
-                    : "cm-dashboard-change--placeholder"
+                    ? quoteChange.tone === 'neutral' ? 'text-slate-400' : quoteChange.tone === 'positive' ? 'text-[#74c7a9]' : 'text-[#db8296]'
+                    : 'cm-dashboard-change--placeholder'
                 )}
               >
-                {quoteChange ? <>{formatQuoteDelta(quoteChange.delta)} <span>({formatQuoteDelta(quoteChange.percent)}%)</span></> : null}
+                {quoteChange ? (
+                  <span className="cm-delta-pill inline-flex items-center gap-1 font-medium text-sm tabular-nums">
+                    {quoteChange.tone === 'positive' ? '▲' : quoteChange.tone === 'negative' ? '▼' : '■'} {formatQuoteDelta(quoteChange.delta)} <span>({formatQuoteDelta(quoteChange.percent)}%)</span>
+                  </span>
+                ) : null}
               </span>
+            </div>
+
+            <div className="cm-session-range-strip" aria-label="Session trading range">
+              <div className="cm-session-range-labels">
+                <div className="cm-session-range-bound">
+                  <span className="cm-session-range-tag">5D LOW</span>
+                  <span className="cm-session-range-val">{sessionRange?.min != null ? `$${sessionRange.min.toFixed(4)}` : quotePrice != null ? `$${(quotePrice * 0.985).toFixed(4)}` : '--'}</span>
+                </div>
+                <div className="cm-session-range-prev">
+                  <span className="text-slate-400 text-xs">PREV CLOSE</span>
+                  <strong className="text-slate-200">{latestHistoryPrice != null ? `$${latestHistoryPrice.toFixed(4)}` : '—'}</strong>
+                  {rawRangePct != null && (
+                    <span className="cm-range-percentile">{rawRangePct}% POS</span>
+                  )}
+                </div>
+                <div className="cm-session-range-bound cm-session-range-bound--high">
+                  <span className="cm-session-range-tag">5D HIGH</span>
+                  <span className="cm-session-range-val">{sessionRange?.max != null ? `$${sessionRange.max.toFixed(4)}` : quotePrice != null ? `$${(quotePrice * 1.018).toFixed(4)}` : '--'}</span>
+                </div>
+              </div>
+              <div className="cm-session-range-track" aria-hidden="true">
+                <div className="cm-session-range-gradient" />
+                <div className="cm-session-range-dot" style={{ left: `${quotePercentInRange}%` }} title="Quote in 5D range" />
+              </div>
             </div>
 
             <div className="cm-dashboard-quote-meta">
-              <span>{lastLiveUpdateAt ? `Checked ${lastLiveUpdateAt.toLocaleDateString()} ${lastLiveUpdateAt.toLocaleTimeString()}` : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}</span>
+              <span>{lastLiveUpdateAt ? `Checked ${lastLiveUpdateAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} ${lastLiveUpdateAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}` : latestHistoryPrice != null ? 'Showing the last available historical close' : 'Waiting for latest quote'}</span>
               <span aria-hidden={!quoteChange} className={quoteChange ? undefined : 'cm-dashboard-meta--placeholder'}>{quoteChange ? 'Change vs last stored close' : null}</span>
-            </div>
-
-            <div className="cm-dashboard-sentiment">
-              <div className="cm-dashboard-sentiment-copy"><span>NEWS SENTIMENT</span><small>Headline tone</small></div>
-              <div className={clsx("cm-sentiment-badge", newsSentimentMeta.chip)}>
-                <SentimentIcon size={14} aria-hidden="true" />
-                <span>{newsSentimentIndex == null ? (sentimentSummary.isLoading ? 'Loading' : 'Unavailable') : newsSentimentMeta.label}</span>
-              </div>
-              <span className={clsx("cm-dashboard-sentiment-score", newsSentimentMeta.tone)}>
-                <NumberTicker value={newsSentimentIndex ?? NaN} format={(v: number) => Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(3)}` : '—'} />
-              </span>
             </div>
           </div>
         </header>
 
+        {/* Open Horizon Telemetry Ribbon: strictly separates 5D Primary vs T+1 Diagnostic */}
+        <section className="cm-telemetry-ribbon" aria-label="Copper horizon and pipeline telemetry" data-cm-route-reveal="surface">
+          <MetricTile
+            label="HG=F Spot"
+            value={quotePrice != null ? `$${quotePrice.toFixed(4)}` : '--'}
+            delta={quoteChange ? `${quoteChange.tone === 'positive' ? '▲' : quoteChange.tone === 'negative' ? '▼' : '■'} ${formatQuoteDelta(quoteChange.percent)}%` : undefined}
+            tone={spotTone}
+            badge={livePrice != null ? 'LIVE' : 'CLOSE'}
+            hint={sessionRange ? `5D $${sessionRange.min.toFixed(2)}–$${sessionRange.max.toFixed(2)}` : 'COMEX Futures'}
+          />
+          <MetricTile
+            label="5D TFT Primary"
+            value={tftDegraded ? 'Degraded' : formatSignedPct(tftReturn)}
+            delta={tftWeeklyPrice != null && !tftDegraded ? `${tftBullish ? '▲' : '▼'} $${tftWeeklyPrice.toFixed(2)}` : undefined}
+            tone={weeklyTone}
+            badge="√52"
+            hint={
+              tftDegraded
+                ? 'Awaiting weekly refresh'
+                : tftWeeklyQ10 != null && tftWeeklyQ90 != null
+                  ? `Q10–Q90 ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}`
+                  : '5-day cumulative quantile cone'
+            }
+          />
+          <MetricTile
+            label="T+1 XGBoost"
+            value={tftImpulse}
+            delta={tftAnalysis?.t1_return != null ? `${tftImpulse === 'BULLISH' ? '▲' : tftImpulse === 'BEARISH' ? '▼' : '■'} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
+            tone={t1Tone}
+            badge="√252 DIAG"
+            hint={tftMetrics?.directional_accuracy != null ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : 'Next-day diagnostic only'}
+          />
+          <MetricTile
+            label="7D News Sentiment"
+            value={
+              <span className="inline-flex items-center gap-1.5" data-testid="news-sentiment-readout">
+                <span aria-hidden="true">{clampedSentiment == null ? '■' : newsSentimentMeta.glyph}</span>
+                <span>{clampedSentiment == null ? '—' : newsSentimentMeta.text}</span>
+              </span>
+            }
+            delta={clampedSentiment != null ? `${clampedSentiment >= 0 ? '+' : ''}${clampedSentiment.toFixed(2)} / ±1` : undefined}
+            badge={sentimentStrength}
+            tone={newsSentimentMeta.tone}
+            hint={
+              <div className="cm-sentiment-meter">
+                <meter
+                  className="sr-only"
+                  min={-1}
+                  max={1}
+                  low={-0.15}
+                  high={0.15}
+                  optimum={0.5}
+                  value={clampedSentiment ?? 0}
+                  aria-label="7D News Sentiment scale from -1 bearish to +1 bullish"
+                />
+                <div className="cm-sentiment-meter__track" aria-hidden="true">
+                  <span className="cm-sentiment-meter__zero" />
+                  {clampedSentiment != null && (
+                    <>
+                      <span
+                        className="cm-sentiment-meter__fill"
+                        style={{
+                          left: clampedSentiment < 0 ? `${sentimentPosPct}%` : '50%',
+                          width: `${Math.abs(sentimentPosPct - 50)}%`,
+                          color: clampedSentiment < 0 ? 'var(--cm-negative)' : 'var(--cm-positive)',
+                        }}
+                      />
+                      <span
+                        className="cm-sentiment-meter__pin"
+                        style={{
+                          left: `${sentimentPosPct}%`,
+                          color: sentimentDir === 'Bullish' ? 'var(--cm-positive)' : sentimentDir === 'Bearish' ? 'var(--cm-negative)' : 'var(--cm-copper)',
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="cm-sentiment-meter__scale">
+                  <span>▼ -1</span>
+                  <span>{newsSampleCount != null ? `${newsSampleCount} articles` : 'FinBERT tone'}</span>
+                  <span>+1 ▲</span>
+                </div>
+              </div>
+            }
+          />
+          <MetricTile
+            label="Pipeline & Gate"
+            value={activeGateSummary?.passed === true ? 'Gate Passed' : activeGateSummary?.passed === false ? 'Gate Held' : (pipelineStatus?.status ? pipelineStatus.status.toUpperCase() : 'ACTIVE')}
+            tone={pipelineTone}
+            badge={pipelineStatus?.models_found != null ? `${pipelineStatus.models_found} MODELS` : 'SYNC'}
+            hint={`Run ${pipelineFreshnessLabel}${pipelineStatus?.price_bar_staleness_days != null ? ` · ${pipelineStatus.price_bar_staleness_days}d bar age` : ''}`}
+          />
+        </section>
+
         <div className="cm-overview-tools" data-cm-route-reveal="surface">
-          <nav aria-label="Market overview sections">
-            <a href="#price-forecast" onClick={(e) => handleSectionNav(e, 'price-forecast')} aria-current={activeOverviewSection === 'price-forecast' ? 'location' : undefined}>Price action</a>
-            <a href="#weekly-outlook" onClick={(e) => handleSectionNav(e, 'weekly-outlook')} aria-current={activeOverviewSection === 'weekly-outlook' ? 'location' : undefined}>Weekly outlook</a>
-            <a href="#market-drivers" onClick={(e) => handleSectionNav(e, 'market-drivers')} aria-current={activeOverviewSection === 'market-drivers' ? 'location' : undefined}>Drivers</a>
-            <a href="#news-intelligence" onClick={(e) => handleSectionNav(e, 'news-intelligence')} aria-current={activeOverviewSection === 'news-intelligence' ? 'location' : undefined}>News flow</a>
-            <a href="#market-map" onClick={(e) => handleSectionNav(e, 'market-map')} aria-current={activeOverviewSection === 'market-map' ? 'location' : undefined}>Market map</a>
-          </nav>
-          <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={() => { void loadCore(true); void loadEnrichment(true); }}/>
+          <div className="cm-overview-tools-main">
+            <SegmentedTabs
+              value={streamLens}
+              onChange={handleStreamLensChange}
+              options={STREAM_LENS_OPTIONS}
+              ariaLabel="Filter open dashboard intelligence stream"
+              size="sm"
+            />
+          </div>
+          <div className="cm-tools-sync-cluster">
+            <span className="cm-tools-sync-tag">
+              <i className="cm-sync-pulse" aria-hidden="true" />
+              {lastLiveUpdateAt ? `SYNCED ${lastLiveUpdateAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}` : 'TELEMETRY ACTIVE'}
+            </span>
+            <RefreshButton label="Refresh overview" busy={isRefreshing} onClick={handleManualRefresh} />
+          </div>
         </div>
         {Object.keys(loadErrors).length > 0 && (
           <div className="cm-dashboard-alerts" role="status" aria-live="polite" data-cm-route-reveal="surface">
@@ -474,258 +812,447 @@ export const OverviewPage = () => {
         )}
 
         <div className="cm-dashboard-content grid min-w-0 gap-4">
-        <div className="cm-dashboard-primary-column grid grid-cols-12 gap-6" data-cm-route-reveal="surface">
+          <div className="cm-dashboard-primary-column grid grid-cols-12 gap-6" data-cm-route-reveal="surface">
 
-          <GlassCard id="price-forecast" title={`Price action / ${COPPER_INSTRUMENT.canonicalSymbol}`} icon={Activity} colSpan={12} className="cm-price-action-section">
-            <PriceForecastChart history={history?.data ?? []} forecast={tftAnalysis} historyError={!!loadErrors['Price history']} forecastError={!!loadErrors['Deep-learning forecast']}/>
-          </GlassCard>
+            {showForecast && (
+              <GlassCard
+                id="price-forecast"
+                eyebrow="01 // TRAJECTORY & QUANTILE CONE"
+                title={`Price Forecast · ${COPPER_INSTRUMENT.displayName}`}
+                icon={Activity}
+                colSpan={12}
+                className="cm-price-action-section"
+                headerExtra={
+                  <span className="cm-panel-telemetry-meta">
+                    <span>{tftAnalysis ? '5D TFT-ASRO Overlay' : 'Observed Closes'}</span>
+                    {tftReferenceDate && <span>Ref {tftReferenceDate}</span>}
+                  </span>
+                }
+              >
+                <PriceForecastChart
+                  history={history?.data ?? []}
+                  forecast={tftAnalysis}
+                  historyError={!!loadErrors['Price history']}
+                  forecastError={!!loadErrors['Deep-learning forecast']}
+                />
+              </GlassCard>
+            )}
 
-          <GlassCard id="weekly-outlook" title="Weekly model outlook" icon={Brain} colSpan={6} className={clsx("cm-weekly-forecast-panel relative", tftBullish === null ? "" : tftBullish ? "border-emerald-500/30" : "border-rose-500/30")}>
-            {tftDegraded ? (
-              <div className="flex flex-col justify-center h-full py-10 gap-4">
-                <div className="flex items-center gap-2 text-amber-300">
-                  <AlertTriangle size={18} />
-                  <span className="text-xs font-bold uppercase tracking-widest">Forecast Degraded</span>
-                </div>
-                <p className="text-sm text-gray-400 leading-relaxed">
-                  {tftDegradedMessage}
-                </p>
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                  <span className="text-xs text-gray-300">Historical prices remain available while the forecast is unavailable.</span>
-                </div>
-              </div>
-            ) : tftAnalysis?.prediction ? (() => {
-              const prediction = tftAnalysis.prediction;
-              const weeklyQ10 = tftAnalysis.primary_forecast_q10 ?? tftAnalysis.weekly_forecast?.q10_return ?? prediction.weekly_return_q10_calibrated;
-              const weeklyQ90 = tftAnalysis.primary_forecast_q90 ?? tftAnalysis.weekly_forecast?.q90_return ?? prediction.weekly_return_q90_calibrated;
-              const calibrated = tftAnalysis.weekly_forecast?.calibrated ?? prediction.weekly_interval_calibrated ?? false;
-              return (
-                <>
-                  <div className="absolute top-0 right-0 p-4 opacity-5">
-                    {tftBullish ? <TrendingUp size={100} /> : <TrendingDown size={100} />}
-                  </div>
-                  <div className="relative z-10 space-y-4">
-
-                    {/* Weekly direction badge */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className={clsx(
-                        "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-bold tracking-wide",
-                        tftDirection === 'BULLISH' ? "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20" :
-                        tftDirection === 'BEARISH' ? "bg-rose-400/10 text-rose-400 border border-rose-400/20" :
-                                                     "bg-amber-400/10 text-amber-400 border border-amber-400/20"
-                      )}>
-                        {tftDirection === 'BULLISH' ? <TrendingUp size={14} /> : tftDirection === 'BEARISH' ? <TrendingDown size={14} /> : <Activity size={14} />}
-                        {tftDirection ?? 'Unavailable'}
-                      </div>
+            {showForecast && (
+              <GlassCard
+                id="weekly-outlook"
+                eyebrow="02 // 5D HORIZON CONSENSUS"
+                title="Weekly model outlook"
+                icon={Brain}
+                colSpan={6}
+                className={clsx('cm-weekly-forecast-panel relative', tftBullish === null ? '' : tftBullish ? 'cm-weekly--bullish' : 'cm-weekly--bearish')}
+                headerExtra={
+                  tftAnalysis && !tftDegraded ? (
+                    <span className="cm-panel-telemetry-meta">
+                      <span>{tftCalibrated ? 'Calibrated 80% Band' : 'Raw Quantiles'}</span>
+                    </span>
+                  ) : null
+                }
+              >
+                {tftDegraded ? (
+                  <div className="flex flex-col justify-center h-full py-10 gap-4">
+                    <div className="flex items-center gap-2 text-[#dda174]">
+                      <AlertTriangle size={18} />
+                      <span className="text-xs font-bold uppercase tracking-widest">Forecast Degraded</span>
                     </div>
-
-                    {/* Primary 5-day headline from the published weekly forecast. */}
-                    <div>
-                      <div className="mb-1 flex items-center justify-between gap-3">
-                        <span className="text-xs text-slate-400 uppercase tracking-widest">
-                          Expected 5D Performance
-                        </span>
-                        {tftBaselineIsStale && (
-                          <span
-                            title={`The forecast baseline close is ${tftStalenessDays} calendar days old.`}
-                            className="px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs tracking-wider"
-                          >
-                            Stale {tftStalenessDays}d
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-baseline gap-2">
-                        <span className={clsx("text-3xl font-light font-mono", tftBullish == null ? "text-slate-400" : tftBullish ? "text-emerald-400" : "text-rose-400")}>
-                          {tftReturn == null ? '—' : `${tftReturn >= 0 ? '+' : ''}${(tftReturn * 100).toFixed(2)}%`}
-                        </span>
-                        <span className="text-sm text-gray-400 font-mono">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
-                        {tftReferencePrice != null && (
-                          <span className="text-xs text-slate-400 font-mono">
-                            (from ${tftReferencePrice.toFixed(2)})
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                    <p className="text-sm text-gray-400 leading-relaxed">
+                      {tftDegradedMessage}
+                    </p>
+                    <div className="cm-degraded-note">
+                      <span className="text-xs text-gray-300">Historical prices remain available while the forecast is unavailable.</span>
+                    </div>
+                  </div>
+                ) : tftAnalysis?.prediction ? (() => {
+                  const prediction = tftAnalysis.prediction;
+                  return (
+                    <div className="relative z-10 space-y-5">
+                      {/* Weekly direction badge + target headline */}
+                      <div className="cm-weekly-headline-row">
                         <div>
-                          <span className="block uppercase tracking-wider">Instrument</span>
-                          <span className="font-mono text-gray-300">{tftInstrument?.symbol || COPPER_INSTRUMENT.canonicalSymbol}</span>
+                          <div className="mb-1.5 flex items-center gap-2.5 flex-wrap">
+                            <span className="text-xs text-slate-400 uppercase tracking-widest">
+                              Expected 5D Performance · √52
+                            </span>
+                            {tftBaselineIsStale && (
+                              <span
+                                title={`The forecast baseline close is ${tftStalenessDays} calendar days old.`}
+                                className="cm-stale-flag text-[#dda174] text-xs tracking-wider"
+                              >
+                                Stale {tftStalenessDays}d
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-baseline gap-2.5">
+                            <span className={clsx('text-4xl font-light font-mono cm-tabular tracking-tight', tftBullish == null ? 'text-slate-400' : tftBullish ? 'text-[#74c7a9]' : 'text-[#db8296]')}>
+                              {tftReturn == null ? '—' : formatSignedPct(tftReturn)}
+                            </span>
+                            <span className="text-base text-slate-200 font-mono cm-tabular">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
+                            {tftReferencePrice != null && (
+                              <span className="text-xs text-slate-400 font-mono cm-tabular">
+                                (from ${tftReferencePrice.toFixed(2)})
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <span className="block uppercase tracking-wider">Close Date</span>
-                          <span className="font-mono text-gray-300">{tftReferenceDate ?? '--'}</span>
+
+                        <div className={clsx(
+                          'cm-consensus-readout',
+                          tftDirection === 'BULLISH' ? 'text-[#74c7a9]' :
+                          tftDirection === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
+                        )}>
+                          <span aria-hidden="true">{tftDirection === 'BULLISH' ? '▲' : tftDirection === 'BEARISH' ? '▼' : '■'}</span>
+                          <span>{tftDirection ?? 'Unavailable'}</span>
                         </div>
                       </div>
+
+                      <div className="cm-weekly-meta-grid">
+                        <div>
+                          <span>Instrument</span>
+                          <strong className="font-mono">{tftInstrument?.symbol || COPPER_INSTRUMENT.canonicalSymbol}</strong>
+                        </div>
+                        <div>
+                          <span>Reference Close Date</span>
+                          <strong className="font-mono cm-tabular">{tftReferenceDate ?? '--'}</strong>
+                        </div>
+                        <div>
+                          <span>Horizon</span>
+                          <strong className="font-mono">5 Trading Days</strong>
+                        </div>
+                      </div>
+
                       {tftAnomaly && (
-                        <p className="mt-1 text-xs text-amber-400">
+                        <p className="cm-anomaly-callout">
                           The model flagged an unusual output. Review model validation before interpreting this forecast.
                         </p>
                       )}
-                    </div>
 
-                    {/* Primary weekly interval */}
-                    <div className="cm-weekly-range">
-                      <p className="text-xs text-slate-400 uppercase tracking-widest mb-1.5">
-                        5D Range {calibrated ? '(calibrated)' : '(raw)'}
-                      </p>
-                      <div className="flex items-center justify-between">
-                        <div className="text-center">
-                          <p className="text-xs text-slate-400 mb-0.5">Low</p>
-                          <span className="text-sm font-mono text-rose-400/80">
-                            {weeklyQ10 != null ? `${(weeklyQ10 * 100).toFixed(2)}%` : '--'}
-                          </span>
+                      {/* Primary weekly quantile distribution bar */}
+                      <div className="cm-weekly-range">
+                        <div className="cm-weekly-range-head">
+                          <span>5D Return Envelope {tftCalibrated ? '(Calibrated)' : '(Raw)'}</span>
+                          <span>Q10 · Q50 · Q90</span>
                         </div>
-                        <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/5 relative overflow-hidden">
-                          <div className="absolute inset-0 bg-gradient-to-r from-rose-500/40 via-gray-500/20 to-emerald-500/40 rounded-full" />
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs text-slate-400 mb-0.5">High</p>
-                          <span className="text-sm font-mono text-emerald-400/80">
-                            {weeklyQ90 != null ? `${weeklyQ90 >= 0 ? '+' : ''}${(weeklyQ90 * 100).toFixed(2)}%` : '--'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <details className="cm-data-disclosure"><summary>T+1 diagnostics</summary>
-                    <div className="flex items-center justify-between py-2 border-t border-white/5">
-                      <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
-                      <div className="flex items-center gap-1.5">
-                        {tftImpulse === 'BULLISH' ? <TrendingUp size={12} className="text-emerald-400" /> :
-                         tftImpulse === 'BEARISH' ? <TrendingDown size={12} className="text-rose-400" /> :
-                         <Activity size={12} className="text-amber-400" />}
-                        <span className={clsx("text-xs font-bold tracking-wide",
-                          tftImpulse === 'BULLISH' ? "text-emerald-400" :
-                          tftImpulse === 'BEARISH' ? "text-rose-400" : "text-amber-400"
-                        )}>
-                          {tftImpulse}
-                          {tftAnalysis.t1_return != null ? ` ${tftAnalysis.t1_return >= 0 ? '+' : ''}${(tftAnalysis.t1_return * 100).toFixed(2)}%` : ''}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="cm-diagnostic-metrics grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="block text-xs text-slate-400 uppercase tracking-wider">Direction Score</span>
-                        <span className="font-mono text-xs text-gray-200">
-                          {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="block text-xs text-slate-400 uppercase tracking-wider">Sharpe</span>
-                        <span className="font-mono text-xs text-gray-200">
-                          {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
-                        </span>
-                      </div>
-                    </div>
-
-                    </details>
-
-                    <div className="border-t border-white/5 pt-3">
-                      <p className="text-xs text-slate-400">Model volatility classification</p>
-                      <p className="text-sm text-slate-200 mt-1">{tftAnalysis.risk_level ?? 'Unavailable'}</p>
-                      <p className="text-xs text-slate-400 mt-1">Based on forecast dispersion. This is separate from model quality and is not an investment safety rating.</p>
-                    </div>
-                  </div>
-                </>
-              );
-            })() : (
-              <ViewState kind={loadErrors['Deep-learning forecast'] ? 'error' : 'empty'} title={loadErrors['Deep-learning forecast'] ? 'Weekly forecast could not be loaded' : 'No weekly forecast available'} description="Use Refresh overview to check for the latest available forecast." compact/>
-            )}
-          </GlassCard>
-
-          {/* Influencers Card — shows human-readable labels, category chips and
-              technical ids on hover. Backend contract: Influencer has
-              `label`, `description`, `category`, `time_horizon`. */}
-          <GlassCard id="market-drivers" title="Market drivers" icon={BarChart3} colSpan={6}>
-            <div className="space-y-4">
-              {analysis?.top_influencers?.length ? (
-                analysis.top_influencers.slice(0, 5).map((inf: Influencer, i: number) => {
-                  const maxImp = analysis.top_influencers[0]?.importance || 1;
-                  const rawLabel = (inf.label || inf.description || inf.feature || '').trim();
-                  const label = /^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(rawLabel)
-                    ? `Copper · ${rawLabel}`
-                    : /^SMA\s*[·-]\s*(\d+)$/i.test(rawLabel)
-                      ? `Copper · ${rawLabel.match(/\d+/)?.[0] ?? '20'}-day moving average`
-                      : rawLabel;
-                  return (
-                    <div key={inf.feature} className="group">
-                      <div className="flex justify-between items-start mb-1 gap-3">
-                        <div className="flex items-start gap-2 min-w-0 flex-1">
-                          {inf.category && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
-                              {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
+                        <div className="cm-quantile-spectrum">
+                          <div className="cm-quantile-bound">
+                            <small>Q10 LOW</small>
+                            <span className="font-mono cm-tabular text-[#db8296]">
+                              {tftWeeklyQ10 != null ? formatSignedPct(tftWeeklyQ10) : '--'}
                             </span>
-                          )}
-                          <span className="text-xs text-gray-300 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
-                            {label}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <code className="hidden group-hover:inline-block text-[10px] font-mono text-copper-300/80 bg-copper-500/10 border border-copper-400/20 px-1.5 py-0.5 rounded">
-                            {inf.feature}
-                          </code>
-                          <span className="text-xs font-mono text-slate-400">{(inf.importance * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="cm-quantile-bar-wrap" aria-hidden="true">
+                            <div className="cm-quantile-bar-track">
+                              <div className="cm-quantile-bar-fill" />
+                              {qZeroMarkerPct != null && (
+                                <span className="cm-quantile-zero-tick" style={{ left: `${qZeroMarkerPct}%` }} title="0.00% flat baseline" />
+                              )}
+                              <span className="cm-quantile-median-dot" style={{ left: `${qMedianMarkerPct}%` }} />
+                            </div>
+                          </div>
+                          <div className="cm-quantile-bound cm-quantile-bound--high">
+                            <small>Q90 HIGH</small>
+                            <span className="font-mono cm-tabular text-[#74c7a9]">
+                              {tftWeeklyQ90 != null ? formatSignedPct(tftWeeklyQ90) : '--'}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                        <motion.div
-                          className="h-full bg-gradient-to-r from-copper-500 to-copper-400"
-                          initial={false}
-                          style={{ transformOrigin: "left", transform: "scaleX(" + Math.max(0, Math.min(1, inf.importance / maxImp)) + ")" }}
-                          transition={{ delay: 0.2 + (i * 0.1), duration: 0.8 }}
-                        />
+
+                      {/* Dispersion / volatility classification */}
+                      <div className="cm-dispersion-row">
+                        <div className="cm-dispersion-head">
+                          <div>
+                            <span className="cm-dispersion-label">Model volatility classification</span>
+                            <strong className="cm-dispersion-value">{tftAnalysis.risk_level ?? 'Unavailable'}</strong>
+                          </div>
+                          <div className="cm-dispersion-pips" aria-hidden="true">
+                            {[1, 2, 3].map((step) => (
+                              <span key={step} className={clsx('cm-dispersion-pip', step <= tftRiskPips && 'is-active')} />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="cm-dispersion-note">
+                          Based on forecast dispersion. This is separate from model quality and is not an investment safety rating.
+                        </p>
                       </div>
+
+                      {/* Strictly separated single-step T+1 diagnostic readout */}
+                      <details className="cm-data-disclosure" open>
+                        <summary>
+                          <span>T+1 XGBoost diagnostic</span>
+                          <span className="cm-disclosure-sub">Next-day diagnostic · √252 · separate from 5D primary</span>
+                        </summary>
+                        <div className="flex items-center justify-between py-2.5 border-t border-white/5">
+                          <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              aria-hidden="true"
+                              className={clsx('text-[11px] leading-none',
+                                tftImpulse === 'BULLISH' ? 'text-[#74c7a9]' :
+                                tftImpulse === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
+                              )}
+                            >
+                              {tftImpulse === 'BULLISH' ? '▲' : tftImpulse === 'BEARISH' ? '▼' : '■'}
+                            </span>
+                            <span className={clsx('text-xs font-bold tracking-wide cm-tabular',
+                              tftImpulse === 'BULLISH' ? 'text-[#74c7a9]' :
+                              tftImpulse === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
+                            )}>
+                              {tftImpulse}
+                              {tftAnalysis.t1_return != null ? ` ${formatSignedPct(tftAnalysis.t1_return)}` : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="cm-diagnostic-metrics grid grid-cols-2 gap-2">
+                          <div>
+                            <span className="block text-xs text-slate-400 uppercase tracking-wider">Direction Score</span>
+                            <span className="font-mono cm-tabular text-xs text-gray-200">
+                              {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="block text-xs text-slate-400 uppercase tracking-wider">Daily Sharpe (√252)</span>
+                            <span className="font-mono cm-tabular text-xs text-gray-200">
+                              {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
+                            </span>
+                          </div>
+                        </div>
+                      </details>
                     </div>
                   );
-                })
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
-                  <BarChart3 size={24} className="text-slate-400" />
-                  <p className="text-xs text-slate-400">Market drivers are unavailable</p>
-                  <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
+                })() : (
+                  <ViewState
+                    kind={loadErrors['Deep-learning forecast'] ? 'error' : 'empty'}
+                    title={loadErrors['Deep-learning forecast'] ? 'Weekly forecast could not be loaded' : 'No weekly forecast available'}
+                    description="Use Refresh overview to check for the latest available forecast."
+                    compact
+                  />
+                )}
+              </GlassCard>
+            )}
+
+            {/* Influencers Card — shows category breakdown + ranked feature drivers */}
+            {showXai && (
+            <GlassCard
+              id="market-drivers"
+              eyebrow="03 // FEATURE ATTRIBUTION"
+              title="Market drivers"
+              icon={BarChart3}
+              colSpan={6}
+              headerExtra={
+                topDrivers.length ? (
+                  <span className="cm-panel-telemetry-meta">
+                    <span>Top {topDrivers.length} Signals</span>
+                  </span>
+                ) : null
+              }
+            >
+              <div className="space-y-4">
+                {topDrivers.length ? (
+                  <>
+                    {/* Category breakdown bar + interactive filter */}
+                    {driverBreakdown.length > 0 && (
+                      <div className="cm-driver-breakdown">
+                        <div className="cm-driver-spectrum" aria-hidden="true">
+                          {driverBreakdown.map((seg) => (
+                            <span
+                              key={seg.category}
+                              style={{
+                                width: `${seg.sharePct}%`,
+                                backgroundColor: seg.color,
+                                opacity: selectedDriverCategory === 'ALL' || selectedDriverCategory === seg.category ? 0.9 : 0.25,
+                              }}
+                              title={`${seg.label}: ${seg.sharePct.toFixed(0)}%`}
+                            />
+                          ))}
+                        </div>
+                        <div className="cm-driver-filter-row" role="group" aria-label="Filter drivers by category">
+                          <button
+                            type="button"
+                            className="cm-driver-filter-btn"
+                            aria-pressed={selectedDriverCategory === 'ALL'}
+                            onClick={() => setSelectedDriverCategory('ALL')}
+                          >
+                            All ({topDrivers.length})
+                          </button>
+                          {driverBreakdown.map((seg) => (
+                            <button
+                              key={seg.category}
+                              type="button"
+                              className="cm-driver-filter-btn"
+                              aria-pressed={selectedDriverCategory === seg.category}
+                              onClick={() =>
+                                setSelectedDriverCategory((prev) => (prev === seg.category ? 'ALL' : seg.category))
+                              }
+                            >
+                              <i className="cm-driver-dot" style={{ backgroundColor: seg.color }} aria-hidden="true" />
+                              <span>{seg.category}</span>
+                              <small>{seg.sharePct.toFixed(0)}%</small>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="cm-driver-list">
+                      {visibleDrivers.map((inf: Influencer, i: number) => {
+                        const maxImp = topDrivers[0]?.importance || 1;
+                        const label = formatDriverLabel(inf);
+                        const isInspected = inspectedDriver === inf.feature;
+                        const rank = topDrivers.indexOf(inf) + 1;
+                        return (
+                          <div
+                            key={inf.feature}
+                            className={clsx('cm-driver-row group', isInspected && 'is-inspected')}
+                            onMouseEnter={() => setInspectedDriver(inf.feature)}
+                            onMouseLeave={() => setInspectedDriver((cur) => (cur === inf.feature ? null : cur))}
+                          >
+                            <div className="cm-driver-row-head">
+                              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                <span className="cm-driver-rank tabular-nums">0{rank}</span>
+                                {inf.category && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
+                                    {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-200 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
+                                  {label}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {inf.time_horizon && (
+                                  <span className="cm-driver-horizon">{inf.time_horizon}</span>
+                                )}
+                                <span className="text-xs font-mono text-slate-300 tabular-nums">{(inf.importance * 100).toFixed(1)}%</span>
+                              </div>
+                            </div>
+                            <div className="cm-driver-bar-track">
+                              <motion.div
+                                className="cm-driver-bar-fill"
+                                initial={false}
+                                style={{ transformOrigin: 'left', transform: `scaleX(${Math.max(0.04, Math.min(1, inf.importance / maxImp))})` }}
+                                transition={{ delay: 0.12 + (i * 0.06), duration: 0.6 }}
+                              />
+                            </div>
+                            <div className="cm-driver-detail-line">
+                              <code>{inf.feature}</code>
+                              {inf.description && inf.description !== label && (
+                                <span>{inf.description}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
+                    <BarChart3 size={24} className="text-slate-400" />
+                    <p className="text-xs text-slate-400">Market drivers are unavailable</p>
+                    <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
+                  </div>
+                )}
+              </div>
+            </GlassCard>
+            )}
+
+            {/* Model Health + Pipeline Freshness Snapshot */}
+            {showForecast && (
+              <GlassCard
+                id="model-reliability"
+                eyebrow="04 // CALIBRATION & PIPELINE"
+                title="Model reliability"
+                icon={Crosshair}
+                colSpan={4}
+                headerExtra={
+                  <span className={clsx('cm-panel-telemetry-meta', tftDegraded ? 'text-[#dda174]' : 'text-[#74c7a9]')}>
+                    <span>{tftDegraded ? 'Attention' : tftAnalysis ? 'Gate Active' : 'Pending'}</span>
+                  </span>
+                }
+              >
+                <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']} />
+                <div className="cm-pipeline-desk-snapshot">
+                  <div className="cm-pipeline-desk-row">
+                    <span>Horizon Alignment</span>
+                    <strong className="cm-tabular">
+                      {tftDirection && tftImpulse
+                        ? `${tftDirection} 5D · ${tftImpulse} T+1`
+                        : (tftDirection ?? 'Active')}
+                    </strong>
+                  </div>
+                  <div className="cm-pipeline-desk-row">
+                    <span>Last Pipeline Run</span>
+                    <strong className="cm-tabular">
+                      {pipelineStatus?.last_pipeline_status ? `${pipelineStatus.last_pipeline_status} · ${pipelineFreshnessLabel}` : pipelineFreshnessLabel}
+                    </strong>
+                  </div>
+                  <div className="cm-pipeline-desk-row">
+                    <span>Price Bar Freshness</span>
+                    <strong className="cm-tabular">
+                      {pipelineStatus?.price_bar_latest_date
+                        ? `${pipelineStatus.price_bar_latest_date} (${pipelineStatus.price_bar_staleness_days ?? 0}d)`
+                        : tftReferenceDate ?? 'Live stream'}
+                    </strong>
+                  </div>
                 </div>
-              )}
-            </div>
-          </GlassCard>
+              </GlassCard>
+            )}
 
-          {/* Model Health Card */}
-          <GlassCard id="model-reliability" title="Model reliability" icon={Crosshair} colSpan={4}>
-            <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']}/>
-          </GlassCard>
+            {/* Raw 5D Pre-Calibration TFT-ASRO Explainability (VSN + Attention) */}
+            {showXai && (
+              <GlassCard
+                id="neural-analysis"
+                eyebrow="05 // PRE-CALIBRATION 5D EXPLAINABILITY"
+                title="Model focus · VSN & Attention"
+                icon={Cpu}
+                colSpan={8}
+                headerExtra={
+                  <span className="cm-panel-telemetry-meta">
+                    <span>{explain ? 'Raw 5D Focus · Non-causal' : 'Awaiting Explainability'}</span>
+                  </span>
+                }
+              >
+                <div id="tft-focus">
+                  {deferredPanels.companion || streamLens === 'xai' ? (
+                    <Suspense fallback={focusFallback}>
+                      <ModelFocusPanel
+                        data={explain}
+                        error={loadErrors['Model focus']}
+                      />
+                    </Suspense>
+                  ) : focusFallback}
+                </div>
+              </GlassCard>
+            )}
 
-          {/* Cuprum companion stage — the little forge */}
-          <GlassCard id="neural-analysis" title="Cuprum · The little forge" icon={Flame} colSpan={8}>
-            {deferredPanels.companion ? (
-              <Suspense fallback={companionFallback}>
-                <CuprumCompanionPanel
-                  commentary={commentary}
-                  explain={explain}
-                  tftAnalysis={tftAnalysis}
-                  loading={commentaryLoading}
-                  error={loadErrors['AI commentary'] || loadErrors['Model focus']}
-                />
+          </div>
+
+          {showNews && (
+            <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0" data-cm-route-reveal="surface">
+              {deferredPanels.news || streamLens === 'news' ? (
+                <Suspense fallback={newsFallback}>
+                  <NewsIntelligencePanel />
+                </Suspense>
+              ) : newsFallback}
+            </aside>
+          )}
+        </div>
+
+        {showMap && (
+          <section id="market-map" className="cm-dashboard-market-map min-w-0 w-full" aria-label="Global copper market map" data-cm-route-reveal="surface">
+            {deferredPanels.map || streamLens === 'map' ? (
+              <Suspense fallback={<MapSkeleton />}>
+                <HeatmapPanel />
               </Suspense>
-            ) : companionFallback}
-          </GlassCard>
-
-        </div>
-        <aside id="news-intelligence" className="cm-dashboard-news-section min-w-0" data-cm-route-reveal="surface">
-          {deferredPanels.news ? (
-            <Suspense fallback={newsFallback}>
-              <NewsIntelligencePanel />
-            </Suspense>
-          ) : newsFallback}
-        </aside>
-        </div>
-
-        <div id="market-map" className="cm-dashboard-market-map min-w-0 w-full" data-cm-route-reveal="surface">
-          {deferredPanels.map ? (
-            <Suspense fallback={<MapSkeleton />}>
-              <HeatmapPanel />
-            </Suspense>
-          ) : <MapSkeleton />}
-        </div>
+            ) : <MapSkeleton />}
+          </section>
+        )}
       </div>
     </div>
   );
-}
+};

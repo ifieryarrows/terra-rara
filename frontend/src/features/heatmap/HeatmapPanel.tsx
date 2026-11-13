@@ -363,7 +363,7 @@ export const HeatmapPanel: React.FC = () => {
   }, []);
 
   const content = (
-    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full bg-slate-950 font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50' : 'relative w-full overflow-hidden rounded-xl border border-slate-700 shadow-xl'}`} data-cm-route-reveal="surface">
+    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50 bg-[#060a11]' : 'cm-heatmap-stage relative w-full overflow-hidden'}`} data-cm-route-reveal="surface">
       <aside className="cm-heatmap-sidebar" aria-label="Market map controls">
         <header className="cm-heatmap-sidebar-head">
           <div className="cm-heatmap-sidebar-title-row">

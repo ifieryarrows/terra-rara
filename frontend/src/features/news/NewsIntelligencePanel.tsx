@@ -19,9 +19,9 @@ import { RefreshButton } from '../../components/ui/RefreshButton';
 
 const LABEL_OPTIONS: Array<{ id: 'all' | NewsLabel; label: string; tone: string }> = [
   { id: 'all', label: 'All', tone: 'bg-white/5 text-gray-300' },
-  { id: 'BULLISH', label: 'Bullish', tone: 'bg-emerald-500/15 text-emerald-300' },
-  { id: 'BEARISH', label: 'Bearish', tone: 'bg-rose-500/15 text-rose-300' },
-  { id: 'NEUTRAL', label: 'Neutral', tone: 'bg-amber-500/10 text-amber-200' },
+  { id: 'BULLISH', label: 'Bullish', tone: 'bg-[#74c7a9]/15 text-[#74c7a9]' },
+  { id: 'BEARISH', label: 'Bearish', tone: 'bg-[#db8296]/15 text-[#db8296]' },
+  { id: 'NEUTRAL', label: 'Neutral', tone: 'bg-[#dda174]/12 text-[#dda174]' },
 ];
 
 const SINCE_OPTIONS = [
@@ -621,7 +621,7 @@ export const NewsIntelligencePanel: React.FC = () => {
   const neutralCount = labelDist.NEUTRAL ?? 0;
   return (
     <motion.aside
-      className="cm-news-panel glass-panel"
+      className="cm-news-panel"
       aria-label="News intelligence"
       data-cm-route-reveal="surface"
       initial={false}
@@ -648,13 +648,13 @@ export const NewsIntelligencePanel: React.FC = () => {
       {/* Stats summary */}
       <div className="cm-news-summary px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
         <div className="flex items-center gap-1.5 text-xs font-mono mb-2">
-          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300" title={`Bullish (${activeWindowLabel})`}>
-            ↑ {stats.data ? bullishCount : '—'}
+          <span className="px-2 py-0.5 rounded-full bg-[#74c7a9]/12 text-[#74c7a9]" title={`Bullish (${activeWindowLabel})`}>
+            ▲ {stats.data ? bullishCount : '—'}
           </span>
-          <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300" title={`Bearish (${activeWindowLabel})`}>
-            ↓ {stats.data ? bearishCount : '—'}
+          <span className="px-2 py-0.5 rounded-full bg-[#db8296]/12 text-[#db8296]" title={`Bearish (${activeWindowLabel})`}>
+            ▼ {stats.data ? bearishCount : '—'}
           </span>
-          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200" title={`Neutral (${activeWindowLabel})`}>
+          <span className="px-2 py-0.5 rounded-full bg-[#dda174]/12 text-[#dda174]" title={`Neutral (${activeWindowLabel})`}>
             · {stats.data ? neutralCount : '—'}
           </span>
           <span className="ml-auto text-slate-400">

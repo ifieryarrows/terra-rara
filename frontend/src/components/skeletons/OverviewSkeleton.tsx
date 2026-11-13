@@ -12,7 +12,7 @@ const MapSkeleton = () => (
         <span className="cm-map-skeleton__orbit cm-map-skeleton__orbit--reverse" />
         <Globe size={32} className="cm-map-skeleton__globe" />
       </div>
-      <span className="text-slate-400 text-xs font-mono">Loading intelligence map...</span>
+      <span className="text-slate-400 text-xs">Loading intelligence map...</span>
     </div>
   </div>
 );
@@ -33,14 +33,15 @@ export function OverviewSkeleton() {
         <header className="cm-dashboard-hero">
           <div className="cm-dashboard-hero-copy">
             <p className="cm-eyebrow cm-dashboard-hero-eyebrow" data-cm-route-reveal="copy">
-              <BrandMark size={18} variant="small" />
-              COPPER INTELLIGENCE / TERRA RARA
+              <BrandMark size={20} variant="small" />
+              <span>COPPER INTELLIGENCE // TERRA RARA</span>
+              <span className="cm-telemetry-dot-live opacity-50" aria-hidden="true" />
             </p>
             <h1 className="cm-dashboard-title" data-cm-route-reveal="copy">
-              Copper<br /><span>market</span>
+              COMEX <span className="cm-title-glow">COPPER</span>
             </h1>
             <p className="cm-dashboard-hero-subtitle" data-cm-route-reveal="copy">
-              COMEX futures · Price action, model outlook and market context.
+              High Grade Copper Futures · 5D TFT-ASRO Quantiles &amp; Real-Time Price Action.
             </p>
           </div>
 
@@ -51,9 +52,8 @@ export function OverviewSkeleton() {
             aria-hidden="true"
           >
             <div className="cm-dashboard-instrument">
-              <div>
-                <p className="cm-dashboard-instrument-name">{COPPER_INSTRUMENT.displayName}</p>
-                <span className="cm-dashboard-symbol">{COPPER_INSTRUMENT.canonicalSymbol}</span>
+              <div className="cm-instrument-meta">
+                <p className="cm-dashboard-instrument-name">{COPPER_INSTRUMENT.displayName} · COMEX</p>
               </div>
               <span className="cm-dashboard-quote-status">
                 <SkeletonBone className="w-2.5 h-2.5 rounded-full" />
@@ -65,8 +65,25 @@ export function OverviewSkeleton() {
               {/* Transparent text keeps the real quote's line box, so the
                   skeleton and the live price row settle at the same height. */}
               <span className="cm-dashboard-price cm-dashboard-price--skeleton" aria-hidden="true" />
-              <span className="cm-dashboard-currency">USD</span>
+              <span className="cm-dashboard-currency">USD / lb</span>
               <span className="cm-dashboard-change cm-dashboard-change--skeleton" aria-hidden="true" />
+            </div>
+
+            <div className="cm-session-range-strip" aria-hidden="true">
+              <div className="cm-session-range-labels">
+                <span className="cm-session-range-bound">
+                  <SkeletonBone className="w-10 h-2.5 mb-1" />
+                  <SkeletonBone className="w-14 h-3.5" />
+                </span>
+                <SkeletonBone className="w-24 h-3 mx-auto" />
+                <span className="cm-session-range-bound cm-session-range-bound--high">
+                  <SkeletonBone className="w-10 h-2.5 mb-1 ml-auto" />
+                  <SkeletonBone className="w-14 h-3.5 ml-auto" />
+                </span>
+              </div>
+              <div className="cm-session-range-track">
+                <div className="cm-session-range-gradient" />
+              </div>
             </div>
 
             <div className="cm-dashboard-quote-meta">
@@ -75,6 +92,11 @@ export function OverviewSkeleton() {
             </div>
 
             <div className="cm-dashboard-sentiment">
+              <div className="cm-sentiment-radar-visual" aria-hidden="true">
+                <span className="cm-radar-ring cm-radar-ring--outer" />
+                <span className="cm-radar-ring cm-radar-ring--inner" />
+                <SkeletonBone className="w-4 h-4 rounded-full" />
+              </div>
               <div className="cm-dashboard-sentiment-copy">
                 <span>NEWS SENTIMENT</span>
                 <small>Headline tone</small>
@@ -90,13 +112,33 @@ export function OverviewSkeleton() {
         </header>
 
         {/* Overview Tools Skeleton */}
-        <div className="cm-overview-tools" data-cm-route-reveal="surface" aria-hidden="true">
+        <div className="cm-overview-tools cm-glass-dock" data-cm-route-reveal="surface" aria-hidden="true">
           <nav aria-label="Market overview sections">
-            <a href="#price-forecast" tabIndex={-1}>Price action</a>
-            <a href="#weekly-outlook" tabIndex={-1}>Weekly outlook</a>
-            <a href="#market-drivers" tabIndex={-1}>Drivers</a>
-            <a href="#news-intelligence" tabIndex={-1}>News flow</a>
-            <a href="#market-map" tabIndex={-1}>Market map</a>
+            <a href="#price-forecast" tabIndex={-1}>
+              <Activity size={14} aria-hidden="true" />
+              <span>Price action</span>
+              <span className="cm-nav-chip">LIVE</span>
+            </a>
+            <a href="#weekly-outlook" tabIndex={-1}>
+              <Brain size={14} aria-hidden="true" />
+              <span>Weekly outlook</span>
+              <span className="cm-nav-chip cm-nav-chip--cyan">5D</span>
+            </a>
+            <a href="#market-drivers" tabIndex={-1}>
+              <BarChart3 size={14} aria-hidden="true" />
+              <span>Drivers</span>
+              <span className="cm-nav-chip">5</span>
+            </a>
+            <a href="#news-intelligence" tabIndex={-1}>
+              <Activity size={14} aria-hidden="true" />
+              <span>News flow</span>
+              <span className="cm-nav-chip">FEED</span>
+            </a>
+            <a href="#market-map" tabIndex={-1}>
+              <Globe size={14} aria-hidden="true" />
+              <span>Market map</span>
+              <span className="cm-nav-chip">GLOBAL</span>
+            </a>
           </nav>
           <button type="button" disabled tabIndex={-1} className="cm-button cm-button--secondary cm-refresh opacity-60 flex items-center gap-2">
             <SkeletonBone className="w-4 h-4 rounded-full" />
@@ -116,7 +158,7 @@ export function OverviewSkeleton() {
             >
               <h2 className="cm-panel-title">
                 <Activity size={18} aria-hidden="true" />
-                Price action / {COPPER_INSTRUMENT.canonicalSymbol}
+                Price action · {COPPER_INSTRUMENT.displayName}
               </h2>
               <div className="cm-panel-body" aria-hidden="true">
                 <div className="cm-price-chart">

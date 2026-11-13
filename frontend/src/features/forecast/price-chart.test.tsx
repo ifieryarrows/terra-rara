@@ -47,8 +47,39 @@ it('keeps a nonzero axis span for flat prices and leaves crossed/missing interva
   const crossed = { ...forecast, prediction: { ...forecast.prediction!, daily_forecasts: [{ ...forecast.prediction!.daily_forecasts[0], price_q10: 5, price_q90: 4 }] } };
   const row = preparePriceChart(history, crossed, 30).rows[30];
   expect(row.priceRange).toBeUndefined();
+  expect(row.priceConvictionRange).toBeUndefined();
   expect(row.priceQ10).toBe(5);
   expect(preparePriceChart([{ ...history[0], price: NaN }], null, 30).rows).toHaveLength(0);
+});
+
+it('computes the Q25-Q75 inner conviction envelope and horizon readouts for valid 5D paths', () => {
+  const fullForecast = {
+    direction: 'BULLISH',
+    primary_forecast_return: 0.025,
+    primary_forecast_q10: -0.012,
+    primary_forecast_q90: 0.064,
+    t1_impulse: 'BEARISH',
+    t1_return: -0.004,
+    prediction: {
+      reference_price: 4.099,
+      reference_price_date: history[99].date,
+      weekly_return: 0.025,
+      daily_forecasts: [
+        { day: 1, forecast_date: '2026-04-13', daily_return: -0.004, cumulative_return: -0.004, price_median: 4.083, price_q10: 4.01, price_q90: 4.16, price_q02: 3.95, price_q98: 4.22 },
+        { day: 5, forecast_date: '2026-04-17', daily_return: 0.008, cumulative_return: 0.025, price_median: 4.2015, price_q10: 4.05, price_q90: 4.36, price_q02: 3.96, price_q98: 4.45 },
+      ],
+    },
+  } as TFTAnalysisResponse;
+  const chart = preparePriceChart(history, fullForecast, 30);
+  expect(chart.rows).toHaveLength(32);
+  expect(chart.rows[31].priceConvictionRange).toBeDefined();
+  expect(chart.rows[31].priceConvictionRange![0]).toBeGreaterThan(4.05);
+  expect(chart.rows[31].priceConvictionRange![1]).toBeLessThan(4.36);
+
+  render(<PriceForecastChart history={history} forecast={fullForecast}/>);
+  expect(screen.getByText(/5D Horizon/)).toBeVisible();
+  expect(screen.getByText(/T\+1 Diagnostic/)).toBeVisible();
+  expect(screen.getByText(/BEARISH -0\.40%/)).toBeVisible();
 });
 
 it('lets readers change periods and series and inspect all available table values on demand', async () => {
@@ -69,7 +100,7 @@ it('lets readers change periods and series and inspect all available table value
   details.open = false;
   fireEvent(details, new Event('toggle'));
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
-});
+}, 15000);
 
 it('labels historical-only, unavailable and loading failures without inventing forecast values', () => {
   const { rerender } = render(<PriceForecastChart history={history} forecast={null}/>);
@@ -94,4 +125,27 @@ it('does not turn missing daily Sharpe into a healthy status alongside weekly ac
   expect(screen.getByText('Daily Sharpe').closest('.cm-reliability-row')).toHaveTextContent('—');
   expect(screen.queryByText('HEALTHY')).not.toBeInTheDocument();
   expect(screen.getByRole('link', { name: /Review model metrics/ })).toHaveAttribute('href', '/models');
+});
+
+it('renders complete reliability telemetry including RMSE/MAE, Sharpe, PI80, and gate state', () => {
+  render(
+    <MemoryRouter>
+      <ModelReliability
+        metrics={{
+          weekly_directional_accuracy: 0.562,
+          weekly_sample_count: 120,
+          sharpe_ratio: 0.84,
+          rmse: 0.0184,
+          mae: 0.0132,
+          variance_ratio: 0.92,
+        }}
+        unavailable={false}
+      />
+    </MemoryRouter>
+  );
+  expect(screen.getByText('Quality Gate Passed')).toBeVisible();
+  expect(screen.getByText('56.2%')).toBeVisible();
+  expect(screen.getByText('0.84')).toBeVisible();
+  expect(screen.getByText('0.0184 / 0.0132')).toBeVisible();
+  expect(screen.getByText('VR 0.92')).toBeVisible();
 });

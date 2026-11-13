@@ -12,10 +12,10 @@ const EMPTY_STATE_TEXT = 'Model focus will appear after the next model refresh.'
 
 const STAGE_WIDTH = 360;
 const STAGE_HEIGHT = 132;
-const WAVE_LEFT = 10;
-const WAVE_RIGHT = 308;
-const CORE_X = 338;
-const CORE_Y = 66;
+const WAVE_LEFT = 12;
+const WAVE_RIGHT = 348;
+const PEAK_Y = 18;
+const BASELINE_Y = 104;
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -133,23 +133,23 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
 
   const waveGeometry = useMemo(() => {
     if (attentionBars.length === 0) return null;
-    const upperPts: Array<{ x: number; y: number; ratio: number }> = [];
-    const lowerPts: Array<{ x: number; y: number }> = [];
+    const pts: Array<{ x: number; y: number; ratio: number }> = [];
+    const spanY = BASELINE_Y - PEAK_Y;
     for (let i = 0; i < attentionBars.length; i += 1) {
       const weight = finiteNumber(attentionBars[i]?.weight) ?? 0;
       const ratio = maxAttentionWeight > 0 ? Math.max(0, Math.min(1, weight / maxAttentionWeight)) : 0;
       const x = slotX(i, attentionBars.length);
-      const upperAmp = 6 + ratio * 42;
-      const lowerAmp = 4 + ratio * 26;
-      upperPts.push({ x, y: CORE_Y - upperAmp, ratio });
-      lowerPts.push({ x, y: CORE_Y + lowerAmp });
+      const barH = 3 + ratio * (spanY - 3);
+      pts.push({ x, y: BASELINE_Y - barH, ratio });
     }
-    const upperLine = buildSmoothPath(upperPts);
-    const lowerReversed = [...lowerPts].reverse();
-    const lowerLine = buildSmoothPath(lowerReversed);
-    const envelopePath = `${upperLine} L ${lowerReversed[0].x.toFixed(1)},${lowerReversed[0].y.toFixed(1)} ${lowerLine.replace(/^M [^C]+/, '')} Z`;
-    return { upperPts, lowerPts, upperLine, envelopePath };
-  }, [attentionBars, maxAttentionWeight]);
+    const curveLine = buildSmoothPath(pts);
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const areaPath = `${curveLine} L ${last.x.toFixed(1)},${BASELINE_Y} L ${first.x.toFixed(1)},${BASELINE_Y} Z`;
+    const meanRatio = maxAttentionWeight > 0 ? Math.max(0, Math.min(1, meanAttentionWeight / maxAttentionWeight)) : 0;
+    const uniformY = BASELINE_Y - (3 + meanRatio * (spanY - 3));
+    return { pts, curveLine, areaPath, uniformY };
+  }, [attentionBars, maxAttentionWeight, meanAttentionWeight]);
 
   if (!data || (topEncoder.length === 0 && attentionBars.length === 0)) {
     return (
@@ -256,8 +256,8 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
               </span>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Temporal resonance across the {attentionBars.length}-session encoder lookback
-              {windowStart && windowEnd ? ` (${windowStart} to ${windowEnd})` : ''}. Curved copper filaments trace the historical sessions the network weighted most heavily to anchor its forecast step.
+              Distribution of encoder lookback attention across {attentionBars.length} sessions
+              {windowStart && windowEnd ? ` (${windowStart} to ${windowEnd})` : ''}. Bars above the dashed floor mark dates the model weighted most heavily.
             </p>
           </div>
 
@@ -273,106 +273,125 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
                 aria-hidden="true"
               >
                 <defs>
-                  <linearGradient id={`${uid}-wave`} x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="var(--cm-forecast)" stopOpacity="0.16" />
-                    <stop offset="65%" stopColor="var(--cm-forecast)" stopOpacity="0.28" />
-                    <stop offset="100%" stopColor="var(--cm-copper)" stopOpacity="0.38" />
+                  <linearGradient id={`${uid}-wave`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--cm-copper)" stopOpacity="0.30" />
+                    <stop offset="55%" stopColor="var(--cm-forecast)" stopOpacity="0.16" />
+                    <stop offset="100%" stopColor="var(--cm-forecast)" stopOpacity="0.01" />
                   </linearGradient>
                   <linearGradient id={`${uid}-stroke`} x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="var(--cm-forecast)" stopOpacity="0.72" />
-                    <stop offset="70%" stopColor="var(--cm-forecast)" stopOpacity="0.92" />
+                    <stop offset="0%" stopColor="var(--cm-forecast)" stopOpacity="0.68" />
+                    <stop offset="65%" stopColor="var(--cm-forecast)" stopOpacity="0.90" />
                     <stop offset="100%" stopColor="var(--cm-copper)" stopOpacity="1" />
                   </linearGradient>
                 </defs>
 
-                {/* Topographic reference rules */}
-                <line x1={WAVE_LEFT} x2={WAVE_RIGHT} y1="26" y2="26" stroke="var(--cm-border)" strokeDasharray="2 6" strokeOpacity="0.55" />
-                <line x1={WAVE_LEFT} x2={CORE_X} y1={CORE_Y} y2={CORE_Y} stroke="var(--cm-copper)" strokeOpacity="0.28" strokeWidth="1" />
-                <line x1={WAVE_LEFT} x2={WAVE_RIGHT} y1="106" y2="106" stroke="var(--cm-border)" strokeDasharray="2 6" strokeOpacity="0.55" />
+                {/* Quartile horizon gridlines */}
+                {[0.25, 0.5, 0.75].map((q) => {
+                  const qx = WAVE_LEFT + (WAVE_RIGHT - WAVE_LEFT) * q;
+                  return (
+                    <line
+                      key={q}
+                      x1={qx}
+                      x2={qx}
+                      y1={PEAK_Y - 4}
+                      y2={BASELINE_Y}
+                      stroke="var(--cm-border)"
+                      strokeOpacity="0.35"
+                      strokeWidth="0.75"
+                    />
+                  );
+                })}
 
-                {/* Mirrored interferometric memory envelope */}
-                <path d={waveGeometry.envelopePath} fill={`url(#${uid}-wave)`} />
-                <path d={waveGeometry.upperLine} fill="none" stroke={`url(#${uid}-stroke)`} strokeWidth="1.6" strokeLinejoin="round" />
+                {/* Uniform equal-weight floor & temporal baseline */}
+                <line
+                  x1={WAVE_LEFT}
+                  x2={WAVE_RIGHT}
+                  y1={waveGeometry.uniformY}
+                  y2={waveGeometry.uniformY}
+                  stroke="var(--cm-muted)"
+                  strokeDasharray="3 4"
+                  strokeOpacity="0.45"
+                  strokeWidth="0.9"
+                />
+                <line
+                  x1={WAVE_LEFT}
+                  x2={WAVE_RIGHT}
+                  y1={BASELINE_Y}
+                  y2={BASELINE_Y}
+                  stroke="var(--cm-border)"
+                  strokeOpacity="0.85"
+                  strokeWidth="1"
+                />
 
-                {/* Session nodal spines */}
-                {waveGeometry.upperPts.map((pt, idx) => {
-                  const lowPt = waveGeometry.lowerPts[idx];
+                {/* Smooth single-sided spectral density profile */}
+                <path d={waveGeometry.areaPath} fill={`url(#${uid}-wave)`} />
+                <path
+                  d={waveGeometry.curveLine}
+                  fill="none"
+                  stroke={`url(#${uid}-stroke)`}
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+
+                {/* Individual encoder session pillars */}
+                {waveGeometry.pts.map((pt, idx) => {
                   const isPeak = peakSessions.some((p) => p.index === idx);
                   const isSelected = idx === activeSessionIdx;
                   return (
-                    <line
-                      key={idx}
-                      x1={pt.x}
-                      x2={pt.x}
-                      y1={pt.y}
-                      y2={lowPt.y}
-                      stroke={isSelected || isPeak ? 'var(--cm-copper)' : 'var(--cm-forecast)'}
-                      strokeOpacity={isSelected ? 0.95 : isPeak ? 0.68 : 0.18 + pt.ratio * 0.35}
-                      strokeWidth={isSelected ? 1.8 : isPeak ? 1.25 : 0.8}
-                    />
+                    <g key={idx}>
+                      <line
+                        x1={pt.x}
+                        x2={pt.x}
+                        y1={pt.y}
+                        y2={BASELINE_Y}
+                        stroke={isSelected ? '#f7dcb8' : isPeak ? 'var(--cm-copper)' : 'var(--cm-forecast)'}
+                        strokeOpacity={isSelected ? 0.98 : isPeak ? 0.82 : 0.24 + pt.ratio * 0.34}
+                        strokeWidth={isSelected ? 2.4 : isPeak ? 1.85 : 1.15}
+                        strokeLinecap="round"
+                      />
+                      {isPeak && !isSelected && (
+                        <circle
+                          cx={pt.x}
+                          cy={pt.y}
+                          r="2.2"
+                          fill="var(--cm-copper)"
+                          fillOpacity="0.9"
+                        />
+                      )}
+                    </g>
                   );
                 })}
 
-                {/* Curved signal arcs from top memory peaks + active session into the T+1 Forecast Core */}
-                {peakSessions.map((peak, rankIdx) => {
-                  const pt = waveGeometry.upperPts[peak.index];
-                  if (!pt) return null;
-                  const midX = (pt.x + CORE_X) / 2;
-                  const archY = Math.max(8, Math.min(pt.y, CORE_Y) - (16 + (PEAK_CHIP_LIMIT - rankIdx) * 6));
-                  const arcPath = `M ${pt.x.toFixed(1)},${pt.y.toFixed(1)} Q ${midX.toFixed(1)},${archY.toFixed(1)} ${CORE_X},${CORE_Y}`;
-                  const isSelected = peak.index === activeSessionIdx;
-                  return (
-                    <path
-                      key={`arc-${peak.index}`}
-                      d={arcPath}
-                      fill="none"
-                      stroke="var(--cm-copper)"
-                      strokeWidth={isSelected ? 1.75 : 1.05}
-                      strokeOpacity={isSelected ? 0.92 : 0.38}
-                      strokeDasharray={isSelected ? undefined : '3 4'}
-                    />
-                  );
-                })}
-
-                {!peakSessions.some((p) => p.index === activeSessionIdx) && waveGeometry.upperPts[activeSessionIdx] && (() => {
-                  const pt = waveGeometry.upperPts[activeSessionIdx];
-                  const midX = (pt.x + CORE_X) / 2;
-                  const archY = Math.max(10, pt.y - 18);
-                  return (
-                    <path
-                      d={`M ${pt.x.toFixed(1)},${pt.y.toFixed(1)} Q ${midX.toFixed(1)},${archY.toFixed(1)} ${CORE_X},${CORE_Y}`}
-                      fill="none"
-                      stroke="var(--cm-copper)"
-                      strokeWidth="1.65"
-                      strokeOpacity="0.9"
-                    />
-                  );
-                })()}
-
-                {/* Active session crosshair and node */}
-                {waveGeometry.upperPts[activeSessionIdx] && (() => {
-                  const pt = waveGeometry.upperPts[activeSessionIdx];
+                {/* Active / inspected session crosshair & summit beacon */}
+                {waveGeometry.pts[activeSessionIdx] && (() => {
+                  const pt = waveGeometry.pts[activeSessionIdx];
                   return (
                     <g>
-                      <line x1={pt.x} x2={pt.x} y1="8" y2={STAGE_HEIGHT - 8} stroke="var(--cm-copper)" strokeOpacity="0.45" strokeDasharray="2 3" />
-                      <circle cx={pt.x} cy={pt.y} r="4.2" fill="var(--cm-bg)" stroke="var(--cm-copper)" strokeWidth="1.8" />
+                      <line
+                        x1={pt.x}
+                        x2={pt.x}
+                        y1="8"
+                        y2={BASELINE_Y + 4}
+                        stroke="#f7dcb8"
+                        strokeOpacity="0.45"
+                        strokeDasharray="2 3"
+                      />
+                      <circle cx={pt.x} cy={pt.y} r="4.2" fill="var(--cm-bg)" stroke="#f7dcb8" strokeWidth="1.75" />
                       <circle cx={pt.x} cy={pt.y} r="1.8" fill="var(--cm-copper)" />
                     </g>
                   );
                 })()}
 
-                {/* Right-side T+1 / 5D Forecast Anchor Core */}
-                <g transform={`translate(${CORE_X} ${CORE_Y})`}>
-                  <circle r="16" fill="none" stroke="var(--cm-copper)" strokeOpacity="0.22" strokeDasharray="2 3" />
-                  <circle r="10" fill="none" stroke="var(--cm-copper)" strokeOpacity="0.48" />
-                  <circle r="4.2" fill="var(--cm-copper)" />
-                  <text x="0" y="-21" textAnchor="middle" fill="var(--cm-copper)" fontSize="8.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="600">
-                    {stepDayNumber ? `T+${stepDayNumber}` : '5D'}
-                  </text>
-                  <text x="0" y="27" textAnchor="middle" fill="var(--cm-muted)" fontSize="7.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace">
-                    ANCHOR
-                  </text>
-                </g>
+                {/* Editorial timeline labels */}
+                <text x={WAVE_LEFT} y="121" fill="var(--cm-muted)" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace">
+                  {windowStart || `-${attentionBars.length}D`}
+                </text>
+                <text x={(WAVE_LEFT + WAVE_RIGHT) / 2} y="121" textAnchor="middle" fill="var(--cm-muted)" fontSize="7.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" opacity="0.82">
+                  DASHED FLOOR = UNIFORM WEIGHT
+                </text>
+                <text x={WAVE_RIGHT} y="121" textAnchor="end" fill="var(--cm-copper)" fontSize="8" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="600">
+                  {stepDayNumber ? `TARGET T+${stepDayNumber}` : 'TARGET 5D'}
+                </text>
               </svg>
             )}
 

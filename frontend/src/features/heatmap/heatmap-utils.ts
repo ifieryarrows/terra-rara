@@ -13,11 +13,11 @@ const mix = (from: string, to: string, amount: number) => {
 };
 
 export function getColorForChange(change?: number): string {
-  if (change == null || !Number.isFinite(change)) return '#3f4652';
+  if (change == null || !Number.isFinite(change)) return '#283140';
   const strength = Math.min(1, Math.abs(change) / 4.5);
-  if (change > 0) return mix('#315445', '#12c45b', 0.22 + strength * 0.78);
-  if (change < 0) return mix('#60434a', '#ff3048', 0.22 + strength * 0.78);
-  return '#414852';
+  if (change > 0) return mix('#233a35', '#52b896', 0.24 + strength * 0.76);
+  if (change < 0) return mix('#3f2630', '#c96279', 0.24 + strength * 0.76);
+  return '#2d3645';
 }
 
 export function clampTooltipPosition(

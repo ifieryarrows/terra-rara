@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
-import { Newspaper, TrendingUp, TrendingDown, Minus, Globe } from 'lucide-react';
+import { Newspaper, Globe } from 'lucide-react';
 import type { NewsItem, NewsLabel } from '../../types';
 
 interface NewsCardProps {
@@ -11,20 +11,20 @@ interface NewsCardProps {
   duplicate?: boolean;
 }
 
-const LABEL_STYLES: Record<NewsLabel, { chip: string; icon: typeof TrendingUp; text: string }> = {
+const LABEL_STYLES: Record<NewsLabel, { chip: string; glyph: string; text: string }> = {
   BULLISH: {
-    chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/40',
-    icon: TrendingUp,
+    chip: 'bg-[#74c7a9]/12 text-[#74c7a9]',
+    glyph: '▲',
     text: 'Bullish',
   },
   BEARISH: {
-    chip: 'bg-rose-500/15 text-rose-300 border-rose-400/40',
-    icon: TrendingDown,
+    chip: 'bg-[#db8296]/12 text-[#db8296]',
+    glyph: '▼',
     text: 'Bearish',
   },
   NEUTRAL: {
-    chip: 'bg-amber-500/10 text-amber-200 border-amber-400/30',
-    icon: Minus,
+    chip: 'bg-white/[0.06] text-[#a3afbf]',
+    glyph: '■',
     text: 'Neutral',
   },
 };
@@ -54,7 +54,7 @@ function formatRelativeTime(iso: string | null): string {
   if (diffH < 24) return `${diffH}h ago`;
   const diffD = Math.round(diffH / 24);
   if (diffD < 7) return `${diffD}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function formatEventType(raw: string | null | undefined): string {
@@ -69,7 +69,6 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
   const sentiment = item.sentiment;
   const label = normaliseLabel(sentiment?.label);
   const style = LABEL_STYLES[label];
-  const Icon = style.icon;
   const relevancePct = Math.max(0, Math.min(100, Math.round(((sentiment?.relevance ?? 0) * 100))));
   const confidencePct = Math.max(0, Math.min(100, Math.round(((sentiment?.confidence ?? 0) * 100))));
   const channelCode = CHANNEL_LABELS[item.channel] ?? item.channel?.slice(0, 2).toUpperCase() ?? '';
@@ -86,11 +85,10 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       onClick={handleSelect}
       className={clsx(
         'cm-news-card',
-        'w-full text-left rounded-lg border px-2.5 py-2 transition-colors duration-200',
-        'bg-midnight/50 hover:bg-midnight/80',
-        'border-white/5 hover:border-copper-400/40',
-        'focus:outline-none focus:ring-2 focus:ring-copper-400/50',
-        selected && 'border-copper-400/70 bg-midnight/80 shadow-lg',
+        `cm-news-card--${label.toLowerCase()}`,
+        'w-full text-left px-3 py-2.5 transition-colors duration-200',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f6c8a7]/60',
+        selected && 'cm-news-card--selected',
       )}
       data-cm-route-reveal="surface"
       initial={{ opacity: 0, y: 8 }}
@@ -132,18 +130,18 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
       <div className="cm-news-card-footer flex items-center gap-1.5 flex-wrap">
         <span
           className={clsx(
-            'cm-news-card-sentiment inline-flex items-center gap-0.5 text-xs font-mono tracking-wider uppercase',
-            'px-1.5 py-0.5 rounded-full border',
+            'cm-news-card-sentiment inline-flex items-center gap-1 text-xs font-mono tracking-wider uppercase',
+            'px-1.5 py-0.5 rounded-sm',
             style.chip,
           )}
         >
-          <Icon size={9} />
+          <span className="text-[10px] leading-none" aria-hidden="true">{style.glyph}</span>
           {style.text}
         </span>
 
         {sentiment?.event_type && (
           <span
-            className="cm-news-card-event text-xs font-mono text-gray-400 bg-white/5 px-1.5 py-0.5 rounded-full truncate max-w-[110px]"
+            className="cm-news-card-event text-xs font-mono text-gray-400 bg-white/[0.04] px-1.5 py-0.5 rounded-sm truncate max-w-[110px]"
             title={sentiment.event_type}
           >
             {formatEventType(sentiment.event_type)}
@@ -152,7 +150,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
 
         {sentiment?.scoring_mode === 'deterministic_fallback' && (
           <span
-            className="text-xs font-mono text-amber-300 bg-amber-500/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full"
+            className="text-xs font-mono text-[#dda174] bg-[#dda174]/10 px-1.5 py-0.5 rounded-sm"
             title={sentiment.fallback_reason || 'Model service unavailable'}
           >
             Local fallback

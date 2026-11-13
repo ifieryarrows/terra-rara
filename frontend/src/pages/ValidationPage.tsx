@@ -15,7 +15,7 @@ const fmtNum = (v?: any, digits = 3) =>
 
 export const ValidationPage = () => {
   const { data, isLoading, isError, refetch, isFetching } = useBacktestReport();
-  const header = <PageHeader eyebrow="03 / THE EVIDENCE" title="Walk-Forward Validation" description={<>Out-of-sample backtest results and baseline comparisons.{data?.report_date && <span className="block">Report generated {new Date(data.report_date).toLocaleString()}</span>}</>} actions={<>{data?.verdict && <span className="cm-filter-chip">Verdict: {data.verdict}</span>}<RefreshButton onClick={() => refetch()} busy={isFetching}/></>}/>;
+  const header = <PageHeader eyebrow="03 / THE EVIDENCE" title="Walk-Forward Validation" description={<>Out-of-sample backtest results and baseline comparisons.{data?.report_date && <span className="block">Report generated {new Date(data.report_date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>}</>} actions={<>{data?.verdict && <span className="cm-filter-chip">Verdict: {data.verdict}</span>}<RefreshButton onClick={() => refetch()} busy={isFetching}/></>}/>;
 
   if (isLoading) {
     return <ValidationSkeleton />;

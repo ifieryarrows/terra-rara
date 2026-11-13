@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, Link, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell, SCROLL_THRESHOLD } from './AppShell';
 
 describe('AppShell auto-hiding sticky header', () => {
@@ -65,7 +66,7 @@ describe('AppShell auto-hiding sticky header', () => {
 
     expect(screen.getByRole('link', { name: 'Skip to workspace' })).toHaveAttribute('href', '#main-content');
     expect(screen.getByRole('link', { name: 'CopperMind Terra Rara home' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Overview' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Desk' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Models' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Validation' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'System' })).toBeVisible();
@@ -663,4 +664,150 @@ describe('AppShell auto-hiding sticky header', () => {
     expect(header).not.toHaveClass('cm-workspace-header--hidden');
     expect(header).toHaveAttribute('data-state', 'visible');
   });
+});
+
+describe('AppShell command bar, observatory audio, and global Cuprum pet', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }));
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      getImageData: vi.fn(),
+      putImageData: vi.fn(),
+      createImageData: vi.fn(),
+      setTransform: vi.fn(),
+      drawImage: vi.fn(),
+      save: vi.fn(),
+      fillText: vi.fn(),
+      restore: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+      stroke: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      rotate: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      measureText: vi.fn().mockReturnValue({ width: 0 }),
+      createRadialGradient: vi.fn().mockReturnValue({ addColorStop: vi.fn() }),
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders COMEX telemetry fallback and observatory sound toggle without QueryClientProvider', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <AppShell />
+      </MemoryRouter>
+    );
+
+    const quote = screen.getByLabelText('COMEX Copper live telemetry');
+    expect(quote).toHaveTextContent('HG=F');
+    expect(quote).toHaveTextContent('COMEX');
+    expect(quote).toHaveTextContent('Desk ready');
+
+    const audioBtn = screen.getByRole('button', { name: 'Enable observatory ambient sound' });
+    expect(audioBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(audioBtn).toHaveTextContent('Muted');
+
+    await user.click(audioBtn);
+    const activeAudioBtn = screen.getByRole('button', { name: 'Mute observatory ambient sound' });
+    expect(activeAudioBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(activeAudioBtn).toHaveTextContent('Audio');
+
+    await user.click(activeAudioBtn);
+    expect(screen.getByRole('button', { name: 'Enable observatory ambient sound' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+  });
+
+  it('displays live HG=F quote & invalidates queries on workspace refresh inside QueryClientProvider', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/live-price')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ symbol: 'HG=F', price: 4.5678, timestamp: '2026-11-12T00:00:00Z' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ status: 'healthy', database: 'ok' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+      })
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    queryClient.setQueryData(['live-price'], {
+      symbol: 'HG=F',
+      price: 4.5678,
+      timestamp: '2026-11-12T00:00:00Z',
+    });
+    queryClient.setQueryData(['system-status'], { status: 'healthy' });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <AppShell />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const quote = screen.getByLabelText('COMEX Copper live telemetry');
+    expect(quote).toHaveTextContent('HG=F');
+    expect(quote).toHaveTextContent('$4.5678');
+    expect(quote).toHaveTextContent('LIVE');
+
+    const refreshBtn = screen.getByRole('button', { name: 'Refresh workspace telemetry' });
+    await user.click(refreshBtn);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('mounts global Cuprum pet lazily and keeps it mounted across workspace route transitions', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="/dashboard" element={<div>Desk body</div>} />
+            <Route path="/models" element={<div>Models body</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const stage = await screen.findByTestId('cuprum-companion-stage', {}, { timeout: 12_000 });
+    expect(stage).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: 'Models' }));
+    expect(screen.getByText('Models body')).toBeInTheDocument();
+    expect(screen.getByTestId('cuprum-companion-stage')).toBe(stage);
+  }, 20_000);
 });

@@ -12,9 +12,9 @@ interface NewsDetailDrawerProps {
 }
 
 const LABEL_STYLES: Record<NewsLabel, string> = {
-  BULLISH: 'text-emerald-300 bg-emerald-500/15 border-emerald-400/40',
-  BEARISH: 'text-rose-300 bg-rose-500/15 border-rose-400/40',
-  NEUTRAL: 'text-amber-200 bg-amber-500/10 border-amber-400/30',
+  BULLISH: 'text-[#74c7a9] bg-[#74c7a9]/15 border-[#74c7a9]/35',
+  BEARISH: 'text-[#db8296] bg-[#db8296]/15 border-[#db8296]/35',
+  NEUTRAL: 'text-[#dda174] bg-[#dda174]/12 border-[#dda174]/30',
 };
 
 function normaliseLabel(raw: string | null | undefined): NewsLabel {
@@ -147,11 +147,12 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                 )}
                 {displayed.published_at && (
                   <span>
-                    {new Date(displayed.published_at).toLocaleString(undefined, {
+                    {new Date(displayed.published_at).toLocaleString('en-US', {
                       month: 'short',
                       day: 'numeric',
                       hour: '2-digit',
                       minute: '2-digit',
+                      hour12: false,
                     })}
                   </span>
                 )}
@@ -198,9 +199,9 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                       <div className="text-xs uppercase tracking-widest text-slate-400 mb-1">
                         FinBERT probabilities
                       </div>
-                      <ProbBar label="Pos" value={displayed.sentiment.finbert.pos} color="bg-emerald-400/80" />
-                      <ProbBar label="Neu" value={displayed.sentiment.finbert.neu} color="bg-amber-400/70" />
-                      <ProbBar label="Neg" value={displayed.sentiment.finbert.neg} color="bg-rose-400/80" />
+                      <ProbBar label="Pos" value={displayed.sentiment.finbert.pos} color="bg-[#74c7a9]/80" />
+                      <ProbBar label="Neu" value={displayed.sentiment.finbert.neu} color="bg-[#dda174]/70" />
+                      <ProbBar label="Neg" value={displayed.sentiment.finbert.neg} color="bg-[#db8296]/80" />
                     </div>
                   )}
 

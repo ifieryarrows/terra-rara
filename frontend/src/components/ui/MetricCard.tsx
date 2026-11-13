@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 export function MetricCard({ label, value, hint, tone = 'neutral' }: {
-  label: string; value: ReactNode; hint?: string; tone?: 'good' | 'bad' | 'neutral';
+  label: string; value: ReactNode; hint?: string; tone?: 'good' | 'bad' | 'neutral' | 'copper' | 'forecast';
 }) {
-  return <div className="cm-metric" data-cm-route-reveal="surface"><p className="cm-metric-label">{label}</p><p className={`cm-metric-value cm-tone-${tone}`}>{value}</p>{hint && <p className="cm-metric-hint">{hint}</p>}</div>;
+  return <div className="cm-metric" data-cm-route-reveal="surface"><p className="cm-metric-label">{label}</p><p className={`cm-metric-value cm-tabular cm-tone-${tone}`}>{value}</p>{hint && <p className="cm-metric-hint">{hint}</p>}</div>;
 }

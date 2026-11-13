@@ -12,7 +12,7 @@ const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits
 
 export const ModelsPage = () => {
   const { data, isLoading, isError, refetch, isFetching } = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
-  const header = <PageHeader eyebrow="02 / MODEL INTELLIGENCE" title="TFT-ASRO Model" description={<>Weekly strategy, daily diagnostics and the evidence behind each forecast.{data?.trained_at && <span className="block">{data.symbol} · Checkpoint trained {new Date(data.trained_at).toLocaleString()}</span>}</>} actions={data?.quality_gate && <span className={`cm-filter-chip cm-tone-${data.quality_gate.passed ? 'good' : 'bad'}`}>Quality gate: {data.quality_gate.passed ? 'Passed' : 'Failed'}</span>}/>;
+  const header = <PageHeader eyebrow="02 / MODEL INTELLIGENCE" title="TFT-ASRO Model" description={<>Weekly strategy, daily diagnostics and the evidence behind each forecast.{data?.trained_at && <span className="block">{data.symbol} · Checkpoint trained {new Date(data.trained_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>}</>} actions={data?.quality_gate && <span className={`cm-filter-chip cm-tone-${data.quality_gate.passed ? 'good' : 'bad'}`}>Quality gate: {data.quality_gate.passed ? 'Passed' : 'Failed'}</span>}/>;
 
   if (isLoading) {
     return <ModelsSkeleton />;
@@ -43,14 +43,16 @@ export const ModelsPage = () => {
       {/* Quality gate reasons */}
       {gate && gate.reasons?.length > 0 && (
         <div
-          className={`rounded-lg border p-4 text-sm ${
+          className={`border-l-2 pl-4 py-1 text-sm ${
             gate.passed
-              ? 'border-emerald-800/40 bg-emerald-950/20 text-emerald-200'
-              : 'border-rose-800/40 bg-rose-950/20 text-rose-200'
+              ? 'border-[#74c7a9]/70 text-slate-200'
+              : 'border-[#db8296]/70 text-slate-200'
           }`}
         >
-          <p className="text-xs uppercase tracking-widest mb-2">Gate Notes</p>
-          <ul className="list-disc list-inside space-y-1">
+          <p className={`text-xs uppercase tracking-widest mb-2 ${gate.passed ? 'text-[#74c7a9]' : 'text-[#db8296]'}`}>
+            Gate Notes
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-slate-300">
             {gate.reasons.map((r: string, i: number) => (
               <li key={i}>{r}</li>
             ))}
@@ -59,9 +61,9 @@ export const ModelsPage = () => {
       )}
 
       {gate && gate.warnings?.length > 0 && (
-        <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-100">
-          <p className="text-xs uppercase tracking-widest mb-2">Stability Warnings</p>
-          <ul className="list-disc list-inside space-y-1">
+        <div className="border-l-2 border-[#dda174]/70 pl-4 py-1 text-sm text-slate-200">
+          <p className="text-xs uppercase tracking-widest mb-2 text-[#dda174]">Stability Warnings</p>
+          <ul className="list-disc list-inside space-y-1 text-slate-300">
             {gate.warnings.map((warning: string, i: number) => (
               <li key={i}>{warning}</li>
             ))}
@@ -217,17 +219,17 @@ export const ModelsPage = () => {
                   <div className="flex justify-between items-start text-sm mb-2 gap-3">
                     <div className="flex flex-wrap items-center gap-2 min-w-0">
                       {vi.category && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase tracking-wider shrink-0">
+                        <span className="text-xs px-1.5 py-0.5 rounded-sm bg-white/[0.05] text-[#8eadde] uppercase tracking-wider shrink-0">
                           {vi.category}
                         </span>
                       )}
                       <span className="text-slate-200 whitespace-normal break-words">{label}</span>
                     </div>
-                    <span className="text-slate-400 font-mono shrink-0">{vi.importance.toFixed(4)}</span>
+                    <span className="text-slate-400 font-mono cm-tabular shrink-0">{vi.importance.toFixed(4)}</span>
                   </div>
-                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-[2px] bg-white/[0.08] overflow-hidden">
                     <div
-                      className="h-full bg-copper-400 origin-left"
+                      className="h-full bg-[#dda174] origin-left"
                       style={{ transform: `scaleX(${Math.max(0, Math.min(1, pct / 100))})` }}
                     />
                   </div>
