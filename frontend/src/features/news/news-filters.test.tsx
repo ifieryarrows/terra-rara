@@ -171,3 +171,25 @@ it('renders the refresh status inside the headline count row', () => {
   if (!count) throw new Error('headline count line not rendered');
   expect(count.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 });
+
+it('renders neutral stats summary in cool grey with a square glyph matching news cards', () => {
+  state.stats.mockReturnValue({
+    data: {
+      top_publishers: [{ publisher: 'Reuters', count: 2 }],
+      channel_distribution: { newsapi: 2 },
+      label_distribution: { BULLISH: 41, BEARISH: 23, NEUTRAL: 30 },
+    },
+  });
+  render(<NewsIntelligencePanel/>);
+
+  const neutralBadge = screen.getByTitle('Neutral (7d)');
+  expect(neutralBadge).toHaveTextContent('■');
+  expect(neutralBadge).toHaveTextContent('30');
+  expect(neutralBadge.className).toContain('text-[#a3afbf]');
+  expect(neutralBadge.className).not.toContain('#dda174');
+
+  expect(screen.getByTitle('Bullish (7d)')).toHaveTextContent('▲');
+  expect(screen.getByTitle('Bullish (7d)')).toHaveTextContent('41');
+  expect(screen.getByTitle('Bearish (7d)')).toHaveTextContent('▼');
+  expect(screen.getByTitle('Bearish (7d)')).toHaveTextContent('23');
+});

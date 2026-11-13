@@ -38,7 +38,10 @@ it('does not colour a balanced score by its sign', () => {
   const score = screen.getByText('-0.376');
   expect(score).toBeInTheDocument();
   expect(score.className).not.toMatch(/rose|emerald/);
-  expect(screen.getByText('NEUTRAL')).toBeInTheDocument();
+  const tag = screen.getByText('NEUTRAL');
+  expect(tag).toBeInTheDocument();
+  expect(tag.className).toContain('text-[#a3afbf]');
+  expect(tag.className).not.toContain('#dda174');
 });
 
 it('colours a bearish score with the bearish tone', () => {

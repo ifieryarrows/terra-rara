@@ -2,7 +2,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import { Newspaper, Globe } from 'lucide-react';
-import type { NewsItem, NewsLabel } from '../../types';
+import type { NewsItem } from '../../types';
+import { NEWS_SENTIMENT_STYLES, normaliseNewsLabel } from './newsSentiment';
 
 interface NewsCardProps {
   item: NewsItem;
@@ -11,36 +12,10 @@ interface NewsCardProps {
   duplicate?: boolean;
 }
 
-const LABEL_STYLES: Record<NewsLabel, { chip: string; glyph: string; text: string }> = {
-  BULLISH: {
-    chip: 'bg-[#74c7a9]/12 text-[#74c7a9]',
-    glyph: '▲',
-    text: 'Bullish',
-  },
-  BEARISH: {
-    chip: 'bg-[#db8296]/12 text-[#db8296]',
-    glyph: '▼',
-    text: 'Bearish',
-  },
-  NEUTRAL: {
-    chip: 'bg-white/[0.06] text-[#a3afbf]',
-    glyph: '■',
-    text: 'Neutral',
-  },
-};
-
 const CHANNEL_LABELS: Record<string, string> = {
   google_news: 'GN',
   newsapi: 'NA',
 };
-
-function normaliseLabel(raw: string | null | undefined): NewsLabel {
-  const upper = (raw ?? '').toUpperCase();
-  if (upper === 'BULLISH' || upper === 'BEARISH' || upper === 'NEUTRAL') {
-    return upper as NewsLabel;
-  }
-  return 'NEUTRAL';
-}
 
 function formatRelativeTime(iso: string | null): string {
   if (!iso) return '';
@@ -67,8 +42,8 @@ function formatEventType(raw: string | null | undefined): string {
 
 export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = false, duplicate = false }) => {
   const sentiment = item.sentiment;
-  const label = normaliseLabel(sentiment?.label);
-  const style = LABEL_STYLES[label];
+  const label = normaliseNewsLabel(sentiment?.label);
+  const style = NEWS_SENTIMENT_STYLES[label];
   const relevancePct = Math.max(0, Math.min(100, Math.round(((sentiment?.relevance ?? 0) * 100))));
   const confidencePct = Math.max(0, Math.min(100, Math.round(((sentiment?.confidence ?? 0) * 100))));
   const channelCode = CHANNEL_LABELS[item.channel] ?? item.channel?.slice(0, 2).toUpperCase() ?? '';

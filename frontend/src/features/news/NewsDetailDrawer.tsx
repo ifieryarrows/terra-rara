@@ -3,26 +3,13 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, ExternalLink, Globe, Radio } from 'lucide-react';
 import clsx from 'clsx';
-import type { NewsItem, NewsLabel } from '../../types';
+import type { NewsItem } from '../../types';
 import { useNewsDetail } from '../../hooks/useNews';
+import { NEWS_SENTIMENT_STYLES, normaliseNewsLabel } from './newsSentiment';
 
 interface NewsDetailDrawerProps {
   item: NewsItem | null;
   onClose: () => void;
-}
-
-const LABEL_STYLES: Record<NewsLabel, string> = {
-  BULLISH: 'text-[#74c7a9] bg-[#74c7a9]/15 border-[#74c7a9]/35',
-  BEARISH: 'text-[#db8296] bg-[#db8296]/15 border-[#db8296]/35',
-  NEUTRAL: 'text-[#dda174] bg-[#dda174]/12 border-[#dda174]/30',
-};
-
-function normaliseLabel(raw: string | null | undefined): NewsLabel {
-  const upper = (raw ?? '').toUpperCase();
-  if (upper === 'BULLISH' || upper === 'BEARISH' || upper === 'NEUTRAL') {
-    return upper as NewsLabel;
-  }
-  return 'NEUTRAL';
 }
 
 function formatEventType(raw: string | null | undefined): string {
@@ -55,7 +42,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
   // The colour of a score follows the article's classification, never the sign
   // of the number: a balanced story must not read as bearish because its
   // score is slightly negative.
-  const sentimentLabel = normaliseLabel(displayed?.sentiment?.label);
+  const sentimentLabel = normaliseNewsLabel(displayed?.sentiment?.label);
   const sentimentTone =
     sentimentLabel === 'BULLISH'
       ? 'positive'
@@ -175,7 +162,7 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
                     <span
                       className={clsx(
                         'cm-news-detail-sentiment-tag text-xs font-mono tracking-wider uppercase',
-                        LABEL_STYLES[sentimentLabel],
+                        NEWS_SENTIMENT_STYLES[sentimentLabel].drawerTag,
                       )}
                     >
                       {displayed.sentiment.label ?? 'NEUTRAL'}

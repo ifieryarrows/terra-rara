@@ -13,15 +13,20 @@ import { useNewsFeed, useNewsStats, flattenNewsPages } from '../../hooks/useNews
 import type { NewsFeedFilters, NewsItem, NewsLabel } from '../../types';
 import NewsCard from './NewsCard';
 import NewsDetailDrawer from './NewsDetailDrawer';
+import { NEWS_SENTIMENT_STYLES } from './newsSentiment';
 import { FilterChip } from '../../components/ui/FilterChip';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
 
+const SENTIMENT_ORDER: readonly NewsLabel[] = ['BULLISH', 'BEARISH', 'NEUTRAL'];
+
 const LABEL_OPTIONS: Array<{ id: 'all' | NewsLabel; label: string; tone: string }> = [
   { id: 'all', label: 'All', tone: 'bg-white/5 text-gray-300' },
-  { id: 'BULLISH', label: 'Bullish', tone: 'bg-[#74c7a9]/15 text-[#74c7a9]' },
-  { id: 'BEARISH', label: 'Bearish', tone: 'bg-[#db8296]/15 text-[#db8296]' },
-  { id: 'NEUTRAL', label: 'Neutral', tone: 'bg-[#dda174]/12 text-[#dda174]' },
+  ...SENTIMENT_ORDER.map((id) => ({
+    id,
+    label: NEWS_SENTIMENT_STYLES[id].text,
+    tone: NEWS_SENTIMENT_STYLES[id].filterTone,
+  })),
 ];
 
 const SINCE_OPTIONS = [
@@ -616,9 +621,11 @@ export const NewsIntelligencePanel: React.FC = () => {
   const isRefreshing = feed.isFetching && !feed.isFetchingNextPage;
 
   const labelDist = stats.data?.label_distribution ?? {};
-  const bullishCount = labelDist.BULLISH ?? 0;
-  const bearishCount = labelDist.BEARISH ?? 0;
-  const neutralCount = labelDist.NEUTRAL ?? 0;
+  const sentimentCounts: Record<NewsLabel, number> = {
+    BULLISH: labelDist.BULLISH ?? 0,
+    BEARISH: labelDist.BEARISH ?? 0,
+    NEUTRAL: labelDist.NEUTRAL ?? 0,
+  };
   return (
     <motion.aside
       className="cm-news-panel"
@@ -648,15 +655,21 @@ export const NewsIntelligencePanel: React.FC = () => {
       {/* Stats summary */}
       <div className="cm-news-summary px-3 sm:px-4 pt-2.5 pb-3 border-b border-white/5">
         <div className="flex items-center gap-1.5 text-xs font-mono mb-2">
-          <span className="px-2 py-0.5 rounded-full bg-[#74c7a9]/12 text-[#74c7a9]" title={`Bullish (${activeWindowLabel})`}>
-            ▲ {stats.data ? bullishCount : '—'}
-          </span>
-          <span className="px-2 py-0.5 rounded-full bg-[#db8296]/12 text-[#db8296]" title={`Bearish (${activeWindowLabel})`}>
-            ▼ {stats.data ? bearishCount : '—'}
-          </span>
-          <span className="px-2 py-0.5 rounded-full bg-[#dda174]/12 text-[#dda174]" title={`Neutral (${activeWindowLabel})`}>
-            · {stats.data ? neutralCount : '—'}
-          </span>
+          {SENTIMENT_ORDER.map((sentimentKey) => {
+            const style = NEWS_SENTIMENT_STYLES[sentimentKey];
+            return (
+              <span
+                key={sentimentKey}
+                className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded-full', style.chip)}
+                title={`${style.text} (${activeWindowLabel})`}
+              >
+                <span className={clsx('leading-none', style.glyphClass)} aria-hidden="true">
+                  {style.glyph}
+                </span>
+                <span>{stats.data ? sentimentCounts[sentimentKey] : '—'}</span>
+              </span>
+            );
+          })}
           <span className="ml-auto text-slate-400">
             {feed.data ? `${totalMatching} hit${totalMatching === 1 ? '' : 's'}` : 'Awaiting headlines'}
           </span>
