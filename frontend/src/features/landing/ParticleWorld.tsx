@@ -28,6 +28,11 @@ function quintic(edge0: number, edge1: number, value: number) {
   return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
+/** Shared Venus dissolution curve so center flyby (p = 0.79) stays completely intact. */
+function getVenusDissolve(progress: number) {
+  return smoothstep(0.795, 0.86, progress);
+}
+
 function makeDrift(count: number) {
   const drift = new Float32Array(count * 4);
   for (let index = 0; index < count; index += 1) {
@@ -606,7 +611,7 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
 
       float venusAppear = smoothstep(0.51, 0.60, p);
       float ringAppear = smoothstep(0.56, 0.66, p);
-      float venusDissolve = smoothstep(0.79, 0.86, p);
+      float venusDissolve = smoothstep(0.795, 0.86, p);
       float venusFadeOut = 1.0 - venusDissolve;
       float venusActive = step(0.52, p) * (1.0 - step(0.87, p));
       float venusBeaconPhase = smoothstep(0.20, 0.29, p) * (1.0 - smoothstep(0.51, 0.59, p));
@@ -652,7 +657,7 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
         venusRot.y * sin(vTilt) + venusRot.z * cos(vTilt)
       );
 
-      // Smooth radial swirl dispersal as Venus dissolves (0.79 -> 0.86)
+      // Smooth radial swirl dispersal as Venus dissolves (0.795 -> 0.86)
       if (venusDissolve > 0.001) {
         float swirl = venusDissolve * (1.45 + a_meta.x * 0.9);
         float cSw = cos(swirl);
@@ -673,7 +678,7 @@ function createWebglRenderer(canvas: HTMLCanvasElement, quality: ParticleQuality
       float aspectScale = min(1.0, u_aspect) * (u_aspect < 1.0 ? 0.84 : 1.0);
       vec3 scaledVenus = venusPos * perspectiveScale * aspectScale;
 
-      float transferT = quintic(0.74, 0.81, p);
+      float transferT = quintic(0.74, 0.79, p);
       float venusCamPitch = 0.08 + pitchOffset;
       float venusCamDist = mix(1.05, 0.84, transferT);
       vec2 flightStart = (u_venus_center.x < 0.45) ? vec2(0.40, 0.46) : vec2(0.50, 0.30);
@@ -1053,7 +1058,7 @@ function getVenusTrajectory(progress: number, width: number, height: number) {
   const alignedX = startX + (corridorX - startX) * flightAlignment;
   const alignedY = startY + (corridorY - startY) * flightAlignment;
 
-  const transferT = quintic(0.74, 0.81, progress);
+  const transferT = quintic(0.74, 0.79, progress);
   const centerX = alignedX + (0.50 - alignedX) * transferT;
   const centerY = alignedY + (0.48 - alignedY) * transferT;
 
@@ -1201,11 +1206,12 @@ function drawVenus(
 
   if (progress < 0.50) return;
 
-  const venusFadeOut = 1 - smoothstep(0.79, 0.86, progress);
+  const dissolve = getVenusDissolve(progress);
+  const venusFadeOut = 1 - dissolve;
   const venusAlpha = smoothstep(0.51, 0.60, progress) * venusFadeOut;
   if (venusAlpha <= 0.005) return;
 
-  const dissolveExpand = 1 + smoothstep(0.79, 0.86, progress) * 0.45;
+  const dissolveExpand = 1 + dissolve * 0.45;
   const baseRadius = Math.min(width, height) * (isDesktop ? 0.20 : 0.17);
   const vr = Math.max(4.0, baseRadius * perspectiveScale * (1.05 / orbitCamDist) * dissolveExpand);
 
@@ -1348,11 +1354,11 @@ function createCanvasRenderer(canvas: HTMLCanvasElement, quality: ParticleQualit
       const mwPersistFade = 1 - smoothstep(0.54, 0.72, value);
       const venusBodyMwFade = 1 - smoothstep(0.45, 0.52, value);
 
-      const venusFadeOut = 1 - smoothstep(0.79, 0.86, value);
+      const venusDissolve = getVenusDissolve(value);
+      const venusFadeOut = 1 - venusDissolve;
       const isVenusPhase = value >= 0.52 && value < 0.87;
       const venusAppear = smoothstep(0.52, 0.60, value) * venusFadeOut;
       const outerDustAppear = smoothstep(0.70, 0.79, value) * venusFadeOut;
-      const venusDissolve = smoothstep(0.79, 0.86, value);
 
       const finaleMwAppear = smoothstep(0.80, 0.865, value);
       const ctaCoreSoften = 1 - 0.22 * smoothstep(0.88, 0.96, value);

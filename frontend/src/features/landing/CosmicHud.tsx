@@ -17,7 +17,7 @@ export type CosmicHudProps = {
   onStepToProgress: (targetProgress: number) => void;
 };
 
-const RETICLE_STOPS = [0, 0.24, 0.43, 0.66, 0.86, 0.97] as const;
+const RETICLE_STOPS = [0, 0.24, 0.43, 0.66, 0.79, 0.86, 0.97] as const;
 
 const MAJOR_STOPS = [
   { label: 'VENUS · 2D', topPct: 6 },

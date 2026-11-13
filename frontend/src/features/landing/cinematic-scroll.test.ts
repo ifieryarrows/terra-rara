@@ -69,18 +69,34 @@ describe('cinematic scene stepper', () => {
     scene.dispose();
   });
 
-  it('gives the Milky Way observatory stage its own rest between the forecast and the CTA', () => {
+  it('gives both the intact Venus flyby and the Milky Way stage their own rests between forecast and CTA', () => {
     const forecast = CINEMATIC_RESTS.indexOf(.69);
-    expect(CINEMATIC_RESTS[forecast + 1]).toBe(.86);
-    expect(CINEMATIC_RESTS[forecast + 2]).toBe(.97);
+    expect(CINEMATIC_RESTS[forecast + 1]).toBe(.79);
+    expect(CINEMATIC_RESTS[forecast + 2]).toBe(.86);
+    expect(CINEMATIC_RESTS[forecast + 3]).toBe(.97);
   });
 
-  it('steps from the forecast into the Milky Way stage, not straight to the CTA', () => {
+  it('steps from forecast to the intact Venus flyby first, then to Milky Way on the next scroll', () => {
     atScrollY(restY(CINEMATIC_RESTS.indexOf(.69)));
-    const scene = stepper();
+    const scene = stepper({ lockTimeoutMs: 50 });
+
+    expect(scene.handleWheel(wheel(240))).toBe(true);
+    expect(window.scrollTo).toHaveBeenLastCalledWith({ top: restY(CINEMATIC_RESTS.indexOf(.79)), behavior: 'smooth' });
+
+    atScrollY(restY(CINEMATIC_RESTS.indexOf(.79)));
+    vi.advanceTimersByTime(400);
 
     expect(scene.handleWheel(wheel(240))).toBe(true);
     expect(window.scrollTo).toHaveBeenLastCalledWith({ top: restY(CINEMATIC_RESTS.indexOf(.86)), behavior: 'smooth' });
+    scene.dispose();
+  });
+
+  it('steps upward cleanly from Milky Way back to intact Venus flyby before forecast', () => {
+    atScrollY(restY(CINEMATIC_RESTS.indexOf(.86)));
+    const scene = stepper();
+
+    expect(scene.handleWheel(wheel(-240))).toBe(true);
+    expect(window.scrollTo).toHaveBeenLastCalledWith({ top: restY(CINEMATIC_RESTS.indexOf(.79)), behavior: 'smooth' });
     scene.dispose();
   });
 
