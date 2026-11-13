@@ -878,7 +878,7 @@ function findInteractiveControl(target: EventTarget | null): HTMLElement | null 
   if ((control as HTMLButtonElement).disabled || control.getAttribute('aria-disabled') === 'true') {
     return null;
   }
-  if (control.dataset.cmNoSound === 'true') return null;
+  if (control.closest('[data-cm-no-sound="true"]')) return null;
   return control;
 }
 

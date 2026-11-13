@@ -11,6 +11,7 @@ import {
   type HeatmapNode,
 } from './heatmap-layout';
 import { recordCommit, recordLongTask } from './performance';
+import { getMarketSessionState, type MarketSessionInfo } from './heatmap-utils';
 import { useMarketHeatmap } from '../../hooks/useQueries';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
@@ -134,6 +135,16 @@ export const HeatmapPanel: React.FC = () => {
   const [focusedPath, setFocusedPath] = useState<HeatmapFocusEntry[]>([]);
   const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [sessionInfo, setSessionInfo] = useState<MarketSessionInfo>(() => getMarketSessionState());
+
+  useEffect(() => {
+    const syncSession = () => {
+      const next = getMarketSessionState();
+      setSessionInfo((prev) => (prev.session === next.session ? prev : next));
+    };
+    const timer = window.setInterval(syncSession, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
@@ -387,6 +398,7 @@ export const HeatmapPanel: React.FC = () => {
           availableGroups={groups}
           meta={meta}
           hasSnapshot={!!rawData}
+          sessionInfo={sessionInfo}
         />
 
         {meta.refresh_error && <p className="cm-heatmap-error">Snapshot refresh failed. Showing the last available data.</p>}
@@ -397,6 +409,7 @@ export const HeatmapPanel: React.FC = () => {
         <div
           ref={containerRef}
           className="cm-heatmap-stage relative min-w-0 flex-1"
+          data-cm-no-sound="true"
           style={{ height: isFullscreen ? undefined : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 280 : 560 }}
         >
           {isError && !hasContent ? (
@@ -448,6 +461,7 @@ export const HeatmapPanel: React.FC = () => {
                   onCategoryDrillDown={handleCategoryDrillDown}
                   onNavigateBack={focusedPath.length ? handleMapNavigateBack : undefined}
                   onCategoryClick={handleCategoryClick}
+                  marketSession={sessionInfo.session}
                 />
               </Profiler>
             </>

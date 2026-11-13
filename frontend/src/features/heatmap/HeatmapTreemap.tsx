@@ -10,6 +10,7 @@ import {
 import { CategoryTiles, LeafTiles } from './HeatmapTiles';
 import { revealTierLogos } from './CompanyLogo';
 import { heatmapMetrics, recordLayout } from './performance';
+import type { MarketSession } from './heatmap-utils';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = HEATMAP_MAX_ZOOM;
@@ -99,6 +100,7 @@ interface Props {
   /** Hover was invalidated without a pointer transition (e.g. page scroll). */
   onHoverInvalidated?: () => void;
   resetKey?: string | number;
+  marketSession?: MarketSession;
 }
 
 interface ZoomCamera {
@@ -163,6 +165,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   onZoomDelta,
   onHoverInvalidated,
   resetKey,
+  marketSession = 'closed',
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -885,6 +888,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         }
       }}
       aria-label="Interactive market heatmap. Use Tab to inspect categories and instruments."
+      data-hm-session={marketSession}
+      data-cm-no-sound="true"
       onDragStart={(event) => event.preventDefault()}
       className="cm-heatmap-map custom-scrollbar relative min-w-0 max-w-full select-none bg-slate-950 outline-none"
       style={{ width: '100%', height, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none', contain: 'paint' }}
@@ -910,7 +915,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           }}
         >
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
-          <LeafTiles leafEntries={leafEntries} />
+          <LeafTiles leafEntries={leafEntries} marketSession={marketSession} />
         </div>
       </div>
     </div>

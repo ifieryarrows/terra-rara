@@ -7,7 +7,13 @@ import { CompanyLogo } from './CompanyLogo';
 import HeatmapCategoryPanel, { type HeatmapCategoryPanelHandle } from './HeatmapCategoryPanel';
 import { HeatmapPanel } from './HeatmapPanel';
 import HeatmapTreemap from './HeatmapTreemap';
-import { clampTooltipPosition, computePanelPosition, computePointerPanelPosition, getColorForChange } from './heatmap-utils';
+import {
+  clampTooltipPosition,
+  computePanelPosition,
+  computePointerPanelPosition,
+  getColorForChange,
+  getMarketSessionState,
+} from './heatmap-utils';
 import { resetLogoCacheForTests } from './logo-cache';
 import type { HeatmapNode } from './heatmap-layout';
 
@@ -736,5 +742,60 @@ describe('heatmap interaction primitives', () => {
       Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: previousWidth });
     }
     expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
+  });
+
+  it('switches heatmap tile vibrancy by NYSE cash session and cools during extended or closed hours', () => {
+    expect(getMarketSessionState(new Date('2026-11-13T13:29:00Z'))).toEqual({
+      session: 'pre',
+      isRegularOpen: false,
+      label: 'Pre-market · Muted palette',
+    });
+    expect(getMarketSessionState(new Date('2026-11-13T14:30:00Z'))).toEqual({
+      session: 'regular',
+      isRegularOpen: true,
+      label: 'Market open · Live palette',
+    });
+    expect(getMarketSessionState(new Date('2026-11-13T21:00:00Z'))).toEqual({
+      session: 'after',
+      isRegularOpen: false,
+      label: 'After-hours · Muted palette',
+    });
+    expect(getMarketSessionState(new Date('2026-11-14T15:00:00Z')).session).toBe('closed');
+    // NYSE Thanksgiving & Good Friday remain closed/muted even during regular clock hours
+    expect(getMarketSessionState(new Date('2026-11-26T15:30:00Z')).session).toBe('closed');
+    expect(getMarketSessionState(new Date('2026-04-03T14:30:00Z')).session).toBe('closed');
+
+    // Extended / closed hours preserve matte rose/sage Milky Way scale; open hours boost live contrast
+    expect(getColorForChange(-5, 'pre')).toBe('rgb(201,98,121)');
+    expect(getColorForChange(5, 'after')).toBe('rgb(82,184,150)');
+    expect(getColorForChange(-5, 'regular')).toBe('rgb(235,52,75)');
+    expect(getColorForChange(0, 'regular')).toBe('#3a4452');
+    expect(getColorForChange(5, 'regular')).toBe('rgb(18,196,91)');
+
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sec', name: 'Technology', children: [{
+          id: 'ind', name: 'Semiconductors', children: [
+            { id: 'nvda', name: 'NVDA', shortName: 'NVIDIA', weight: 100, price: 166, changePercent: -5 },
+            { id: 'avgo', name: 'AVGO', shortName: 'Broadcom', weight: 100, price: 364, changePercent: 5 },
+          ],
+        }],
+      }],
+    };
+    const { container, rerender } = render(
+      <HeatmapTreemap data={data} width={700} height={420} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} marketSession="pre" />,
+    );
+    const getBg = (index: number) => container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]')[index].style.backgroundColor;
+    expect(container.querySelector('[data-hm-session]')?.getAttribute('data-hm-session')).toBe('pre');
+    expect(container.querySelector('.cm-heatmap-map')?.getAttribute('data-cm-no-sound')).toBe('true');
+    expect([getBg(0), getBg(1)]).toContain('rgb(201, 98, 121)');
+    expect([getBg(0), getBg(1)]).toContain('rgb(82, 184, 150)');
+
+    rerender(
+      <HeatmapTreemap data={data} width={700} height={420} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} marketSession="regular" />,
+    );
+    expect(container.querySelector('[data-hm-session]')?.getAttribute('data-hm-session')).toBe('regular');
+    expect([getBg(0), getBg(1)]).toContain('rgb(235, 52, 75)');
+    expect([getBg(0), getBg(1)]).toContain('rgb(18, 196, 91)');
   });
 });

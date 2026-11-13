@@ -14,7 +14,7 @@ import {
   type TileTierPlan,
 } from './heatmap-layout';
 import { CompanyLogo } from './CompanyLogo';
-import { getColorForChange } from './heatmap-utils';
+import { getColorForChange, type MarketSession } from './heatmap-utils';
 
 const LOGO_INSTRUMENT_TYPES = new Set(['equity', 'etf', 'mutualfund']);
 const MIN_TILE_SIZE = 4;
@@ -222,7 +222,15 @@ function TileTierLayer({
   );
 }
 
-export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { leafEntries: LeafEntry[]; zoom?: number }) {
+export const LeafTiles = memo(function LeafTiles({
+  leafEntries,
+  zoom = 1,
+  marketSession = 'closed',
+}: {
+  leafEntries: LeafEntry[];
+  zoom?: number;
+  marketSession?: MarketSession;
+}) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
     const item = leaf.data as HeatmapData;
     const cellWidth = leaf.x1 - leaf.x0;
@@ -255,13 +263,14 @@ export const LeafTiles = memo(function LeafTiles({ leafEntries, zoom = 1 }: { le
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] overflow-hidden text-white outline-none transition-[filter] duration-75 hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`absolute z-[2] overflow-hidden text-white outline-none hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,
           width: cellWidth,
           height: cellHeight,
-          backgroundColor: getColorForChange(item.changePercent),
+          backgroundColor: getColorForChange(item.changePercent, marketSession),
+          transition: 'background-color 700ms ease, filter 75ms ease',
           visibility: tileScale <= 1 ? 'visible' : 'hidden',
         }}
       >

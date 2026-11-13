@@ -431,4 +431,41 @@ describe('cosmicVision Observatory Audio Engine', () => {
 
     randomSpy.mockRestore();
   });
+
+  it('suppresses hover and click observatory audio inside data-cm-no-sound="true" containers such as the heatmap stage', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-13T10:00:00Z'));
+    const spy = installMockWebAudio();
+
+    const { attachObservatoryInteractionAudio, playObservatoryChime } = await import('./cosmicVision');
+    const detach = attachObservatoryInteractionAudio(document);
+
+    // Unlock interaction audio first
+    expect(await playObservatoryChime()).toBe(true);
+    const initialCount = spy.playedSources.length;
+
+    const heatmapStage = document.createElement('div');
+    heatmapStage.dataset.cmNoSound = 'true';
+    const tile = document.createElement('div');
+    tile.setAttribute('role', 'button');
+    const tickerSpan = document.createElement('span');
+    tickerSpan.textContent = 'NVDA';
+    tile.appendChild(tickerSpan);
+    heatmapStage.appendChild(tile);
+    document.body.appendChild(heatmapStage);
+
+    const tileOver = new MouseEvent('pointerover', { bubbles: true });
+    Object.defineProperty(tileOver, 'pointerType', { value: 'mouse' });
+    Object.defineProperty(tileOver, 'buttons', { value: 0 });
+    tickerSpan.dispatchEvent(tileOver);
+    await vi.runAllTimersAsync();
+
+    vi.advanceTimersByTime(200);
+    tile.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.runAllTimersAsync();
+
+    expect(spy.playedSources).toHaveLength(initialCount);
+
+    detach();
+  });
 });

@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import type { HeatmapMeta } from './heatmap-layout';
 import { FilterChip } from '../../components/ui/FilterChip';
+import type { MarketSessionInfo } from './heatmap-utils';
 
 interface Props {
   groupFilter: string;
@@ -12,6 +13,7 @@ interface Props {
   availableGroups: string[];
   meta: HeatmapMeta;
   hasSnapshot: boolean;
+  sessionInfo?: MarketSessionInfo;
 }
 
 const HeatmapFilters = memo(function HeatmapFilters({
@@ -24,6 +26,7 @@ const HeatmapFilters = memo(function HeatmapFilters({
   availableGroups,
   meta,
   hasSnapshot,
+  sessionInfo,
 }: Props) {
   const [countdown, setCountdown] = useState(0);
   useEffect(() => {
@@ -70,6 +73,7 @@ const HeatmapFilters = memo(function HeatmapFilters({
       <span className={`cm-heatmap-snapshot-dot is-${snapshotState}`} aria-hidden="true"/>
       <div><strong>{status}</strong><span>{meta.next_refresh_at ? `Next check ${format(countdown)}` : 'Refresh timing unavailable'}</span></div>
       {meta.source_delay_minutes > 0 && <small>Quotes delayed {meta.source_delay_minutes} min</small>}
+      {sessionInfo && <small data-hm-session={sessionInfo.session}>{sessionInfo.label}</small>}
     </div>
   </div>;
 });
