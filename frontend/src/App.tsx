@@ -7,6 +7,8 @@ import { RouteBoundary } from './components/ui/RouteBoundary';
 import { BrandMark } from './components/ui/BrandMark';
 import { TerraCursor } from './components/ui/TerraCursor';
 import { LogoTransitionProvider } from './components/ui/LogoTransition';
+import { CuprumProvider } from './contexts/CuprumContext';
+import { useObservatoryInteractionAudio } from './utils/cosmicVision';
 import { motionTokens } from './design/motion';
 import { scrollToElement } from './design/scroll';
 import { SpeedInsights } from '@vercel/speed-insights/react';
@@ -91,6 +93,11 @@ export function AppRoutes() {
     <Route path="*" element={<main id="main-content" tabIndex={-1} className="cm-route-loading"><h1>That page is not here.</h1><Link to="/dashboard">Open dashboard</Link><Link to="/">Explore CopperMind</Link></main>}/>
   </Routes></Suspense></RouteBoundary></MotionConfig>;
 }
+function ObservatoryAudio() {
+  useObservatoryInteractionAudio();
+  return null;
+}
+
 export default function App() {
-  return <QueryClientProvider client={queryClient}><BrowserRouter><LogoTransitionProvider><TerraCursor/><AppRoutes/><SpeedInsights/></LogoTransitionProvider></BrowserRouter></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><BrowserRouter><LogoTransitionProvider><CuprumProvider><TerraCursor/><ObservatoryAudio/><AppRoutes/><SpeedInsights/></CuprumProvider></LogoTransitionProvider></BrowserRouter></QueryClientProvider>;
 }

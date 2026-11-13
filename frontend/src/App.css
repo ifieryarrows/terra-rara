@@ -15,19 +15,28 @@
 @layer utilities {
   .glass-panel {
     background: var(--cm-surface);
-    border: 1px solid var(--cm-border);
+    border: var(--cm-hairline);
     border-radius: var(--cm-radius);
+    box-shadow: var(--cm-shadow-sm);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .glass-card {
     background: var(--cm-surface);
-    border: 1px solid var(--cm-border);
+    border: var(--cm-hairline);
     border-radius: var(--cm-radius);
-    transition: border-color var(--cm-motion-fast);
+    box-shadow: var(--cm-shadow-sm);
+    transition: border-color var(--cm-motion-fast) var(--cm-ease), background-color var(--cm-motion-fast) var(--cm-ease);
+  }
+
+  .glass-card:hover {
+    border-color: var(--cm-border-strong);
   }
 
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
   }
 
   .custom-scrollbar::-webkit-scrollbar-track {
@@ -35,7 +44,11 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: theme('colors.gray.700');
+    background: rgba(142, 173, 222, 0.24);
     border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(221, 161, 116, 0.42);
   }
 }

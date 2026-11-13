@@ -1,13 +1,13 @@
 /** Shared category tone/label maps for model driver chips (Overview + Model focus). */
 export const driverCategoryTone: Record<string, string> = {
-  Momentum:   'bg-copper-500/15 text-copper-300',
-  Trend:      'bg-blue-500/15 text-blue-300',
-  Volatility: 'bg-amber-500/15 text-amber-300',
-  Sentiment:  'bg-violet-500/15 text-violet-300',
-  Macro:      'bg-emerald-500/15 text-emerald-300',
-  Sector:     'bg-rose-500/15 text-rose-300',
-  Embedding:  'bg-slate-500/15 text-slate-300',
-  Other:      'bg-white/5 text-gray-400',
+  Momentum:   'bg-[#dda174]/15 text-[#dda174]',
+  Trend:      'bg-[#8eadde]/15 text-[#8eadde]',
+  Volatility: 'bg-[#dda174]/10 text-[#e8bfa0]',
+  Sentiment:  'bg-[#8eadde]/10 text-[#b4c8ea]',
+  Macro:      'bg-[#74c7a9]/15 text-[#74c7a9]',
+  Sector:     'bg-[#db8296]/15 text-[#db8296]',
+  Embedding:  'bg-[#8eadde]/10 text-[#a3afbf]',
+  Other:      'bg-white/[0.04] text-[#a3afbf]',
 };
 
 export const driverCategoryLabel: Record<string, string> = {

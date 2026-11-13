@@ -2,7 +2,7 @@ import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useL
 import { Link, useLocation, useNavigate, type LinkProps } from 'react-router-dom';
 import { useReducedMotion } from 'framer-motion';
 import { BrandMark } from './BrandMark';
-import { TERRA_RARA_MARK_STAR_PATH } from './brand-mark-geometry';
+import { playObservatoryDisperse, playObservatoryTransition } from '../../utils/cosmicVision';
 
 const TransitionAtmosphere = lazy(() => import('./TerraAtmosphere').then(module => ({ default: module.TerraAtmosphere })));
 const transitionStylesReady = import('./LogoTransition.css').then(() => true, () => false);
@@ -35,12 +35,6 @@ const DASHBOARD_READY_TIMEOUT_MS = 15_000;
 const LOGO_SIZE = 224;
 const ROUTE_TRANSITION_MIN_HEIGHT = '--cm-route-transition-min-height';
 
-const coordinates = (TERRA_RARA_MARK_STAR_PATH.match(/-?\d*\.?\d+/g) ?? []).map(Number);
-const starVertices = Array.from({ length: Math.floor(coordinates.length / 2) }, (_, index) => ({
-  x: coordinates[index * 2],
-  y: coordinates[index * 2 + 1],
-}));
-
 function createRandom(seed: number) {
   let value = seed >>> 0;
   return () => {
@@ -49,16 +43,22 @@ function createRandom(seed: number) {
   };
 }
 
-function isInsideStar(x: number, y: number) {
-  let inside = false;
-  for (let index = 0, previous = starVertices.length - 1; index < starVertices.length; previous = index, index += 1) {
-    const currentPoint = starVertices[index];
-    const previousPoint = starVertices[previous];
-    const crosses = currentPoint.y > y !== previousPoint.y > y
-      && x < ((previousPoint.x - currentPoint.x) * (y - currentPoint.y)) / (previousPoint.y - currentPoint.y) + currentPoint.x;
-    if (crosses) inside = !inside;
-  }
-  return inside;
+function cubicPoint(
+  p0: readonly [number, number],
+  p1: readonly [number, number],
+  p2: readonly [number, number],
+  p3: readonly [number, number],
+  t: number,
+): [number, number] {
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+  return [
+    uuu * p0[0] + 3 * uu * t * p1[0] + 3 * u * tt * p2[0] + ttt * p3[0],
+    uuu * p0[1] + 3 * uu * t * p1[1] + 3 * u * tt * p2[1] + ttt * p3[1],
+  ];
 }
 
 function createParticles(width: number, height: number, origin: TransitionOrigin | null): Particle[] {
@@ -71,13 +71,6 @@ function createParticles(width: number, height: number, origin: TransitionOrigin
     ? origin
     : { left: centerX - 18, top: centerY - 18, width: 36, height: 36 };
   const particles: Particle[] = [];
-  const starPoints: Array<{ x: number; y: number }> = [];
-
-  for (let attempt = 0; attempt < 2_500 && starPoints.length < 104; attempt += 1) {
-    const x = 11.25 + random() * 25.5;
-    const y = 11.25 + random() * 25.5;
-    if (isInsideStar(x, y)) starPoints.push({ x, y });
-  }
 
   const addParticle = (x: number, y: number, color: string, ring = false) => {
     particles.push({
@@ -88,7 +81,7 @@ function createParticles(width: number, height: number, origin: TransitionOrigin
       scatterX: random() * width,
       scatterY: random() * height,
       size: ring ? .85 + random() * .65 : .95 + random() * .85,
-      alpha: ring ? .62 + random() * .3 : .68 + random() * .3,
+      alpha: ring ? .64 + random() * .3 : .7 + random() * .28,
       color,
       delay: random() * .24,
       twist: (random() - .5) * 32,
@@ -96,14 +89,37 @@ function createParticles(width: number, height: number, origin: TransitionOrigin
     });
   };
 
-  for (const point of starPoints) {
-    addParticle(point.x, point.y, random() < .22 ? '#d9956c' : '#f3eee6');
+  // Copper broken orbital ring matching BrandMark RING_TOP (2.634 -> 6.223 rad) & RING_BOT (0.392 -> 2.122 rad).
+  for (let index = 0; index < 54; index += 1) {
+    const t = index / 53;
+    const angle = 2.634 + t * (Math.PI * 2 - 0.060 - 2.634);
+    const radius = 14.8 + (random() - .5) * 1.4;
+    const copper = random() < .28 ? '#f7dcb8' : random() < .72 ? '#dda174' : '#b26b3e';
+    addParticle(24 + Math.cos(angle) * radius, 24 + Math.sin(angle) * radius, copper, true);
+  }
+  for (let index = 0; index < 26; index += 1) {
+    const t = index / 25;
+    const angle = 0.392 + t * (2.122 - 0.392);
+    const radius = 14.8 + (random() - .5) * 1.4;
+    const copper = random() < .24 ? '#f7dcb8' : random() < .7 ? '#dda174' : '#b26b3e';
+    addParticle(24 + Math.cos(angle) * radius, 24 + Math.sin(angle) * radius, copper, true);
   }
 
-  for (let index = 0; index < 72; index += 1) {
-    const angle = (index / 72) * Math.PI * 2;
-    const radius = 15.75 + (random() - .5) * .16;
-    addParticle(24 + Math.cos(angle) * radius, 24 + Math.sin(angle) * radius, random() < .24 ? '#f3eee6' : '#c9825b', true);
+  // Sweeping Galactic Silver-Blue orbital swoosh (SWOOSH_MAIN + SWOOSH_ECHO).
+  for (let index = 0; index < 64; index += 1) {
+    const t = 0.04 + (index / 63) * 0.92;
+    const top = cubicPoint([2.20, 30.80], [17.03, 33.75], [30.56, 31.83], [45.80, 19.80], t);
+    const bot = cubicPoint([45.80, 19.80], [32.40, 32.44], [16.26, 38.90], [2.20, 30.80], 1 - t);
+    const mix = random();
+    const blue = random() < .3 ? '#edf4fe' : random() < .75 ? '#bdd2f1' : '#8eadde';
+    addParticle(top[0] + (bot[0] - top[0]) * mix, top[1] + (bot[1] - top[1]) * mix, blue);
+  }
+  for (let index = 0; index < 28; index += 1) {
+    const t = 0.06 + (index / 27) * 0.88;
+    const top = cubicPoint([7.40, 33.80], [18.96, 37.63], [30.40, 35.05], [42.60, 24.40], t);
+    const bot = cubicPoint([42.60, 24.40], [30.91, 35.10], [18.72, 39.11], [7.40, 33.80], 1 - t);
+    const mix = random();
+    addParticle(top[0] + (bot[0] - top[0]) * mix, top[1] + (bot[1] - top[1]) * mix, random() < .4 ? '#bdd2f1' : '#8eadde');
   }
 
   return particles;
@@ -290,6 +306,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const startTransition = useCallback((to = '/dashboard', source?: TransitionOrigin) => {
     if (started.current) return;
     started.current = true;
+    void playObservatoryTransition({ volume: 0.44 });
     if (genericRevealTimer.current !== undefined) {
       window.clearTimeout(genericRevealTimer.current);
       genericRevealTimer.current = undefined;
@@ -474,6 +491,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!active || phase !== 'release') return;
+    void playObservatoryDisperse({ volume: 0.36 });
     const timer = window.setTimeout(() => setMachine(prev => advanceLogoTransition(prev, { type: 'advance', phase: 'reveal' })), RELEASE_MS);
     return () => window.clearTimeout(timer);
   }, [active, phase]);
@@ -518,5 +536,5 @@ export function EnterWorkspaceLink({ onClick, ...props }: EnterWorkspaceLinkProp
     startTransition('/dashboard', { left: rect.left, top: rect.top, width: rect.width, height: rect.height });
   };
 
-  return <Link {...props} to="/dashboard" onClick={handleClick}/>;
+  return <Link data-cm-click-sound="off" {...props} to="/dashboard" onClick={handleClick}/>;
 }

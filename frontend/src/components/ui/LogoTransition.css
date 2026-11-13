@@ -14,7 +14,7 @@
   position: absolute;
   z-index: 1;
   inset: 0;
-  background: #070b14;
+  background: var(--cm-bg, #060a11);
   opacity: .28;
   animation: cm-logo-transition-cover 720ms cubic-bezier(.22, 1, .36, 1) both;
 }
@@ -52,7 +52,7 @@
   width: min(34rem, 78vw, 70vh);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(circle, #bd714d55 0%, #7a48252a 38%, transparent 72%);
+  background: radial-gradient(circle, #bf7e4f36 0%, #8eadde18 42%, transparent 72%);
   opacity: 0;
   transform: translate(-50%, -50%) scale(.86);
   transition: opacity 420ms ease, transform 640ms cubic-bezier(.22, 1, .36, 1);
@@ -78,7 +78,7 @@
 }
 
 .cm-logo-transition--hold .cm-logo-transition__glow {
-  opacity: .62;
+  opacity: .38;
   transform: translate(-50%, -50%) scale(1);
 }
 
