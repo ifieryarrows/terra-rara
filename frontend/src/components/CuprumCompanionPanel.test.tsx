@@ -10,6 +10,7 @@ import {
   CUPRUM_SAFE_MARGIN,
   CUPRUM_STORAGE_KEYS,
   clampCuprumPosition,
+  useOptionalCuprumContext,
 } from '../contexts/CuprumContext';
 import * as cosmicVision from '../utils/cosmicVision';
 import type { CommentaryResponse } from '../types';
@@ -343,6 +344,128 @@ describe('CuprumCompanionPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Let me ask something else.' }));
     expect(screen.getByTestId('cuprum-spoken-text')).not.toHaveTextContent('You came back');
     expect(screen.getByTestId('cuprum-spoken-text')).toHaveTextContent('The fire is still hot. What else do you want to ask?');
+  });
+});
+
+describe('CuprumCompanionPanel minimize/expand bottom-edge anchoring', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: 800 });
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  function mockCuprumStageRects() {
+    return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const dock = this.closest('.cm-cuprum-dock');
+      const isPill =
+        dock?.getAttribute('data-minimized') === 'true' ||
+        this.classList.contains('cm-cuprum-pill');
+      const width = isPill ? 132 : 176;
+      const height = isPill ? 42 : 172;
+      return {
+        width,
+        height,
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+  }
+
+  function clickExpandPill() {
+    const pill = screen.getByTestId('cuprum-minimized-pill');
+    const target =
+      Array.from(pill.querySelectorAll('button')).find(
+        (btn) => !/drag|move/i.test(btn.getAttribute('aria-label') ?? ''),
+      ) ?? pill;
+    fireEvent.click(target);
+  }
+
+  it('keeps the bottom control edge anchored across minimize and expand when undocked', () => {
+    mockCuprumStageRects();
+    let ctxRef: ReturnType<typeof useOptionalCuprumContext> = null;
+    function Harness() {
+      ctxRef = useOptionalCuprumContext();
+      return null;
+    }
+
+    const { container } = render(
+      <CuprumProvider>
+        <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />
+        <Harness />
+      </CuprumProvider>,
+    );
+
+    const dock = container.querySelector('.cm-cuprum-dock') as HTMLElement;
+    expect(dock).not.toBeNull();
+
+    // Right-half custom position: (600, 300) with 176x172 -> right=776, bottom=472
+    act(() => {
+      ctxRef?.setPosition({ x: 600, y: 300 });
+    });
+    expect(dock.style.transform).toBe('translate3d(600px, 300px, 0)');
+
+    // Minimize -> 132x42 pill stays at bottom-right edge (644, 430), not jumping to y=300
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(dock.getAttribute('data-minimized')).toBe('true');
+    expect(dock.style.transform).toBe('translate3d(644px, 430px, 0)');
+
+    // Expand -> returns cleanly to (600, 300)
+    clickExpandPill();
+    expect(dock.getAttribute('data-minimized')).toBe('false');
+    expect(dock.style.transform).toBe('translate3d(600px, 300px, 0)');
+
+    // Left-half custom position: (200, 300) -> left-aligned bottom anchor (200, 430)
+    act(() => {
+      ctxRef?.setPosition({ x: 200, y: 300 });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(dock.style.transform).toBe('translate3d(200px, 430px, 0)');
+
+    clickExpandPill();
+    expect(dock.style.transform).toBe('translate3d(200px, 300px, 0)');
+  });
+
+  it('restores original pill height after expanding near the top edge clamps downward', () => {
+    mockCuprumStageRects();
+    let ctxRef: ReturnType<typeof useOptionalCuprumContext> = null;
+    function Harness() {
+      ctxRef = useOptionalCuprumContext();
+      return null;
+    }
+
+    const { container } = render(
+      <CuprumProvider>
+        <CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />
+        <Harness />
+      </CuprumProvider>,
+    );
+
+    const dock = container.querySelector('.cm-cuprum-dock') as HTMLElement;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    act(() => {
+      ctxRef?.setPosition({ x: 200, y: 20 });
+    });
+    expect(dock.style.transform).toBe('translate3d(200px, 20px, 0)');
+
+    // Expanding from bottom=62 pushes top above screen, so it clamps to SAFE_MARGIN
+    clickExpandPill();
+    expect(dock.style.transform).toBe(`translate3d(200px, ${CUPRUM_SAFE_MARGIN}px, 0)`);
+
+    // Minimizing again returns to exact y=20 rather than drifting downward
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(dock.style.transform).toBe('translate3d(200px, 20px, 0)');
   });
 });
 

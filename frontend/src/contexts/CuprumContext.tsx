@@ -355,7 +355,7 @@ function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps
     readStoredBoolean(CUPRUM_STORAGE_KEYS.visible, true),
   );
   const [widgetSize, setWidgetSizeState] = useState<CuprumSize>(() =>
-    readStoredBoolean(CUPRUM_STORAGE_KEYS.minimized, false) ? DEFAULT_PILL_SIZE : DEFAULT_CUPRUM_SIZE,
+    minimized ? DEFAULT_PILL_SIZE : DEFAULT_CUPRUM_SIZE,
   );
 
   const storedRef = useRef<StoredPositionPayload | null>(readStoredPosition());
@@ -365,9 +365,7 @@ function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps
   });
   const [position, setPositionState] = useState<CuprumPosition>(() => {
     const vp = getViewportSize();
-    const initialSize = readStoredBoolean(CUPRUM_STORAGE_KEYS.minimized, false)
-      ? DEFAULT_PILL_SIZE
-      : DEFAULT_CUPRUM_SIZE;
+    const initialSize = minimized ? DEFAULT_PILL_SIZE : DEFAULT_CUPRUM_SIZE;
     const stored = storedRef.current;
     if (!stored || stored.docked) {
       return getDefaultDockedPosition(initialSize, vp);

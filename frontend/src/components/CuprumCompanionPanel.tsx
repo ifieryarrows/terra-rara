@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8,6 +9,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 import {
   CUPRUM_DRAG_THRESHOLD_PX,
   CUPRUM_KEY_STEP_PX,
@@ -335,21 +339,87 @@ export function CuprumCompanionPanel({
   );
 
   // Measure dock size for responsive clamping & bubble auto-flipping.
+  const dockDocked = cuprumCtx ? cuprumCtx.isDocked : localDocked;
+  const dockSize = cuprumCtx ? cuprumCtx.widgetSize : localSize;
+  const dockPos = cuprumCtx ? cuprumCtx.position : localPos;
+  const dockVp = cuprumCtx ? cuprumCtx.viewport : localViewport;
+  const setDockPos = cuprumCtx ? cuprumCtx.setPosition : setLocalPos;
+
+  const latestDockRef = useRef({ docked: dockDocked, pos: dockPos });
+  latestDockRef.current = { docked: dockDocked, pos: dockPos };
+
+  const anchorMetaRef = useRef<{
+    init: boolean;
+    size: CuprumSize;
+    r: number | null;
+    b: number | null;
+    lastPos: CuprumPosition | null;
+  }>({ init: false, size: dockSize, r: null, b: null, lastPos: null });
+
+  const pendingAnchorRef = useRef<{
+    targetSize: CuprumSize;
+    prevSize: CuprumSize;
+    prevPos: CuprumPosition;
+    r: number | null;
+    b: number | null;
+  } | null>(null);
+
   const stageRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const fallback = minimized ? DEFAULT_PILL_SIZE : DEFAULT_CUPRUM_SIZE;
     const node = stageRef.current;
     if (!node) {
+      anchorMetaRef.current.init = false;
+      pendingAnchorRef.current = null;
       updateMeasuredSize(fallback);
       return undefined;
     }
 
+    const applyMeasure = (raw: CuprumSize) => {
+      const nextSize = { width: Math.ceil(raw.width), height: Math.ceil(raw.height) };
+      const meta = anchorMetaRef.current;
+      const latest = latestDockRef.current;
+
+      if (!meta.init) {
+        meta.init = true;
+        meta.size = nextSize;
+        meta.lastPos = latest.pos;
+        updateMeasuredSize(nextSize);
+        return;
+      }
+
+      if (latest.docked) {
+        meta.size = nextSize;
+        meta.r = null;
+        meta.b = null;
+        meta.lastPos = null;
+        pendingAnchorRef.current = null;
+        updateMeasuredSize(nextSize);
+        return;
+      }
+
+      if (meta.size.width !== nextSize.width || meta.size.height !== nextSize.height) {
+        const movedExternally =
+          meta.lastPos !== null &&
+          (latest.pos.x !== meta.lastPos.x || latest.pos.y !== meta.lastPos.y);
+        pendingAnchorRef.current = {
+          targetSize: nextSize,
+          prevSize: meta.size,
+          prevPos: latest.pos,
+          r: movedExternally ? null : meta.r,
+          b: movedExternally ? null : meta.b,
+        };
+        meta.size = nextSize;
+      }
+      updateMeasuredSize(nextSize);
+    };
+
     const measure = () => {
       const rect = node.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
-        updateMeasuredSize({ width: rect.width, height: rect.height });
+        applyMeasure({ width: rect.width, height: rect.height });
       } else {
-        updateMeasuredSize(fallback);
+        applyMeasure(fallback);
       }
     };
 
@@ -360,6 +430,35 @@ export function CuprumCompanionPanel({
     observer.observe(node);
     return () => observer.disconnect();
   }, [minimized, updateMeasuredSize]);
+
+  useIsomorphicLayoutEffect(() => {
+    const pending = pendingAnchorRef.current;
+    if (!pending || dockDocked) return;
+    if (
+      dockSize.width !== pending.targetSize.width ||
+      dockSize.height !== pending.targetSize.height
+    ) {
+      return;
+    }
+    pendingAnchorRef.current = null;
+    const { prevSize, prevPos, r: effR, b: effB } = pending;
+    const intendedR =
+      effR ??
+      (prevPos.x + prevSize.width / 2 > dockVp.width / 2
+        ? prevPos.x + prevSize.width
+        : null);
+    const intendedB = effB ?? prevPos.y + prevSize.height;
+    const rawX = intendedR !== null ? intendedR - dockSize.width : prevPos.x;
+    const rawY = intendedB - dockSize.height;
+    const clamped = clampCuprumPosition({ x: rawX, y: rawY }, dockSize, dockVp);
+    anchorMetaRef.current.r =
+      intendedR !== null && clamped.x !== Math.round(rawX) ? intendedR : null;
+    anchorMetaRef.current.b = clamped.y !== Math.round(rawY) ? intendedB : null;
+    anchorMetaRef.current.lastPos = clamped;
+    if (clamped.x !== prevPos.x || clamped.y !== prevPos.y) {
+      setDockPos(clamped);
+    }
+  }, [dockSize, dockDocked, dockVp, setDockPos]);
 
   // Dragging & keyboard repositioning state
   const [dragPreviewPos, setDragPreviewPos] = useState<CuprumPosition | null>(null);
