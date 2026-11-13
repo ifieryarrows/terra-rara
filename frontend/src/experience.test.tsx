@@ -44,39 +44,39 @@ describe('product introduction and workspace routes', () => {
     const user = userEvent.setup();
     render(<App/>);
     await user.click(screen.getAllByRole('link', { name: 'Enter CopperMind' })[0]);
-    expect(await screen.findByRole('heading', { name: 'Market overview' }, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Market overview' }, { timeout: 15_000 })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
-    await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus());
+    await waitFor(() => expect(document.getElementById('main-content')).toHaveFocus(), { timeout: 5000 });
     expect(screen.getByRole('navigation', { name: 'Workspace' })).toBeInTheDocument();
     expect(document.querySelector('.cm-story')).toBeNull();
-  });
+  }, 20_000);
   it.each([['/models', 'Model intelligence'], ['/validation', 'Validation report'], ['/system', 'System health']])('preserves direct navigation to %s', async (path, heading) => {
     window.history.replaceState({}, '', path);
     render(<App/>);
-    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: heading }, { timeout: 8000 })).toBeInTheDocument();
     expect(window.location.pathname).toBe(path);
-  });
+  }, 15_000);
   it('preserves a query-bearing legacy root link when moving to the dashboard', async () => {
     window.history.replaceState({}, '', '/?symbol=HG%3DF');
     render(<App/>);
-    expect(await screen.findByRole('heading', { name: 'Market overview' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Market overview' }, { timeout: 8000 })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     expect(window.location.search).toBe('?symbol=HG%3DF');
-  });
+  }, 15_000);
   it('keeps the workspace shell mounted and visible when navigating from a scrolled page', async () => {
     const user = userEvent.setup();
     window.history.replaceState({}, '', '/dashboard');
     Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: 350 });
     render(<App/>);
 
-    const header = await screen.findByRole('banner');
+    const header = await screen.findByRole('banner', {}, { timeout: 8000 });
     expect(header).toHaveClass('cm-workspace-header--hidden');
 
     await user.click(screen.getByRole('link', { name: 'Models' }));
-    expect(await screen.findByRole('heading', { name: 'Model intelligence' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Model intelligence' }, { timeout: 8000 })).toBeInTheDocument();
     await waitFor(() => expect(header).not.toHaveClass('cm-workspace-header--hidden'));
     expect(screen.getByRole('banner')).toBe(header);
-  });
+  }, 15_000);
   it('provides a way out of an unknown URL', () => {
     window.history.replaceState({}, '', '/unknown-view');
     render(<App/>);

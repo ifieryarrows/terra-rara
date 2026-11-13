@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { ArrowRight, ChartNoAxesCombined, Newspaper, ScanLine, ShieldCheck } from 'lucide-react';
-import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
+import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'framer-motion';
 import { Hero } from './Hero';
 import { BrandMark } from '../../components/ui/BrandMark';
 import { EnterWorkspaceLink } from '../../components/ui/LogoTransition';
@@ -16,12 +16,10 @@ function EntryRevealLine({ progress, index, startAt = .06, step = .11, duration 
   const staticProgress = useMotionValue(1);
   const timeline = progress ?? staticProgress;
   const start = startAt + index * step;
-  const maskX = useTransform(timeline, [start, start + duration], ['0%', '-105%']);
-  const textOpacity = useTransform(timeline, [Math.max(0, start - .03), start + .055], [0, 1]);
-  const textY = useTransform(timeline, [start, start + duration], [12, 0]);
+  const textOpacity = useTransform(timeline, [Math.max(0, start - .02), start + duration * .78], [0, 1]);
+  const textY = useTransform(timeline, [start, start + duration], [14, 0]);
   return <span className={`cm-enter-reveal-line ${className}`}>
     <motion.span className="cm-enter-reveal-text" style={progress ? { opacity: textOpacity, y: textY } : undefined}>{children}</motion.span>
-    {progress ? <motion.span className="cm-enter-reveal-mask" style={{ x: maskX }} aria-hidden="true"/> : null}
   </span>;
 }
 
@@ -31,16 +29,16 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
   const contentTimeline = revealProgress ?? timeline;
   const lineStart = cinematic ? .02 : .06;
   const lineStep = cinematic ? .09 : .11;
-  const lineDuration = cinematic ? .18 : .16;
-  const bridgeScale = useTransform(timeline, cinematic ? [CINEMATIC_ENTRY_TRIGGER, .98] : [0, .22], [0, 1]);
+  const lineDuration = cinematic ? .20 : .16;
+  const bridgeScale = useTransform(timeline, cinematic ? [CINEMATIC_ENTRY_FADE_FROM, .97] : [0, .22], [0, 1]);
   const actionOpacity = useTransform(contentTimeline, cinematic ? [.32, .56] : [.53, .73], [0, 1]);
   const actionY = useTransform(contentTimeline, cinematic ? [.32, .56] : [.53, .73], [18, 0]);
   const noteOpacity = useTransform(contentTimeline, cinematic ? [.48, .72] : [.68, .84], [0, 1]);
-  const brandOpacity = useTransform(contentTimeline, [0, .12], [0, 1]);
-  const brandY = useTransform(contentTimeline, [0, .12], [14, 0]);
+  const brandOpacity = useTransform(contentTimeline, [0, .14], [0, 1]);
+  const brandY = useTransform(contentTimeline, [0, .14], [14, 0]);
   const lineProgress = animated ? contentTimeline : progress;
   return <>
-    {animated ? <div className="cm-enter-bridge" aria-hidden="true"><motion.span style={{ scaleX: bridgeScale }}/></div> : null}
+    {animated && !cinematic ? <div className="cm-enter-bridge" aria-hidden="true"><motion.span style={{ scaleX: bridgeScale }}/></div> : null}
     <motion.div className="cm-enter-brand-mark" style={animated ? { opacity: brandOpacity, y: brandY } : undefined} aria-hidden="true"><BrandMark size={52} variant="primary"/></motion.div>
     <p className="cm-eyebrow"><EntryRevealLine progress={lineProgress} index={0} startAt={lineStart} step={lineStep} duration={lineDuration}>YOUR RESEARCH STARTS HERE</EntryRevealLine></p>
     <h2 id="enter-title"><EntryRevealLine progress={lineProgress} index={1} startAt={lineStart} step={lineStep} duration={lineDuration}>From perspective</EntryRevealLine><EntryRevealLine progress={lineProgress} index={2} startAt={lineStart} step={lineStep} duration={lineDuration}>to your next question.</EntryRevealLine></h2>
@@ -50,12 +48,20 @@ function EntryCTAContent({ progress, revealProgress, animated, cinematic = false
   </>;
 }
 
+const CINEMATIC_CTA_SPRING = { stiffness: 105, damping: 21, mass: .9 };
+
 function CinematicEntryCTA({ progress, revealProgress }: { progress: MotionValue<number>; revealProgress: MotionValue<number> }) {
-  const opacity = useTransform(progress, getCinematicEntryOpacity);
-  const y = useTransform(revealProgress, [0, .1], [28, 0]);
-  const visibility = useTransform(progress, value => value > CINEMATIC_ENTRY_FADE_FROM ? 'visible' : 'hidden');
-  const pointerEvents = useTransform(progress, value => value >= CINEMATIC_ENTRY_TRIGGER ? 'auto' : 'none');
-  return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
+  const targetOpacity = useTransform(progress, getCinematicEntryOpacity);
+  const opacity = useSpring(targetOpacity, CINEMATIC_CTA_SPRING);
+  const scrollY = useTransform(progress, [CINEMATIC_ENTRY_FADE_FROM, CINEMATIC_ENTRY_TRIGGER], [28, 0]);
+  const revealY = useTransform(revealProgress, [0, 1], [12, 0]);
+  const combinedY = useTransform([scrollY, revealY], ([sy, ry]: number[]) => sy + ry);
+  const y = useSpring(combinedY, CINEMATIC_CTA_SPRING);
+  const targetScale = useTransform(progress, [CINEMATIC_ENTRY_FADE_FROM, CINEMATIC_ENTRY_TRIGGER], [.968, 1]);
+  const scale = useSpring(targetScale, CINEMATIC_CTA_SPRING);
+  const visibility = useTransform(opacity, value => value > .004 ? 'visible' : 'hidden');
+  const pointerEvents = useTransform(progress, value => value >= .905 ? 'auto' : 'none');
+  return <motion.section className="cm-enter cm-enter--cinematic cm-cinematic-entry" aria-labelledby="enter-title" style={{ opacity, y, scale, visibility, pointerEvents }}><EntryCTAContent progress={progress} revealProgress={revealProgress} animated cinematic/></motion.section>;
 }
 
 function StaticEntryCTA() {

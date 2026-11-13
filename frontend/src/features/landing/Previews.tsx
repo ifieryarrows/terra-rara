@@ -73,25 +73,28 @@ function NewsSequenceLayer({
 }
 
 function NewsHeadlineLayer({ progress }: { progress: MotionValue<number> }) {
-  const clipPath = useTransform(progress, [0, .12], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const headlineOpacity = useTransform(progress, [0, .10], [0, 1]);
+  const headlineY = useTransform(progress, [0, .12], [12, 0]);
   return <NewsSequenceLayer className="cm-news-headline-layer" progress={progress} range={[0, .08, .24, .28]}>
     <span className="cm-news-step-label">01 / SOURCE HEADLINE</span>
     <div className="cm-news-headline-copy">
       <span className="cm-news-route">{newsIntelligencePreview.symbol} / {newsIntelligencePreview.company}</span>
-      <motion.h3 style={{ clipPath }}>{newsIntelligencePreview.headline}</motion.h3>
+      <motion.h3 style={{ opacity: headlineOpacity, y: headlineY }}>{newsIntelligencePreview.headline}</motion.h3>
       <p>{newsIntelligencePreview.description}</p>
     </div>
   </NewsSequenceLayer>;
 }
 
 function NewsEntitiesLayer({ progress }: { progress: MotionValue<number> }) {
-  const firstClip = useTransform(progress, [.28, .36], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
-  const secondClip = useTransform(progress, [.34, .43], ['inset(0 100% 0 0)', 'inset(0 0% 0 0)']);
+  const firstOpacity = useTransform(progress, [.28, .36], [0, 1]);
+  const secondOpacity = useTransform(progress, [.34, .43], [0, 1]);
+  const firstY = useTransform(progress, [.28, .36], [8, 0]);
+  const secondY = useTransform(progress, [.34, .43], [8, 0]);
   return <NewsSequenceLayer className="cm-news-entities-layer" progress={progress} range={[.28, .34, .48, .53]}>
     <span className="cm-news-step-label">02 / SEMANTIC EMPHASIS</span>
-    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: firstClip }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
-    <p className="cm-news-entity-line"><motion.mark style={{ clipPath: secondClip }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
-    <p className="cm-news-entity-line cm-news-entity-line--event"><motion.mark style={{ clipPath: secondClip }}>copper supply</motion.mark><span> / {newsIntelligencePreview.eventType.replace('_', ' ')}</span></p>
+    <p className="cm-news-entity-line"><motion.mark style={{ opacity: firstOpacity, y: firstY }}>{newsIntelligencePreview.company}</motion.mark><span> / entity</span></p>
+    <p className="cm-news-entity-line"><motion.mark style={{ opacity: secondOpacity, y: secondY }}>{newsIntelligencePreview.symbol}</motion.mark><span> / ticker · market context</span></p>
+    <p className="cm-news-entity-line cm-news-entity-line--event"><motion.mark style={{ opacity: secondOpacity, y: secondY }}>copper supply</motion.mark><span> / {newsIntelligencePreview.eventType.replace('_', ' ')}</span></p>
   </NewsSequenceLayer>;
 }
 

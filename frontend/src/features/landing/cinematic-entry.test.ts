@@ -12,12 +12,15 @@ describe('cinematic entry choreography', () => {
     expect(getCinematicParticleProgress(.9, 1)).toBe(.9);
   });
 
-  it('fades the CTA layer out before the returning copy can reach the viewport', () => {
+  it('fades the CTA layer smoothly across upward and downward steps without snapping to hidden', () => {
     expect(getCinematicEntryOpacity(CINEMATIC_ENTRY_TRIGGER)).toBe(1);
     expect(getCinematicEntryOpacity(.97)).toBe(1);
     expect(getCinematicEntryOpacity((CINEMATIC_ENTRY_FADE_FROM + CINEMATIC_ENTRY_TRIGGER) / 2)).toBeCloseTo(.5);
+    expect(getCinematicEntryOpacity(.91)).toBeGreaterThan(.5);
+    expect(getCinematicEntryOpacity(.91)).toBeLessThan(1);
+    expect(getCinematicEntryOpacity(.86)).toBeGreaterThan(0);
+    expect(getCinematicEntryOpacity(.86)).toBeLessThan(.2);
     expect(getCinematicEntryOpacity(CINEMATIC_ENTRY_FADE_FROM)).toBe(0);
-    expect(getCinematicEntryOpacity(.86)).toBe(0);
     expect(getCinematicEntryOpacity(.75)).toBe(0);
   });
 });

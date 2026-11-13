@@ -4,16 +4,17 @@ import { animate, useMotionValue, type MotionValue } from 'framer-motion';
 export const CINEMATIC_ENTRY_TRIGGER = .93;
 export const CINEMATIC_ENTRY_RESET = .87;
 /**
- * The CTA layer's opacity is scroll-linked from here to the trigger. The
- * content reveal keeps its own 2 s / .62 s clock, but the layer itself can
- * never linger over the returning story when a reverse gesture lands before
- * the reset animation has finished.
+ * The CTA layer fades smoothly with scroll across [FADE_FROM, TRIGGER] and is
+ * further damped by a Framer Motion spring in `CinematicEntryCTA`, so a single
+ * upward or downward scroll step glides smoothly via opacity + transform and
+ * never snaps invisible mid-motion.
  */
-export const CINEMATIC_ENTRY_FADE_FROM = .90;
+export const CINEMATIC_ENTRY_FADE_FROM = .85;
 
 export function getCinematicEntryOpacity(progress: number) {
   const value = Math.max(0, Math.min(1, progress));
-  return Math.max(0, Math.min(1, (value - CINEMATIC_ENTRY_FADE_FROM) / (CINEMATIC_ENTRY_TRIGGER - CINEMATIC_ENTRY_FADE_FROM)));
+  const t = Math.max(0, Math.min(1, (value - CINEMATIC_ENTRY_FADE_FROM) / (CINEMATIC_ENTRY_TRIGGER - CINEMATIC_ENTRY_FADE_FROM)));
+  return t * t * (3 - 2 * t);
 }
 
 export function getCinematicParticleProgress(scrollProgress: number, revealProgress: number) {
@@ -50,8 +51,8 @@ export function useCinematicEntryReveal(progress: MotionValue<number>) {
       phaseRef.current = step.phase;
       animation.current?.stop();
       animation.current = step.target === 1
-        ? animate(reveal, 1, { duration: 2, ease: [0.22, 0.61, 0.36, 1] })
-        : animate(reveal, 0, { duration: .62, ease: [0.4, 0, 0.2, 1] });
+        ? animate(reveal, 1, { duration: 1.25, ease: [0.22, 0.61, 0.36, 1] })
+        : animate(reveal, 0, { duration: .55, ease: [0.4, 0, 0.2, 1] });
     };
     update(progress.get());
     const unsubscribe = progress.on('change', update);

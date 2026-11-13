@@ -69,17 +69,26 @@ describe('cinematic scene stepper', () => {
     scene.dispose();
   });
 
-  it('gives the ingot stage its own rest between the forecast and the CTA', () => {
+  it('gives the Milky Way observatory stage its own rest between the forecast and the CTA', () => {
     const forecast = CINEMATIC_RESTS.indexOf(.69);
     expect(CINEMATIC_RESTS[forecast + 1]).toBe(.86);
     expect(CINEMATIC_RESTS[forecast + 2]).toBe(.97);
   });
 
-  it('steps from the forecast onto the ingot stage, not straight to the CTA', () => {
+  it('steps from the forecast into the Milky Way stage, not straight to the CTA', () => {
     atScrollY(restY(CINEMATIC_RESTS.indexOf(.69)));
     const scene = stepper();
 
     expect(scene.handleWheel(wheel(240))).toBe(true);
+    expect(window.scrollTo).toHaveBeenLastCalledWith({ top: restY(CINEMATIC_RESTS.indexOf(.86)), behavior: 'smooth' });
+    scene.dispose();
+  });
+
+  it('steps upward cleanly from the final CTA back to the Milky Way stage', () => {
+    atScrollY(restY(CINEMATIC_RESTS.indexOf(.97)));
+    const scene = stepper();
+
+    expect(scene.handleWheel(wheel(-240))).toBe(true);
     expect(window.scrollTo).toHaveBeenLastCalledWith({ top: restY(CINEMATIC_RESTS.indexOf(.86)), behavior: 'smooth' });
     scene.dispose();
   });
