@@ -337,3 +337,153 @@ def test_get_db_type_with_session_get_bind():
 
     assert get_db_type(mock_session) == "postgresql"
 
+
+def test_vectorized_market_calendar_exact_parity():
+    from pipelines.market_calendar import (
+        assign_market_date,
+        assign_market_date_and_after_close_series,
+        is_after_close_news,
+    )
+
+    timestamps = [
+        datetime.datetime(2026, 3, 6, 22, 29, 59, tzinfo=datetime.timezone.utc),   # EST before 17:30 Fri
+        datetime.datetime(2026, 3, 6, 22, 30, 0, tzinfo=datetime.timezone.utc),    # EST exact 17:30 Fri
+        datetime.datetime(2026, 3, 6, 22, 30, 1, tzinfo=datetime.timezone.utc),    # EST after 17:30 Fri -> Mon
+        datetime.datetime(2026, 3, 7, 14, 0, 0, tzinfo=datetime.timezone.utc),     # Saturday -> Mon
+        datetime.datetime(2026, 3, 8, 23, 0, 0, tzinfo=datetime.timezone.utc),     # Sunday EDT transition -> Mon
+        datetime.datetime(2026, 7, 15, 21, 30, 0, tzinfo=datetime.timezone.utc),   # EDT exact 17:30 Wed
+        datetime.datetime(2026, 7, 15, 21, 30, 1, tzinfo=datetime.timezone.utc),   # EDT after 17:30 Wed -> Thu
+        datetime.datetime(2026, 11, 6, 22, 30, 10, tzinfo=datetime.timezone.utc),  # EST after 17:30 Fri -> Mon
+    ]
+    md_series, ac_series = assign_market_date_and_after_close_series(timestamps)
+    for idx, ts in enumerate(timestamps):
+        assert md_series.iloc[idx].date() == assign_market_date(ts)
+        assert int(ac_series.iloc[idx]) == int(is_after_close_news(ts))
+
+
+def test_aggregate_daily_sentiment_v2_skips_unchanged_db_updates(db_session):
+    from sqlalchemy import event
+    from app.ai_engine import aggregate_daily_sentiment_v2
+    from app.models import DailySentimentV2, NewsSentimentV2
+
+    DailySentimentV2.__table__.create(bind=db_session.bind, checkfirst=True)
+    NewsSentimentV2.__table__.create(bind=db_session.bind, checkfirst=True)
+
+    run_id = uuid.uuid4()
+    base_dt = datetime.datetime(2026, 10, 5, 14, 0, tzinfo=datetime.timezone.utc)  # Mon through Fri
+    for day_offset in range(5):
+        pub_dt = base_dt + datetime.timedelta(days=day_offset)
+        raw = NewsRaw(
+            url=f"https://example.com/news-{day_offset}",
+            url_hash=f"{day_offset + 100:064x}",
+            title=f"Copper supply update day {day_offset}",
+            publisher="Reuters",
+            published_at=pub_dt,
+            fetched_at=pub_dt + datetime.timedelta(minutes=5),
+            run_id=run_id,
+        )
+        db_session.add(raw)
+        db_session.flush()
+        proc = NewsProcessed(
+            raw_id=raw.id,
+            canonical_title=f"copper supply update day {day_offset}",
+            canonical_title_hash=f"{day_offset + 200:064x}",
+            cleaned_text="Copper supply tightens.",
+            dedup_key=f"{day_offset + 300:064x}",
+            dedup_version="content_v2",
+            language="en",
+            run_id=run_id,
+        )
+        db_session.add(proc)
+        db_session.flush()
+        db_session.add(
+            NewsSentimentV2(
+                news_processed_id=proc.id,
+                horizon_days=5,
+                label="BULLISH",
+                impact_score_llm=0.5,
+                confidence_llm=0.8,
+                confidence_calibrated=0.75,
+                relevance_score=0.85,
+                event_type="supply_disruption",
+                rule_sign=1,
+                final_score=0.45 + 0.01 * day_offset,
+                finbert_pos=0.7,
+                finbert_neu=0.2,
+                finbert_neg=0.1,
+                reasoning_json="{}",
+            )
+        )
+    db_session.commit()
+
+    first_count = aggregate_daily_sentiment_v2(db_session)
+    assert first_count == 5
+
+    sql_statements: list[str] = []
+
+    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        sql_statements.append(statement.strip().upper())
+
+    event.listen(db_session.bind, "before_cursor_execute", _capture_sql)
+    try:
+        second_count = aggregate_daily_sentiment_v2(db_session)
+        assert second_count == 5
+        update_statements = [s for s in sql_statements if s.startswith("UPDATE DAILY_SENTIMENTS_V2")]
+        assert update_statements == []
+    finally:
+        event.remove(db_session.bind, "before_cursor_execute", _capture_sql)
+
+
+def test_v2_scoring_disables_reasoning_and_skips_same_model_conflict_escalation(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app import ai_engine
+
+    captured_calls = []
+
+    async def _fake_chat_completion(**kwargs):
+        captured_calls.append(kwargs)
+        return {
+            "model": "nvidia/nemotron-3.5-super-vl:free",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": (
+                            '[{"id": 1, "label": "BEARISH", "impact_score": -0.60, '
+                            '"confidence": 0.90, "relevance": 0.90, '
+                            '"event_type": "supply_disruption", "reasoning": "Contrarian take."}]'
+                        )
+                    },
+                }
+            ],
+        }
+
+    fake_settings = SimpleNamespace(
+        openrouter_api_key="sk-or-v1-test-key",
+        openrouter_api_keys=["sk-or-v1-test-key"],
+        resolved_scoring_fast_model="nvidia/nemotron-3.5-super-vl:free",
+        resolved_scoring_reliable_model="nvidia/nemotron-3.5-super-vl:free",
+        openrouter_fallback_models_list=[],
+        openrouter_max_retries=1,
+        openrouter_rpm=20,
+        openrouter_timeout_seconds=30.0,
+        openrouter_chain_deadline_seconds=60.0,
+        sentiment_escalate_conflict_threshold=0.55,
+    )
+    monkeypatch.setattr(ai_engine, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(ai_engine, "create_chat_completion", _fake_chat_completion)
+
+    bundle = asyncio.run(
+        ai_engine.score_batch_with_llm_v2(
+            [{"id": 1, "title": "Copper outage", "description": "Mine halted"}],
+            horizon_days=5,
+        )
+    )
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["extra_payload"] == {"reasoning": {"enabled": False, "exclude": True}}
+    assert bundle["escalation_count"] == 0
+    assert len(bundle["results"]) == 1
+    assert bundle["results"][0]["id"] == 1
+
+

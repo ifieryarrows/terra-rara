@@ -10,7 +10,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as SASession
 
 from app.models import NewsProcessed, NewsRaw, NewsSentimentV2
-from pipelines.market_calendar import assign_market_date, is_after_close_news
+from pipelines.market_calendar import (
+    assign_market_date,
+    assign_market_date_and_after_close_series,
+    is_after_close_news,
+)
 
 
 MATERIAL_RELEVANCE_MIN = 0.60
@@ -85,30 +89,34 @@ def build_market_date_sentiment_frame(session, start_date, end_date) -> pd.DataF
     if not rows:
         return pd.DataFrame(columns=columns)
 
-    records = []
-    for r in rows:
-        market_date = _effective_market_date(r)
-        if not _within_window(market_date, start_date, end_date):
-            continue
-        relevance = float(r.relevance_score or 0.0)
-        confidence = float(r.confidence_calibrated or 0.0)
-        material = relevance >= MATERIAL_RELEVANCE_MIN and confidence >= MATERIAL_CONFIDENCE_MIN
-        weight = max(relevance, 0.0) * max(confidence, 0.0)
-        score = float(r.final_score or 0.0)
-        records.append(
-            {
-                "market_date": market_date,
-                "score": score,
-                "weight": weight,
-                "weighted_score": score * weight,
-                "material": int(material),
-                "after_close": int(is_after_close_news(r.published_at)),
-            }
-        )
+    pub_list = [getattr(r, "published_at", None) for r in rows]
+    avail_list = [_effective_available_at(r) for r in rows]
+    pub_md, after_close_s = assign_market_date_and_after_close_series(pub_list)
+    avail_md, _ = assign_market_date_and_after_close_series(avail_list)
+    eff_md = pub_md.where(pub_md >= avail_md, avail_md)
 
-    raw = pd.DataFrame(records)
-    if raw.empty:
+    start_ts = pd.Timestamp(start_date).floor("D").tz_localize(None)
+    end_ts = pd.Timestamp(end_date).floor("D").tz_localize(None)
+    mask = (eff_md >= start_ts) & (eff_md <= end_ts)
+    if not bool(mask.any()):
         return pd.DataFrame(columns=columns)
+
+    rel_arr = np.array([float(getattr(r, "relevance_score", 0.0) or 0.0) for r in rows], dtype=np.float64)[mask]
+    conf_arr = np.array([float(getattr(r, "confidence_calibrated", 0.0) or 0.0) for r in rows], dtype=np.float64)[mask]
+    score_arr = np.array([float(getattr(r, "final_score", 0.0) or 0.0) for r in rows], dtype=np.float64)[mask]
+    weight_arr = np.maximum(rel_arr, 0.0) * np.maximum(conf_arr, 0.0)
+    material_arr = ((rel_arr >= MATERIAL_RELEVANCE_MIN) & (conf_arr >= MATERIAL_CONFIDENCE_MIN)).astype(np.int64)
+
+    raw = pd.DataFrame(
+        {
+            "market_date": eff_md[mask].to_numpy(),
+            "score": score_arr,
+            "weight": weight_arr,
+            "weighted_score": score_arr * weight_arr,
+            "material": material_arr,
+            "after_close": after_close_s[mask].to_numpy(dtype=np.int64),
+        }
+    )
 
     grouped = raw.groupby("market_date", sort=True).agg(
         score_mean=("score", "mean"),
@@ -181,20 +189,25 @@ def build_market_date_event_counts_from_db(session, start_date, end_date) -> pd.
     if not rows:
         return pd.DataFrame()
 
-    records = []
-    for r in rows:
-        md = _effective_market_date(r)
-        if _within_window(md, start_date, end_date):
-            records.append(
-                {
-                    "market_date": md,
-                    "event_type": r.event_type,
-                    "count": 1,
-                }
-            )
-    if not records:
+    pub_list = [getattr(r, "published_at", None) for r in rows]
+    avail_list = [_effective_available_at(r) for r in rows]
+    pub_md, _ = assign_market_date_and_after_close_series(pub_list)
+    avail_md, _ = assign_market_date_and_after_close_series(avail_list)
+    eff_md = pub_md.where(pub_md >= avail_md, avail_md)
+
+    start_ts = pd.Timestamp(start_date).floor("D").tz_localize(None)
+    end_ts = pd.Timestamp(end_date).floor("D").tz_localize(None)
+    mask = (eff_md >= start_ts) & (eff_md <= end_ts)
+    if not bool(mask.any()):
         return pd.DataFrame()
-    df = pd.DataFrame(records)
+
+    df = pd.DataFrame(
+        {
+            "market_date": eff_md[mask].to_numpy(),
+            "event_type": [getattr(r, "event_type", None) for r, keep in zip(rows, mask) if keep],
+            "count": 1,
+        }
+    )
     pivot = df.pivot_table(index="market_date", columns="event_type", values="count", aggfunc="sum", fill_value=0)
     pivot.index = pd.to_datetime(pivot.index)
     return pivot.sort_index()

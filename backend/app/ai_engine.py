@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 from contextlib import nullcontext
 from functools import lru_cache
@@ -59,7 +60,11 @@ from app.openrouter_client import (
     create_chat_completion,
     get_configured_api_keys,
 )
-from pipelines.market_calendar import assign_market_date, is_after_close_news
+from pipelines.market_calendar import (
+    assign_market_date,
+    assign_market_date_and_after_close_series,
+    is_after_close_news,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,8 +79,8 @@ HYBRID_SCORING_VERSION = "hybrid_v2"
 HYBRID_FALLBACK_429_MODEL_NAME = "hybrid_fallback_429"
 HYBRID_FALLBACK_PARSE_MODEL_NAME = "hybrid_fallback_parse"
 LLM_LABELS = {"BULLISH", "BEARISH", "NEUTRAL"}
-LLM_SCORING_MAX_TOKENS_PRIMARY = 1500
-LLM_SCORING_MAX_TOKENS_RETRY = 2500
+LLM_SCORING_MAX_TOKENS_PRIMARY = 2200
+LLM_SCORING_MAX_TOKENS_RETRY = 3500
 LLM_V2_LABEL_THRESHOLD = 0.15
 LLM_V2_EVENT_TYPES = {
     "supply_disruption",
@@ -702,7 +707,7 @@ async def score_batch_with_llm(
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis",
             "response_format": LLM_SCORING_RESPONSE_FORMAT,
-            "extra_payload": {"reasoning": {"exclude": True}},
+            "extra_payload": {"reasoning": {"enabled": False, "exclude": True}},
         }
         return await create_chat_completion(**request_kwargs)
 
@@ -734,7 +739,7 @@ async def score_batch_with_llm(
             fallback_models=settings.openrouter_fallback_models_list,
             referer="https://copper-mind.vercel.app",
             title="CopperMind JSON Repair",
-            extra_payload={"reasoning": {"exclude": True}},
+            extra_payload={"reasoning": {"enabled": False, "exclude": True}},
         )
         repaired_content = _extract_chat_message_content(repair_data)
         if not repaired_content:
@@ -1054,7 +1059,7 @@ async def _repair_json_response_v2(
         chain_deadline_seconds=getattr(settings, "openrouter_chain_deadline_seconds", 120.0),
         referer="https://copper-mind.vercel.app",
         title="CopperMind V2 JSON Repair",
-        extra_payload={"reasoning": {"exclude": True}},
+        extra_payload={"reasoning": {"enabled": False, "exclude": True}},
     )
     repaired_content = _extract_chat_message_content(repair_data)
     if not repaired_content:
@@ -1119,7 +1124,7 @@ async def _score_subset_with_model_v2(
             "chain_deadline_seconds": getattr(settings, "openrouter_chain_deadline_seconds", 120.0),
             "referer": "https://copper-mind.vercel.app",
             "title": "CopperMind Sentiment Analysis V2",
-            "extra_payload": {"reasoning": {"exclude": True}},
+            "extra_payload": {"reasoning": {"enabled": False, "exclude": True}},
         }
         if LLM_SCORING_RESPONSE_FORMAT_V2 is not None:
             request_kwargs["response_format"] = LLM_SCORING_RESPONSE_FORMAT_V2
@@ -1301,6 +1306,14 @@ async def _score_batch_with_llm_v2_unbounded(
             1.0,
         )
         if rule_sign != 0 and llm_sign != 0 and llm_sign != rule_sign and conflict_strength >= conflict_threshold:
+            scored_by = str(item.get("llm_model") or fast_model).strip()
+            if scored_by == reliable_model:
+                logger.debug(
+                    "Skipping redundant conflict escalation for article_id=%s: already scored by reliable model %s",
+                    article_id,
+                    reliable_model,
+                )
+                continue
             conflict_ids.append(article_id)
             results_by_id.pop(article_id, None)
 
@@ -1915,6 +1928,39 @@ def score_unscored_processed_articles(
     }
 
 
+def _float_matches(existing_val: Any, new_val: float) -> bool:
+    if existing_val is None:
+        return False
+    try:
+        return math.isclose(float(existing_val), float(new_val), rel_tol=1e-9, abs_tol=1e-12)
+    except (TypeError, ValueError):
+        return False
+
+
+def _daily_sentiment_v2_row_matches(
+    existing: DailySentimentV2,
+    row: dict[str, Any],
+    date_dt: datetime,
+) -> bool:
+    existing_dt = existing.date
+    if existing_dt is not None and existing_dt.tzinfo is None:
+        existing_dt = existing_dt.replace(tzinfo=timezone.utc)
+    return (
+        existing.market_date == row["market_date"]
+        and existing_dt == date_dt
+        and existing.news_count == row["news_count"]
+        and existing.material_news_count == row["material_news_count"]
+        and existing.after_close_news_count == row["after_close_news_count"]
+        and existing.days_since_last_material_news == row["days_since_last_material_news"]
+        and bool(existing.stale_sentiment_flag) == bool(row["stale_sentiment_flag"])
+        and existing.cutoff_version == "market_close_v1"
+        and existing.source_version == "v2"
+        and _float_matches(existing.sentiment_index, row["sentiment_index"])
+        and _float_matches(existing.avg_confidence, row["avg_confidence"])
+        and _float_matches(existing.avg_relevance, row["avg_relevance"])
+    )
+
+
 def aggregate_daily_sentiment_v2(
     session: Session,
     *,
@@ -1964,87 +2010,83 @@ def aggregate_daily_sentiment_v2(
             "event_type",
         ],
     )
-    df["market_date"] = df["published_at"].apply(assign_market_date)
-    df["date"] = pd.to_datetime(df["market_date"])
+    market_date_ts, after_close_series = assign_market_date_and_after_close_series(df["published_at"])
+    df["date"] = market_date_ts
+    df["after_close"] = after_close_series
+    df["final_score"] = df["final_score"].astype(float)
+    df["confidence_calibrated"] = df["confidence_calibrated"].astype(float)
+    df["relevance_score"] = df["relevance_score"].astype(float)
     df["material"] = (
-        (df["relevance_score"].astype(float) >= 0.60)
-        & (df["confidence_calibrated"].astype(float) >= 0.55)
-    ).astype(int)
-    df["after_close"] = df["published_at"].apply(lambda ts: int(is_after_close_news(ts)))
+        (df["relevance_score"] >= 0.60) & (df["confidence_calibrated"] >= 0.55)
+    ).astype(np.int64)
 
-    age_audit = {
-        "min_age_hours": None,
-        "max_age_hours": None,
-        "num_negative_age": 0,
-        "num_age_over_30d": 0,
-        "num_nonfinite_weight": 0,
-    }
+    published_utc = pd.to_datetime(df["published_at"], utc=True)
+    available_utc = pd.to_datetime(df["fetched_at"].fillna(df["published_at"]), utc=True)
+    as_of_utc = available_utc.groupby(df["date"], sort=False).transform("max")
 
-    def _update_age_audit(raw_age_hours: pd.Series, weights: pd.Series) -> None:
-        finite_age = raw_age_hours[np.isfinite(raw_age_hours)]
-        if not finite_age.empty:
-            min_age = float(finite_age.min())
-            max_age = float(finite_age.max())
-            age_audit["min_age_hours"] = (
-                min_age
-                if age_audit["min_age_hours"] is None
-                else min(float(age_audit["min_age_hours"]), min_age)
-            )
-            age_audit["max_age_hours"] = (
-                max_age
-                if age_audit["max_age_hours"] is None
-                else max(float(age_audit["max_age_hours"]), max_age)
-            )
-        age_audit["num_negative_age"] += int((raw_age_hours < 0).sum())
-        age_audit["num_age_over_30d"] += int((raw_age_hours > max_age_hours).sum())
-        age_audit["num_nonfinite_weight"] += int((~np.isfinite(weights)).sum())
+    raw_age_hours = (
+        (as_of_utc - published_utc).dt.total_seconds().to_numpy(dtype=np.float64) / 3600.0
+    )
+    bounded_age_hours = np.clip(raw_age_hours, 0.0, max_age_hours)
+    weights = np.exp(-bounded_age_hours / float(tau_hours))
 
-    def calc_weights(group):
-        published = pd.to_datetime(group["published_at"], utc=True)
-        available = pd.to_datetime(group["fetched_at"].fillna(group["published_at"]), utc=True)
-        as_of = available.max()
-        raw_age_hours = (as_of - published).dt.total_seconds() / 3600.0
-        bounded_age_hours = raw_age_hours.clip(lower=0.0, upper=max_age_hours)
-        weights = pd.Series(
-            np.exp(-bounded_age_hours.astype(float) / float(tau_hours)),
-            index=group.index,
+    finite_age_mask = np.isfinite(raw_age_hours)
+    if finite_age_mask.any():
+        min_age_hours: Optional[float] = float(raw_age_hours[finite_age_mask].min())
+        max_age_val: Optional[float] = float(raw_age_hours[finite_age_mask].max())
+    else:
+        min_age_hours = None
+        max_age_val = None
+    num_negative_age = int((raw_age_hours < 0).sum())
+    num_age_over_30d = int((raw_age_hours > max_age_hours).sum())
+    num_nonfinite_weight = int((~np.isfinite(weights)).sum())
+
+    finite_weights = np.where(np.isfinite(weights), weights, 0.0)
+    df["_finite_weight"] = finite_weights
+    weight_sums = df.groupby("date", sort=False)["_finite_weight"].transform("sum").to_numpy(dtype=np.float64)
+    group_counts = df.groupby("date", sort=False)["final_score"].transform("count").to_numpy(dtype=np.float64)
+    norm_weights = np.where(weight_sums <= 1e-12, 1.0 / group_counts, finite_weights / weight_sums)
+    df["_weighted_score"] = df["final_score"].to_numpy(dtype=np.float64) * norm_weights
+
+    grouped = df.groupby("date", sort=True).agg(
+        sentiment_index=("_weighted_score", "sum"),
+        news_count=("final_score", "count"),
+        material_news_count=("material", "sum"),
+        after_close_news_count=("after_close", "sum"),
+        avg_confidence=("confidence_calibrated", "mean"),
+        avg_relevance=("relevance_score", "mean"),
+    )
+
+    daily_rows = [
+        {
+            "date": date_ts,
+            "market_date": date_ts.date(),
+            "sentiment_index": float(s_idx),
+            "news_count": int(n_cnt),
+            "material_news_count": int(m_cnt),
+            "after_close_news_count": int(ac_cnt),
+            "avg_confidence": float(avg_conf),
+            "avg_relevance": float(avg_rel),
+        }
+        for date_ts, s_idx, n_cnt, m_cnt, ac_cnt, avg_conf, avg_rel in zip(
+            grouped.index,
+            grouped["sentiment_index"].to_numpy(),
+            grouped["news_count"].to_numpy(),
+            grouped["material_news_count"].to_numpy(),
+            grouped["after_close_news_count"].to_numpy(),
+            grouped["avg_confidence"].to_numpy(),
+            grouped["relevance_score"] if "relevance_score" in grouped else grouped["avg_relevance"].to_numpy(),
         )
-        _update_age_audit(raw_age_hours.astype(float), weights.astype(float))
-
-        finite_weights = weights.where(np.isfinite(weights), 0.0)
-        weight_sum = float(finite_weights.sum())
-        if weight_sum <= 1e-12:
-            return pd.Series(1.0 / len(group), index=group.index)
-        return finite_weights / weight_sum
-
-    daily_rows = []
-    for date, group in df.groupby("date"):
-        weights = calc_weights(group)
-        daily_rows.append(
-            {
-                "date": date,
-                "market_date": date.date(),
-                "sentiment_index": float((group["final_score"] * weights).sum()),
-                "news_count": int(len(group)),
-                "material_news_count": int(group["material"].sum()),
-                "after_close_news_count": int(group["after_close"].sum()),
-                "avg_confidence": float(group["confidence_calibrated"].mean()),
-                "avg_relevance": float(group["relevance_score"].mean()),
-            }
-        )
+    ]
 
     logger.info(
         "V2 sentiment aggregation age audit: min_age_hours=%s max_age_hours=%s "
         "num_negative_age=%s num_age_over_30d=%s num_nonfinite_weight=%s",
-        None
-        if age_audit["min_age_hours"] is None
-        else round(float(age_audit["min_age_hours"]), 2),
-        None
-        if age_audit["max_age_hours"] is None
-        else round(float(age_audit["max_age_hours"]), 2),
-        age_audit["num_negative_age"],
-        age_audit["num_age_over_30d"],
-        age_audit["num_nonfinite_weight"],
+        None if min_age_hours is None else round(min_age_hours, 2),
+        None if max_age_val is None else round(max_age_val, 2),
+        num_negative_age,
+        num_age_over_30d,
+        num_nonfinite_weight,
     )
 
     last_material = None
@@ -2073,6 +2115,9 @@ def aggregate_daily_sentiment_v2(
                 existing_by_date[dt_key] = existing_row
 
     count = 0
+    inserted_count = 0
+    updated_count = 0
+    unchanged_count = 0
     now_utc = datetime.now(timezone.utc)
     for row in daily_rows:
         date_dt = row["date"].to_pydatetime()
@@ -2091,19 +2136,23 @@ def aggregate_daily_sentiment_v2(
                 )
             ).first()
         if existing:
-            existing.sentiment_index = row["sentiment_index"]
-            existing.news_count = row["news_count"]
-            existing.date = date_dt
-            existing.market_date = row["market_date"]
-            existing.material_news_count = row["material_news_count"]
-            existing.after_close_news_count = row["after_close_news_count"]
-            existing.days_since_last_material_news = row["days_since_last_material_news"]
-            existing.stale_sentiment_flag = row["stale_sentiment_flag"]
-            existing.cutoff_version = "market_close_v1"
-            existing.avg_confidence = row["avg_confidence"]
-            existing.avg_relevance = row["avg_relevance"]
-            existing.source_version = "v2"
-            existing.aggregated_at = now_utc
+            if isinstance(session, Session) and _daily_sentiment_v2_row_matches(existing, row, date_dt):
+                unchanged_count += 1
+            else:
+                existing.sentiment_index = row["sentiment_index"]
+                existing.news_count = row["news_count"]
+                existing.date = date_dt
+                existing.market_date = row["market_date"]
+                existing.material_news_count = row["material_news_count"]
+                existing.after_close_news_count = row["after_close_news_count"]
+                existing.days_since_last_material_news = row["days_since_last_material_news"]
+                existing.stale_sentiment_flag = row["stale_sentiment_flag"]
+                existing.cutoff_version = "market_close_v1"
+                existing.avg_confidence = row["avg_confidence"]
+                existing.avg_relevance = row["avg_relevance"]
+                existing.source_version = "v2"
+                existing.aggregated_at = now_utc
+                updated_count += 1
         else:
             new_row = DailySentimentV2(
                 date=date_dt,
@@ -2121,13 +2170,20 @@ def aggregate_daily_sentiment_v2(
                 aggregated_at=now_utc,
             )
             session.add(new_row)
+            inserted_count += 1
             if isinstance(session, Session):
                 existing_by_market_date[row["market_date"]] = new_row
                 existing_by_date[date_dt] = new_row
         count += 1
 
     session.commit()
-    logger.info("Aggregated V2 sentiment for %s days", count)
+    logger.info(
+        "Aggregated V2 sentiment for %s days (inserted=%s, updated=%s, unchanged=%s)",
+        count,
+        inserted_count,
+        updated_count,
+        unchanged_count,
+    )
     return count
 
 
@@ -2412,54 +2468,81 @@ def aggregate_daily_sentiment(
         "published_at", "score", "prob_positive", "prob_neutral", "prob_negative"
     ])
     
-    # Extract date
-    df["date"] = pd.to_datetime(df["published_at"]).dt.normalize()
-    
-    # Calculate recency weight within each day
-    # Higher weight for articles later in the day (closer to market close)
-    def calc_weights(group):
-        # Hours since start of day
-        hours = (group["published_at"] - group["date"]).dt.total_seconds() / 3600
-        # Exponential weighting: later = higher weight
-        weights = np.exp(hours / tau_hours)
-        return weights / weights.sum()  # Normalize
-    
-    # Group by date and aggregate
-    daily_data = []
-    
-    for date, group in df.groupby("date"):
-        weights = calc_weights(group)
-        
-        # Convert numpy types to native Python types for database compatibility
-        daily_data.append({
-            "date": date,
-            "sentiment_index": float((group["score"] * weights).sum()),
-            "news_count": int(len(group)),
-            "avg_positive": float(group["prob_positive"].mean()),
-            "avg_neutral": float(group["prob_neutral"].mean()),
-            "avg_negative": float(group["prob_negative"].mean()),
-        })
-    
+    # Extract date and compute vectorized recency weights within each day
+    pub_ts = pd.to_datetime(df["published_at"])
+    df["date"] = pub_ts.dt.normalize()
+    hours = (pub_ts - df["date"]).dt.total_seconds().to_numpy(dtype=np.float64) / 3600.0
+    raw_weights = np.exp(hours / float(tau_hours))
+    df["_raw_weight"] = raw_weights
+    weight_sums = df.groupby("date", sort=False)["_raw_weight"].transform("sum").to_numpy(dtype=np.float64)
+    df["_weighted_score"] = df["score"].to_numpy(dtype=np.float64) * (raw_weights / weight_sums)
+
+    grouped = df.groupby("date", sort=True).agg(
+        sentiment_index=("_weighted_score", "sum"),
+        news_count=("score", "count"),
+        avg_positive=("prob_positive", "mean"),
+        avg_neutral=("prob_neutral", "mean"),
+        avg_negative=("prob_negative", "mean"),
+    )
+
+    daily_data = [
+        {
+            "date": date_ts,
+            "sentiment_index": float(s_idx),
+            "news_count": int(n_cnt),
+            "avg_positive": float(avg_pos),
+            "avg_neutral": float(avg_neu),
+            "avg_negative": float(avg_neg),
+        }
+        for date_ts, s_idx, n_cnt, avg_pos, avg_neu, avg_neg in zip(
+            grouped.index,
+            grouped["sentiment_index"].to_numpy(),
+            grouped["news_count"].to_numpy(),
+            grouped["avg_positive"].to_numpy(),
+            grouped["avg_neutral"].to_numpy(),
+            grouped["avg_negative"].to_numpy(),
+        )
+    ]
+
+    existing_by_day: dict = {}
+    if isinstance(session, Session) and daily_data:
+        for existing_row in session.query(DailySentiment).all():
+            if existing_row.date is not None:
+                existing_by_day[existing_row.date.date()] = existing_row
+
     # Upsert daily sentiments
     count = 0
+    now_utc = datetime.now(timezone.utc)
     for row in daily_data:
         date_dt = row["date"].to_pydatetime()
         if date_dt.tzinfo is None:
             date_dt = date_dt.replace(tzinfo=timezone.utc)
-        
+
         # Check if exists
-        existing = session.query(DailySentiment).filter(
-            func.date(DailySentiment.date) == func.date(date_dt)
-        ).first()
-        
+        if isinstance(session, Session):
+            existing = existing_by_day.get(date_dt.date())
+        else:
+            existing = session.query(DailySentiment).filter(
+                func.date(DailySentiment.date) == func.date(date_dt)
+            ).first()
+
         if existing:
-            # Update
-            existing.sentiment_index = row["sentiment_index"]
-            existing.news_count = row["news_count"]
-            existing.avg_positive = row["avg_positive"]
-            existing.avg_neutral = row["avg_neutral"]
-            existing.avg_negative = row["avg_negative"]
-            existing.aggregated_at = datetime.now(timezone.utc)
+            if (
+                isinstance(session, Session)
+                and existing.news_count == row["news_count"]
+                and _float_matches(existing.sentiment_index, row["sentiment_index"])
+                and _float_matches(existing.avg_positive, row["avg_positive"])
+                and _float_matches(existing.avg_neutral, row["avg_neutral"])
+                and _float_matches(existing.avg_negative, row["avg_negative"])
+            ):
+                pass
+            else:
+                existing.sentiment_index = row["sentiment_index"]
+                existing.news_count = row["news_count"]
+                existing.avg_positive = row["avg_positive"]
+                existing.avg_neutral = row["avg_neutral"]
+                existing.avg_negative = row["avg_negative"]
+                existing.aggregated_at = now_utc
         else:
             # Insert
             daily = DailySentiment(
@@ -2470,10 +2553,12 @@ def aggregate_daily_sentiment(
                 avg_neutral=row["avg_neutral"],
                 avg_negative=row["avg_negative"],
                 weighting_method="recency_exponential",
-                aggregated_at=datetime.now(timezone.utc)
+                aggregated_at=now_utc
             )
             session.add(daily)
-        
+            if isinstance(session, Session):
+                existing_by_day[date_dt.date()] = daily
+
         count += 1
     
     session.commit()
@@ -2677,8 +2762,8 @@ def train_xgboost_model(
         "subsample": 0.8,
         "colsample_bytree": 0.6,     # Use fewer features per tree
         "min_child_weight": 5,       # Require more samples per leaf
-        "reg_alpha": 0.5,            # L1 regularization (sparsity)
-        "reg_lambda": 2.0,           # L2 regularization (smoothness)
+        "reg_alpha": 0.01,           # L1 regularization (scaled for return targets)
+        "reg_lambda": 1.0,           # L2 regularization (smoothness)
         "seed": 42,
     }
     
@@ -2855,7 +2940,8 @@ def save_model_metadata_to_db(
     existing = session.query(ModelMetadata).filter(ModelMetadata.symbol == symbol).first()
     
     if existing:
-        existing.importance_json = json.dumps(importance)
+        if importance or not existing.importance_json or existing.importance_json == "[]":
+            existing.importance_json = json.dumps(importance)
         existing.features_json = json.dumps(features)
         existing.metrics_json = json.dumps(metrics)
         existing.trained_at = datetime.now(timezone.utc)
