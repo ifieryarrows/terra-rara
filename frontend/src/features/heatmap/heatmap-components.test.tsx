@@ -339,7 +339,7 @@ describe('heatmap interaction primitives', () => {
     map.dispatchEvent(wheel);
 
     // Wait for zoom animation to settle (decay constant ~38ms, completes within ~250ms)
-    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    await waitFor(() => expect(surface.style.pointerEvents).toBe(''), { timeout: 4_000 });
 
     expect(surface.style.transform).not.toContain('matrix(1, 0, 0, 1, 0, 0)');
     const matrixMatch = surface.style.transform.match(/matrix\(([^)]+)\)/);
@@ -386,7 +386,7 @@ describe('heatmap interaction primitives', () => {
     map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 150, clientX: 350, clientY: 200 }));
 
     // Wait for animation to settle completely
-    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    await waitFor(() => expect(surface.style.pointerEvents).toBe(''), { timeout: 4_000 });
 
     expect(map.scrollLeft).toBe(0);
     expect(map.scrollTop).toBe(0);
@@ -840,11 +840,11 @@ describe('heatmap interaction primitives', () => {
 
     const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
     map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -240, clientX: 450, clientY: 250 }));
-    await new Promise((resolve) => window.setTimeout(resolve, 350));
-
-    const unlockedTiers = Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'))
-      .map((tile) => tile.querySelectorAll('[data-hm-tier]').length);
-    expect(Math.max(...unlockedTiers)).toBeGreaterThan(1);
+    await waitFor(() => {
+      const unlockedTiers = Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'))
+        .map((tile) => tile.querySelectorAll('[data-hm-tier]').length);
+      expect(Math.max(...unlockedTiers)).toBeGreaterThan(1);
+    }, { timeout: 4_000 });
   });
 
   it('isolates hover popover updates from HeatmapPanel and HeatmapTreemap commits', async () => {
