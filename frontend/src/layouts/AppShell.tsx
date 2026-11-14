@@ -13,12 +13,14 @@ import {
 import { clsx } from 'clsx';
 import { fetchLivePrice } from '../api';
 import { Brand } from '../components/ui/Brand';
-import { TerraAtmosphere } from '../components/ui/TerraAtmosphere';
 import { CuprumProvider, useCuprumFeed } from '../contexts/CuprumContext';
 import { useSystemStatus } from '../hooks/useQueries';
 import { playObservatoryChime, useObservatorySound } from '../utils/cosmicVision';
 import '../design/workspace.css';
 
+const LazyTerraAtmosphere = lazy(() =>
+  import('../components/ui/TerraAtmosphere').then((m) => ({ default: m.TerraAtmosphere })),
+);
 const LazyCuprumCompanionPanel = lazy(() =>
   import('../components/CuprumCompanionPanel').then((m) => ({ default: m.CuprumCompanionPanel })),
 );
@@ -405,7 +407,9 @@ function AppShellContent() {
 
   return (
     <div className="cm-workspace">
-      <TerraAtmosphere className="cm-terra-atmosphere--workspace" interactive />
+      <Suspense fallback={null}>
+        <LazyTerraAtmosphere className="cm-terra-atmosphere--workspace" interactive />
+      </Suspense>
       <a className="cm-skip" href="#main-content">Skip to workspace</a>
       <header
         ref={headerRef}
