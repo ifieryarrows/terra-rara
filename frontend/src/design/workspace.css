@@ -106,9 +106,9 @@
 .cm-commentary { max-height: 22rem; overflow: auto; overflow-wrap: anywhere; }
 .cm-focus-vsn-row { position: relative; padding: .45rem .55rem; border-left: 2px solid transparent; border-radius: 0 .35rem .35rem 0; transition: background-color 160ms ease, border-color 160ms ease; cursor: pointer; }
 .cm-focus-vsn-row:hover, .cm-focus-vsn-row:focus-visible, .cm-focus-vsn-row[data-active="true"] { border-left-color: var(--cm-copper); background: color-mix(in srgb, var(--cm-copper) 7%, transparent); outline: none; }
-.cm-focus-feature-slot { min-height: 8.5rem; display: flex; flex-direction: column; }
+.cm-focus-feature-slot { min-height: 9.25rem; display: flex; flex-direction: column; }
 .cm-focus-feature-slot > .cm-focus-template-card { flex: 1; align-content: start; }
-#tft-focus { min-height: 46rem; }
+#tft-focus { min-height: 50rem; }
 .cm-focus-template-card { display: grid; gap: .45rem; padding: .6rem 0 .6rem .95rem; border: 0; border-left: 2px solid var(--cm-copper); border-radius: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--cm-copper) 6%, transparent), transparent 65%); color: var(--cm-text); font-size: .74rem; line-height: 1.5; }
 .cm-focus-template-card--forecast { border-left-color: var(--cm-forecast); border-color: color-mix(in srgb, var(--cm-forecast) 34%, var(--cm-border)); }
 .cm-focus-template-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .75rem; color: var(--cm-muted); font: 600 .62rem/1.2 var(--cm-font-family); letter-spacing: .1em; text-transform: uppercase; }
@@ -1556,10 +1556,10 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 /* Hold the deferred sections at their loaded heights so mounting the news
    panel or the map does not shift everything below it (dashboard CLS). */
 .cm-market-dashboard .cm-dashboard-news-section {
-  min-height: 540px;
+  min-height: 680px;
 }
 .cm-market-dashboard .cm-news-loading {
-  min-height: 540px;
+  min-height: 680px;
 }
 .cm-market-dashboard .cm-dashboard-market-map {
   min-height: 705px;

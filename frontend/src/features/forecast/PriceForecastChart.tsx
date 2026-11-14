@@ -91,10 +91,10 @@ export function PriceTooltip({ active, payload, onActiveRowChange }: {
     : 'Observed close · USD';
 
   return (
-    <div className="cm-chart-tooltip rounded-lg border border-white/10 bg-[#060a11]/94 px-3.5 py-2.5 text-xs text-slate-100 backdrop-blur-md">
-      <div className="mb-1.5 flex items-center justify-between gap-4 border-b border-white/10 pb-1.5">
+    <div className="cm-chart-tooltip w-[min(18.5rem,80vw)] rounded-lg border border-white/10 bg-[#060a11]/94 px-3.5 py-2.5 text-xs text-slate-100 backdrop-blur-md">
+      <div className="mb-1.5 grid grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-3 border-b border-white/10 pb-1.5 tabular-nums">
         <p className="font-medium text-slate-100">{formatChartDate(row.date)}</p>
-        <strong className={row.isForecast ? 'font-semibold tracking-wider text-[#8eadde] uppercase' : 'font-semibold tracking-wider text-[#dda174] uppercase'}>
+        <strong className={row.isForecast ? 'text-right font-semibold tracking-wider text-[#8eadde] uppercase' : 'text-right font-semibold tracking-wider text-[#dda174] uppercase'}>
           {horizonTag}
         </strong>
       </div>
@@ -154,14 +154,20 @@ const ChartHoverReadout = memo(function ChartHoverReadout({
     ? (finite(activeRow.day) ? `T+${activeRow.day} · 5D Path` : 'Forecast')
     : `5D Horizon · ${forecastRow ? formatChartDate(forecastRow.date, true) : ''}`;
 
+  const slotDate = activeRow
+    ? formatChartDate(activeRow.date)
+    : forecastRow
+      ? formatChartDate(forecastRow.date, true)
+      : (chart.lastDate ? formatChartDate(chart.lastDate, true) : '—');
+
   return (
     <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-white/[0.07] pb-2.5 text-xs tabular-nums">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="inline-block w-[6.5rem] shrink-0 font-medium text-slate-200">{slotDate}</span>
         {forecastRow ? (
           <>
-            {activeRow && <span className="font-medium text-slate-200">{formatChartDate(activeRow.date)}</span>}
-            <span className="text-[11px] font-semibold tracking-wider text-[#8eadde] uppercase">{horizonTitle}</span>
-            <span className="text-slate-100">
+            <span className="inline-block w-[9.5rem] shrink-0 text-[11px] font-semibold tracking-wider text-[#8eadde] uppercase">{horizonTitle}</span>
+            <span className="inline-block min-w-[11rem] shrink-0 text-slate-100">
               Q50 <strong className="font-semibold text-white">{formatPrice(forecastRow.priceMedian)}</strong>{' '}
               <span className={returnToneClass(medianRet)}>{formatReturnPct(medianRet)}</span>
             </span>
@@ -174,18 +180,17 @@ const ChartHoverReadout = memo(function ChartHoverReadout({
           </>
         ) : activeRow ? (
           <>
-            <span className="font-medium text-slate-200">{formatChartDate(activeRow.date)}</span>
-            <span className="text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">Observed Close</span>
-            <span className="text-slate-100">
+            <span className="inline-block w-[9.5rem] shrink-0 text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">Observed Close</span>
+            <span className="inline-block min-w-[11rem] shrink-0 text-slate-100">
               Close <strong className="font-semibold text-white">{formatPrice(activeRow.price)}</strong>
             </span>
           </>
         ) : (
           <>
-            <span className="text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">
-              Last Close · {chart.lastDate ? formatChartDate(chart.lastDate, true) : '—'}
+            <span className="inline-block w-[9.5rem] shrink-0 text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">
+              Last Close
             </span>
-            <span className="font-semibold text-white">{formatPrice(chart.lastPrice)}</span>
+            <span className="inline-block min-w-[11rem] shrink-0 font-semibold text-white">{formatPrice(chart.lastPrice)}</span>
             <span className="text-slate-400">
               {chart.degraded ? '5D forecast unavailable (degraded)' : 'Historical closes only'}
             </span>
