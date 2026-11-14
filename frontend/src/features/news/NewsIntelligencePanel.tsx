@@ -17,6 +17,7 @@ import { NEWS_SENTIMENT_STYLES } from './newsSentiment';
 import { FilterChip } from '../../components/ui/FilterChip';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import './news.css';
 
 const SENTIMENT_ORDER: readonly NewsLabel[] = ['BULLISH', 'BEARISH', 'NEUTRAL'];
 
@@ -44,8 +45,17 @@ const DEFAULT_FILTERS: NewsFeedFilters = {
   channel: 'all',
 };
 
+const DEFAULT_MIN_RELEVANCE = DEFAULT_FILTERS.min_relevance ?? 0.2;
 const NEWS_FLOW_SPEED = 42;
 const NEWS_FLOW_EASE_MS = 280;
+
+type NewsRailGeometry = {
+  cycleWidth: number;
+  railWidth: number;
+  scrollbarTrackWidth: number;
+  railScrollLeft?: number;
+  skipScrollReset?: boolean;
+};
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -61,16 +71,34 @@ export const NewsIntelligencePanel: React.FC = () => {
   const [filters, setFilters] = useState<NewsFeedFilters>(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState('');
+  const [minRelevanceDraft, setMinRelevanceDraft] = useState<number>(DEFAULT_MIN_RELEVANCE);
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
-  const [isDraggingHeadlines, setIsDraggingHeadlines] = useState(false);
-  const hasActiveFilters = !!searchDraft || filters.label !== DEFAULT_FILTERS.label || filters.since_hours !== DEFAULT_FILTERS.since_hours || filters.min_relevance !== DEFAULT_FILTERS.min_relevance || filters.channel !== DEFAULT_FILTERS.channel || !!filters.publisher;
-  const resetFilters = () => { setFilters(DEFAULT_FILTERS); setSearchDraft(''); };
+  const hasActiveFilters =
+    !!searchDraft ||
+    filters.label !== DEFAULT_FILTERS.label ||
+    filters.since_hours !== DEFAULT_FILTERS.since_hours ||
+    minRelevanceDraft !== DEFAULT_MIN_RELEVANCE ||
+    filters.channel !== DEFAULT_FILTERS.channel ||
+    !!filters.publisher;
+  const resetFilters = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+    setSearchDraft('');
+    setMinRelevanceDraft(DEFAULT_MIN_RELEVANCE);
+  }, []);
   const newsRailRef = useRef<HTMLDivElement | null>(null);
   const newsTrackRef = useRef<HTMLDivElement | null>(null);
   const originalNewsSetRef = useRef<HTMLDivElement | null>(null);
   const newsScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const newsScrollbarThumbRef = useRef<HTMLDivElement | null>(null);
-  const newsScrollbarDragRef = useRef<{ pointerId: number; startX: number; startThumbX: number } | null>(null);
+  const newsScrollbarDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startThumbX: number;
+    maxThumbOffset: number;
+    cycleWidth: number;
+    railWidth: number;
+    scrollbarTrackWidth: number;
+  } | null>(null);
   const flowPausedRef = useRef(false);
   const flowHoveredRef = useRef(false);
   const flowVelocityRef = useRef(NEWS_FLOW_SPEED);
@@ -88,13 +116,28 @@ export const NewsIntelligencePanel: React.FC = () => {
     duration: number;
   } | null>(null);
   const rampFrameRef = useRef<number | null>(null);
-  const dragState = useRef<{ pointerId: number; startX: number; startY: number; startScroll: number; trackWidth: number; moved: boolean; captureTarget: HTMLElement } | null>(null);
+  const dragState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startScroll: number;
+    trackWidth: number;
+    railWidth: number;
+    scrollbarTrackWidth: number;
+    moved: boolean;
+    captureTarget: HTMLElement;
+  } | null>(null);
   const suppressCardClick = useRef(false);
 
   const debouncedSearch = useDebouncedValue(searchDraft, 300);
+  const debouncedMinRelevance = useDebouncedValue(minRelevanceDraft, 180);
   const effectiveFilters = useMemo<NewsFeedFilters>(
-    () => ({ ...filters, search: debouncedSearch || undefined }),
-    [filters, debouncedSearch],
+    () => ({
+      ...filters,
+      min_relevance: debouncedMinRelevance,
+      search: debouncedSearch || undefined,
+    }),
+    [filters, debouncedMinRelevance, debouncedSearch],
   );
   const activeWindowHours = effectiveFilters.since_hours ?? 168;
   const activeWindowLabel = SINCE_OPTIONS.find((opt) => opt.id === activeWindowHours)?.label ?? `${activeWindowHours}h`;
@@ -294,14 +337,16 @@ export const NewsIntelligencePanel: React.FC = () => {
   }), [feed.data]);
   const totalMatching = feed.data?.pages?.[0]?.total ?? items.length;
 
-  const syncNewsScrollbar = useCallback(() => {
+  const syncNewsScrollbar = useCallback((geometry?: NewsRailGeometry) => {
     const rail = newsRailRef.current;
     const track = newsScrollbarTrackRef.current;
     const thumb = newsScrollbarThumbRef.current;
     if (!rail || !track || !thumb) return;
-    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
-    const trackWidth = track.clientWidth;
-    const overflow = cycleWidth > rail.clientWidth + 1 && trackWidth > 0;
+    const cycleWidth = geometry?.cycleWidth ?? (originalNewsSetRef.current?.clientWidth ?? 0);
+    const railWidth = geometry?.railWidth ?? rail.clientWidth;
+    const trackWidth = geometry?.scrollbarTrackWidth ?? track.clientWidth;
+    const railScrollLeft = geometry?.railScrollLeft ?? (geometry?.skipScrollReset ? 0 : rail.scrollLeft);
+    const overflow = cycleWidth > railWidth + 1 && trackWidth > 0;
     const overflowStr = String(overflow);
     const cache = scrollbarCacheRef.current;
     if (cache.overflow !== overflowStr) {
@@ -320,14 +365,14 @@ export const NewsIntelligencePanel: React.FC = () => {
       }
       return;
     }
-    const thumbWidth = Math.min(trackWidth, Math.max(30, trackWidth * rail.clientWidth / cycleWidth));
+    const thumbWidth = Math.min(trackWidth, Math.max(30, trackWidth * railWidth / cycleWidth));
     const thumbWidthStr = `${thumbWidth}px`;
     if (cache.thumbWidth !== thumbWidthStr) {
       cache.thumbWidth = thumbWidthStr;
       thumb.style.width = thumbWidthStr;
     }
     const maxThumbOffset = trackWidth - thumbWidth;
-    const progress = ((flowPositionRef.current + rail.scrollLeft) % cycleWidth) / cycleWidth;
+    const progress = ((flowPositionRef.current + railScrollLeft) % cycleWidth) / cycleWidth;
     thumb.style.transform = `translate3d(${progress * maxThumbOffset}px, 0, 0)`;
     const ariaValueNow = String(Math.round(progress * 100));
     if (cache.ariaValueNow !== ariaValueNow) {
@@ -336,10 +381,10 @@ export const NewsIntelligencePanel: React.FC = () => {
     }
   }, []);
 
-  const applyNewsFlowPosition = (position: number) => {
+  const applyNewsFlowPosition = (position: number, geometry?: NewsRailGeometry) => {
     const rail = newsRailRef.current;
     const track = newsTrackRef.current;
-    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
+    const cycleWidth = geometry?.cycleWidth ?? (originalNewsSetRef.current?.clientWidth ?? 0);
     if (!rail || !track || cycleWidth <= 0) return;
     const normalized = ((position % cycleWidth) + cycleWidth) % cycleWidth;
     flowPositionRef.current = normalized;
@@ -351,8 +396,8 @@ export const NewsIntelligencePanel: React.FC = () => {
         active.thumbAnim.currentTime = (normalized / active.cycleWidth) * active.duration;
       }
     }
-    if (rail.scrollLeft) rail.scrollLeft = 0;
-    syncNewsScrollbar();
+    if (!geometry?.skipScrollReset && rail.scrollLeft) rail.scrollLeft = 0;
+    syncNewsScrollbar(geometry);
   };
 
   useLayoutEffect(() => {
@@ -370,14 +415,15 @@ export const NewsIntelligencePanel: React.FC = () => {
       }
       syncNewsScrollbar();
     };
+    const onScroll = () => syncNewsScrollbar();
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
     resizeObserver?.observe(rail);
     if (set) resizeObserver?.observe(set);
-    rail.addEventListener('scroll', syncNewsScrollbar, { passive: true });
+    rail.addEventListener('scroll', onScroll, { passive: true });
     syncNewsScrollbar();
     return () => {
       resizeObserver?.disconnect();
-      rail.removeEventListener('scroll', syncNewsScrollbar);
+      rail.removeEventListener('scroll', onScroll);
     };
   }, [items.length, startCompositorFlow, stopCompositorFlow, syncNewsScrollbar]);
 
@@ -498,6 +544,9 @@ export const NewsIntelligencePanel: React.FC = () => {
       pauseNewsFlow();
     }
     syncFromCompositor();
+    const railWidth = rail.clientWidth;
+    const trackWidth = originalNewsSetRef.current?.getBoundingClientRect().width ?? 0;
+    const scrollbarTrackWidth = newsScrollbarTrackRef.current?.clientWidth ?? 0;
     // Arm a pending drag but leave the pointer alone until the gesture proves to be
     // horizontal, so pressing on a headline to select its text or scrolling vertically stays native.
     dragState.current = {
@@ -505,7 +554,9 @@ export const NewsIntelligencePanel: React.FC = () => {
       startX: event.clientX,
       startY: event.clientY,
       startScroll: flowPositionRef.current + rail.scrollLeft,
-      trackWidth: originalNewsSetRef.current?.getBoundingClientRect().width ?? 0,
+      trackWidth,
+      railWidth,
+      scrollbarTrackWidth,
       moved: false,
       captureTarget: card ?? rail,
     };
@@ -525,13 +576,22 @@ export const NewsIntelligencePanel: React.FC = () => {
       }
       drag.moved = true;
       drag.captureTarget.setPointerCapture(event.pointerId);
-      setIsDraggingHeadlines(true);
+      newsRailRef.current?.classList.toggle('is-dragging', true);
+      if (newsRailRef.current && newsRailRef.current.scrollLeft) {
+        newsRailRef.current.scrollLeft = 0;
+      }
       pauseNewsFlow();
     }
-    const rail = event.currentTarget;
     let next = drag.startScroll - delta;
-    if (drag.trackWidth > rail.clientWidth) next = ((next % drag.trackWidth) + drag.trackWidth) % drag.trackWidth;
-    applyNewsFlowPosition(next);
+    if (drag.trackWidth > drag.railWidth) {
+      next = ((next % drag.trackWidth) + drag.trackWidth) % drag.trackWidth;
+    }
+    applyNewsFlowPosition(next, {
+      cycleWidth: drag.trackWidth,
+      railWidth: drag.railWidth,
+      scrollbarTrackWidth: drag.scrollbarTrackWidth,
+      skipScrollReset: true,
+    });
   };
 
   const finishHeadlineDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -539,7 +599,7 @@ export const NewsIntelligencePanel: React.FC = () => {
     if (!drag || drag.pointerId !== event.pointerId) return;
     suppressCardClick.current = drag.moved;
     dragState.current = null;
-    setIsDraggingHeadlines(false);
+    newsRailRef.current?.classList.toggle('is-dragging', false);
     pauseNewsFlow();
     if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
       drag.captureTarget.releasePointerCapture(event.pointerId);
@@ -552,35 +612,51 @@ export const NewsIntelligencePanel: React.FC = () => {
     const track = newsScrollbarTrackRef.current;
     const thumb = newsScrollbarThumbRef.current;
     const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
-    if (!rail || !track || !thumb || cycleWidth <= rail.clientWidth) return;
+    const railWidth = rail?.clientWidth ?? 0;
+    if (!rail || !track || !thumb || cycleWidth <= railWidth) return;
     event.preventDefault();
     event.stopPropagation();
     pauseNewsFlow();
     const bounds = track.getBoundingClientRect();
+    const scrollbarTrackWidth = track.clientWidth;
     const thumbWidth = thumb.getBoundingClientRect().width;
-    const maxThumbOffset = Math.max(0, track.clientWidth - thumbWidth);
+    const maxThumbOffset = Math.max(0, scrollbarTrackWidth - thumbWidth);
     const isThumb = event.target === thumb;
     const currentOffset = Math.max(0, Math.min(maxThumbOffset, ((flowPositionRef.current + rail.scrollLeft) % cycleWidth) / cycleWidth * maxThumbOffset));
     const startThumbX = isThumb
       ? currentOffset
       : Math.max(0, Math.min(maxThumbOffset, event.clientX - bounds.left - thumbWidth / 2));
-    newsScrollbarDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startThumbX };
+    if (rail.scrollLeft) rail.scrollLeft = 0;
+    newsScrollbarDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startThumbX,
+      maxThumbOffset,
+      cycleWidth,
+      railWidth,
+      scrollbarTrackWidth,
+    };
     track.setPointerCapture(event.pointerId);
     if (!isThumb) {
-      applyNewsFlowPosition(maxThumbOffset ? startThumbX / maxThumbOffset * cycleWidth : 0);
+      applyNewsFlowPosition(maxThumbOffset ? startThumbX / maxThumbOffset * cycleWidth : 0, {
+        cycleWidth,
+        railWidth,
+        scrollbarTrackWidth,
+        skipScrollReset: true,
+      });
     }
   };
 
   const moveNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = newsScrollbarDragRef.current;
-    const rail = newsRailRef.current;
-    const track = newsScrollbarTrackRef.current;
-    const thumb = newsScrollbarThumbRef.current;
-    const cycleWidth = originalNewsSetRef.current?.clientWidth ?? 0;
-    if (!drag || drag.pointerId !== event.pointerId || !rail || !track || !thumb) return;
-    const maxThumbOffset = Math.max(0, track.clientWidth - thumb.getBoundingClientRect().width);
-    const thumbOffset = Math.max(0, Math.min(maxThumbOffset, drag.startThumbX + event.clientX - drag.startX));
-    applyNewsFlowPosition(maxThumbOffset ? thumbOffset / maxThumbOffset * cycleWidth : 0);
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const thumbOffset = Math.max(0, Math.min(drag.maxThumbOffset, drag.startThumbX + event.clientX - drag.startX));
+    applyNewsFlowPosition(drag.maxThumbOffset ? thumbOffset / drag.maxThumbOffset * drag.cycleWidth : 0, {
+      cycleWidth: drag.cycleWidth,
+      railWidth: drag.railWidth,
+      scrollbarTrackWidth: drag.scrollbarTrackWidth,
+      skipScrollReset: true,
+    });
   };
 
   const finishNewsScrollbarDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -612,10 +688,28 @@ export const NewsIntelligencePanel: React.FC = () => {
     rail.scrollBy({ left: offsets[event.key], behavior: 'smooth' });
   };
 
-  const pages = feed.data?.pages ?? [];
-  const priorPageIds = new Set(pages.slice(0, -1).flatMap((page) => page.items.map((item) => item.id)));
-  const latestPageHasNewItems = pages.length < 2 || (pages[pages.length - 1]?.items.some((item) => !priorPageIds.has(item.id)) ?? false);
+  const pages = feed.data?.pages;
+  const priorPageIds = useMemo(() => {
+    if (!pages || pages.length < 2) return new Set<number>();
+    const ids = new Set<number>();
+    for (let i = 0; i < pages.length - 1; i += 1) {
+      for (const item of pages[i].items) {
+        ids.add(item.id);
+      }
+    }
+    return ids;
+  }, [pages]);
+  const latestPageHasNewItems = useMemo(() => {
+    if (!pages || pages.length < 2) return true;
+    return pages[pages.length - 1]?.items.some((item) => !priorPageIds.has(item.id)) ?? false;
+  }, [pages, priorPageIds]);
   const canLoadMore = !!feed.hasNextPage && latestPageHasNewItems;
+
+  const handleSelectCard = useCallback((newsItem: NewsItem) => {
+    pauseNewsFlow();
+    setSelectedItem(newsItem);
+  }, [pauseNewsFlow]);
+  const handleCloseDrawer = useCallback(() => setSelectedItem(null), []);
 
   const isLoading = feed.isLoading && items.length === 0;
   const isRefreshing = feed.isFetching && !feed.isFetchingNextPage;
@@ -675,20 +769,18 @@ export const NewsIntelligencePanel: React.FC = () => {
           </span>
         </div>
 
-        {topPublishers.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {topPublishers.map((p) => (
-              <FilterChip
-                key={p.publisher}
-                active={filters.publisher === p.publisher}
-                onClick={() => updateFilter('publisher', filters.publisher === p.publisher ? undefined : p.publisher)}
-                title={`${p.publisher} (${p.count} articles)`}
-              >
-                {p.publisher}
-              </FilterChip>
-            ))}
-          </div>
-        )}
+        <div className="cm-news-publishers flex items-center gap-1.5 flex-wrap" aria-hidden={topPublishers.length === 0 || undefined}>
+          {topPublishers.map((p) => (
+            <FilterChip
+              key={p.publisher}
+              active={filters.publisher === p.publisher}
+              onClick={() => updateFilter('publisher', filters.publisher === p.publisher ? undefined : p.publisher)}
+              title={`${p.publisher} (${p.count} articles)`}
+            >
+              {p.publisher}
+            </FilterChip>
+          ))}
+        </div>
 
         <div className="cm-news-controls">
           <label className="cm-field">
@@ -701,19 +793,27 @@ export const NewsIntelligencePanel: React.FC = () => {
         <div id={filterId} hidden={!filtersOpen} className="mt-3 space-y-4">
           <fieldset className="cm-news-filter-group"><legend>Sentiment</legend>{LABEL_OPTIONS.map(option => <FilterChip key={option.id} active={filters.label === option.id} onClick={() => updateFilter('label', option.id)}>{option.label}</FilterChip>)}</fieldset>
           <fieldset className="cm-news-filter-group"><legend>Time window</legend>{SINCE_OPTIONS.map(option => <FilterChip key={option.id} active={filters.since_hours === option.id} onClick={() => updateFilter('since_hours', option.id)}>{option.label}</FilterChip>)}</fieldset>
-          <label className="cm-field"><span>Minimum relevance · {Math.round((filters.min_relevance ?? 0) * 100)}%</span><input type="range" min={0} max={0.9} step={0.05} value={filters.min_relevance ?? 0} onChange={event => updateFilter('min_relevance', Number(event.target.value))} className="w-full"/></label>
+          <label className="cm-field"><span>Minimum relevance · {Math.round(minRelevanceDraft * 100)}%</span><input type="range" min={0} max={0.9} step={0.05} value={minRelevanceDraft} onChange={event => setMinRelevanceDraft(Number(event.target.value))} className="w-full"/></label>
           {(availableChannels.length > 1 || (filters.channel && filters.channel !== 'all')) && <fieldset className="cm-news-filter-group"><legend>Channel</legend><FilterChip active={!filters.channel || filters.channel === 'all'} onClick={() => updateFilter('channel', 'all')}>All channels</FilterChip>{Array.from(new Set([...availableChannels, ...(filters.channel && filters.channel !== 'all' ? [filters.channel] : [])])).map(channel => <FilterChip key={channel} active={filters.channel === channel} onClick={() => updateFilter('channel', channel)}>{channel === 'google_news' ? 'Google News' : channel === 'newsapi' ? 'NewsAPI' : channel}</FilterChip>)}</fieldset>}
         </div>
       </div>
       {/* Feed list */}
-      {items.length > 0 && <div className="cm-news-rail-tools">
-        <p><span>{items.length}{feed.data ? ` / ${totalMatching}` : ''}</span> headlines <small>· scroll sideways to browse</small></p>
-        {isRefreshing && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
+      <div className="cm-news-rail-tools">
+        <p>
+          {items.length > 0 ? (
+            <>
+              <span>{items.length}{feed.data ? ` / ${totalMatching}` : ''}</span> headlines <small>· scroll sideways to browse</small>
+            </>
+          ) : (
+            <small>{isLoading ? 'Loading headlines…' : '0 headlines'}</small>
+          )}
+        </p>
+        {isRefreshing && items.length > 0 && <p className="cm-news-updating" role="status">Updating headlines… Previous results remain visible.</p>}
         <div className="cm-news-rail-controls" aria-label="Browse headlines">
-          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(-1)} aria-label="Previous headlines" aria-controls={`${filterId}-headlines`}><ArrowLeft size={15} aria-hidden="true"/></button>
-          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(1)} aria-label="Next headlines" aria-controls={`${filterId}-headlines`}><ArrowRight size={15} aria-hidden="true"/></button>
+          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(-1)} disabled={items.length === 0} aria-label="Previous headlines" aria-controls={`${filterId}-headlines`}><ArrowLeft size={15} aria-hidden="true"/></button>
+          <button type="button" className="cm-icon-button" onClick={() => scrollHeadlines(1)} disabled={items.length === 0} aria-label="Next headlines" aria-controls={`${filterId}-headlines`}><ArrowRight size={15} aria-hidden="true"/></button>
         </div>
-      </div>}
+      </div>
       <div
         className="cm-news-feed-shell"
         onMouseEnter={() => { flowHoveredRef.current = true; retargetNewsFlow(); }}
@@ -723,7 +823,7 @@ export const NewsIntelligencePanel: React.FC = () => {
         <div
           id={`${filterId}-headlines`}
           ref={newsRailRef}
-          className={clsx('cm-news-feed', isDraggingHeadlines && 'is-dragging')}
+          className="cm-news-feed"
           role="region"
           aria-label="Headlines, scroll horizontally"
           tabIndex={0}
@@ -756,12 +856,12 @@ export const NewsIntelligencePanel: React.FC = () => {
         {items.length > 0 && <>
           <div className="cm-news-feed-set cm-news-feed-set--duplicate" aria-hidden="true">
             {items.map((item) => (
-              <NewsCard key={`copy-${item.id}`} item={item} duplicate selected={selectedItem?.id === item.id} onSelect={(newsItem) => { pauseNewsFlow(); setSelectedItem(newsItem); }}/>
+              <NewsCard key={`copy-${item.id}`} item={item} duplicate selected={selectedItem?.id === item.id} onSelect={handleSelectCard}/>
             ))}
           </div>
           <div ref={originalNewsSetRef} className="cm-news-feed-set">
             {items.map((item) => (
-              <NewsCard key={item.id} item={item} selected={selectedItem?.id === item.id} onSelect={(newsItem) => { pauseNewsFlow(); setSelectedItem(newsItem); }}/>
+              <NewsCard key={item.id} item={item} selected={selectedItem?.id === item.id} onSelect={handleSelectCard}/>
             ))}
           </div>
         </>}
@@ -788,15 +888,18 @@ export const NewsIntelligencePanel: React.FC = () => {
           <div ref={newsScrollbarThumbRef} className="cm-news-feed-scrollbar-thumb" />
         </div>
       </div>
-      {canLoadMore && items.length > 0 && <div className="cm-news-more">
-        <button type="button" className="cm-news-more-button" onClick={() => { void feed.fetchNextPage(); }} disabled={feed.isFetchingNextPage}>
-          {feed.isFetchingNextPage ? <><RefreshCw size={13} className="animate-spin" aria-hidden="true"/> Loading</> : <>Load more <ArrowRight size={13} aria-hidden="true"/></>}
-        </button>
-      </div>}
-      {feed.hasNextPage && items.length > 0 && !latestPageHasNewItems && <p className="cm-news-pagination-note" role="status">No additional unique headlines are available.</p>}
+      <div className="cm-news-more cm-news-more--slot">
+        {canLoadMore && items.length > 0 ? (
+          <button type="button" className="cm-news-more-button" onClick={() => { void feed.fetchNextPage(); }} disabled={feed.isFetchingNextPage}>
+            {feed.isFetchingNextPage ? <><RefreshCw size={13} className="animate-spin" aria-hidden="true"/> Loading</> : <>Load more <ArrowRight size={13} aria-hidden="true"/></>}
+          </button>
+        ) : feed.hasNextPage && items.length > 0 && !latestPageHasNewItems ? (
+          <p className="cm-news-pagination-note" role="status">No additional unique headlines are available.</p>
+        ) : null}
+      </div>
       </div>
 
-      <NewsDetailDrawer item={selectedItem} onClose={() => setSelectedItem(null)} />
+      <NewsDetailDrawer item={selectedItem} onClose={handleCloseDrawer} />
     </motion.aside>
   );
 };

@@ -33,7 +33,7 @@ function ProbBar({ label, value, color }: { label: string; value: number; color:
   );
 }
 
-export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClose }) => {
+export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = React.memo(({ item, onClose }) => {
   const processedId = item?.id ?? null;
   // Fetch a fresh copy when a card is opened — the feed row may be stale,
   // and the detail endpoint is the authoritative source for reasoning text.
@@ -223,7 +223,9 @@ export const NewsDetailDrawer: React.FC<NewsDetailDrawerProps> = ({ item, onClos
     </AnimatePresence>
   );
   return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
-};
+});
+
+NewsDetailDrawer.displayName = 'NewsDetailDrawer';
 
 function Stat({
   label,

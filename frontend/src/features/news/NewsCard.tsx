@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import { Newspaper, Globe } from 'lucide-react';
 import type { NewsItem } from '../../types';
@@ -40,7 +39,7 @@ function formatEventType(raw: string | null | undefined): string {
     .join(' ');
 }
 
-export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = false, duplicate = false }) => {
+export const NewsCard: React.FC<NewsCardProps> = React.memo(({ item, onSelect, selected = false, duplicate = false }) => {
   const sentiment = item.sentiment;
   const label = normaliseNewsLabel(sentiment?.label);
   const style = NEWS_SENTIMENT_STYLES[label];
@@ -53,7 +52,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
   const reasoning = sentiment?.reasoning?.trim() || null;
 
   return (
-    <motion.button
+    <button
       type="button"
       tabIndex={duplicate ? -1 : undefined}
       aria-hidden={duplicate || undefined}
@@ -66,9 +65,6 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
         selected && 'cm-news-card--selected',
       )}
       data-cm-route-reveal="surface"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
     >
       <div className="cm-news-card-meta flex items-center justify-between gap-1.5 mb-1 text-xs font-mono text-slate-400">
         <div className="flex items-center gap-1 min-w-0">
@@ -145,8 +141,10 @@ export const NewsCard: React.FC<NewsCardProps> = ({ item, onSelect, selected = f
           <span title={`Confidence ${confidencePct}%`}>{confidencePct}%</span>
         </div>
       </div>
-    </motion.button>
+    </button>
   );
-};
+});
+
+NewsCard.displayName = 'NewsCard';
 
 export default NewsCard;

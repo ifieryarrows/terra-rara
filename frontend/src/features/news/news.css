@@ -1,0 +1,26 @@
+.cm-news-publishers {
+  min-height: 2.75rem;
+}
+
+.cm-market-dashboard .cm-news-rail-tools {
+  min-height: 2.25rem;
+}
+
+.cm-market-dashboard .cm-news-feed {
+  min-height: 13.65rem;
+}
+
+.cm-market-dashboard .cm-news-more--slot {
+  min-height: 3.6rem;
+  align-items: center;
+}
+
+.cm-news-card {
+  transition: border-color 180ms ease, background-color 180ms ease, opacity 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-news-card {
+    transition: none;
+  }
+}
