@@ -49,7 +49,7 @@ function BackgroundWord({ progress, word, range, reverse = false, finale = false
   return <motion.span className={`cm-background-word${finale ? ' cm-background-word--finale' : ''}`} style={{ opacity, visibility, x, scale }}>{word}</motion.span>;
 }
 
-function useActiveVisibilityClass<T extends HTMLElement>(visibility: MotionValue<string>, activeClass: string) {
+function useActiveVisibilityClass<T extends HTMLElement>(visibility: MotionValue<'hidden' | 'visible'>, activeClass: string) {
   const elementRef = useRef<T>(null);
   useEffect(() => {
     const el = elementRef.current;
