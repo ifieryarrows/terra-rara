@@ -169,12 +169,19 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const categoryOverlayRef = useRef<HTMLDivElement>(null);
+  const leafOverlayRef = useRef<HTMLDivElement>(null);
+  const hoverOverlayFrameRef = useRef<number | null>(null);
+  const pendingHoverOverlayRef = useRef<{ categoryId: string | null; leafId: string | null }>({
+    categoryId: null,
+    leafId: null,
+  });
   const lodRef = useRef<LodIndex>({ entries: [], boundaries: [] });
   const lodScaleRef = useRef<number | null>(null);
-  const categoryElementsRef = useRef(new Map<string, HTMLElement>());
-  const hoveredCategoryElementRef = useRef<HTMLElement | null>(null);
   const activeLeafRef = useRef<string | null>(null);
   const activeCategoryRef = useRef<string | null>(null);
+  const [settledScale, setSettledScale] = useState(zoom);
+  const lodUnlocked = settledScale > MIN_ZOOM;
   const [layoutZoom, setLayoutZoom] = useState(zoom);
   const visualScale = zoom !== layoutZoom ? zoom / layoutZoom : 1;
 
@@ -200,7 +207,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   const hoverInvalidatedRef = useRef(false);
   const startZoomAnimationRef = useRef<() => void>(() => {});
   const dragRef = useRef<{
-    pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean;
+    pointerId: number; startX: number; startY: number; x: number; y: number; scaleX: number; scaleY: number; moved: boolean;
   } | null>(null);
   const suppressClickRef = useRef(false);
   const lastPointerTypeRef = useRef<string>('mouse');
@@ -249,33 +256,55 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const nodeData = node.data as HeatmapNode;
     return [String(nodeData.id || `${node.depth}-${nodeData.name}`), node] as const;
   })), [parents]);
+  const pinnedCategoryNode = hoveredCategoryId ? categoryById.get(hoveredCategoryId) : undefined;
 
-  const setCategoryHoverVisual = useCallback((id: string | null) => {
-    const previous = hoveredCategoryElementRef.current;
-    const next = id ? categoryElementsRef.current.get(id) || null : null;
-    if (previous === next) return;
-    const restore = (element: HTMLElement) => {
-      const isSector = element.dataset.hmDepth === '1';
-      element.style.border = element.dataset.hmCategoryId === hoveredCategoryId
-        ? '2px solid #d99a5b'
-        : isSector
-          ? '1px solid #334155'
-          : '1px solid #1e293b';
-      element.style.backgroundColor = element.dataset.hmCategoryId === hoveredCategoryId
-        ? '#d99a5b'
-        : '#020617';
-      element.style.boxShadow = element.dataset.hmCategoryId === hoveredCategoryId
-        ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)'
-        : 'none';
-    };
-    if (previous) restore(previous);
-    hoveredCategoryElementRef.current = next;
-    if (next) {
-      next.style.border = '2px solid #d99a5b';
-      next.style.backgroundColor = '#d99a5b';
-      next.style.boxShadow = '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)';
+  const applyOverlayBox = (
+    overlay: HTMLDivElement | null,
+    node: LayoutNode | undefined,
+    activeId: string | null,
+  ) => {
+    if (!overlay) return;
+    if (!node || !activeId) {
+      if (overlay.style.opacity !== '0') overlay.style.opacity = '0';
+      if (overlay.dataset.hmActiveId !== undefined) delete overlay.dataset.hmActiveId;
+      return;
     }
-  }, [hoveredCategoryId]);
+    overlay.style.transform = `translate3d(${node.x0}px, ${node.y0}px, 0)`;
+    overlay.style.width = `${Math.max(0, node.x1 - node.x0)}px`;
+    overlay.style.height = `${Math.max(0, node.y1 - node.y0)}px`;
+    overlay.style.opacity = '1';
+    overlay.dataset.hmActiveId = activeId;
+  };
+
+  const setHoverOverlayVisual = useCallback((categoryId: string | null, leafId: string | null) => {
+    const prev = pendingHoverOverlayRef.current;
+    if (prev.categoryId === categoryId && prev.leafId === leafId) return;
+    pendingHoverOverlayRef.current = { categoryId, leafId };
+    if (hoverOverlayFrameRef.current !== null) return;
+    hoverOverlayFrameRef.current = window.requestAnimationFrame(() => {
+      hoverOverlayFrameRef.current = null;
+      const target = pendingHoverOverlayRef.current;
+      applyOverlayBox(
+        categoryOverlayRef.current,
+        target.categoryId ? categoryById.get(target.categoryId) : undefined,
+        target.categoryId,
+      );
+      applyOverlayBox(
+        leafOverlayRef.current,
+        target.leafId ? leafById.get(target.leafId) : undefined,
+        target.leafId,
+      );
+    });
+  }, [categoryById, leafById]);
+
+  const syncSettledLod = useCallback((scale: number) => {
+    setSettledScale((prev) => {
+      const prevUnlocked = prev > MIN_ZOOM;
+      const nextUnlocked = scale > MIN_ZOOM;
+      if (prevUnlocked === nextUnlocked) return prev;
+      return scale;
+    });
+  }, []);
 
   const updateTileVisibility = useCallback((scale: number) => {
     const { entries, boundaries } = lodRef.current;
@@ -337,6 +366,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       zoomingRef.current = false;
       const scroller = scrollRef.current;
       updateTileVisibility(cameraRef.current.scale);
+      syncSettledLod(cameraRef.current.scale);
 
       // A stationary pointer can move over new cells as the map is transformed.
       // Defer hover work until the camera settles, then resolve the final cell once.
@@ -361,7 +391,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           return;
         }
       }
-      setCategoryHoverVisual(null);
+      setHoverOverlayVisual(null, null);
       activeLeafRef.current = null;
       activeCategoryRef.current = null;
       onLeafHover?.(null);
@@ -430,20 +460,23 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
-    categoryElementsRef.current = new Map(
-      Array.from(surface.querySelectorAll<HTMLElement>('[data-hm-category-id]'))
-        .map((element) => [element.dataset.hmCategoryId || '', element] as const)
-        .filter(([id]) => !!id),
-    );
-    hoveredCategoryElementRef.current = activeCategoryRef.current
-      ? categoryElementsRef.current.get(activeCategoryRef.current) || null
-      : null;
     // Newly rendered tiles carry visibility for scale 1; a null previous scale
     // forces a full pass so a zoomed camera is reconciled immediately.
     lodRef.current = buildLodIndex(surface);
     lodScaleRef.current = null;
     applyCamera(cameraRef.current);
-  }, [applyCamera, height, leafEntries, parents, width]);
+    const pending = pendingHoverOverlayRef.current;
+    applyOverlayBox(
+      categoryOverlayRef.current,
+      pending.categoryId ? categoryById.get(pending.categoryId) : undefined,
+      pending.categoryId,
+    );
+    applyOverlayBox(
+      leafOverlayRef.current,
+      pending.leafId ? leafById.get(pending.leafId) : undefined,
+      pending.leafId,
+    );
+  }, [applyCamera, categoryById, height, leafById, leafEntries, lodUnlocked, parents, width]);
 
   useEffect(() => {
     if (zoom === previousZoomPropRef.current) return;
@@ -466,7 +499,9 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
 
   useEffect(() => () => {
     if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
+    if (hoverOverlayFrameRef.current !== null) window.cancelAnimationFrame(hoverOverlayFrameRef.current);
     zoomFrameRef.current = null;
+    hoverOverlayFrameRef.current = null;
     lastZoomFrameTimeRef.current = null;
     zoomingRef.current = false;
   }, []);
@@ -539,6 +574,8 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const touchEnd = () => {
       pinchStartDist = 0;
       pinchAnchor = null;
+      updateTileVisibility(cameraRef.current.scale);
+      syncSettledLod(cameraRef.current.scale);
     };
     element.addEventListener('touchstart', touchStart, { passive: true });
     element.addEventListener('touchmove', touchMove, { passive: false });
@@ -551,7 +588,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       element.removeEventListener('touchend', touchEnd);
       element.removeEventListener('touchcancel', touchEnd);
     };
-  }, [applyCamera, onNavigateBack, onZoomDelta]);
+  }, [applyCamera, onNavigateBack, onZoomDelta, syncSettledLod, updateTileVisibility]);
 
   // Hover belongs to the map's live position. A scroll moves the map under a
   // stationary pointer, so drop the hover immediately instead of leaving the
@@ -572,7 +609,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       if (!activeCategoryRef.current && !activeLeafRef.current) return;
       activeCategoryRef.current = null;
       activeLeafRef.current = null;
-      setCategoryHoverVisual(null);
+      setHoverOverlayVisual(null, null);
       onLeafHover?.(null);
       onHoverInvalidated?.();
     };
@@ -584,9 +621,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         hoverScrollTimerRef.current = null;
       }
     };
-    // `setCategoryHoverVisual` already tracks `hoveredCategoryId` so the
-    // highlight restore inside the closure stays current.
-  }, [onHoverInvalidated, onLeafHover, setCategoryHoverVisual]);
+  }, [onHoverInvalidated, onLeafHover, setHoverOverlayVisual]);
 
   const anchorFor = (
     id: string,
@@ -624,9 +659,10 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     y?: number,
     rectOverride?: CategoryAnchor['rect'],
     forceAnchorUpdate = false,
+    leafId: string | null = null,
   ) => {
     if (!id) return;
-    setCategoryHoverVisual(id);
+    setHoverOverlayVisual(id, leafId);
     if (x != null && y != null) onCategoryPointerMove?.(x, y);
     if (activeCategoryRef.current === id && !forceAnchorUpdate) return;
     activeCategoryRef.current = id;
@@ -653,13 +689,14 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
         y,
         node && scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
         leafChanged,
+        leafId,
       );
     } else {
       if (activeLeafRef.current) {
         activeLeafRef.current = null;
         onLeafHover?.(null);
       }
-      showCategory(cell.dataset.hmCategoryId, x, y);
+      showCategory(cell.dataset.hmCategoryId, x, y, undefined, false, null);
     }
     return true;
   };
@@ -682,18 +719,15 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
       if (!drag.moved && Math.hypot(deltaX, deltaY) > 3) {
         drag.moved = true;
         activeLeafRef.current = null;
-        setCategoryHoverVisual(null);
+        setHoverOverlayVisual(null, null);
         onLeafHover?.(null);
         onCategoryHover(null);
       }
       if (drag.moved) {
-        const bounds = element.getBoundingClientRect();
-        const scaleX = element.clientWidth > 0 ? element.clientWidth / Math.max(bounds.width, 1) : 1;
-        const scaleY = element.clientHeight > 0 ? element.clientHeight / Math.max(bounds.height, 1) : 1;
         applyCamera({
           ...cameraRef.current,
-          x: drag.x + deltaX * scaleX,
-          y: drag.y + deltaY * scaleY,
+          x: drag.x + deltaX * drag.scaleX,
+          y: drag.y + deltaY * drag.scaleY,
         });
       }
       return;
@@ -714,7 +748,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
     const next = targetData(event.relatedTarget);
     const nextLeaf = next?.dataset.hmLeafId || null;
     const nextCategory = next?.dataset.hmParentId || next?.dataset.hmCategoryId || null;
-    setCategoryHoverVisual(nextCategory);
+    setHoverOverlayVisual(nextCategory, nextLeaf);
     if (nextLeaf !== activeLeafRef.current) {
       activeLeafRef.current = nextLeaf;
       if (nextLeaf) {
@@ -728,6 +762,7 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
             event.clientY,
             scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
             true,
+            nextLeaf,
           );
         }
       } else if (nextCategory) {
@@ -808,14 +843,24 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           zoomingRef.current = false;
           if (surfaceRef.current) surfaceRef.current.style.pointerEvents = '';
           updateTileVisibility(cameraRef.current.scale);
+          syncSettledLod(cameraRef.current.scale);
         }
         event.preventDefault();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const scaleX = event.currentTarget.clientWidth > 0 && bounds.width > 0
+          ? event.currentTarget.clientWidth / bounds.width
+          : 1;
+        const scaleY = event.currentTarget.clientHeight > 0 && bounds.height > 0
+          ? event.currentTarget.clientHeight / bounds.height
+          : 1;
         dragRef.current = {
           pointerId: event.pointerId,
           startX: event.clientX,
           startY: event.clientY,
           x: cameraRef.current.x,
           y: cameraRef.current.y,
+          scaleX,
+          scaleY,
           moved: false,
         };
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -873,16 +918,16 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
             undefined,
             scroller ? rectForNode(node, scroller, cameraRef.current, dimensionsRef.current.width, dimensionsRef.current.height) : undefined,
             true,
+            leafId || null,
           );
         } else {
-      
           const id = target?.dataset.hmCategoryId;
-          if (id) showCategory(id);
+          if (id) showCategory(id, undefined, undefined, undefined, false, null);
         }
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
-          setCategoryHoverVisual(null);
+          setHoverOverlayVisual(null, null);
           onLeafHover?.(null);
           onCategoryHover(null);
         }
@@ -915,7 +960,38 @@ const HeatmapTreemap = memo(function HeatmapTreemap({
           }}
         >
           <CategoryTiles parents={parents} hoveredCategoryId={hoveredCategoryId} />
-          <LeafTiles leafEntries={leafEntries} marketSession={marketSession} />
+          <LeafTiles
+            leafEntries={leafEntries}
+            lodUnlocked={lodUnlocked}
+            initialScale={settledScale}
+            marketSession={marketSession}
+          />
+          {pinnedCategoryNode && (
+            <div
+              data-hm-pinned-overlay="category"
+              data-hm-active-id={hoveredCategoryId || undefined}
+              aria-hidden="true"
+              className="cm-hm-hover-overlay cm-hm-hover-overlay--category"
+              style={{
+                opacity: 1,
+                transform: `translate3d(${pinnedCategoryNode.x0}px, ${pinnedCategoryNode.y0}px, 0)`,
+                width: Math.max(0, pinnedCategoryNode.x1 - pinnedCategoryNode.x0),
+                height: Math.max(0, pinnedCategoryNode.y1 - pinnedCategoryNode.y0),
+              }}
+            />
+          )}
+          <div
+            ref={categoryOverlayRef}
+            data-hm-hover-overlay="category"
+            aria-hidden="true"
+            className="cm-hm-hover-overlay cm-hm-hover-overlay--category"
+          />
+          <div
+            ref={leafOverlayRef}
+            data-hm-hover-overlay="leaf"
+            aria-hidden="true"
+            className="cm-hm-hover-overlay cm-hm-hover-overlay--leaf"
+          />
         </div>
       </div>
     </div>

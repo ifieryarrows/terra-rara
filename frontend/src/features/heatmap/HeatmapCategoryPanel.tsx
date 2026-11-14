@@ -8,6 +8,41 @@ import { computePointerPanelPosition } from './heatmap-utils';
 const ROW_HEIGHT = 40;
 const OVERSCAN = 6;
 const MAX_VISIBLE_ROWS = 9;
+const VIRTUALIZATION_THRESHOLD = 8;
+
+interface PeerRowProps {
+  item: HeatmapData;
+  rowIndex: number;
+  rowHeight: number;
+  isSheet: boolean;
+  virtualized: boolean;
+}
+
+const PeerRow = memo(function PeerRow({
+  item,
+  rowIndex,
+  rowHeight,
+  isSheet,
+  virtualized,
+}: PeerRowProps) {
+  const change = item.changePercent || 0;
+  return (
+    <div
+      data-testid="peer-row"
+      aria-label={`${item.name}, ${item.shortName || 'peer'}, ${item.price ?? 'price unavailable'}, ${change >= 0 ? 'plus' : 'minus'} ${Math.abs(change).toFixed(2)} percent`}
+      className={`grid grid-cols-[minmax(54px,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/[0.05] ${isSheet ? 'px-2.5' : 'px-3'} hover:bg-white/[0.055] ${rowIndex % 2 ? 'bg-white/[0.025]' : 'bg-transparent'}`}
+      style={{
+        height: rowHeight,
+        ...(virtualized ? { position: 'absolute', left: 0, right: 0, transform: `translateY(${rowIndex * rowHeight}px)` } : {}),
+      }}
+    >
+      <strong className="truncate text-xs font-semibold text-slate-100">{item.name}</strong>
+      <Sparkline values={item.sparkline} positive={change >= 0} width={82} height={22} />
+      <span className="text-right font-mono text-[11px] tabular-nums text-slate-300">{item.price == null ? '—' : item.price.toFixed(item.price < 10 ? 3 : 2)}</span>
+      <span className={`text-right font-mono text-[11px] font-semibold tabular-nums ${change > 0 ? 'text-emerald-400' : change < 0 ? 'text-rose-400' : 'text-slate-500'}`}>{change > 0 ? '+' : ''}{change.toFixed(2)}%</span>
+    </div>
+  );
+});
 
 interface Props {
   categoryId: string;
@@ -105,7 +140,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
   const isInteractive = pinned || isSheet;
   const maxRows = isSheet ? 2 : MAX_VISIBLE_ROWS;
   const rowHeight = isSheet ? 28 : ROW_HEIGHT;
-  const virtualized = peers.length > 40;
+  const virtualized = peers.length > VIRTUALIZATION_THRESHOLD;
   const listHeight = Math.min(rowHeight * maxRows, Math.max(rowHeight, peers.length * rowHeight));
   const start = virtualized ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
   const end = virtualized ? Math.min(peers.length, start + maxRows + OVERSCAN * 2) : peers.length;
@@ -135,31 +170,35 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
       element.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
     }
   }, [activeLeaf, anchor.containerRect, anchor.rect]);
+  const applyPositionRef = useRef(applyPosition);
+  applyPositionRef.current = applyPosition;
 
   const schedulePosition = useCallback(() => {
-    if (positionFrame.current === null) positionFrame.current = requestAnimationFrame(applyPosition);
-  }, [applyPosition]);
+    if (positionFrame.current === null) {
+      positionFrame.current = requestAnimationFrame(() => applyPositionRef.current());
+    }
+  }, []);
 
   useImperativeHandle(ref, () => ({
     move(x, y) {
       pointerRef.current = { x, y };
-      if (positionFrame.current !== null) {
-        cancelAnimationFrame(positionFrame.current);
-        positionFrame.current = null;
-      }
-      applyPosition();
+      schedulePosition();
     },
-  }), [applyPosition]);
+  }), [schedulePosition]);
 
   useLayoutEffect(() => {
-    pointerRef.current = anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top };
+    if (typeof ResizeObserver !== 'undefined') return;
     const element = panelRef.current;
     if (element && window.innerWidth > 640) {
       const bounds = element.getBoundingClientRect();
       if (bounds.width > 0 && bounds.height > 0) {
-        panelSizeRef.current = { width: bounds.width, height: bounds.height };
+        panelSizeRef.current = { width: Math.min(380, bounds.width), height: bounds.height };
       }
     }
+  }, [categoryId, isSheet]);
+
+  useLayoutEffect(() => {
+    pointerRef.current = anchor.pointer || { x: anchor.rect.right, y: anchor.rect.top };
     applyPosition();
   }, [anchor, applyPosition]);
 
@@ -179,7 +218,7 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [schedulePosition]);
+  }, [categoryId, isSheet, schedulePosition]);
 
   useEffect(() => () => {
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
@@ -223,26 +262,50 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
         )}
       </header>
 
-      {visibleNews && (
-        <a
-          href={visibleNews.url || undefined}
-          target={visibleNews.url ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          className={`block border-b border-white/10 bg-white/[0.025] hover:bg-white/[0.045] ${isSheet ? 'px-2.5 py-1' : 'px-3 py-2'}`}
-        >
-          <div className="flex items-center gap-2 text-[9px] text-slate-500">
-            <span>{visibleNews.publishedAt ? new Date(visibleNews.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
-            {visibleNews.publisher && <span className="truncate text-slate-600">· {visibleNews.publisher}</span>}
-            {visibleNews.sentiment && <span className="ml-auto shrink-0 text-copper-300">{visibleNews.sentiment}</span>}
-          </div>
-          <p className={`mt-0.5 text-[11px] leading-[1.35] text-slate-300 ${isSheet ? 'line-clamp-1' : 'mt-1 line-clamp-3'}`}>{visibleNews.summary || visibleNews.title}</p>
-        </a>
-      )}
-
-      {!isSheet && activeLeaf && context && !visibleNews && (
-        <div className="flex min-h-9 items-center gap-2 border-b border-white/10 bg-white/[0.018] px-3 py-2 text-[10px] text-slate-500" role="status">
-          <span aria-hidden="true" className="text-copper-400">✧</span>
-          <span>No recent news is available for {activeLeaf.name}.</span>
+      {isSheet ? (
+        visibleNews && (
+          <a
+            href={visibleNews.url || undefined}
+            target={visibleNews.url ? '_blank' : undefined}
+            rel="noopener noreferrer"
+            className="block border-b border-white/10 bg-white/[0.025] px-2.5 py-1 hover:bg-white/[0.045]"
+          >
+            <div className="flex items-center gap-2 text-[9px] text-slate-500">
+              <span>{visibleNews.publishedAt ? new Date(visibleNews.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
+              {visibleNews.publisher && <span className="truncate text-slate-600">· {visibleNews.publisher}</span>}
+              {visibleNews.sentiment && <span className="ml-auto shrink-0 text-copper-300">{visibleNews.sentiment}</span>}
+            </div>
+            <p className="mt-0.5 line-clamp-1 text-[11px] leading-[1.35] text-slate-300">{visibleNews.summary || visibleNews.title}</p>
+          </a>
+        )
+      ) : (
+        <div className="h-[80px] shrink-0 overflow-hidden border-b border-white/10">
+          {visibleNews ? (
+            <a
+              href={visibleNews.url || undefined}
+              target={visibleNews.url ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              className="block h-full bg-white/[0.025] px-3 py-2 hover:bg-white/[0.045]"
+            >
+              <div className="flex items-center gap-2 text-[9px] text-slate-500">
+                <span>{visibleNews.publishedAt ? new Date(visibleNews.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
+                {visibleNews.publisher && <span className="truncate text-slate-600">· {visibleNews.publisher}</span>}
+                {visibleNews.sentiment && <span className="ml-auto shrink-0 text-copper-300">{visibleNews.sentiment}</span>}
+              </div>
+              <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-slate-300">{visibleNews.summary || visibleNews.title}</p>
+            </a>
+          ) : context ? (
+            <div className="flex h-full items-center gap-2 bg-white/[0.018] px-3 py-2 text-[10px] text-slate-500" role="status">
+              <span aria-hidden="true" className="text-copper-400">✧</span>
+              <span>No recent news is available for {activeLeaf ? activeLeaf.name : categoryName}.</span>
+            </div>
+          ) : (
+            <div aria-hidden="true" className="flex h-full flex-col justify-center gap-2 bg-white/[0.018] px-3 py-2">
+              <span className="h-2 w-24 rounded bg-white/10" />
+              <span className="h-2.5 w-full rounded bg-white/[0.06]" />
+              <span className="h-2.5 w-4/5 rounded bg-white/[0.06]" />
+            </div>
+          )}
         </div>
       )}
 
@@ -275,27 +338,16 @@ const HeatmapCategoryPanel = memo(forwardRef<HeatmapCategoryPanelHandle, Props>(
           <p className="px-3 py-3 text-[10px] text-slate-500">No additional peers in this category.</p>
         ) : (
           <div className="relative" style={{ height: virtualized ? peers.length * rowHeight : 'auto' }}>
-            {visible.map((item, index) => {
-              const rowIndex = start + index;
-              const change = item.changePercent || 0;
-              return (
-                <div
-                  key={item.id || item.name}
-                  data-testid="peer-row"
-                  aria-label={`${item.name}, ${item.shortName || 'peer'}, ${item.price ?? 'price unavailable'}, ${change >= 0 ? 'plus' : 'minus'} ${Math.abs(change).toFixed(2)} percent`}
-                  className={`grid grid-cols-[minmax(54px,1fr)_82px_58px_58px] items-center gap-2 border-b border-white/[0.05] ${isSheet ? 'px-2.5' : 'px-3'} hover:bg-white/[0.055] ${rowIndex % 2 ? 'bg-white/[0.025]' : 'bg-transparent'}`}
-                  style={{
-                    height: rowHeight,
-                    ...(virtualized ? { position: 'absolute', left: 0, right: 0, transform: `translateY(${rowIndex * rowHeight}px)` } : {}),
-                  }}
-                >
-                  <strong className="truncate text-xs font-semibold text-slate-100">{item.name}</strong>
-                  <Sparkline values={item.sparkline} positive={change >= 0} width={82} height={22} />
-                  <span className="text-right font-mono text-[11px] tabular-nums text-slate-300">{item.price == null ? '—' : item.price.toFixed(item.price < 10 ? 3 : 2)}</span>
-                  <span className={`text-right font-mono text-[11px] font-semibold tabular-nums ${change > 0 ? 'text-emerald-400' : change < 0 ? 'text-rose-400' : 'text-slate-500'}`}>{change > 0 ? '+' : ''}{change.toFixed(2)}%</span>
-                </div>
-              );
-            })}
+            {visible.map((item, index) => (
+              <PeerRow
+                key={item.id || item.name}
+                item={item}
+                rowIndex={start + index}
+                rowHeight={rowHeight}
+                isSheet={isSheet}
+                virtualized={virtualized}
+              />
+            ))}
           </div>
         )}
       </div>

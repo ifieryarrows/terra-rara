@@ -1,4 +1,15 @@
-import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  Profiler,
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import HeatmapFilters from './HeatmapFilters';
 import HeatmapTreemap, { type CategoryAnchor } from './HeatmapTreemap';
@@ -16,9 +27,14 @@ import { useMarketHeatmap } from '../../hooks/useQueries';
 import { ViewState } from '../../components/ui/ViewState';
 import { RefreshButton } from '../../components/ui/RefreshButton';
 import { Maximize2, Minimize2 } from 'lucide-react';
+import './heatmap.css';
+
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 const OPEN_DELAY_MS = 90;
 const CLOSE_DELAY_MS = 180;
+const RESIZE_THRESHOLD_PX = 4;
+
 function transformTree(
   raw: HeatmapNode,
   groupFilter: string,
@@ -123,17 +139,191 @@ export function advanceHeatmapPopover(
   }
 }
 
+export interface HeatmapPopoverHostHandle {
+  handleCategoryHover: (anchor: CategoryAnchor | null) => void;
+  moveCategoryPanel: (x: number, y: number) => void;
+  handleLeafHover: (leaf: HeatmapData | null) => void;
+  handleHoverInvalidated: () => void;
+  handleCategoryClick: (anchor: CategoryAnchor) => void;
+  clear: () => void;
+  dismissActive: () => boolean;
+}
+
+interface HeatmapPopoverHostProps {
+  categoryLeafIndex: Map<string, HeatmapData[]>;
+  sourceTree: HeatmapNode | null;
+  renderTree: HeatmapNode | null;
+  focusedPath: HeatmapFocusEntry[];
+  view: 'market' | 'themes';
+  onDrillDown: (anchor: CategoryAnchor) => void;
+  onPinnedCategoryChange: (id: string | null) => void;
+}
+
+const HeatmapPopoverHost = memo(forwardRef<HeatmapPopoverHostHandle, HeatmapPopoverHostProps>(function HeatmapPopoverHost({
+  categoryLeafIndex,
+  sourceTree,
+  renderTree,
+  focusedPath,
+  view,
+  onDrillDown,
+  onPinnedCategoryChange,
+}, ref) {
+  const [popover, setPopover] = useState<HeatmapPopoverState>(INITIAL_HEATMAP_POPOVER_STATE);
+  const hoveredAnchor = popover.mode !== 'idle' ? popover.anchor : null;
+  const pinnedAnchor = popover.mode === 'pinned' ? popover.anchor : null;
+  const hoveredLeaf = popover.leaf;
+  const activeAnchor = pinnedAnchor || hoveredAnchor;
+
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const leafHoverFrame = useRef<number | null>(null);
+  const pendingLeafRef = useRef<HeatmapData | null>(null);
+  const latestPointer = useRef<{ x: number; y: number } | null>(null);
+  const categoryPanelRef = useRef<HeatmapCategoryPanelHandle>(null);
+  const hoverStateRef = useRef({ mode: popover.mode, hoveredAnchor, pinnedAnchor });
+  hoverStateRef.current = { mode: popover.mode, hoveredAnchor, pinnedAnchor };
+
+  const pinnedId = pinnedAnchor?.id || null;
+  useEffect(() => {
+    onPinnedCategoryChange(pinnedId);
+  }, [onPinnedCategoryChange, pinnedId]);
+
+  const clearTimer = (timerRef: React.MutableRefObject<number | null>) => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  };
+
+  const cancelLeafHoverFrame = () => {
+    if (leafHoverFrame.current !== null) {
+      cancelAnimationFrame(leafHoverFrame.current);
+      leafHoverFrame.current = null;
+    }
+  };
+
+  const cancelClose = useCallback(() => clearTimer(closeTimer), []);
+
+  const scheduleClose = useCallback(() => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    cancelLeafHoverFrame();
+    closeTimer.current = window.setTimeout(() => {
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
+    }, CLOSE_DELAY_MS);
+  }, []);
+
+  useEffect(() => () => {
+    clearTimer(openTimer);
+    clearTimer(closeTimer);
+    cancelLeafHoverFrame();
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    handleCategoryHover(anchor) {
+      const { hoveredAnchor: currentHovered, pinnedAnchor: currentPinned } = hoverStateRef.current;
+      if (currentPinned) return;
+      if (!anchor) {
+        scheduleClose();
+        return;
+      }
+      if (anchor.pointer) latestPointer.current = anchor.pointer;
+      const pointerDriven = !!anchor.pointer;
+      clearTimer(closeTimer);
+      clearTimer(openTimer);
+      if (currentHovered?.id === anchor.id) return;
+      openTimer.current = window.setTimeout(() => {
+        const nextAnchor = pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor;
+        setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-open', anchor: nextAnchor }));
+      }, OPEN_DELAY_MS);
+    },
+    moveCategoryPanel(x, y) {
+      latestPointer.current = { x, y };
+      if (!hoverStateRef.current.pinnedAnchor) categoryPanelRef.current?.move(x, y);
+    },
+    handleLeafHover(leaf) {
+      if (hoverStateRef.current.pinnedAnchor) return;
+      pendingLeafRef.current = leaf;
+      if (leafHoverFrame.current === null) {
+        leafHoverFrame.current = requestAnimationFrame(() => {
+          leafHoverFrame.current = null;
+          if (hoverStateRef.current.pinnedAnchor) return;
+          const nextLeaf = pendingLeafRef.current;
+          setPopover((prev) => advanceHeatmapPopover(prev, { type: 'leaf-hover', leaf: nextLeaf }));
+        });
+      }
+    },
+    handleHoverInvalidated() {
+      if (hoverStateRef.current.pinnedAnchor) return;
+      clearTimer(openTimer);
+      clearTimer(closeTimer);
+      cancelLeafHoverFrame();
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
+    },
+    handleCategoryClick(anchor) {
+      clearTimer(openTimer);
+      clearTimer(closeTimer);
+      cancelLeafHoverFrame();
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'click-anchor', anchor }));
+    },
+    clear() {
+      clearTimer(openTimer);
+      clearTimer(closeTimer);
+      cancelLeafHoverFrame();
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
+    },
+    dismissActive() {
+      if (hoverStateRef.current.mode === 'idle') return false;
+      clearTimer(openTimer);
+      clearTimer(closeTimer);
+      cancelLeafHoverFrame();
+      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
+      return true;
+    },
+  }), [scheduleClose]);
+
+  const panelLeaves = useMemo(
+    () => activeAnchor
+      ? categoryLeafIndex.get(activeAnchor.id) || categoryLeafIndex.get(activeAnchor.name) || []
+      : [],
+    [activeAnchor, categoryLeafIndex],
+  );
+  const canDrillActiveAnchor = useMemo(
+    () => Boolean(
+      activeAnchor
+      && sourceTree
+      && findMapCategory(renderTree || sourceTree, activeAnchor.id)
+      && focusedPath[focusedPath.length - 1]?.id !== activeAnchor.id,
+    ),
+    [activeAnchor, focusedPath, renderTree, sourceTree],
+  );
+
+  if (!activeAnchor) return null;
+
+  return (
+    <HeatmapCategoryPanel
+      ref={categoryPanelRef}
+      categoryId={activeAnchor.id}
+      categoryName={activeAnchor.name}
+      leaves={panelLeaves}
+      activeLeaf={hoveredLeaf}
+      anchor={activeAnchor}
+      view={view}
+      pinned={!!pinnedAnchor}
+      onPointerEnter={cancelClose}
+      onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
+      onDrillDown={canDrillActiveAnchor ? () => onDrillDown(activeAnchor) : undefined}
+      onClose={() => setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }))}
+    />
+  );
+}));
+
 export const HeatmapPanel: React.FC = () => {
   const [view, setView] = useState<'market' | 'themes'>('market');
   const { data: rawData, isError, isLoading, refetch, isFetching } = useMarketHeatmap(view);
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [sortFilter, setSortFilter] = useState<'Weight' | 'Performance'>('Weight');
-  const [popover, setPopover] = useState<HeatmapPopoverState>(INITIAL_HEATMAP_POPOVER_STATE);
-  const hoveredAnchor = popover.mode !== 'idle' ? popover.anchor : null;
-  const pinnedAnchor = popover.mode === 'pinned' ? popover.anchor : null;
-  const hoveredLeaf = popover.leaf;
+  const [pinnedCategoryId, setPinnedCategoryId] = useState<string | null>(null);
   const [focusedPath, setFocusedPath] = useState<HeatmapFocusEntry[]>([]);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 560 });
+  const [dimensions, setDimensions] = useState({ width: 0, height: 661 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<MarketSessionInfo>(() => getMarketSessionState());
 
@@ -145,14 +335,13 @@ export const HeatmapPanel: React.FC = () => {
     const timer = window.setInterval(syncSession, 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
+  const popoverHostRef = useRef<HeatmapPopoverHostHandle>(null);
   const resizeFrame = useRef<number | null>(null);
-  const openTimer = useRef<number | null>(null);
-  const closeTimer = useRef<number | null>(null);
-  const categoryPanelRef = useRef<HeatmapCategoryPanelHandle>(null);
-  const latestPointer = useRef<{ x: number; y: number } | null>(null);
+  const lastDimensionsRef = useRef({ width: 0, height: 0 });
   // Portal exit mounts a new inline button; resolve the current node at cleanup.
   const restoreFullscreenFocus = useCallback(() => fullscreenButtonRef.current?.focus({ preventScroll: true }), []);
 
@@ -178,32 +367,79 @@ export const HeatmapPanel: React.FC = () => {
     };
   }, [isFullscreen, restoreFullscreenFocus]);
 
+  // Measure initial dimensions synchronously before paint so frame 1 renders
+  // the treemap at full size with zero CLS.
+  useIsomorphicLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const bounds = element.getBoundingClientRect();
+    const initialWidth = Math.max(0, Math.floor(bounds.width || element.clientWidth));
+    const initialHeight = Math.max(0, Math.floor(bounds.height || element.clientHeight));
+    if (initialWidth > 0 && initialHeight > 0) {
+      lastDimensionsRef.current = { width: initialWidth, height: initialHeight };
+      setDimensions((previous) =>
+        previous.width === initialWidth && previous.height === initialHeight
+          ? previous
+          : { width: initialWidth, height: initialHeight },
+      );
+    }
+  }, [isFullscreen]);
+
+  // Throttle ResizeObserver updates via rAF + 4px threshold so minor sub-pixel
+  // jitter never triggers expensive aggregateTinyLeaves / layoutTreemap passes.
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
-    const update = (width: number, height: number) => {
-      if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
-      resizeFrame.current = requestAnimationFrame(() => {
-        resizeFrame.current = null;
-        const next = { width: Math.max(0, Math.floor(width)), height: Math.max(0, Math.floor(height)) };
-        setDimensions((previous) => previous.width === next.width && previous.height === next.height ? previous : next);
-      });
+    let pending: { width: number; height: number } | null = null;
+    const flush = () => {
+      resizeFrame.current = null;
+      if (!pending) return;
+      const nextWidth = Math.max(0, Math.floor(pending.width));
+      const nextHeight = Math.max(0, Math.floor(pending.height));
+      pending = null;
+      if (nextWidth <= 0 || nextHeight <= 0) return;
+      const prev = lastDimensionsRef.current;
+      const uninitialized = prev.width === 0 || prev.height === 0;
+      if (
+        !uninitialized
+        && Math.abs(nextWidth - prev.width) < RESIZE_THRESHOLD_PX
+        && Math.abs(nextHeight - prev.height) < RESIZE_THRESHOLD_PX
+      ) {
+        return;
+      }
+      lastDimensionsRef.current = { width: nextWidth, height: nextHeight };
+      setDimensions({ width: nextWidth, height: nextHeight });
     };
-    const bounds = element.getBoundingClientRect();
-    update(bounds.width, bounds.height);
+    const schedule = (width: number, height: number) => {
+      pending = { width, height };
+      if (resizeFrame.current === null) {
+        resizeFrame.current = requestAnimationFrame(flush);
+      }
+    };
     if (typeof ResizeObserver === 'undefined') {
+      const bounds = element.getBoundingClientRect();
+      schedule(bounds.width, bounds.height);
       const onResize = () => {
         const next = element.getBoundingClientRect();
-        update(next.width, next.height);
+        schedule(next.width, next.height);
       };
       window.addEventListener('resize', onResize);
-      return () => window.removeEventListener('resize', onResize);
+      return () => {
+        window.removeEventListener('resize', onResize);
+        if (resizeFrame.current !== null) {
+          cancelAnimationFrame(resizeFrame.current);
+          resizeFrame.current = null;
+        }
+      };
     }
-    const observer = new ResizeObserver(([entry]) => update(entry.contentRect.width, entry.contentRect.height));
+    const observer = new ResizeObserver(([entry]) => schedule(entry.contentRect.width, entry.contentRect.height));
     observer.observe(element);
     return () => {
       observer.disconnect();
-      if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
+      if (resizeFrame.current !== null) {
+        cancelAnimationFrame(resizeFrame.current);
+        resizeFrame.current = null;
+      }
     };
   }, [isFullscreen]);
 
@@ -220,65 +456,19 @@ export const HeatmapPanel: React.FC = () => {
     }
   }, []);
 
-  const hoverStateRef = useRef({ hoveredAnchor, pinnedAnchor });
-  hoverStateRef.current = { hoveredAnchor, pinnedAnchor };
-
-  const clearTimer = (ref: React.MutableRefObject<number | null>) => {
-    if (ref.current !== null) window.clearTimeout(ref.current);
-    ref.current = null;
-  };
-  const cancelClose = useCallback(() => clearTimer(closeTimer), []);
-  const scheduleClose = useCallback(() => {
-    clearTimer(openTimer);
-    clearTimer(closeTimer);
-    closeTimer.current = window.setTimeout(() => {
-      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
-    }, CLOSE_DELAY_MS);
-  }, []);
-  const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
-    const { hoveredAnchor: currentHovered, pinnedAnchor: currentPinned } = hoverStateRef.current;
-    if (currentPinned) return;
-    if (!anchor) {
-      // Finviz paints selection on a dedicated hover canvas. Mirror that
-      // immediacy for the visual boundary while retaining the panel's close
-      // grace period.
-      scheduleClose();
-      return;
-    }
-    if (anchor.pointer) latestPointer.current = anchor.pointer;
-    const pointerDriven = !!anchor.pointer;
-    clearTimer(closeTimer);
-    clearTimer(openTimer);
-    if (currentHovered?.id === anchor.id) {
-      return;
-    }
-    openTimer.current = window.setTimeout(() => {
-      const nextAnchor = pointerDriven && latestPointer.current ? { ...anchor, pointer: latestPointer.current } : anchor;
-      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-open', anchor: nextAnchor }));
-    }, OPEN_DELAY_MS);
-  }, [scheduleClose]);
-
-  useEffect(() => () => {
-    clearTimer(openTimer);
-    clearTimer(closeTimer);
-  }, []);
-
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (pinnedAnchor || hoveredAnchor) {
-        setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
-      } else if (isFullscreen) {
-        setIsFullscreen(false);
-      }
+      if (popoverHostRef.current?.dismissActive()) return;
+      if (isFullscreen) setIsFullscreen(false);
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [hoveredAnchor, isFullscreen, pinnedAnchor]);
+  }, [isFullscreen]);
 
   useEffect(() => {
     setGroupFilter('ALL');
-    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
+    popoverHostRef.current?.clear();
     setFocusedPath([]);
   }, [view]);
 
@@ -319,43 +509,25 @@ export const HeatmapPanel: React.FC = () => {
     () => sourceTree ? indexCategoryLeaves(sourceTree) : new Map<string, HeatmapData[]>(),
     [sourceTree],
   );
-  const activeAnchor = pinnedAnchor || hoveredAnchor;
-  const panelLeaves = useMemo(
-    () => activeAnchor
-      ? categoryLeafIndex.get(activeAnchor.id) || categoryLeafIndex.get(activeAnchor.name) || []
-      : [],
-    [activeAnchor, categoryLeafIndex],
-  );
-  const canDrillActiveAnchor = useMemo(
-    () => Boolean(
-      activeAnchor
-      && sourceTree
-      && findMapCategory(renderTree || sourceTree, activeAnchor.id)
-      && focusedPath[focusedPath.length - 1]?.id !== activeAnchor.id,
-    ),
-    [activeAnchor, focusedPath, renderTree, sourceTree],
-  );
   const hasContent = !!renderTree?.children?.length && dimensions.width > 0;
+
+  const handleCategoryHover = useCallback((anchor: CategoryAnchor | null) => {
+    popoverHostRef.current?.handleCategoryHover(anchor);
+  }, []);
   const moveCategoryPanel = useCallback((x: number, y: number) => {
-    latestPointer.current = { x, y };
-    if (!hoverStateRef.current.pinnedAnchor) categoryPanelRef.current?.move(x, y);
+    popoverHostRef.current?.moveCategoryPanel(x, y);
   }, []);
   const handleLeafHover = useCallback((leaf: HeatmapData | null) => {
-    if (!hoverStateRef.current.pinnedAnchor) {
-      setPopover((prev) => advanceHeatmapPopover(prev, { type: 'leaf-hover', leaf }));
-    }
+    popoverHostRef.current?.handleLeafHover(leaf);
   }, []);
-  // A page scroll invalidates the pointer anchor: close the hover card at once
-  // instead of leaving it floating over unrelated sections. A pinned card is a
-  // deliberate, dismissible state and stays put.
   const handleHoverInvalidated = useCallback(() => {
-    if (hoverStateRef.current.pinnedAnchor) return;
-    clearTimer(openTimer);
-    clearTimer(closeTimer);
-    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'hover-close' }));
+    popoverHostRef.current?.handleHoverInvalidated();
+  }, []);
+  const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
+    popoverHostRef.current?.handleCategoryClick(anchor);
   }, []);
   const handleCategoryDrillDown = useCallback((anchor: CategoryAnchor) => {
-    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
+    popoverHostRef.current?.clear();
     setFocusedPath((current) => {
       const existingIndex = current.findIndex((entry) => entry.id === anchor.id);
       if (existingIndex >= 0) return current.slice(0, existingIndex + 1);
@@ -365,16 +537,14 @@ export const HeatmapPanel: React.FC = () => {
   }, [renderTree, sourceTree]);
   const handleMapNavigateBack = useCallback(() => {
     setFocusedPath((current) => current.length ? current.slice(0, -1) : current);
-    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }));
+    popoverHostRef.current?.clear();
   }, []);
-  const handleCategoryClick = useCallback((anchor: CategoryAnchor) => {
-    clearTimer(openTimer);
-    clearTimer(closeTimer);
-    setPopover((prev) => advanceHeatmapPopover(prev, { type: 'click-anchor', anchor }));
+  const handlePinnedCategoryChange = useCallback((id: string | null) => {
+    setPinnedCategoryId((prev) => (prev === id ? prev : id));
   }, []);
 
   const content = (
-    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50 bg-[#060a11]' : 'cm-heatmap-stage relative w-full overflow-hidden'}`} data-cm-route-reveal="surface">
+    <section ref={panelRef} role={isFullscreen ? 'dialog' : undefined} aria-modal={isFullscreen || undefined} aria-label={isFullscreen ? 'Fullscreen market map' : 'Market map'} className={`cm-heatmap cm-heatmap--terminal min-w-0 max-w-full font-sans ${isFullscreen ? 'cm-map-fullscreen fixed inset-0 z-50 bg-[#060a11]' : 'relative w-full overflow-hidden'}`} data-cm-route-reveal="surface">
       <aside className="cm-heatmap-sidebar" aria-label="Market map controls">
         <header className="cm-heatmap-sidebar-head">
           <div className="cm-heatmap-sidebar-title-row">
@@ -405,13 +575,16 @@ export const HeatmapPanel: React.FC = () => {
       </aside>
 
       <div className="cm-heatmap-main">
-        {isError && hasContent && <p className="cm-news-updating" role="status">Map refresh failed. The previous snapshot remains visible.</p>}
         <div
           ref={containerRef}
           className="cm-heatmap-stage relative min-w-0 flex-1"
           data-cm-no-sound="true"
-          style={{ height: isFullscreen ? undefined : 'clamp(560px, 72vh, 820px)', minHeight: isFullscreen ? 280 : 560 }}
         >
+          {isError && hasContent && (
+            <p className="cm-news-updating pointer-events-none" role="status">
+              Map refresh failed. The previous snapshot remains visible.
+            </p>
+          )}
           {isError && !hasContent ? (
             <ViewState kind="error" title="Market map could not be loaded" description="Check again to retrieve an available snapshot." action={<RefreshButton onClick={() => refetch()} busy={isFetching} label="Retry market map"/>} compact/>
           ) : !hasContent ? (
@@ -453,7 +626,7 @@ export const HeatmapPanel: React.FC = () => {
                   height={dimensions.height}
                   zoom={1}
                   resetKey={view}
-                  hoveredCategoryId={pinnedAnchor?.id || null}
+                  hoveredCategoryId={pinnedCategoryId}
                   onCategoryHover={handleCategoryHover}
                   onCategoryPointerMove={moveCategoryPanel}
                   onLeafHover={handleLeafHover}
@@ -466,22 +639,16 @@ export const HeatmapPanel: React.FC = () => {
               </Profiler>
             </>
           )}
-          {activeAnchor && (
-            <HeatmapCategoryPanel
-              ref={categoryPanelRef}
-              categoryId={activeAnchor.id}
-              categoryName={activeAnchor.name}
-              leaves={panelLeaves}
-              activeLeaf={hoveredLeaf}
-              anchor={activeAnchor}
-              view={view}
-              pinned={!!pinnedAnchor}
-              onPointerEnter={cancelClose}
-              onPointerLeave={() => { if (!pinnedAnchor) scheduleClose(); }}
-              onDrillDown={canDrillActiveAnchor ? () => handleCategoryDrillDown(activeAnchor) : undefined}
-              onClose={() => setPopover((prev) => advanceHeatmapPopover(prev, { type: 'clear' }))}
-            />
-          )}
+          <HeatmapPopoverHost
+            ref={popoverHostRef}
+            categoryLeafIndex={categoryLeafIndex}
+            sourceTree={sourceTree}
+            renderTree={renderTree}
+            focusedPath={focusedPath}
+            view={view}
+            onDrillDown={handleCategoryDrillDown}
+            onPinnedCategoryChange={handlePinnedCategoryChange}
+          />
         </div>
         <footer className="cm-heatmap-footer">
           <span>Wheel or pinch to zoom <i/> drag to pan <i/> tap or click to inspect <i/> double-click to drill in</span>

@@ -1,0 +1,47 @@
+.cm-hm-category-tile {
+  position: absolute;
+  overflow: hidden;
+  z-index: 1;
+  background-color: #020617;
+  border: 1px solid #1e293b;
+  contain: layout style;
+}
+
+.cm-hm-category-tile[data-hm-depth='1'] {
+  border-color: #334155;
+}
+
+.cm-hm-category-tile[aria-pressed='true'] {
+  border-color: #d99a5b;
+}
+
+.cm-hm-leaf-tile {
+  position: absolute;
+  z-index: 2;
+  overflow: hidden;
+  color: #ffffff;
+  contain: layout style;
+  transition: background-color 700ms ease;
+}
+
+.cm-hm-hover-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  opacity: 0;
+  will-change: transform, width, height, opacity;
+}
+
+.cm-hm-hover-overlay--category {
+  z-index: 5;
+  border: 2px solid #d99a5b;
+  background-color: rgba(217, 154, 91, 0.08);
+}
+
+.cm-hm-hover-overlay--leaf {
+  z-index: 6;
+  border: 1.5px solid rgba(255, 255, 255, 0.92);
+  background-color: rgba(255, 255, 255, 0.12);
+}

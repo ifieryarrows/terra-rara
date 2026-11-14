@@ -15,6 +15,7 @@ import {
 } from './heatmap-layout';
 import { CompanyLogo } from './CompanyLogo';
 import { getColorForChange, type MarketSession } from './heatmap-utils';
+import './HeatmapTiles.css';
 
 const LOGO_INSTRUMENT_TYPES = new Set(['equity', 'etf', 'mutualfund']);
 const MIN_TILE_SIZE = 4;
@@ -62,21 +63,17 @@ export const CategoryTiles = memo(function CategoryTiles({
         tabIndex={0}
         aria-label={`${isSector ? 'Sector or asset class' : 'Industry or theme'}: ${nodeData.name}`}
         aria-pressed={active}
-        className={`absolute overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-copper-400 ${zoom > 1 ? 'cursor-grab' : 'cursor-pointer'}`}
+        className={`cm-hm-category-tile outline-none focus-visible:ring-2 focus-visible:ring-copper-400 ${zoom > 1 ? 'cursor-grab' : 'cursor-pointer'}`}
         style={{
           left: node.x0,
           top: node.y0,
           width: nodeWidth,
           height: nodeHeight,
-          border: active
-            ? '2px solid #d99a5b'
+          borderColor: active
+            ? '#d99a5b'
             : isSector
-              ? '1px solid #334155'
-              : '1px solid #1e293b',
-          backgroundColor: active ? '#d99a5b' : '#020617',
-          boxShadow: active
-            ? '0 0 0 2px rgba(217,154,91,.22), inset 0 0 18px rgba(217,154,91,.08)'
-            : undefined,
+              ? '#334155'
+              : '#1e293b',
           // Category geometry stays below stock cells so the copper
           // highlight never intercepts stock hover/focus events.
           zIndex: 1,
@@ -152,12 +149,14 @@ function TileTierLayer({
   logoTicker,
   changeText,
   priceText,
+  initialScale = 1,
 }: {
   plan: TileTierPlan;
   item: HeatmapData;
   logoTicker: string | null;
   changeText: string;
   priceText: string | null;
+  initialScale?: number;
 }) {
   const { tier, minScale, maxScale, typography } = plan;
   const showChange = tier !== 'small' && typography.change > 0;
@@ -170,7 +169,7 @@ function TileTierLayer({
       data-hm-tier={tier}
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center overflow-hidden text-center"
-      style={{ padding: typography.padding, visibility: lodVisibility(minScale, maxScale, 1) }}
+      style={{ padding: typography.padding, visibility: lodVisibility(minScale, maxScale, initialScale) }}
     >
       {showLogo && (
         <CompanyLogo
@@ -225,10 +224,14 @@ function TileTierLayer({
 export const LeafTiles = memo(function LeafTiles({
   leafEntries,
   zoom = 1,
+  lodUnlocked = false,
+  initialScale = 1,
   marketSession = 'closed',
 }: {
   leafEntries: LeafEntry[];
   zoom?: number;
+  lodUnlocked?: boolean;
+  initialScale?: number;
   marketSession?: MarketSession;
 }) {
   return leafEntries.map(({ leaf, parentId, renderId }) => {
@@ -253,6 +256,13 @@ export const LeafTiles = memo(function LeafTiles({
       hasLogo: !!logoTicker,
     });
     const tierAtRest = tierAtScale(plans, 1);
+    const activeRestPlan = tierAtRest === 'micro'
+      ? null
+      : plans.find((plan) => plan.tier === tierAtRest) ?? null;
+    // At rest (zoom === 1), render only the single active LOD tier to keep
+    // initial DOM light; unlock higher LOD tiers only when zoomed in (>1) and settled.
+    const renderedPlans = lodUnlocked ? plans : activeRestPlan ? [activeRestPlan] : [];
+    const layerScale = lodUnlocked ? initialScale : 1;
     return (
       <div
         key={renderId}
@@ -263,18 +273,17 @@ export const LeafTiles = memo(function LeafTiles({
         role="button"
         tabIndex={0}
         aria-label={`${item.aggregateCount ? item.shortName : `${item.name}, ${item.shortName || ''}`}. Price ${item.price ?? 'unavailable'}. Daily change ${change >= 0 ? 'plus ' : 'minus '}${Math.abs(change).toFixed(2)} percent.`}
-        className={`absolute z-[2] overflow-hidden text-white outline-none hover:brightness-125 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className={`cm-hm-leaf-tile outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-white ${zoom > 1 ? 'cursor-grab' : 'cursor-crosshair'}`}
         style={{
           left: leaf.x0,
           top: leaf.y0,
           width: cellWidth,
           height: cellHeight,
           backgroundColor: getColorForChange(item.changePercent, marketSession),
-          transition: 'background-color 700ms ease, filter 75ms ease',
-          visibility: tileScale <= 1 ? 'visible' : 'hidden',
+          visibility: tileScale <= layerScale ? 'visible' : 'hidden',
         }}
       >
-        {plans.map((plan) => (
+        {renderedPlans.map((plan) => (
           <TileTierLayer
             key={plan.tier}
             plan={plan}
@@ -282,6 +291,7 @@ export const LeafTiles = memo(function LeafTiles({
             logoTicker={logoTicker}
             changeText={changeText}
             priceText={priceText}
+            initialScale={layerScale}
           />
         ))}
       </div>

@@ -147,7 +147,7 @@ describe('heatmap interaction primitives', () => {
     expect(885 - (leftLanePosition.left + leftLanePosition.width)).toBe(18);
   });
 
-  it('moves the stock panel synchronously and never intercepts unpinned hover', async () => {
+  it('batches stock panel movement in rAF and never intercepts unpinned hover', async () => {
     vi.useFakeTimers();
     const panelHandle = createRef<HeatmapCategoryPanelHandle>();
     const selected = {
@@ -181,8 +181,13 @@ describe('heatmap interaction primitives', () => {
     const heightRead = vi.fn(() => 480);
     Object.defineProperty(panel, 'offsetWidth', { configurable: true, get: widthRead });
     Object.defineProperty(panel, 'offsetHeight', { configurable: true, get: heightRead });
+    panelHandle.current?.move(360, 200);
     panelHandle.current?.move(400, 200);
+    // Batched via requestAnimationFrame: not synchronously applied mid-frame.
+    expect(panel.style.transform).toBe(initialTransform);
+    await vi.advanceTimersByTimeAsync(16);
     expect(panel.style.transform).not.toBe(initialTransform);
+    expect(panel.style.transform).toContain('translate3d(418px');
     expect(panel.style.pointerEvents).toBe('none');
     expect(widthRead).not.toHaveBeenCalled();
     expect(heightRead).not.toHaveBeenCalled();
@@ -662,7 +667,7 @@ describe('heatmap interaction primitives', () => {
     expect(screen.getByText('No recent news is available for AMD.')).toBeVisible();
   });
 
-  it('highlights the industry grid immediately while retaining panel hover intent', async () => {
+  it('highlights via dedicated GPU overlays immediately while retaining panel hover intent', async () => {
     vi.useFakeTimers();
     render(<HeatmapPanel />);
     await vi.advanceTimersByTimeAsync(20);
@@ -675,12 +680,20 @@ describe('heatmap interaction primitives', () => {
     fireEvent.pointerOver(stock, { clientX: 100, clientY: 100 });
     const industryCells = Array.from(map.querySelectorAll<HTMLElement>('[data-hm-parent-id="industry"]'));
     const industry = map.querySelector<HTMLElement>('[data-hm-category-id="industry"]')!;
+    const categoryOverlay = map.querySelector<HTMLElement>('[data-hm-hover-overlay="category"]')!;
+    const leafOverlay = map.querySelector<HTMLElement>('[data-hm-hover-overlay="leaf"]')!;
     expect(industryCells.length).toBeGreaterThan(1);
     industryCells.forEach((cell) => {
       expect(cell.classList.contains('border')).toBe(false);
     });
-    expect(industry).toHaveStyle({ backgroundColor: '#d99a5b' });
-    await vi.advanceTimersByTimeAsync(89);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(categoryOverlay.dataset.hmActiveId).toBe('industry');
+    expect(categoryOverlay.style.opacity).toBe('1');
+    expect(categoryOverlay.style.transform).toContain('translate3d(');
+    expect(leafOverlay.dataset.hmActiveId).toBe(stock.dataset.hmLeafId);
+    expect(leafOverlay.style.opacity).toBe('1');
+    expect(industry.style.boxShadow).toBe('');
+    await vi.advanceTimersByTimeAsync(73);
     expect(screen.queryByLabelText(/Semiconductors category details/i)).toBeNull();
     await vi.advanceTimersByTimeAsync(1);
     const panel = screen.getByLabelText(/Semiconductors category details/i);
@@ -689,8 +702,11 @@ describe('heatmap interaction primitives', () => {
     await vi.advanceTimersByTimeAsync(20);
     expect(panel.style.transform).not.toBe(initialTransform);
     fireEvent.pointerOut(stock, { relatedTarget: document.body });
-    expect(industry).toHaveStyle({ backgroundColor: '#020617' });
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(categoryOverlay.style.opacity).toBe('0');
+    expect(categoryOverlay.dataset.hmActiveId).toBeUndefined();
+    expect(leafOverlay.style.opacity).toBe('0');
+    await vi.advanceTimersByTimeAsync(84);
     fireEvent.pointerEnter(panel);
     await vi.advanceTimersByTimeAsync(200);
     expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
@@ -797,5 +813,118 @@ describe('heatmap interaction primitives', () => {
     expect(container.querySelector('[data-hm-session]')?.getAttribute('data-hm-session')).toBe('regular');
     expect([getBg(0), getBg(1)]).toContain('rgb(235, 52, 75)');
     expect([getBg(0), getBg(1)]).toContain('rgb(18, 196, 91)');
+  });
+
+  it('renders only the active LOD tier at rest and unlocks higher tiers only after zoom settles', async () => {
+    const leaves = [
+      { id: 'big', name: 'BIG', shortName: 'Big Co', weight: 4_000, price: 250, changePercent: 1.5, instrumentType: 'equity' },
+      ...Array.from({ length: 80 }, (_, index) => ({
+        id: `s${index}`, name: `S${index}`, shortName: `Small ${index}`,
+        weight: index < 15 ? 70 : 2, price: 10 + index, changePercent: index % 2 ? -1 : 1,
+      })),
+    ];
+    const data: HeatmapNode = {
+      id: 'root', name: 'Root', children: [{
+        id: 'sector', name: 'Technology', children: [{ id: 'industry', name: 'Semiconductors', children: leaves }],
+      }],
+    };
+    const { container } = render(
+      <HeatmapTreemap data={data} width={900} height={500} zoom={1} hoveredCategoryId={null} onCategoryHover={() => {}} />,
+    );
+    const tiles = Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'));
+    for (const tile of tiles) {
+      const tiers = tile.querySelectorAll('[data-hm-tier]');
+      const atRest = tile.dataset.hmTierAtRest;
+      expect(tiers).toHaveLength(atRest === 'micro' ? 0 : 1);
+    }
+
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    map.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -240, clientX: 450, clientY: 250 }));
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+    const unlockedTiers = Array.from(container.querySelectorAll<HTMLElement>('[data-hm-leaf-id]'))
+      .map((tile) => tile.querySelectorAll('[data-hm-tier]').length);
+    expect(Math.max(...unlockedTiers)).toBeGreaterThan(1);
+  });
+
+  it('isolates hover popover updates from HeatmapPanel and HeatmapTreemap commits', async () => {
+    vi.useFakeTimers();
+    if (window.__COPPERMIND_HEATMAP_METRICS__) {
+      window.__COPPERMIND_HEATMAP_METRICS__.commits = [];
+    }
+    render(<HeatmapPanel />);
+    await vi.advanceTimersByTimeAsync(20);
+    const commitsAfterMount = window.__COPPERMIND_HEATMAP_METRICS__?.commits.length ?? 0;
+    const map = screen.getByLabelText(/Interactive market heatmap/i) as HTMLDivElement;
+    map.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560,
+      toJSON: () => ({}),
+    });
+    const nvda = screen.getByRole('button', { name: /^NVDA,/i });
+    const amd = screen.getByRole('button', { name: /^AMD,/i });
+    fireEvent.pointerOver(nvda, { clientX: 140, clientY: 160 });
+    await vi.advanceTimersByTimeAsync(90);
+    fireEvent.pointerMove(map, { clientX: 220, clientY: 180 });
+    fireEvent.pointerOver(amd, { clientX: 240, clientY: 180 });
+    await vi.advanceTimersByTimeAsync(32);
+    expect(screen.getByLabelText(/Semiconductors category details/i)).toBeVisible();
+    expect(window.__COPPERMIND_HEATMAP_METRICS__?.commits.length ?? 0).toBe(commitsAfterMount);
+  });
+
+  it('virtualizes peer lists above 8 rows and reserves a fixed desktop news slot height', () => {
+    const selected = {
+      id: 's0', name: 'S0', shortName: 'Selected', weight: 100, price: 100, changePercent: 1,
+      sector: 'Technology', industry: 'Semiconductors', sparkline: [1, 2, 3],
+    };
+    const leaves = [selected, ...Array.from({ length: 14 }, (_, index) => ({
+      id: `s${index + 1}`, name: `S${index + 1}`, shortName: `Peer ${index + 1}`, weight: 10,
+      price: 50 + index, changePercent: index % 2 ? -1 : 1, sector: 'Technology', industry: 'Semiconductors',
+    }))];
+    const anchor = {
+      id: 'industry', name: 'Semiconductors', depth: 2, pointer: { x: 100, y: 100 },
+      rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+      containerRect: { left: 0, top: 0, right: 700, bottom: 560, width: 700, height: 560 },
+    };
+    render(
+      <HeatmapCategoryPanel
+        categoryId="industry"
+        categoryName="Semiconductors"
+        leaves={leaves}
+        activeLeaf={selected}
+        anchor={anchor}
+        view="market"
+        pinned={false}
+        onClose={() => {}}
+        onPointerEnter={() => {}}
+        onPointerLeave={() => {}}
+      />,
+    );
+    const panel = screen.getByLabelText(/Semiconductors category details/i);
+    // 14 peers > 8 threshold -> virtualized (only visible rows + overscan, or < 14 when scrolled/large)
+    // With MAX_VISIBLE_ROWS=9 + OVERSCAN*2=12, 14 peers fits in 0..14; test with 30 peers to verify slicing below length.
+    expect(panel.querySelector('.h-\\[80px\\]')).toBeTruthy();
+
+    cleanup();
+    const thirtyOneLeaves = [selected, ...Array.from({ length: 30 }, (_, index) => ({
+      id: `p${index + 1}`, name: `P${index + 1}`, shortName: `Peer ${index + 1}`, weight: 10,
+      price: 50 + index, changePercent: 1, sector: 'Technology', industry: 'Semiconductors',
+    }))];
+    render(
+      <HeatmapCategoryPanel
+        categoryId="industry"
+        categoryName="Semiconductors"
+        leaves={thirtyOneLeaves}
+        activeLeaf={selected}
+        anchor={anchor}
+        view="market"
+        pinned={false}
+        onClose={() => {}}
+        onPointerEnter={() => {}}
+        onPointerLeave={() => {}}
+      />,
+    );
+    const virtualizedPanel = screen.getByLabelText(/Semiconductors category details/i);
+    expect(within(virtualizedPanel).getAllByTestId('peer-row').length).toBeLessThan(30);
+    expect(within(virtualizedPanel).getAllByTestId('peer-row')[0].style.transform).toContain('translateY(');
   });
 });
