@@ -147,9 +147,18 @@ function StarFieldCanvas({ subtle = false }: { subtle?: boolean }) {
     };
 
     render();
-    window.addEventListener('resize', render, { passive: true });
+    let resizeTimer: number | undefined;
+    const onResize = () => {
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = undefined;
+        render();
+      }, 150);
+    };
+    window.addEventListener('resize', onResize, { passive: true });
     return () => {
-      window.removeEventListener('resize', render);
+      window.removeEventListener('resize', onResize);
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
     };
   }, [subtle]);
 

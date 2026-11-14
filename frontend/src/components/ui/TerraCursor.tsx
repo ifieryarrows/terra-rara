@@ -162,25 +162,49 @@ export function TerraCursor() {
     };
 
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(draw); };
+    let moveRaf = 0;
+    let pendingMove: {
+      target: EventTarget | null;
+      clientX: number;
+      clientY: number;
+      pointerType: string;
+      buttons: number;
+    } | null = null;
+    let lastCheckedTarget: EventTarget | null = null;
+    let lastTargetSuppressed = false;
+
     const resetTrailOrigin = () => {
       previousPoint = null;
       distanceSinceMote = 0;
     };
-    const onPointerMove = (event: PointerEvent) => {
-      const target = event.target;
+
+    const flushPointerMove = () => {
+      moveRaf = 0;
+      const move = pendingMove;
+      pendingMove = null;
+      if (!move) return;
+
+      const { target, clientX: x, clientY: y, pointerType, buttons } = move;
       // Buttons held means a selection or card drag is in progress: stay quiet.
-      if (!(target instanceof Node) || !root.contains(target) || event.pointerType === 'touch' || event.buttons !== 0) {
-        resetTrailOrigin();
-        return;
-      }
-      const element = target instanceof Element ? target : null;
-      if (element?.closest('input, textarea, select, [contenteditable="true"]')) {
+      if (pointerType === 'touch' || buttons !== 0) {
         resetTrailOrigin();
         return;
       }
 
-      const x = event.clientX;
-      const y = event.clientY;
+      if (target !== lastCheckedTarget) {
+        lastCheckedTarget = target;
+        const element = target instanceof Element ? target : null;
+        lastTargetSuppressed =
+          !(target instanceof Node) ||
+          !root.contains(target) ||
+          Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'));
+      }
+
+      if (lastTargetSuppressed) {
+        resetTrailOrigin();
+        return;
+      }
+
       if (!previousPoint) {
         previousPoint = { x, y };
         return;
@@ -202,8 +226,35 @@ export function TerraCursor() {
       previousPoint = { x, y };
       if (moteCount) schedule();
     };
-    const onPointerLeave = () => resetTrailOrigin();
+
+    const onPointerMove = (event: PointerEvent) => {
+      pendingMove = {
+        target: event.target,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerType: event.pointerType,
+        buttons: event.buttons,
+      };
+      if (!moveRaf) {
+        moveRaf = window.requestAnimationFrame(flushPointerMove);
+      }
+    };
+    const onPointerLeave = () => {
+      pendingMove = null;
+      if (moveRaf) {
+        window.cancelAnimationFrame(moveRaf);
+        moveRaf = 0;
+      }
+      resetTrailOrigin();
+    };
     const onBlur = () => {
+      pendingMove = null;
+      if (moveRaf) {
+        window.cancelAnimationFrame(moveRaf);
+        moveRaf = 0;
+      }
+      lastCheckedTarget = null;
+      lastTargetSuppressed = false;
       resetTrailOrigin();
       particles.length = 0;
       if (frame) window.cancelAnimationFrame(frame);
@@ -229,6 +280,7 @@ export function TerraCursor() {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('blur', onBlur);
       root.removeEventListener('pointerleave', onPointerLeave);
+      if (moveRaf) window.cancelAnimationFrame(moveRaf);
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, [reducedMotion]);

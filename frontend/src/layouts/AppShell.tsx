@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useContext, lazy, Suspense } from 'react';
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, lazy, Suspense } from 'react';
 import { Outlet, NavLink, Link, useLocation } from 'react-router-dom';
 import { QueryClientContext, useIsFetching, useQuery, type QueryClient } from '@tanstack/react-query';
 import {
@@ -140,31 +140,41 @@ function HeaderQuoteStatus({
   );
 }
 
-function HeaderActions({
+const HeaderSoundButton = memo(function HeaderSoundButton() {
+  const [soundOn, toggleSound] = useObservatorySound();
+
+  const handleToggleSound = () => {
+    const next = !soundOn;
+    toggleSound(next);
+    if (next) void playObservatoryChime({ force: true, volume: 0.4 });
+  };
+
+  return (
+    <button
+      type="button"
+      className={clsx('cm-header-action', soundOn && 'cm-header-action--active')}
+      data-cm-click-sound="off"
+      onClick={handleToggleSound}
+      aria-pressed={soundOn}
+      aria-label={soundOn ? 'Mute observatory ambient sound' : 'Enable observatory ambient sound'}
+      title={soundOn ? 'Sound on' : 'Sound muted'}
+    >
+      {soundOn ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
+      <span className="cm-header-action-label">{soundOn ? 'Audio' : 'Muted'}</span>
+    </button>
+  );
+});
+
+const HeaderActions = memo(function HeaderActions({
   refreshing,
   onRefresh,
-  soundOn,
-  onToggleSound,
 }: {
   refreshing: boolean;
   onRefresh: () => void;
-  soundOn: boolean;
-  onToggleSound: () => void;
 }) {
   return (
     <div className="cm-header-actions">
-      <button
-        type="button"
-        className={clsx('cm-header-action', soundOn && 'cm-header-action--active')}
-        data-cm-click-sound="off"
-        onClick={onToggleSound}
-        aria-pressed={soundOn}
-        aria-label={soundOn ? 'Mute observatory ambient sound' : 'Enable observatory ambient sound'}
-        title={soundOn ? 'Sound on' : 'Sound muted'}
-      >
-        {soundOn ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}
-        <span className="cm-header-action-label">{soundOn ? 'Audio' : 'Muted'}</span>
-      </button>
+      <HeaderSoundButton />
 
       <button
         type="button"
@@ -183,25 +193,44 @@ function HeaderActions({
       </button>
     </div>
   );
-}
+});
 
-function HeaderBarWithQuery({
+const WorkspaceNav = memo(function WorkspaceNav() {
+  return (
+    <nav className="cm-workspace-nav" aria-label="Workspace">
+      {navigation.map(({ to, icon: Icon, label }) => (
+        <NavLink
+          to={to}
+          key={to}
+          end
+          className="cm-nav-link"
+          onMouseEnter={() => { prefetchRoute(to); }}
+          onFocus={() => { prefetchRoute(to); }}
+        >
+          <Icon size={16} aria-hidden="true" />
+          <span>{label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+});
+
+const HeaderBarWithQuery = memo(function HeaderBarWithQuery({
   queryClient,
-  soundOn,
-  onToggleSound,
-  navNode,
 }: {
   queryClient: QueryClient;
-  soundOn: boolean;
-  onToggleSound: () => void;
-  navNode: React.ReactNode;
 }) {
+  const { pathname } = useLocation();
+  const isOverviewRoute = pathname === '/dashboard' || pathname === '/overview';
   const { feed } = useCuprumFeed();
   const liveQuery = useQuery({
     queryKey: ['live-price'],
     queryFn: fetchLivePrice,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    staleTime: 120_000,
+    refetchInterval: isOverviewRoute ? false : 120_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    enabled: !isOverviewRoute,
   });
   const statusQuery = useSystemStatus();
   const isFetching = useIsFetching();
@@ -215,13 +244,16 @@ function HeaderBarWithQuery({
         ? feed.trendPct
         : null;
   const healthStatus = statusQuery.data?.status ?? 'ready';
-  const isLive = Boolean(liveQuery.data?.price && !liveQuery.data?.error);
+  const isLive = Boolean(
+    (liveQuery.data?.price && !liveQuery.data?.error) ||
+      (typeof feed.quote?.price === 'number' && feed.quote?.market_status === 'LIVE'),
+  );
   const refreshing = isFetching > 0 || liveQuery.isFetching;
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     void playObservatoryChime();
     void queryClient.invalidateQueries();
-  };
+  }, [queryClient]);
 
   return (
     <>
@@ -234,29 +266,24 @@ function HeaderBarWithQuery({
           isLive={isLive}
         />
       </div>
-      {navNode}
+      <WorkspaceNav />
       <HeaderActions
         refreshing={refreshing}
         onRefresh={handleRefresh}
-        soundOn={soundOn}
-        onToggleSound={onToggleSound}
       />
     </>
   );
-}
+});
 
-function HeaderBarFallback({
-  soundOn,
-  onToggleSound,
-  navNode,
-}: {
-  soundOn: boolean;
-  onToggleSound: () => void;
-  navNode: React.ReactNode;
-}) {
+const HeaderBarFallback = memo(function HeaderBarFallback() {
   const { feed } = useCuprumFeed();
   const price = typeof feed.quote?.price === 'number' ? feed.quote.price : null;
   const changePct = typeof feed.quote?.change_pct === 'number' ? feed.quote.change_pct : null;
+  const isLive = Boolean(typeof feed.quote?.price === 'number' && feed.quote?.market_status === 'LIVE');
+
+  const handleRefresh = useCallback(() => {
+    void playObservatoryChime();
+  }, []);
 
   return (
     <>
@@ -266,41 +293,41 @@ function HeaderBarFallback({
           price={price}
           changePct={changePct}
           healthStatus="ready"
-          isLive={false}
+          isLive={isLive}
         />
       </div>
-      {navNode}
+      <WorkspaceNav />
       <HeaderActions
         refreshing={false}
-        onRefresh={() => {
-          void playObservatoryChime();
-        }}
-        soundOn={soundOn}
-        onToggleSound={onToggleSound}
+        onRefresh={handleRefresh}
       />
     </>
   );
-}
+});
 
-function AppShellContent() {
-  const [isVisible, setIsVisible] = useState(() => {
-    return getBoundedScrollY() <= SCROLL_THRESHOLD;
-  });
-  const [isFocused, setIsFocused] = useState(false);
+const HeaderScrollObserver = memo(function HeaderScrollObserver({
+  onVisibilityChange,
+}: {
+  onVisibilityChange: (visible: boolean) => void;
+}) {
   const location = useLocation();
   const lastScrollYRef = useRef(getBoundedScrollY());
   const previousPathnameRef = useRef(location.pathname);
-  const queryClient = useContext(QueryClientContext);
-  const [soundOn, toggleSound] = useObservatorySound();
+
+  useLayoutEffect(() => {
+    const initialScrollY = getBoundedScrollY();
+    lastScrollYRef.current = initialScrollY;
+    onVisibilityChange(initialScrollY <= SCROLL_THRESHOLD);
+  }, [onVisibilityChange]);
 
   // Synchronize scroll baseline and restore visibility upon route change
   useEffect(() => {
     if (previousPathnameRef.current !== location.pathname) {
       previousPathnameRef.current = location.pathname;
-      setIsVisible(true);
       lastScrollYRef.current = 0;
+      onVisibilityChange(true);
     }
-  }, [location.pathname]);
+  }, [location.pathname, onVisibilityChange]);
 
   useEffect(() => {
     let ticking = false;
@@ -312,11 +339,11 @@ function AppShellContent() {
       const lastScrollY = lastScrollYRef.current;
 
       if (currentScrollY <= SCROLL_THRESHOLD) {
-        setIsVisible(true);
+        onVisibilityChange(true);
       } else if (currentScrollY > lastScrollY) {
-        setIsVisible(false);
+        onVisibilityChange(false);
       } else if (currentScrollY < lastScrollY) {
-        setIsVisible(true);
+        onVisibilityChange(true);
       }
 
       lastScrollYRef.current = currentScrollY;
@@ -341,7 +368,30 @@ function AppShellContent() {
         window.cancelAnimationFrame(frameId);
       }
     };
+  }, [onVisibilityChange]);
+
+  return null;
+});
+
+function AppShellContent() {
+  const headerRef = useRef<HTMLElement>(null);
+  const isVisibleRef = useRef(true);
+  const isFocusedRef = useRef(false);
+  const queryClient = useContext(QueryClientContext);
+
+  const syncHeaderVisibility = useCallback(() => {
+    const headerEl = headerRef.current;
+    if (!headerEl) return;
+    const isHidden = !isVisibleRef.current && !isFocusedRef.current;
+    headerEl.classList.toggle('cm-workspace-header--hidden', isHidden);
+    headerEl.dataset.state = isHidden ? 'hidden' : 'visible';
+    headerEl.dataset.hidden = isHidden ? 'true' : 'false';
   }, []);
+
+  const setHeaderVisible = useCallback((visible: boolean) => {
+    isVisibleRef.current = visible;
+    syncHeaderVisibility();
+  }, [syncHeaderVisibility]);
 
   useEffect(() => {
     const idle = 'requestIdleCallback' in window
@@ -354,64 +404,33 @@ function AppShellContent() {
     };
   }, []);
 
-  const isHidden = !isVisible && !isFocused;
-
-  const handleToggleSound = () => {
-    const next = !soundOn;
-    toggleSound(next);
-    if (next) void playObservatoryChime({ force: true, volume: 0.4 });
-  };
-
-  const navNode = (
-    <nav className="cm-workspace-nav" aria-label="Workspace">
-      {navigation.map(({ to, icon: Icon, label }) => (
-        <NavLink
-          to={to}
-          key={to}
-          end
-          className="cm-nav-link"
-          onMouseEnter={() => { prefetchRoute(to); }}
-          onFocus={() => { prefetchRoute(to); }}
-        >
-          <Icon size={16} aria-hidden="true" />
-          <span>{label}</span>
-        </NavLink>
-      ))}
-    </nav>
-  );
-
   return (
     <div className="cm-workspace">
       <TerraAtmosphere className="cm-terra-atmosphere--workspace" interactive />
       <a className="cm-skip" href="#main-content">Skip to workspace</a>
       <header
-        className={clsx('cm-workspace-header', isHidden && 'cm-workspace-header--hidden')}
-        data-state={isHidden ? 'hidden' : 'visible'}
-        data-hidden={isHidden ? 'true' : 'false'}
-        onFocusCapture={() => setIsFocused(true)}
+        ref={headerRef}
+        className="cm-workspace-header"
+        onFocusCapture={() => {
+          isFocusedRef.current = true;
+          syncHeaderVisibility();
+        }}
         onBlurCapture={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-            setIsFocused(false);
+            isFocusedRef.current = false;
+            syncHeaderVisibility();
           }
         }}
       >
         <div className="cm-workspace-bar">
           {queryClient ? (
-            <HeaderBarWithQuery
-              queryClient={queryClient}
-              soundOn={soundOn}
-              onToggleSound={handleToggleSound}
-              navNode={navNode}
-            />
+            <HeaderBarWithQuery queryClient={queryClient} />
           ) : (
-            <HeaderBarFallback
-              soundOn={soundOn}
-              onToggleSound={handleToggleSound}
-              navNode={navNode}
-            />
+            <HeaderBarFallback />
           )}
         </div>
       </header>
+      <HeaderScrollObserver onVisibilityChange={setHeaderVisible} />
       <main id="main-content" tabIndex={-1} className="cm-workspace-main">
         <Suspense fallback={<WorkspacePageSkeleton />}>
           <Outlet />

@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -10,6 +11,9 @@ import {
 import clsx from 'clsx';
 import type { CuprumChoice } from '../utils/cuprumDialogue';
 import { playCuprumSpeakBlip, playCuprumTap } from '../utils/cosmicVision';
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 const TYPE_INTERVAL_MS = 17;
 const IDLE_BASE_MS = 4600;
@@ -196,12 +200,18 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         : null;
 
     const reducedMotion = usePrefersReducedMotion();
-    const [bubbleState, setBubbleState] = useState<SpeechBubbleMachineState>(() =>
-      createInitialSpeechBubbleState(text.length, getPrefersReducedMotion()),
-    );
-    const { visibleCount, paused } = bubbleState;
+    const [bubbleState, setBubbleState] = useState<{
+      phase: SpeechBubblePhase;
+      paused: boolean;
+    }>(() => ({
+      phase: getPrefersReducedMotion() || text.length === 0 ? 'revealed' : 'typing',
+      paused: false,
+    }));
+    const { paused } = bubbleState;
     const typing = bubbleState.phase === 'typing';
     const typingCallbackRef = useRef(onTypingChange);
+    const speechTextRef = useRef<HTMLSpanElement | null>(null);
+    const typingRafRef = useRef<number>(0);
 
     useEffect(() => {
       typingCallbackRef.current = onTypingChange;
@@ -218,35 +228,83 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       [],
     );
 
-    useEffect(() => {
-      setBubbleState((prev) =>
-        advanceSpeechBubble(prev, { type: 'reset', length: text.length, reducedMotion }),
-      );
+    useIsomorphicLayoutEffect(() => {
+      if (typingRafRef.current) {
+        window.cancelAnimationFrame(typingRafRef.current);
+        typingRafRef.current = 0;
+      }
+
       if (reducedMotion || text.length === 0) {
+        if (speechTextRef.current) {
+          speechTextRef.current.textContent = text;
+        }
+        setBubbleState((prev) => {
+          const nextPhase: SpeechBubblePhase = prev.paused ? 'paused' : 'revealed';
+          return prev.phase === nextPhase ? prev : { ...prev, phase: nextPhase };
+        });
         return;
       }
 
-      let index = 0;
+      if (speechTextRef.current) {
+        speechTextRef.current.textContent = '';
+      }
+      setBubbleState((prev) =>
+        prev.phase === 'typing' ? prev : { ...prev, phase: 'typing' },
+      );
+
+      let startTime: number | null = null;
+      let revealedCount = 0;
       let spokenCount = 0;
       let syllableStep = 0;
-      const interval = window.setInterval(() => {
-        index += 1;
-        const ch = text.charAt(index - 1);
-        if (mode === 'dialogue' && /\S/.test(ch)) {
-          if (spokenCount % 3 === 0) {
-            void playCuprumSpeakBlip({ pitchStep: syllableStep });
-            syllableStep += 1;
+      let cancelled = false;
+
+      const step = (now: number) => {
+        if (cancelled) return;
+        if (startTime === null) {
+          startTime = now;
+        }
+        const elapsed = Math.max(0, now - startTime);
+        const targetCount = Math.min(text.length, Math.floor(elapsed / TYPE_INTERVAL_MS) + 1);
+
+        if (targetCount > revealedCount) {
+          if (mode === 'dialogue') {
+            for (let i = revealedCount; i < targetCount; i += 1) {
+              const ch = text.charAt(i);
+              if (/\S/.test(ch)) {
+                if (spokenCount % 3 === 0) {
+                  void playCuprumSpeakBlip({ pitchStep: syllableStep });
+                  syllableStep += 1;
+                }
+                spokenCount += 1;
+              }
+            }
           }
-          spokenCount += 1;
+          revealedCount = targetCount;
+          if (speechTextRef.current) {
+            speechTextRef.current.textContent = text.slice(0, revealedCount);
+          }
         }
-        setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'tick', length: text.length }));
-        if (index >= text.length) {
-          window.clearInterval(interval);
+
+        if (revealedCount >= text.length) {
+          typingRafRef.current = 0;
+          setBubbleState((prev) => {
+            const nextPhase: SpeechBubblePhase = prev.paused ? 'paused' : 'revealed';
+            return prev.phase === nextPhase ? prev : { ...prev, phase: nextPhase };
+          });
+          return;
         }
-      }, TYPE_INTERVAL_MS);
+
+        typingRafRef.current = window.requestAnimationFrame(step);
+      };
+
+      typingRafRef.current = window.requestAnimationFrame(step);
 
       return () => {
-        window.clearInterval(interval);
+        cancelled = true;
+        if (typingRafRef.current) {
+          window.cancelAnimationFrame(typingRafRef.current);
+          typingRafRef.current = 0;
+        }
       };
     }, [text, reducedMotion, mode]);
 
@@ -260,11 +318,26 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
     }, [mode, typing, paused, text.length, onClose]);
 
     const revealAll = useCallback(() => {
-      setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'reveal-all', length: text.length }));
-    }, [text.length]);
+      if (typingRafRef.current) {
+        window.cancelAnimationFrame(typingRafRef.current);
+        typingRafRef.current = 0;
+      }
+      if (speechTextRef.current) {
+        speechTextRef.current.textContent = text;
+      }
+      setBubbleState((prev) => {
+        const nextPhase: SpeechBubblePhase = prev.paused ? 'paused' : 'revealed';
+        return prev.phase === nextPhase ? prev : { ...prev, phase: nextPhase };
+      });
+    }, [text]);
 
     const setPaused = useCallback((nextPaused: boolean) => {
-      setBubbleState((prev) => advanceSpeechBubble(prev, { type: 'set-paused', paused: nextPaused }));
+      setBubbleState((prev) => {
+        const nextPhase: SpeechBubblePhase =
+          prev.phase === 'typing' ? 'typing' : nextPaused ? 'paused' : 'revealed';
+        if (prev.paused === nextPaused && prev.phase === nextPhase) return prev;
+        return { paused: nextPaused, phase: nextPhase };
+      });
     }, []);
 
     const handleClick = useCallback(() => {
@@ -296,7 +369,6 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
       [mode, choices, onChoose, onClose],
     );
 
-    const visibleText = text.slice(0, visibleCount);
     const spokenText = resolvedAction ? `${resolvedAction} ${text}` : text;
     const vertical = placement?.vertical ?? 'above';
     const horizontal = placement?.horizontal ?? 'left';
@@ -372,7 +444,7 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
             {resolvedAction && <p className="cm-cuprum-action">{resolvedAction}</p>}
 
             <p className="cm-cuprum-speech" aria-hidden="true">
-              {visibleText}
+              <span ref={speechTextRef} />
               {typing && <span className="cm-cuprum-caret" aria-hidden="true" />}
             </p>
           </div>

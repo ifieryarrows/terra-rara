@@ -30,6 +30,7 @@ const SETTLE_MS = 520;
 const RELEASE_MS = 1_520;
 // Keep the transparent final frame in place while destination content enters.
 const REVEAL_MS = 2_000;
+const TAB_REVEAL_MS = 160;
 const ABOUT_REVEAL_MS = 1_200;
 const DASHBOARD_READY_TIMEOUT_MS = 15_000;
 const LOGO_SIZE = 224;
@@ -311,6 +312,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(genericRevealTimer.current);
       genericRevealTimer.current = undefined;
     }
+    delete document.documentElement.dataset.cmTabTransition;
     void transitionStylesReady.then(stylesReady => {
       if (!stylesReady) {
         started.current = false;
@@ -333,6 +335,18 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
     });
   }, [navigate, reducedMotionPreference]);
 
+  useEffect(() => () => {
+    if (genericRevealTimer.current !== undefined) {
+      window.clearTimeout(genericRevealTimer.current);
+      genericRevealTimer.current = undefined;
+    }
+    const root = document.documentElement;
+    delete root.dataset.cmTabTransition;
+    delete root.dataset.cmTransitionPhase;
+    delete root.dataset.cmRouteTransition;
+    delete root.dataset.cmLogoTransition;
+  }, []);
+
   useLayoutEffect(() => {
     const root = document.documentElement;
     const isPathnameChange = previousPathnameRef.current !== pathname;
@@ -341,26 +355,29 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
     if (isPathnameChange) {
       if (active) {
+        if (genericRevealTimer.current !== undefined) {
+          window.clearTimeout(genericRevealTimer.current);
+          genericRevealTimer.current = undefined;
+        }
+        delete root.dataset.cmTabTransition;
         root.dataset.cmRouteTransition = 'arriving';
       } else {
-        root.dataset.cmRouteTransition = 'arriving';
-        root.dataset.cmTransitionPhase = 'reveal';
+        delete root.dataset.cmTransitionPhase;
+        delete root.dataset.cmRouteTransition;
         if (genericRevealTimer.current !== undefined) window.clearTimeout(genericRevealTimer.current);
+        root.dataset.cmTabTransition = 'arriving';
         genericRevealTimer.current = window.setTimeout(() => {
-          delete root.dataset.cmTransitionPhase;
-          delete root.dataset.cmRouteTransition;
+          delete root.dataset.cmTabTransition;
           genericRevealTimer.current = undefined;
-        }, REVEAL_MS);
+        }, TAB_REVEAL_MS);
       }
     }
     if (active) {
       root.dataset.cmTransitionPhase = reducedMotion ? 'reduced' : phase;
       return;
     }
-    if (!isPathnameChange && genericRevealTimer.current === undefined) {
-      delete root.dataset.cmTransitionPhase;
-      delete root.dataset.cmRouteTransition;
-    }
+    delete root.dataset.cmTransitionPhase;
+    delete root.dataset.cmRouteTransition;
     delete root.dataset.cmLogoTransition;
     root.style.removeProperty(ROUTE_TRANSITION_MIN_HEIGHT);
   }, [active, phase, reducedMotion, key, pathname]);

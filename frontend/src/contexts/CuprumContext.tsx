@@ -106,22 +106,31 @@ export interface CuprumFeedState extends CuprumFeedInput {
   updatedAt: number | null;
 }
 
-export interface CuprumContextValue {
-  feed: CuprumFeedState;
+export interface CuprumFeedActions {
   publishFeed: (next: Partial<CuprumFeedInput> | null) => void;
   clearFeed: () => void;
+}
+
+export interface CuprumDockState {
   position: CuprumPosition;
-  setPosition: (next: CuprumPosition) => void;
-  resetPosition: () => void;
   isDocked: boolean;
   minimized: boolean;
+  visible: boolean;
+  widgetSize: CuprumSize;
+  viewport: CuprumViewport;
+}
+
+export interface CuprumDockActions {
+  setPosition: (next: CuprumPosition) => void;
+  resetPosition: () => void;
   setMinimized: (next: boolean) => void;
   toggleMinimized: () => void;
-  visible: boolean;
   setVisible: (next: boolean) => void;
-  widgetSize: CuprumSize;
   setWidgetSize: (size: CuprumSize) => void;
-  viewport: CuprumViewport;
+}
+
+export interface CuprumContextValue extends CuprumFeedActions, CuprumDockState, CuprumDockActions {
+  feed: CuprumFeedState;
 }
 
 export const CUPRUM_SAFE_MARGIN = 16;
@@ -331,10 +340,9 @@ function mergeFeedState(prev: CuprumFeedState, next: Partial<CuprumFeedInput>): 
 }
 
 const CuprumFeedStateContext = createContext<CuprumFeedState | null>(null);
-const CuprumFeedActionsContext = createContext<{
-  publishFeed: (next: Partial<CuprumFeedInput> | null) => void;
-  clearFeed: () => void;
-} | null>(null);
+const CuprumFeedActionsContext = createContext<CuprumFeedActions | null>(null);
+const CuprumDockStateContext = createContext<CuprumDockState | null>(null);
+const CuprumDockActionsContext = createContext<CuprumDockActions | null>(null);
 const CuprumContext = createContext<CuprumContextValue | null>(null);
 
 interface CuprumProviderProps {
@@ -343,10 +351,39 @@ interface CuprumProviderProps {
   isolated?: boolean;
 }
 
-function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps, 'isolated'>) {
+function CuprumFeedProvider({
+  children,
+  initialFeed,
+}: {
+  children: ReactNode;
+  initialFeed?: Partial<CuprumFeedInput>;
+}) {
   const [feed, setFeed] = useState<CuprumFeedState>(() =>
     initialFeed ? mergeFeedState(INITIAL_CUPRUM_FEED, initialFeed) : INITIAL_CUPRUM_FEED,
   );
+
+  const publishFeed = useCallback((next: Partial<CuprumFeedInput> | null) => {
+    if (!next) return;
+    setFeed((prev) => mergeFeedState(prev, next));
+  }, []);
+
+  const clearFeed = useCallback(() => {
+    setFeed(INITIAL_CUPRUM_FEED);
+  }, []);
+
+  const feedActions = useMemo<CuprumFeedActions>(
+    () => ({ publishFeed, clearFeed }),
+    [publishFeed, clearFeed],
+  );
+
+  return (
+    <CuprumFeedActionsContext.Provider value={feedActions}>
+      <CuprumFeedStateContext.Provider value={feed}>{children}</CuprumFeedStateContext.Provider>
+    </CuprumFeedActionsContext.Provider>
+  );
+}
+
+function CuprumDockProvider({ children }: { children: ReactNode }) {
   const [viewport, setViewport] = useState<CuprumViewport>(() => getViewportSize());
   const [minimized, setMinimizedState] = useState<boolean>(() =>
     readStoredBoolean(CUPRUM_STORAGE_KEYS.minimized, false),
@@ -373,6 +410,14 @@ function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps
     return clampCuprumPosition({ x: stored.x, y: stored.y }, initialSize, vp);
   });
 
+  // Keep latest size & viewport in refs so position actions remain referentially stable.
+  const widgetSizeRef = useRef(widgetSize);
+  const viewportRef = useRef(viewport);
+  useEffect(() => {
+    widgetSizeRef.current = widgetSize;
+    viewportRef.current = viewport;
+  }, [widgetSize, viewport]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const handleResize = () => {
@@ -398,31 +443,19 @@ function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps
     });
   }, [isDocked, widgetSize, viewport]);
 
-  const publishFeed = useCallback((next: Partial<CuprumFeedInput> | null) => {
-    if (!next) return;
-    setFeed((prev) => mergeFeedState(prev, next));
+  const setPosition = useCallback((next: CuprumPosition) => {
+    const clamped = clampCuprumPosition(next, widgetSizeRef.current, viewportRef.current);
+    setIsDocked(false);
+    setPositionState(clamped);
+    writeStoredPosition({ x: clamped.x, y: clamped.y, docked: false });
   }, []);
-
-  const clearFeed = useCallback(() => {
-    setFeed(INITIAL_CUPRUM_FEED);
-  }, []);
-
-  const setPosition = useCallback(
-    (next: CuprumPosition) => {
-      const clamped = clampCuprumPosition(next, widgetSize, viewport);
-      setIsDocked(false);
-      setPositionState(clamped);
-      writeStoredPosition({ x: clamped.x, y: clamped.y, docked: false });
-    },
-    [widgetSize, viewport],
-  );
 
   const resetPosition = useCallback(() => {
-    const dockedPos = getDefaultDockedPosition(widgetSize, viewport);
+    const dockedPos = getDefaultDockedPosition(widgetSizeRef.current, viewportRef.current);
     setIsDocked(true);
     setPositionState(dockedPos);
     writeStoredPosition(null);
-  }, [widgetSize, viewport]);
+  }, []);
 
   const setMinimized = useCallback((next: boolean) => {
     setMinimizedState(next);
@@ -445,59 +478,82 @@ function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps
   const setWidgetSize = useCallback((size: CuprumSize) => {
     if (!(size.width > 0 && size.height > 0)) return;
     const rounded = { width: Math.ceil(size.width), height: Math.ceil(size.height) };
+    widgetSizeRef.current = rounded;
     setWidgetSizeState((prev) =>
       prev.width === rounded.width && prev.height === rounded.height ? prev : rounded,
     );
   }, []);
 
-  const feedActions = useMemo(
-    () => ({ publishFeed, clearFeed }),
-    [publishFeed, clearFeed],
+  const dockActions = useMemo<CuprumDockActions>(
+    () => ({
+      setPosition,
+      resetPosition,
+      setMinimized,
+      toggleMinimized,
+      setVisible,
+      setWidgetSize,
+    }),
+    [setPosition, resetPosition, setMinimized, toggleMinimized, setVisible, setWidgetSize],
   );
 
-  const value = useMemo<CuprumContextValue>(
+  const dockState = useMemo<CuprumDockState>(
     () => ({
-      feed,
-      publishFeed,
-      clearFeed,
       position,
-      setPosition,
-      resetPosition,
       isDocked,
       minimized,
-      setMinimized,
-      toggleMinimized,
       visible,
-      setVisible,
       widgetSize,
-      setWidgetSize,
       viewport,
     }),
-    [
-      feed,
-      publishFeed,
-      clearFeed,
-      position,
-      setPosition,
-      resetPosition,
-      isDocked,
-      minimized,
-      setMinimized,
-      toggleMinimized,
-      visible,
-      setVisible,
-      widgetSize,
-      setWidgetSize,
-      viewport,
-    ],
+    [position, isDocked, minimized, visible, widgetSize, viewport],
   );
 
   return (
-    <CuprumFeedActionsContext.Provider value={feedActions}>
-      <CuprumFeedStateContext.Provider value={feed}>
-        <CuprumContext.Provider value={value}>{children}</CuprumContext.Provider>
-      </CuprumFeedStateContext.Provider>
-    </CuprumFeedActionsContext.Provider>
+    <CuprumDockActionsContext.Provider value={dockActions}>
+      <CuprumDockStateContext.Provider value={dockState}>{children}</CuprumDockStateContext.Provider>
+    </CuprumDockActionsContext.Provider>
+  );
+}
+
+function CuprumLegacyBridge({ children }: { children: ReactNode }) {
+  const feed = useContext(CuprumFeedStateContext) ?? INITIAL_CUPRUM_FEED;
+  const feedActions = useContext(CuprumFeedActionsContext);
+  const dockState = useContext(CuprumDockStateContext);
+  const dockActions = useContext(CuprumDockActionsContext);
+
+  const value = useMemo<CuprumContextValue>(() => {
+    if (!feedActions || !dockState || !dockActions) {
+      throw new Error('CuprumLegacyBridge must be rendered inside CuprumProvider');
+    }
+    return {
+      feed,
+      publishFeed: feedActions.publishFeed,
+      clearFeed: feedActions.clearFeed,
+      position: dockState.position,
+      setPosition: dockActions.setPosition,
+      resetPosition: dockActions.resetPosition,
+      isDocked: dockState.isDocked,
+      minimized: dockState.minimized,
+      setMinimized: dockActions.setMinimized,
+      toggleMinimized: dockActions.toggleMinimized,
+      visible: dockState.visible,
+      setVisible: dockActions.setVisible,
+      widgetSize: dockState.widgetSize,
+      setWidgetSize: dockActions.setWidgetSize,
+      viewport: dockState.viewport,
+    };
+  }, [feed, feedActions, dockState, dockActions]);
+
+  return <CuprumContext.Provider value={value}>{children}</CuprumContext.Provider>;
+}
+
+function CuprumProviderInner({ children, initialFeed }: Omit<CuprumProviderProps, 'isolated'>) {
+  return (
+    <CuprumFeedProvider initialFeed={initialFeed}>
+      <CuprumDockProvider>
+        <CuprumLegacyBridge>{children}</CuprumLegacyBridge>
+      </CuprumDockProvider>
+    </CuprumFeedProvider>
   );
 }
 
@@ -511,6 +567,18 @@ export function CuprumProvider({ children, initialFeed, isolated = false }: Cupr
 
 export function useOptionalCuprumContext(): CuprumContextValue | null {
   return useContext(CuprumContext);
+}
+
+export function useOptionalCuprumFeedState(): CuprumFeedState | null {
+  return useContext(CuprumFeedStateContext);
+}
+
+export function useOptionalCuprumDockState(): CuprumDockState | null {
+  return useContext(CuprumDockStateContext);
+}
+
+export function useOptionalCuprumDockActions(): CuprumDockActions | null {
+  return useContext(CuprumDockActionsContext);
 }
 
 export function useCuprum(): CuprumContextValue {
@@ -551,9 +619,12 @@ export function useCuprumFeed(
     return () => clearFeed();
   }, [resetOnUnmount, clearFeed]);
 
-  return {
-    feed: feed ?? INITIAL_CUPRUM_FEED,
-    publishFeed,
-    clearFeed,
-  };
+  return useMemo(
+    () => ({
+      feed: feed ?? INITIAL_CUPRUM_FEED,
+      publishFeed,
+      clearFeed,
+    }),
+    [feed, publishFeed, clearFeed],
+  );
 }

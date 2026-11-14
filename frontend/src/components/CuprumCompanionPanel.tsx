@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -21,7 +22,9 @@ import {
   clampCuprumPosition,
   getDefaultDockedPosition,
   getViewportSize,
-  useOptionalCuprumContext,
+  useOptionalCuprumDockActions,
+  useOptionalCuprumDockState,
+  useOptionalCuprumFeedState,
   type CuprumPosition,
   type CuprumSize,
   type CuprumViewport,
@@ -176,9 +179,182 @@ interface DragSession {
   pointerOffsetX: number;
   pointerOffsetY: number;
   startPos: CuprumPosition;
+  lastPreviewPos: CuprumPosition;
   moved: boolean;
   source: 'handle' | 'pet';
 }
+
+interface CuprumSpriteStageProps {
+  moodPrefix: string;
+  moodTitle: string;
+  isTyping: boolean;
+  alertEpoch: number;
+  onClick: () => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerCancel: () => void;
+  onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+}
+
+const SPRITE_FRAMES = ['idle-1', 'idle-2', 'blink', 'alert', 'talk'] as const;
+
+const CuprumSpriteStage = memo(function CuprumSpriteStage({
+  moodPrefix,
+  moodTitle,
+  isTyping,
+  alertEpoch,
+  onClick,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onLostPointerCapture,
+}: CuprumSpriteStageProps) {
+  const [frame, setFrame] = useState<CuprumSpriteFrame>(() =>
+    cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
+  );
+  const [talkFlap, setTalkFlap] = useState(true);
+  const dispatchSpriteRef = useRef<(event: CuprumSpriteEvent) => void>(() => {});
+  const preloadedPrefixesRef = useRef<Set<string>>(new Set());
+  const preloadedImagesRef = useRef<HTMLImageElement[]>([]);
+
+  // Preload small sprite frames once per mood when idle so swaps never flash or delay.
+  useEffect(() => {
+    if (typeof window === 'undefined' || preloadedPrefixesRef.current.has(moodPrefix)) return;
+
+    const preload = () => {
+      if (preloadedPrefixesRef.current.has(moodPrefix)) return;
+      preloadedPrefixesRef.current.add(moodPrefix);
+      const images: HTMLImageElement[] = [];
+      for (const frameName of SPRITE_FRAMES) {
+        const img = new Image();
+        img.src = `/assets/cuprum/${moodPrefix}-${frameName}.webp?v=retro-v7`;
+        if (typeof img.decode === 'function') {
+          img.decode().catch(() => {});
+        }
+        images.push(img);
+      }
+      preloadedImagesRef.current = images;
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(preload, { timeout: 1500 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = window.setTimeout(preload, 250);
+    return () => window.clearTimeout(timer);
+  }, [moodPrefix]);
+
+  // Retro pixel sprite machine: clean up-down bob + transient expressions.
+  useEffect(() => {
+    let machine: CuprumSpriteState = INITIAL_CUPRUM_SPRITE_STATE;
+    const timers: Record<'tick' | 'blinkEnd' | 'alertEnd' | 'blinkRequest', number> = {
+      tick: 0,
+      blinkEnd: 0,
+      alertEnd: 0,
+      blinkRequest: 0,
+    };
+    const clearTimer = (key: keyof typeof timers) => {
+      if (timers[key]) {
+        window.clearTimeout(timers[key]);
+        timers[key] = 0;
+      }
+    };
+    const dispatch = (event: CuprumSpriteEvent) => {
+      const { state, schedule } = advanceCuprumSprite(machine, event);
+      machine = state;
+      setFrame(cuprumSpriteFrame(state));
+      for (const item of schedule) {
+        switch (item.kind) {
+          case 'tick':
+            clearTimer('tick');
+            timers.tick = window.setTimeout(() => dispatch('bob-tick'), item.delayMs);
+            break;
+          case 'blink-end':
+            clearTimer('blinkEnd');
+            timers.blinkEnd = window.setTimeout(() => dispatch('blink-end'), item.delayMs);
+            break;
+          case 'alert-end':
+            clearTimer('alertEnd');
+            timers.alertEnd = window.setTimeout(() => dispatch('alert-end'), item.delayMs);
+            break;
+          case 'blink-request':
+            clearTimer('blinkRequest');
+            timers.blinkRequest = window.setTimeout(
+              () => dispatch('blink-request'),
+              item.delayMs ?? cuprumBlinkGapMs(),
+            );
+            break;
+          case 'cancel-tick':
+            clearTimer('tick');
+            break;
+        }
+      }
+    };
+    dispatchSpriteRef.current = dispatch;
+    dispatch('mounted');
+    return () => {
+      dispatchSpriteRef.current = () => {};
+      clearTimer('tick');
+      clearTimer('blinkEnd');
+      clearTimer('alertEnd');
+      clearTimer('blinkRequest');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (alertEpoch > 0) {
+      dispatchSpriteRef.current('alert-start');
+    }
+  }, [alertEpoch]);
+
+  // Talking mouth flap rhythm while text types out.
+  useEffect(() => {
+    if (!isTyping) {
+      setTalkFlap(true);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setTalkFlap((prev) => !prev);
+    }, 220);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isTyping]);
+
+  const currentFrame: CuprumSpriteFrame | 'talk' = isTyping && talkFlap ? 'talk' : frame;
+  const currentWebp = `/assets/cuprum/${moodPrefix}-${currentFrame}.webp?v=retro-v7`;
+  const currentPng = `/assets/cuprum/${moodPrefix}-${currentFrame}.png?v=retro-v7`;
+
+  return (
+    <div
+      className="cm-cuprum-sprite-stage"
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onLostPointerCapture}
+      aria-hidden="true"
+    >
+      <span className="cm-cuprum-sprite-frame">
+        <img
+          src={currentWebp}
+          alt={`Cuprum — ${moodTitle}`}
+          className="cm-cuprum-sprite-img"
+          draggable={false}
+          decoding="async"
+          onError={(e) => {
+            if (!e.currentTarget.src.endsWith('.png')) {
+              e.currentTarget.src = currentPng;
+            }
+          }}
+        />
+      </span>
+    </div>
+  );
+});
 
 export function CuprumCompanionPanel({
   commentary,
@@ -187,7 +363,10 @@ export function CuprumCompanionPanel({
   loading,
   error,
 }: CuprumCompanionPanelProps) {
-  const cuprumCtx = useOptionalCuprumContext();
+  const feed = useOptionalCuprumFeedState();
+  const dockState = useOptionalCuprumDockState();
+  const dockActions = useOptionalCuprumDockActions();
+  const hasProvider = dockState !== null && dockActions !== null;
 
   // Resolve effective market inputs: explicit props override context feed so standalone unit
   // tests and isolated previews work without requiring CuprumProvider.
@@ -198,18 +377,17 @@ export function CuprumCompanionPanel({
   const propError = error;
 
   const effectiveExplain =
-    propExplain !== undefined ? propExplain : (cuprumCtx?.feed.explain ?? null);
+    propExplain !== undefined ? propExplain : (feed?.explain ?? null);
   const effectiveTftAnalysis =
-    propTftAnalysis !== undefined ? propTftAnalysis : (cuprumCtx?.feed.tftAnalysis ?? null);
+    propTftAnalysis !== undefined ? propTftAnalysis : (feed?.tftAnalysis ?? null);
   const effectiveLoading =
-    propLoading !== undefined ? propLoading : (cuprumCtx?.feed.loading ?? false);
+    propLoading !== undefined ? propLoading : (feed?.loading ?? false);
   const effectiveError =
     propError !== undefined
       ? propError
-      : (cuprumCtx?.feed.error ??
-        (cuprumCtx?.feed.hasError ? 'Market feed unavailable' : undefined)) ?? undefined;
+      : (feed?.error ??
+        (feed?.hasError ? 'Market feed unavailable' : undefined)) ?? undefined;
 
-  const feed = cuprumCtx?.feed;
   const telemetry = useMemo<CuprumTelemetrySnapshot | null>(() => {
     if (!feed) return null;
     const quotePct =
@@ -243,7 +421,7 @@ export function CuprumCompanionPanel({
   }, [feed]);
 
   const rawCommentary =
-    propCommentary !== undefined ? propCommentary : (cuprumCtx?.feed.commentary ?? null);
+    propCommentary !== undefined ? propCommentary : (feed?.commentary ?? null);
 
   const effectiveCommentary = useMemo(() => {
     if (rawCommentary !== null) return rawCommentary;
@@ -261,48 +439,46 @@ export function CuprumCompanionPanel({
   );
 
   useEffect(() => {
-    if (cuprumCtx || typeof window === 'undefined') return undefined;
+    if (hasProvider || typeof window === 'undefined') return undefined;
     const onResize = () => {
       const vp = getViewportSize();
       setLocalViewport((prev) => (prev.width === vp.width && prev.height === vp.height ? prev : vp));
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [cuprumCtx]);
+  }, [hasProvider]);
 
   useEffect(() => {
-    if (cuprumCtx) return;
+    if (hasProvider) return;
     setLocalPos((prev) => {
       const target = localDocked
         ? getDefaultDockedPosition(localSize, localViewport)
         : clampCuprumPosition(prev, localSize, localViewport);
       return target.x === prev.x && target.y === prev.y ? prev : target;
     });
-  }, [cuprumCtx, localDocked, localSize, localViewport]);
+  }, [hasProvider, localDocked, localSize, localViewport]);
 
-  const viewport = cuprumCtx ? cuprumCtx.viewport : localViewport;
-  const minimized = cuprumCtx ? cuprumCtx.minimized : localMinimized;
-  const isVisible = cuprumCtx ? cuprumCtx.visible : true;
-  const currentSize = cuprumCtx
-    ? cuprumCtx.widgetSize
-    : localSize;
-  const persistedPos = cuprumCtx ? cuprumCtx.position : localPos;
+  const viewport = dockState ? dockState.viewport : localViewport;
+  const minimized = dockState ? dockState.minimized : localMinimized;
+  const isVisible = dockState ? dockState.visible : true;
+  const currentSize = dockState ? dockState.widgetSize : localSize;
+  const persistedPos = dockState ? dockState.position : localPos;
 
   const commitPosition = useCallback(
     (next: CuprumPosition) => {
-      if (cuprumCtx) {
-        cuprumCtx.setPosition(next);
+      if (dockActions) {
+        dockActions.setPosition(next);
       } else {
         setLocalDocked(false);
         setLocalPos(clampCuprumPosition(next, localSize, localViewport));
       }
     },
-    [cuprumCtx, localSize, localViewport],
+    [dockActions, localSize, localViewport],
   );
 
   const commitResetPosition = useCallback(() => {
-    if (cuprumCtx) {
-      cuprumCtx.resetPosition();
+    if (dockActions) {
+      dockActions.resetPosition();
     } else {
       setLocalDocked(true);
       setLocalPos(getDefaultDockedPosition(localSize, localViewport));
@@ -312,22 +488,22 @@ export function CuprumCompanionPanel({
         // Ignore storage errors in restricted environments.
       }
     }
-  }, [cuprumCtx, localSize, localViewport]);
+  }, [dockActions, localSize, localViewport]);
 
   const handleToggleMinimized = useCallback(() => {
     void playCuprumTap({ volume: 0.4 }).catch(() => {});
-    if (cuprumCtx) {
-      cuprumCtx.toggleMinimized();
+    if (dockActions) {
+      dockActions.toggleMinimized();
     } else {
       setLocalMinimized((prev) => !prev);
     }
-  }, [cuprumCtx]);
+  }, [dockActions]);
 
   const updateMeasuredSize = useCallback(
     (size: CuprumSize) => {
       if (!(size.width > 0 && size.height > 0)) return;
-      if (cuprumCtx) {
-        cuprumCtx.setWidgetSize(size);
+      if (dockActions) {
+        dockActions.setWidgetSize(size);
       } else {
         const rounded = { width: Math.ceil(size.width), height: Math.ceil(size.height) };
         setLocalSize((prev) =>
@@ -335,15 +511,15 @@ export function CuprumCompanionPanel({
         );
       }
     },
-    [cuprumCtx],
+    [dockActions],
   );
 
   // Measure dock size for responsive clamping & bubble auto-flipping.
-  const dockDocked = cuprumCtx ? cuprumCtx.isDocked : localDocked;
-  const dockSize = cuprumCtx ? cuprumCtx.widgetSize : localSize;
-  const dockPos = cuprumCtx ? cuprumCtx.position : localPos;
-  const dockVp = cuprumCtx ? cuprumCtx.viewport : localViewport;
-  const setDockPos = cuprumCtx ? cuprumCtx.setPosition : setLocalPos;
+  const dockDocked = dockState ? dockState.isDocked : localDocked;
+  const dockSize = dockState ? dockState.widgetSize : localSize;
+  const dockPos = dockState ? dockState.position : localPos;
+  const dockVp = dockState ? dockState.viewport : localViewport;
+  const setDockPos = dockActions ? dockActions.setPosition : setLocalPos;
 
   const latestDockRef = useRef({ docked: dockDocked, pos: dockPos });
   latestDockRef.current = { docked: dockDocked, pos: dockPos };
@@ -460,15 +636,12 @@ export function CuprumCompanionPanel({
     }
   }, [dockSize, dockDocked, dockVp, setDockPos]);
 
-  // Dragging & keyboard repositioning state
-  const [dragPreviewPos, setDragPreviewPos] = useState<CuprumPosition | null>(null);
+  // Dragging & keyboard repositioning state (drag moves update stageRef transform directly)
   const [isDragging, setIsDragging] = useState(false);
   const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const dragSessionRef = useRef<DragSession | null>(null);
   const suppressClickRef = useRef(false);
   const dragHandleRef = useRef<HTMLButtonElement>(null);
-
-  const effectivePos = dragPreviewPos ?? persistedPos;
 
   const [session, setSession] = useState<CuprumSessionState>(INITIAL_CUPRUM_SESSION_STATE);
   const { mode, activeNodeId, idleLine, isTyping } = session;
@@ -476,22 +649,26 @@ export function CuprumCompanionPanel({
   const [inView, setInView] = useState(true);
   const [docVisible, setDocVisible] = useState(initialVisibility);
   const [interactionEpoch, setInteractionEpoch] = useState(0);
-  const [frame, setFrame] = useState<CuprumSpriteFrame>(() =>
-    cuprumSpriteFrame(INITIAL_CUPRUM_SPRITE_STATE),
-  );
-  const [talkFlap, setTalkFlap] = useState(true);
+  const [alertEpoch, setAlertEpoch] = useState(0);
 
   const modeRef = useRef<'idle' | 'dialogue'>('idle');
   const ambientTimerRef = useRef<number | null>(null);
   const petButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
-  const dispatchSpriteRef = useRef<(event: CuprumSpriteEvent) => void>(() => {});
   const recentIdleIdsRef = useRef<string[]>([]);
   const hasShownIdleRef = useRef(false);
   const freshDataRef = useRef(false);
   const hasMountedRef = useRef(false);
   const generatedAt = effectiveCommentary?.generated_at ?? null;
   const lastGeneratedAtRef = useRef<string | null>(generatedAt);
+
+  useIsomorphicLayoutEffect(() => {
+    const node = stageRef.current;
+    if (!node || !isVisible) return;
+    const target =
+      isDragging && dragSessionRef.current ? dragSessionRef.current.lastPreviewPos : persistedPos;
+    node.style.transform = `translate3d(${target.x}px, ${target.y}px, 0)`;
+  }, [persistedPos.x, persistedPos.y, isDragging, isVisible]);
 
   const ctx = useMemo(() => {
     const built = buildCuprumContext(
@@ -524,83 +701,6 @@ export function CuprumCompanionPanel({
 
   const noteInteraction = useCallback(() => {
     setInteractionEpoch((value) => value + 1);
-  }, []);
-
-  const preloadedRef = useRef<HTMLImageElement[]>([]);
-
-  // Preload and pre-decode all sprite frames so swaps never drop frames, flash, or delay.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const frames = ['idle-1', 'idle-2', 'blink', 'alert', 'talk'];
-    const images: HTMLImageElement[] = [];
-
-    frames.forEach((frameName) => {
-      const img = new Image();
-      img.src = `/assets/cuprum/${moodMeta.prefix}-${frameName}.webp?v=retro-v7`;
-      if (typeof img.decode === 'function') {
-        img.decode().catch(() => {});
-      }
-      images.push(img);
-    });
-
-    preloadedRef.current = images;
-  }, [moodMeta.prefix]);
-
-  // Retro pixel sprite machine: clean up-down bob + transient expressions.
-  useEffect(() => {
-    let machine: CuprumSpriteState = INITIAL_CUPRUM_SPRITE_STATE;
-    const timers: Record<'tick' | 'blinkEnd' | 'alertEnd' | 'blinkRequest', number> = {
-      tick: 0,
-      blinkEnd: 0,
-      alertEnd: 0,
-      blinkRequest: 0,
-    };
-    const clearTimer = (key: keyof typeof timers) => {
-      if (timers[key]) {
-        window.clearTimeout(timers[key]);
-        timers[key] = 0;
-      }
-    };
-    const dispatch = (event: CuprumSpriteEvent) => {
-      const { state, schedule } = advanceCuprumSprite(machine, event);
-      machine = state;
-      setFrame(cuprumSpriteFrame(state));
-      for (const item of schedule) {
-        switch (item.kind) {
-          case 'tick':
-            clearTimer('tick');
-            timers.tick = window.setTimeout(() => dispatch('bob-tick'), item.delayMs);
-            break;
-          case 'blink-end':
-            clearTimer('blinkEnd');
-            timers.blinkEnd = window.setTimeout(() => dispatch('blink-end'), item.delayMs);
-            break;
-          case 'alert-end':
-            clearTimer('alertEnd');
-            timers.alertEnd = window.setTimeout(() => dispatch('alert-end'), item.delayMs);
-            break;
-          case 'blink-request':
-            clearTimer('blinkRequest');
-            timers.blinkRequest = window.setTimeout(
-              () => dispatch('blink-request'),
-              item.delayMs ?? cuprumBlinkGapMs(),
-            );
-            break;
-          case 'cancel-tick':
-            clearTimer('tick');
-            break;
-        }
-      }
-    };
-    dispatchSpriteRef.current = dispatch;
-    dispatch('mounted');
-    return () => {
-      dispatchSpriteRef.current = () => {};
-      clearTimer('tick');
-      clearTimer('blinkEnd');
-      clearTimer('alertEnd');
-      clearTimer('blinkRequest');
-    };
   }, []);
 
   // Notice a fresh pipeline snapshot so the next conversation can acknowledge it.
@@ -703,7 +803,7 @@ export function CuprumCompanionPanel({
       storyStreak: 0,
     }));
     setSession((prev) => advanceCuprumSession(prev, { type: 'open-dialogue', nodeId: ROOT_NODE_ID }));
-    dispatchSpriteRef.current('alert-start');
+    setAlertEpoch((value) => value + 1);
   }, []);
 
   const handlePetClick = useCallback(() => {
@@ -786,18 +886,23 @@ export function CuprumCompanionPanel({
                 currentSize,
                 viewport,
               )
-            : (dragPreviewPos ?? drag.startPos);
+            : drag.lastPreviewPos;
+          if (stageRef.current) {
+            stageRef.current.style.transform = `translate3d(${targetPos.x}px, ${targetPos.y}px, 0)`;
+          }
           commitPosition(targetPos);
           setLiveAnnouncement(`Cuprum moved to left ${targetPos.x}, top ${targetPos.y}.`);
         } else {
+          if (stageRef.current) {
+            stageRef.current.style.transform = `translate3d(${drag.startPos.x}px, ${drag.startPos.y}px, 0)`;
+          }
           setLiveAnnouncement('Cuprum move canceled.');
         }
       }
 
-      setDragPreviewPos(null);
       setIsDragging(false);
     },
-    [commitPosition, currentSize, dragPreviewPos, viewport],
+    [commitPosition, currentSize, viewport],
   );
 
   const startDrag = useCallback(
@@ -806,9 +911,10 @@ export function CuprumCompanionPanel({
       noteInteraction();
       suppressClickRef.current = false;
 
+      const basePos = latestDockRef.current.pos;
       const dockRect = stageRef.current?.getBoundingClientRect();
-      const anchorX = dockRect && dockRect.width > 0 ? dockRect.left : effectivePos.x;
-      const anchorY = dockRect && dockRect.height > 0 ? dockRect.top : effectivePos.y;
+      const anchorX = dockRect && dockRect.width > 0 ? dockRect.left : basePos.x;
+      const anchorY = dockRect && dockRect.height > 0 ? dockRect.top : basePos.y;
 
       let captured = false;
       try {
@@ -825,7 +931,8 @@ export function CuprumCompanionPanel({
         startClientY: event.clientY,
         pointerOffsetX: event.clientX - anchorX,
         pointerOffsetY: event.clientY - anchorY,
-        startPos: effectivePos,
+        startPos: basePos,
+        lastPreviewPos: basePos,
         moved: false,
         source,
       };
@@ -841,16 +948,18 @@ export function CuprumCompanionPanel({
             suppressClickRef.current = true;
             setIsDragging(true);
           }
-          setDragPreviewPos(
-            clampCuprumPosition(
-              {
-                x: moveEvt.clientX - active.pointerOffsetX,
-                y: moveEvt.clientY - active.pointerOffsetY,
-              },
-              currentSize,
-              viewport,
-            ),
+          const nextPos = clampCuprumPosition(
+            {
+              x: moveEvt.clientX - active.pointerOffsetX,
+              y: moveEvt.clientY - active.pointerOffsetY,
+            },
+            currentSize,
+            viewport,
           );
+          active.lastPreviewPos = nextPos;
+          if (stageRef.current) {
+            stageRef.current.style.transform = `translate3d(${nextPos.x}px, ${nextPos.y}px, 0)`;
+          }
         };
         const onWindowUp = (upEvt: PointerEvent) => {
           const active = dragSessionRef.current;
@@ -872,7 +981,7 @@ export function CuprumCompanionPanel({
         };
       }
     },
-    [effectivePos, noteInteraction, currentSize, viewport, finishDrag],
+    [noteInteraction, currentSize, viewport, finishDrag],
   );
 
   const handlePointerMove = useCallback(
@@ -900,7 +1009,10 @@ export function CuprumCompanionPanel({
         currentSize,
         viewport,
       );
-      setDragPreviewPos(nextPos);
+      drag.lastPreviewPos = nextPos;
+      if (stageRef.current) {
+        stageRef.current.style.transform = `translate3d(${nextPos.x}px, ${nextPos.y}px, 0)`;
+      }
     },
     [currentSize, viewport],
   );
@@ -912,6 +1024,20 @@ export function CuprumCompanionPanel({
       finishDrag(true, { x: event.clientX, y: event.clientY });
     },
     [finishDrag],
+  );
+
+  const handlePointerCancel = useCallback(() => {
+    finishDrag(false);
+  }, [finishDrag]);
+
+  const handlePetPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => startDrag(event, 'pet'),
+    [startDrag],
+  );
+
+  const handleHandlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => startDrag(event, 'handle'),
+    [startDrag],
   );
 
   const handleLostPointerCapture = useCallback(
@@ -948,16 +1074,16 @@ export function CuprumCompanionPanel({
       let nextPos: CuprumPosition;
       switch (event.key) {
         case 'ArrowLeft':
-          nextPos = { x: effectivePos.x - CUPRUM_KEY_STEP_PX, y: effectivePos.y };
+          nextPos = { x: persistedPos.x - CUPRUM_KEY_STEP_PX, y: persistedPos.y };
           break;
         case 'ArrowRight':
-          nextPos = { x: effectivePos.x + CUPRUM_KEY_STEP_PX, y: effectivePos.y };
+          nextPos = { x: persistedPos.x + CUPRUM_KEY_STEP_PX, y: persistedPos.y };
           break;
         case 'ArrowUp':
-          nextPos = { x: effectivePos.x, y: effectivePos.y - CUPRUM_KEY_STEP_PX };
+          nextPos = { x: persistedPos.x, y: persistedPos.y - CUPRUM_KEY_STEP_PX };
           break;
         case 'ArrowDown':
-          nextPos = { x: effectivePos.x, y: effectivePos.y + CUPRUM_KEY_STEP_PX };
+          nextPos = { x: persistedPos.x, y: persistedPos.y + CUPRUM_KEY_STEP_PX };
           break;
         case 'Escape':
           if (mode === 'dialogue' && !dragSessionRef.current) {
@@ -983,8 +1109,8 @@ export function CuprumCompanionPanel({
       setLiveAnnouncement(`Cuprum moved to left ${clamped.x}, top ${clamped.y}.`);
     },
     [
-      effectivePos.x,
-      effectivePos.y,
+      persistedPos.x,
+      persistedPos.y,
       currentSize,
       viewport,
       noteInteraction,
@@ -1012,28 +1138,14 @@ export function CuprumCompanionPanel({
     };
   }, [mode, activeNodeId, runtime.turn, minimized]);
 
-  // Talking mouth flap rhythm while text types out.
-  useEffect(() => {
-    if (!isTyping) {
-      setTalkFlap(true);
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setTalkFlap((prev) => !prev);
-    }, 220);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [isTyping]);
-
   const anchorRect = useMemo(
     () => ({
-      x: effectivePos.x,
-      y: effectivePos.y,
+      x: persistedPos.x,
+      y: persistedPos.y,
       width: currentSize.width,
       height: currentSize.height,
     }),
-    [effectivePos.x, effectivePos.y, currentSize.width, currentSize.height],
+    [persistedPos.x, persistedPos.y, currentSize.width, currentSize.height],
   );
 
   const bubblePlacement = useMemo(
@@ -1048,14 +1160,9 @@ export function CuprumCompanionPanel({
 
   if (!isVisible) return null;
 
-  const currentFrame: CuprumSpriteFrame | 'talk' = isTyping && talkFlap ? 'talk' : frame;
-  const currentWebp = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.webp?v=retro-v7`;
-  const currentPng = `/assets/cuprum/${moodMeta.prefix}-${currentFrame}.png?v=retro-v7`;
-
   const dockStyle = {
     '--cuprum-ring': moodMeta.ringColor,
     '--cuprum-core': moodMeta.coreColor,
-    transform: `translate3d(${effectivePos.x}px, ${effectivePos.y}px, 0)`,
   } as CSSProperties;
 
   return (
@@ -1067,8 +1174,8 @@ export function CuprumCompanionPanel({
       data-testid="cuprum-companion-stage"
       data-minimized={minimized ? 'true' : 'false'}
       data-dragging={isDragging ? 'true' : 'false'}
-      data-pos-x={effectivePos.x}
-      data-pos-y={effectivePos.y}
+      data-pos-x={persistedPos.x}
+      data-pos-y={persistedPos.y}
     >
       <p className="sr-only" aria-live="polite" data-testid="cuprum-position-announcement">
         {liveAnnouncement}
@@ -1117,10 +1224,10 @@ export function CuprumCompanionPanel({
             data-cm-click-sound="off"
             aria-label="Reposition Cuprum pet. Use arrow keys to move."
             aria-roledescription="movable widget"
-            onPointerDown={(e) => startDrag(e, 'handle')}
+            onPointerDown={handleHandlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerCancel={() => finishDrag(false)}
+            onPointerCancel={handlePointerCancel}
             onLostPointerCapture={handleLostPointerCapture}
             onKeyDown={handleDragHandleKeyDown}
             onDoubleClick={commitResetPosition}
@@ -1156,31 +1263,18 @@ export function CuprumCompanionPanel({
         </div>
       ) : (
         <div className="cm-cuprum-pet-shell">
-          <div
-            className="cm-cuprum-sprite-stage"
+          <CuprumSpriteStage
+            moodPrefix={moodMeta.prefix}
+            moodTitle={moodMeta.title}
+            isTyping={isTyping}
+            alertEpoch={alertEpoch}
             onClick={handlePetClick}
-            onPointerDown={(e) => startDrag(e, 'pet')}
+            onPointerDown={handlePetPointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerCancel={() => finishDrag(false)}
+            onPointerCancel={handlePointerCancel}
             onLostPointerCapture={handleLostPointerCapture}
-            aria-hidden="true"
-          >
-            <span className="cm-cuprum-sprite-frame">
-              <img
-                src={currentWebp}
-                alt={`Cuprum — ${moodMeta.title}`}
-                className="cm-cuprum-sprite-img"
-                draggable={false}
-                decoding="sync"
-                onError={(e) => {
-                  if (!e.currentTarget.src.endsWith('.png')) {
-                    e.currentTarget.src = currentPng;
-                  }
-                }}
-              />
-            </span>
-          </div>
+          />
 
           <div className="cm-cuprum-action-bar">
             <button
@@ -1188,10 +1282,10 @@ export function CuprumCompanionPanel({
               type="button"
               data-cm-click-sound="off"
               onClick={handlePetClick}
-              onPointerDown={(e) => startDrag(e, 'pet')}
+              onPointerDown={handlePetPointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
-              onPointerCancel={() => finishDrag(false)}
+              onPointerCancel={handlePointerCancel}
               onLostPointerCapture={handleLostPointerCapture}
               className="cm-cuprum-pet-btn"
               aria-expanded={mode === 'dialogue'}
@@ -1217,9 +1311,10 @@ export function CuprumCompanionPanel({
                 data-cm-click-sound="off"
                 aria-label="Reposition Cuprum pet. Use arrow keys to move."
                 aria-roledescription="movable widget"
-                onPointerDown={(e) => startDrag(e, 'handle')}
+                onPointerDown={handleHandlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
                 onLostPointerCapture={handleLostPointerCapture}
                 onKeyDown={handleDragHandleKeyDown}
                 onDoubleClick={commitResetPosition}

@@ -165,6 +165,15 @@ class ObservatoryAudioEngine {
     return this.sfxMuted;
   }
 
+  public canPlayHover(): boolean {
+    if (this.sfxMuted) return false;
+    if (this.unlocked || this.ctx?.state === 'running') return true;
+    const nav = typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } })
+      : null;
+    return Boolean(nav?.userActivation?.hasBeenActive);
+  }
+
   public setSfxEnabled(enabled: boolean): void {
     const nextMuted = !enabled;
     if (nextMuted === this.sfxMuted && (enabled || !this.desiredActive)) return;
@@ -871,14 +880,21 @@ class ObservatoryAudioEngine {
 
 const sharedAudioEngine = new ObservatoryAudioEngine();
 
-function findInteractiveControl(target: EventTarget | null): HTMLElement | null {
+function findInteractiveControl(
+  target: EventTarget | null,
+  onNoSoundContainer?: (el: Element) => void,
+): HTMLElement | null {
   if (!(target instanceof Element)) return null;
   const control = target.closest(INTERACTIVE_SELECTOR);
   if (!(control instanceof HTMLElement)) return null;
   if ((control as HTMLButtonElement).disabled || control.getAttribute('aria-disabled') === 'true') {
     return null;
   }
-  if (control.closest('[data-cm-no-sound="true"]')) return null;
+  const noSound = control.closest('[data-cm-no-sound="true"]');
+  if (noSound) {
+    onNoSoundContainer?.(noSound);
+    return null;
+  }
   return control;
 }
 
@@ -887,6 +903,20 @@ function findInteractiveControl(target: EventTarget | null): HTMLElement | null 
  */
 export function attachObservatoryInteractionAudio(doc: Document = document): () => void {
   let lastHoverControl: HTMLElement | null = null;
+  let lastNoSoundRoot: Element | null = null;
+
+  const isInsideNoSound = (target: EventTarget | null): boolean => {
+    if (!lastNoSoundRoot || !(target instanceof Node)) return false;
+    if (!lastNoSoundRoot.isConnected || lastNoSoundRoot.getAttribute('data-cm-no-sound') !== 'true') {
+      lastNoSoundRoot = null;
+      return false;
+    }
+    return lastNoSoundRoot.contains(target);
+  };
+
+  const cacheNoSoundRoot = (el: Element) => {
+    lastNoSoundRoot = el;
+  };
 
   const onFirstActivation = () => {
     sharedAudioEngine.unlockOnGesture();
@@ -894,7 +924,16 @@ export function attachObservatoryInteractionAudio(doc: Document = document): () 
 
   const onPointerOver = (event: PointerEvent) => {
     if (event.pointerType === 'touch' || event.buttons !== 0) return;
-    const control = findInteractiveControl(event.target);
+    if (!sharedAudioEngine.canPlayHover()) {
+      lastHoverControl = null;
+      return;
+    }
+    const target = event.target;
+    if (lastHoverControl && target instanceof Node && lastHoverControl.contains(target)) {
+      return;
+    }
+    if (isInsideNoSound(target)) return;
+    const control = findInteractiveControl(target, cacheNoSoundRoot);
     if (!control || control === lastHoverControl) return;
     lastHoverControl = control;
     void sharedAudioEngine.playHover();
@@ -902,7 +941,17 @@ export function attachObservatoryInteractionAudio(doc: Document = document): () 
 
   const onPointerOut = (event: PointerEvent) => {
     if (!lastHoverControl) return;
-    if (findInteractiveControl(event.relatedTarget) !== lastHoverControl) {
+    if (!sharedAudioEngine.canPlayHover()) {
+      lastHoverControl = null;
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related instanceof Node && lastHoverControl.contains(related)) return;
+    if (!(related instanceof Element) || isInsideNoSound(related)) {
+      lastHoverControl = null;
+      return;
+    }
+    if (findInteractiveControl(related, cacheNoSoundRoot) !== lastHoverControl) {
       lastHoverControl = null;
     }
   };
@@ -912,7 +961,8 @@ export function attachObservatoryInteractionAudio(doc: Document = document): () 
       delete doc.documentElement.dataset.cmSuppressClickSound;
       return;
     }
-    const control = findInteractiveControl(event.target);
+    if (sharedAudioEngine.isSfxMuted() || isInsideNoSound(event.target)) return;
+    const control = findInteractiveControl(event.target, cacheNoSoundRoot);
     if (!control || control.dataset.cmClickSound === 'off') return;
     const customSound =
       control.dataset.cmSound ??
