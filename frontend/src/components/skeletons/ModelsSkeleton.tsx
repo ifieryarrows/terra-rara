@@ -16,7 +16,7 @@ export function ModelsSkeleton({ header }: { header?: ReactNode }) {
           </span>
         </>
       }
-      actions={<SkeletonBone className="w-28 h-7" rounded="full" />}
+      actions={<SkeletonBone className="w-36 h-9" rounded="full" />}
     />
   );
 
@@ -31,15 +31,12 @@ export function ModelsSkeleton({ header }: { header?: ReactNode }) {
       <span className="sr-only">Retrieving the available checkpoint and validation metrics.</span>
       {header ?? fallbackHeader}
 
-      {/* Checkpoint Summary Card Skeleton */}
+      {/* Gate Notes Placeholder matching live border-l-2 callout */}
       <div
-        className="rounded-lg border border-slate-800 bg-slate-900/20 p-4 space-y-2"
+        className="border-l-2 border-white/[0.12] pl-4 py-1 space-y-2"
         aria-hidden="true"
       >
-        <div className="flex items-center justify-between">
-          <SkeletonBone className="w-28 h-3.5 uppercase" />
-          <SkeletonBone className="w-20 h-5" rounded="full" />
-        </div>
+        <SkeletonBone className="w-28 h-3 uppercase" />
         <SkeletonBone className="w-3/4 h-3.5" />
         <SkeletonBone className="w-1/2 h-3.5" />
       </div>
@@ -65,7 +62,7 @@ export function ModelsSkeleton({ header }: { header?: ReactNode }) {
             <div key={idx} className="cm-metric">
               <p className="cm-metric-label">{label}</p>
               <p className="cm-metric-value">
-                <SkeletonBone className="w-24 h-7 my-1" rounded="md" />
+                <SkeletonBone className="w-24 h-7" rounded="md" />
               </p>
               <p className="cm-metric-hint">
                 <SkeletonBone className="w-32 h-3" />
@@ -98,7 +95,7 @@ export function ModelsSkeleton({ header }: { header?: ReactNode }) {
             <div key={idx} className="cm-metric">
               <p className="cm-metric-label">{label}</p>
               <p className="cm-metric-value">
-                <SkeletonBone className="w-20 h-7 my-1" rounded="md" />
+                <SkeletonBone className="w-20 h-7" rounded="md" />
               </p>
               <p className="cm-metric-hint">
                 <SkeletonBone className="w-28 h-3" />
@@ -124,8 +121,8 @@ export function ModelsSkeleton({ header }: { header?: ReactNode }) {
                 </div>
                 <SkeletonBone className="w-12 h-3.5 font-mono" />
               </div>
-              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <SkeletonBone className="h-full" style={{ width: `${pct}%` }} rounded="full" />
+              <div className="h-[2px] bg-white/[0.08] overflow-hidden">
+                <SkeletonBone className="h-full" style={{ width: `${pct}%` }} rounded="none" />
               </div>
             </div>
           ))}

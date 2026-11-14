@@ -1,6 +1,5 @@
-import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react';
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { useReducedMotion } from 'framer-motion';
 import type { HistoryDataPoint, TFTAnalysisResponse } from '../../types';
 import { chartTokens as theme } from '../../design/chart-tokens';
 import { DataTable } from '../../components/ui/DataTable';
@@ -8,12 +7,57 @@ import { ViewState } from '../../components/ui/ViewState';
 import { finite, formatChartDate, formatPrice, formatReturnPct, preparePriceChart, type PriceChartRow } from './chart-data';
 
 const HISTORY_WINDOWS = [30, 90, 180] as const;
+type PreparedPriceChart = ReturnType<typeof preparePriceChart>;
 
 interface DotRenderProps {
   cx?: number;
   cy?: number;
   index?: number;
   payload?: PriceChartRow;
+}
+
+interface ChartHoverStore {
+  getSnapshot: () => PriceChartRow | null;
+  set: (row: PriceChartRow | null) => void;
+  queue: (row: PriceChartRow | null) => void;
+  cancel: () => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createHoverStore(): ChartHoverStore {
+  let current: PriceChartRow | null = null;
+  let pending: PriceChartRow | null = null;
+  let raf = 0;
+  const listeners = new Set<() => void>();
+  const set = (next: PriceChartRow | null) => {
+    if (current === next || (current && next && current.date === next.date && current.isForecast === next.isForecast)) return;
+    current = next;
+    listeners.forEach(fn => fn());
+  };
+  const cancel = () => {
+    if (raf) {
+      window.cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    pending = null;
+  };
+  return {
+    getSnapshot: () => current,
+    set,
+    queue: (row) => {
+      pending = row;
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        set(pending);
+      });
+    },
+    cancel,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+  };
 }
 
 function impulseToneClass(impulse: string | null | undefined): string {
@@ -28,8 +72,17 @@ function returnToneClass(value: number | null | undefined): string {
   return value > 0 ? 'text-emerald-300' : 'text-rose-300';
 }
 
-export function PriceTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: PriceChartRow }> }) {
-  const row = payload?.[0]?.payload;
+export function PriceTooltip({ active, payload, onActiveRowChange }: {
+  active?: boolean;
+  payload?: Array<{ payload: PriceChartRow }>;
+  onActiveRowChange?: (row: PriceChartRow | null) => void;
+}) {
+  const row = payload?.[0]?.payload ?? null;
+  useEffect(() => {
+    if (!onActiveRowChange) return;
+    onActiveRowChange(active && row ? row : null);
+  }, [active, row, onActiveRowChange]);
+
   if (!active || !row) return null;
   const hasConviction = Array.isArray(row.priceConvictionRange) && row.priceConvictionRange.length === 2;
   const hasReturnRange = finite(row.returnQ10) && finite(row.returnQ90);
@@ -76,39 +129,150 @@ export function PriceTooltip({ active, payload }: { active?: boolean; payload?: 
   );
 }
 
+/** Isolated readout subscriber so pointer/keyboard hover updates only this strip. */
+const ChartHoverReadout = memo(function ChartHoverReadout({
+  store,
+  chart,
+}: {
+  store: ChartHoverStore;
+  chart: PreparedPriceChart;
+}) {
+  const activeRow = useSyncExternalStore(store.subscribe, store.getSnapshot, () => null);
+  const forecastRow = activeRow
+    ? (activeRow.isForecast ? activeRow : null)
+    : (chart.hasForecast ? chart.horizonRow : null);
+  const medianRet = activeRow?.isForecast
+    ? activeRow.cumulativeReturn
+    : (chart.weeklyReturn ?? chart.horizonRow?.cumulativeReturn ?? null);
+  const q10Ret = activeRow?.isForecast
+    ? activeRow.returnQ10
+    : (chart.weeklyQ10Return ?? chart.horizonRow?.returnQ10 ?? null);
+  const q90Ret = activeRow?.isForecast
+    ? activeRow.returnQ90
+    : (chart.weeklyQ90Return ?? chart.horizonRow?.returnQ90 ?? null);
+  const horizonTitle = activeRow
+    ? (finite(activeRow.day) ? `T+${activeRow.day} · 5D Path` : 'Forecast')
+    : `5D Horizon · ${forecastRow ? formatChartDate(forecastRow.date, true) : ''}`;
+
+  return (
+    <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-white/[0.07] pb-2.5 text-xs tabular-nums">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        {forecastRow ? (
+          <>
+            {activeRow && <span className="font-medium text-slate-200">{formatChartDate(activeRow.date)}</span>}
+            <span className="text-[11px] font-semibold tracking-wider text-[#8eadde] uppercase">{horizonTitle}</span>
+            <span className="text-slate-100">
+              Q50 <strong className="font-semibold text-white">{formatPrice(forecastRow.priceMedian)}</strong>{' '}
+              <span className={returnToneClass(medianRet)}>{formatReturnPct(medianRet)}</span>
+            </span>
+            <span className="text-slate-400">
+              Q10–Q90 <span className="text-slate-200">{formatPrice(forecastRow.priceQ10)} – {formatPrice(forecastRow.priceQ90)}</span>
+              {finite(q10Ret) && finite(q90Ret) && (
+                <span className="ml-1.5 text-slate-400">({formatReturnPct(q10Ret)} to {formatReturnPct(q90Ret)})</span>
+              )}
+            </span>
+          </>
+        ) : activeRow ? (
+          <>
+            <span className="font-medium text-slate-200">{formatChartDate(activeRow.date)}</span>
+            <span className="text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">Observed Close</span>
+            <span className="text-slate-100">
+              Close <strong className="font-semibold text-white">{formatPrice(activeRow.price)}</strong>
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">
+              Last Close · {chart.lastDate ? formatChartDate(chart.lastDate, true) : '—'}
+            </span>
+            <span className="font-semibold text-white">{formatPrice(chart.lastPrice)}</span>
+            <span className="text-slate-400">
+              {chart.degraded ? '5D forecast unavailable (degraded)' : 'Historical closes only'}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* T+1 Diagnostic Impulse kept cleanly separate from the 5D Horizon */}
+      {chart.hasForecast && (chart.t1Impulse || finite(chart.t1Return)) && (
+        <div className="flex items-center gap-2 border-l border-white/10 pl-3.5 text-[11px]">
+          <span className="tracking-wider text-slate-400 uppercase">T+1 Diagnostic</span>
+          <span className={`font-semibold tracking-wide ${impulseToneClass(chart.t1Impulse)}`}>
+            {chart.t1Impulse ?? 'NEUTRAL'}
+            {finite(chart.t1Return) ? ` ${formatReturnPct(chart.t1Return)}` : ''}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});
+
+const ChartDataDisclosure = memo(function ChartDataDisclosure({ rows }: { rows: PriceChartRow[] }) {
+  const [tableOpen, setTableOpen] = useState(false);
+  return (
+    <details className="cm-chart-table" onToggle={event => setTableOpen(event.currentTarget.open)}>
+      <summary>View chart data</summary>
+      {tableOpen && (
+        <DataTable caption="Values in USD for the selected historical window and available daily forecast. Hidden chart series remain in this table.">
+          <thead>
+            <tr>
+              {['Date', 'Observed', 'Forecast median', 'Q10', 'Q90', 'Cum. return'].map(label => (
+                <th key={label} scope="col">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${row.date}-${index}`}>
+                <th scope="row">{row.date.slice(0, 10)}</th>
+                {[
+                  formatPrice(row.price),
+                  formatPrice(row.isForecast ? row.priceMedian : null),
+                  formatPrice(row.isForecast ? row.priceQ10 : null),
+                  formatPrice(row.isForecast ? row.priceQ90 : null),
+                  formatReturnPct(row.isForecast ? row.cumulativeReturn : null),
+                ].map((value, column) => (
+                  <td key={column}>{value}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+    </details>
+  );
+});
+
 export const PriceForecastChart = memo(function PriceForecastChart({ history, forecast, historyError }: {
   history: HistoryDataPoint[]; forecast: TFTAnalysisResponse | null; historyError?: boolean; forecastError?: boolean;
 }) {
   const id = useId();
   const uid = id.replace(/:/g, '');
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const [count, setCount] = useState(30);
   const [medianVisible, setMedianVisible] = useState(true);
   const [rangeVisible, setRangeVisible] = useState(true);
-  const [tableOpen, setTableOpen] = useState(false);
-  const [hoveredRow, setHoveredRow] = useState<PriceChartRow | null>(null);
   const chart = useMemo(() => preparePriceChart(history, forecast, count), [history, forecast, count]);
   const [animateSeries, setAnimateSeries] = useState(true);
-  const lastRowsRef = useRef<PriceChartRow[] | null>(null);
-  const hadForecastRef = useRef(false);
+  const hoverStore = useMemo(createHoverStore, []);
+  const yDecimals = chart.domain[1] - chart.domain[0] < 0.08 ? 3 : 2;
+  const horizonDate = chart.horizonRow?.date;
+  const forecastCount = chart.rows.filter(r => r.isForecast).length;
+  const animateActive = !reducedMotion && animateSeries;
 
   // Draw the entry animation once — including the moment the forecast lands —
-  // then let refreshes redraw in place instead of replaying the 1.5s path draw.
-  useLayoutEffect(() => {
-    const hadRows = lastRowsRef.current !== null;
-    const forecastArrived = chart.hasForecast && !hadForecastRef.current;
-    lastRowsRef.current = chart.rows;
-    hadForecastRef.current = chart.hasForecast;
-    if (hadRows && !forecastArrived && animateSeries) setAnimateSeries(false);
-  }, [chart.rows, chart.hasForecast, animateSeries]);
+  // then let refreshes redraw in place without synchronous useLayoutEffect thrashing.
+  useEffect(() => {
+    if (!animateSeries || chart.rows.length === 0) return;
+    const delay = chart.hasForecast ? 1600 : 2500;
+    const timer = window.setTimeout(() => setAnimateSeries(false), delay);
+    return () => window.clearTimeout(timer);
+  }, [animateSeries, chart.rows.length, chart.hasForecast]);
 
-  const yDecimals = useMemo(() => {
-    const span = chart.domain[1] - chart.domain[0];
-    return span < 0.08 ? 3 : 2;
-  }, [chart.domain]);
-
-  const forecastCount = useMemo(() => chart.rows.filter(r => r.isForecast).length, [chart.rows]);
-  const horizonDate = chart.horizonRow?.date;
+  useEffect(() => {
+    hoverStore.set(null);
+    return hoverStore.cancel;
+  }, [chart, hoverStore]);
 
   const renderBridgeDot = useCallback((props: DotRenderProps) => {
     const { cx, cy, payload, index } = props;
@@ -138,19 +302,14 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
 
   const handleChartMouseMove = useCallback((state: unknown) => {
     const next = state as { activeTooltipIndex?: number; activePayload?: Array<{ payload?: PriceChartRow }> } | null;
-    const activePayloadRow = next?.activePayload?.[0]?.payload;
-    if (activePayloadRow) {
-      setHoveredRow(activePayloadRow);
-      return;
-    }
-    if (typeof next?.activeTooltipIndex === 'number' && chart.rows[next.activeTooltipIndex]) {
-      setHoveredRow(chart.rows[next.activeTooltipIndex]);
-    }
-  }, [chart.rows]);
+    const nextRow = next?.activePayload?.[0]?.payload ?? (typeof next?.activeTooltipIndex === 'number' ? chart.rows[next.activeTooltipIndex] ?? null : null);
+    hoverStore.queue(nextRow);
+  }, [chart.rows, hoverStore]);
 
   const handleChartMouseLeave = useCallback(() => {
-    setHoveredRow(null);
-  }, []);
+    hoverStore.cancel();
+    hoverStore.set(null);
+  }, [hoverStore]);
 
   if (!chart.rows.length) {
     return (
@@ -162,17 +321,6 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
       />
     );
   }
-
-  const activeRow = hoveredRow;
-  const readoutMedianRet = activeRow?.isForecast
-    ? activeRow.cumulativeReturn
-    : (chart.weeklyReturn ?? chart.horizonRow?.cumulativeReturn ?? null);
-  const readoutQ10Ret = activeRow?.isForecast
-    ? activeRow.returnQ10
-    : (chart.weeklyQ10Return ?? chart.horizonRow?.returnQ10 ?? null);
-  const readoutQ90Ret = activeRow?.isForecast
-    ? activeRow.returnQ90
-    : (chart.weeklyQ90Return ?? chart.horizonRow?.returnQ90 ?? null);
 
   return (
     <div className="cm-price-chart">
@@ -194,7 +342,10 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
                   type="button"
                   aria-pressed={count === size}
                   aria-label={`Last ${size} daily closes`}
-                  onClick={() => setCount(size)}
+                  onClick={() => {
+                    setAnimateSeries(false);
+                    setCount(size);
+                  }}
                 >
                   {size}<span>D</span>
                 </button>
@@ -246,72 +397,7 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
         aria-label="Copper historical prices and daily forecast"
         aria-describedby={`${id}-help`}
       >
-        {/* Interactive Crosshair & Dual-Horizon Readout Strip */}
-        <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-white/[0.07] pb-2.5 text-xs tabular-nums">
-          {activeRow ? (
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <span className="font-medium text-slate-200">{formatChartDate(activeRow.date)}</span>
-              <span className={activeRow.isForecast ? 'text-[11px] font-semibold tracking-wider text-[#8eadde] uppercase' : 'text-[11px] font-semibold tracking-wider text-[#dda174] uppercase'}>
-                {activeRow.isForecast ? (finite(activeRow.day) ? `T+${activeRow.day} · 5D Path` : 'Forecast') : 'Observed Close'}
-              </span>
-              {activeRow.isForecast ? (
-                <>
-                  <span className="text-slate-100">
-                    Q50 <strong className="font-semibold text-white">{formatPrice(activeRow.priceMedian)}</strong>{' '}
-                    <span className={returnToneClass(readoutMedianRet)}>{formatReturnPct(readoutMedianRet)}</span>
-                  </span>
-                  <span className="text-slate-400">
-                    Q10–Q90 <span className="text-slate-200">{formatPrice(activeRow.priceQ10)} – {formatPrice(activeRow.priceQ90)}</span>
-                    {finite(readoutQ10Ret) && finite(readoutQ90Ret) && (
-                      <span className="ml-1.5 text-slate-400">({formatReturnPct(readoutQ10Ret)} to {formatReturnPct(readoutQ90Ret)})</span>
-                    )}
-                  </span>
-                </>
-              ) : (
-                <span className="text-slate-100">
-                  Close <strong className="font-semibold text-white">{formatPrice(activeRow.price)}</strong>
-                </span>
-              )}
-            </div>
-          ) : chart.hasForecast && chart.horizonRow ? (
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <span className="text-[11px] font-semibold tracking-wider text-[#8eadde] uppercase">
-                5D Horizon · {formatChartDate(chart.horizonRow.date, true)}
-              </span>
-              <span className="text-slate-100">
-                Q50 <strong className="font-semibold text-white">{formatPrice(chart.horizonRow.priceMedian)}</strong>{' '}
-                <span className={returnToneClass(readoutMedianRet)}>{formatReturnPct(readoutMedianRet)}</span>
-              </span>
-              <span className="text-slate-400">
-                Q10–Q90 <span className="text-slate-200">{formatPrice(chart.horizonRow.priceQ10)} – {formatPrice(chart.horizonRow.priceQ90)}</span>
-                {finite(readoutQ10Ret) && finite(readoutQ90Ret) && (
-                  <span className="ml-1.5 text-slate-400">({formatReturnPct(readoutQ10Ret)} to {formatReturnPct(readoutQ90Ret)})</span>
-                )}
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">
-                Last Close · {chart.lastDate ? formatChartDate(chart.lastDate, true) : '—'}
-              </span>
-              <span className="font-semibold text-white">{formatPrice(chart.lastPrice)}</span>
-              <span className="text-slate-400">
-                {chart.degraded ? '5D forecast unavailable (degraded)' : 'Historical closes only'}
-              </span>
-            </div>
-          )}
-
-          {/* T+1 Diagnostic Impulse kept cleanly separate from the 5D Horizon */}
-          {chart.hasForecast && (chart.t1Impulse || finite(chart.t1Return)) && (
-            <div className="flex items-center gap-2 border-l border-white/10 pl-3.5 text-[11px]">
-              <span className="tracking-wider text-slate-400 uppercase">T+1 Diagnostic</span>
-              <span className={`font-semibold tracking-wide ${impulseToneClass(chart.t1Impulse)}`}>
-                {chart.t1Impulse ?? 'NEUTRAL'}
-                {finite(chart.t1Return) ? ` ${formatReturnPct(chart.t1Return)}` : ''}
-              </span>
-            </div>
-          )}
-        </div>
+        <ChartHoverReadout store={hoverStore} chart={chart} />
 
         <div className="min-h-0 w-full flex-1">
           <ResponsiveContainer width="100%" height="100%" debounce={60}>
@@ -359,14 +445,14 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
               />
               <Tooltip
                 cursor={{ stroke: 'rgba(221, 161, 116, 0.4)', strokeWidth: 1, strokeDasharray: '3 3' }}
-                content={<PriceTooltip />}
+                content={<PriceTooltip onActiveRowChange={hoverStore.set} />}
                 isAnimationActive={false}
                 wrapperStyle={{ zIndex: 20, pointerEvents: 'none' }}
               />
 
               {/* Historical close curve & subtle gradient fill */}
               <Area
-                isAnimationActive={!reducedMotion && animateSeries}
+                isAnimationActive={animateActive}
                 type="linear"
                 dataKey="price"
                 stroke={theme.copper}
@@ -377,64 +463,49 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
                 connectNulls={false}
               />
 
-              {/* Outer Q10–Q90 quantile envelope */}
+              {/* Outer Q10–Q90 & inner Q25–Q75 quantile envelopes */}
               {rangeVisible && (
-                <Area
-                  isAnimationActive={false}
-                  type="linear"
-                  dataKey="priceRange"
-                  stroke="none"
-                  fill={`url(#${uid}-fan-outer)`}
-                  connectNulls={false}
-                  tooltipType="none"
-                />
-              )}
-              {rangeVisible && (
-                <Line
-                  isAnimationActive={false}
-                  type="linear"
-                  dataKey="priceQ10"
-                  stroke={theme.forecast}
-                  strokeWidth={1}
-                  strokeDasharray="2 4"
-                  strokeOpacity={0.55}
-                  dot={false}
-                  activeDot={false}
-                  connectNulls={false}
-                />
-              )}
-              {rangeVisible && (
-                <Line
-                  isAnimationActive={false}
-                  type="linear"
-                  dataKey="priceQ90"
-                  stroke={theme.forecast}
-                  strokeWidth={1}
-                  strokeDasharray="2 4"
-                  strokeOpacity={0.55}
-                  dot={false}
-                  activeDot={false}
-                  connectNulls={false}
-                />
-              )}
-
-              {/* Inner Q25–Q75 conviction envelope */}
-              {rangeVisible && (
-                <Area
-                  isAnimationActive={false}
-                  type="linear"
-                  dataKey="priceConvictionRange"
-                  stroke="none"
-                  fill={`url(#${uid}-fan-inner)`}
-                  connectNulls={false}
-                  tooltipType="none"
-                />
+                <>
+                  <Area
+                    isAnimationActive={false}
+                    type="linear"
+                    dataKey="priceRange"
+                    stroke="none"
+                    fill={`url(#${uid}-fan-outer)`}
+                    connectNulls={false}
+                    tooltipType="none"
+                  />
+                  {(['priceQ10', 'priceQ90'] as const).map(key => (
+                    <Line
+                      key={key}
+                      isAnimationActive={false}
+                      type="linear"
+                      dataKey={key}
+                      stroke={theme.forecast}
+                      strokeWidth={1}
+                      strokeDasharray="2 4"
+                      strokeOpacity={0.55}
+                      dot={false}
+                      activeDot={false}
+                      connectNulls={false}
+                    />
+                  ))}
+                  <Area
+                    isAnimationActive={false}
+                    type="linear"
+                    dataKey="priceConvictionRange"
+                    stroke="none"
+                    fill={`url(#${uid}-fan-inner)`}
+                    connectNulls={false}
+                    tooltipType="none"
+                  />
+                </>
               )}
 
               {/* Crisp Q50 median trajectory */}
               {medianVisible && (
                 <Line
-                  isAnimationActive={!reducedMotion && animateSeries}
+                  isAnimationActive={animateActive}
                   type="linear"
                   dataKey="priceMedian"
                   stroke="#8eadde"
@@ -476,36 +547,7 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
         </span>
       </p>
 
-      <details className="cm-chart-table" onToggle={event => setTableOpen(event.currentTarget.open)}>
-        <summary>View chart data</summary>
-        {tableOpen && (
-          <DataTable caption="Values in USD for the selected historical window and available daily forecast. Hidden chart series remain in this table.">
-            <thead>
-              <tr>
-                {['Date', 'Observed', 'Forecast median', 'Q10', 'Q90', 'Cum. return'].map(label => (
-                  <th key={label} scope="col">{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {chart.rows.map((row, index) => (
-                <tr key={`${row.date}-${index}`}>
-                  <th scope="row">{row.date.slice(0, 10)}</th>
-                  {[
-                    formatPrice(row.price),
-                    formatPrice(row.isForecast ? row.priceMedian : null),
-                    formatPrice(row.isForecast ? row.priceQ10 : null),
-                    formatPrice(row.isForecast ? row.priceQ90 : null),
-                    formatReturnPct(row.isForecast ? row.cumulativeReturn : null),
-                  ].map((value, column) => (
-                    <td key={column}>{value}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </DataTable>
-        )}
-      </details>
+      <ChartDataDisclosure rows={chart.rows} />
     </div>
   );
 });

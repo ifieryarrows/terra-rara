@@ -1,5 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef, useContext, Suspense, lazy } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState, useCallback, useMemo, useRef, useContext, Suspense, lazy, startTransition, type Dispatch, type SetStateAction } from 'react';
 import { QueryClientContext } from '@tanstack/react-query';
 import { FinancialPanel as GlassCard } from '../components/ui/FinancialPanel';
 import { PriceForecastChart } from '../features/forecast/PriceForecastChart';
@@ -8,9 +7,8 @@ import { ModelReliability } from '../features/forecast/ModelReliability';
 import { MetricTile } from '../components/ui/MetricTile';
 import { SegmentedTabs, type SegmentedTabOption } from '../components/ui/SegmentedTabs';
 import { ViewState } from '../components/ui/ViewState';
-import { OverviewSkeleton } from '../components/skeletons';
+import { MapSkeleton, OverviewSkeleton } from '../components/skeletons/OverviewSkeleton';
 import { BrandMark } from '../components/ui/BrandMark';
-import { VenusParticles } from '../components/ui/VenusParticles';
 import {
   Activity, AlertTriangle, BarChart3, Brain, Compass, Cpu,
   Crosshair, Globe, Newspaper,
@@ -48,6 +46,9 @@ const NewsIntelligencePanel = lazy(() =>
 );
 const ModelFocusPanel = lazy(() =>
   import('../components/ModelFocusPanel').then(m => ({ default: m.ModelFocusPanel })),
+);
+const VenusParticles = lazy(() =>
+  import('../components/ui/VenusParticles').then(m => ({ default: m.VenusParticles })),
 );
 
 type OverviewStreamLens = 'all' | 'forecast' | 'xai' | 'news' | 'map';
@@ -89,32 +90,48 @@ function formatDriverLabel(inf: Influencer): string {
   return rawLabel;
 }
 
-// --- Skeleton Components for perceived performance ---
-const MapSkeleton = () => (
-  <div className="cm-map-skeleton w-full flex items-center justify-center" role="status" aria-label="Loading intelligence map">
-    <div className="flex flex-col items-center gap-3">
-      <div className="cm-map-skeleton__visual" aria-hidden="true">
-        <span className="cm-map-skeleton__orbit" />
-        <span className="cm-map-skeleton__orbit cm-map-skeleton__orbit--reverse" />
-        <Globe size={32} className="cm-map-skeleton__globe" />
-      </div>
-      <span className="text-slate-400 text-xs">Loading intelligence map...</span>
-    </div>
-  </div>
-);
-
 // --- Main App ---
 
-// Polls frequently return byte-identical payloads; keeping the previous object
-// identity in state skips every downstream memo and render.
+function settle<T>(
+  res: PromiseSettledResult<T | null>,
+  setter: Dispatch<SetStateAction<T | null>>,
+  label: string,
+  silent: boolean,
+  errs: Record<string, string>,
+) {
+  if (res.status === 'fulfilled') setter((prev) => (isSamePayload(prev, res.value) ? prev : res.value));
+  else {
+    if (!silent) setter(null);
+    errs[label] = String(res.reason);
+  }
+}
+
+function dirGlyph(v?: string | null): [string, string] {
+  return v === 'BULLISH' ? ['▲', 'text-[#74c7a9]'] : v === 'BEARISH' ? ['▼', 'text-[#db8296]'] : ['■', 'text-[#dda174]'];
+}
+
+// O(1) structural/timestamp/boundary equality to avoid JSON.stringify on polls.
 function isSamePayload(previous: unknown, next: unknown): boolean {
   if (previous === next) return true;
-  if (previous == null || next == null) return false;
-  try {
-    return JSON.stringify(previous) === JSON.stringify(next);
-  } catch {
-    return false;
-  }
+  if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object') return false;
+  const a = previous as Record<string, any>;
+  const b = next as Record<string, any>;
+  if (
+    a.generated_at !== b.generated_at ||
+    a.reference_price_date !== b.reference_price_date ||
+    a.current_price !== b.current_price ||
+    a.predicted_return !== b.predicted_return ||
+    a.primary_forecast_return !== b.primary_forecast_return ||
+    a.quality_state !== b.quality_state ||
+    a.model_state !== b.model_state ||
+    a.notes !== b.notes
+  ) return false;
+  const al = Array.isArray(a.data) ? a.data : null;
+  const bl = Array.isArray(b.data) ? b.data : null;
+  if (al?.length !== bl?.length || (al?.length && bl && (al[0]?.date !== bl[0]?.date || al[al.length - 1]?.date !== bl[bl.length - 1]?.date || al[al.length - 1]?.price !== bl[bl.length - 1]?.price))) return false;
+  if (a.top_influencers?.length !== b.top_influencers?.length || a.top_influencers?.[0]?.feature !== b.top_influencers?.[0]?.feature || a.top_influencers?.[0]?.importance !== b.top_influencers?.[0]?.importance) return false;
+  if (a.prediction?.weekly_return !== b.prediction?.weekly_return || a.prediction?.daily_forecasts?.length !== b.prediction?.daily_forecasts?.length) return false;
+  return a.attention?.series?.length === b.attention?.series?.length && a.variable_selection?.encoder?.length === b.variable_selection?.encoder?.length;
 }
 
 export type DeferredPanelKey = 'companion' | 'news' | 'map';
@@ -148,7 +165,6 @@ export const OverviewPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [streamLens, setStreamLens] = useState<OverviewStreamLens>('all');
   const [selectedDriverCategory, setSelectedDriverCategory] = useState<string>('ALL');
-  const [inspectedDriver, setInspectedDriver] = useState<string | null>(null);
   const coreInFlight = useRef(false);
   const enrichInFlight = useRef(false);
   const busyCount = useRef(0);
@@ -180,27 +196,14 @@ export const OverviewPage = () => {
     coreInFlight.current = true;
     setBusy(1);
     try {
-      const [analysisResult, historyResult] = await Promise.allSettled([
+      const [a, h] = await Promise.allSettled([
         fetchAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
       ]);
-      const nextErrors: Record<string, string> = {};
-      if (analysisResult.status === 'fulfilled') setAnalysis(previous => isSamePayload(previous, analysisResult.value) ? previous : analysisResult.value);
-      else {
-        if (!silent) setAnalysis(null);
-        nextErrors['Price forecast'] = String(analysisResult.reason);
-      }
-      if (historyResult.status === 'fulfilled') setHistory(previous => isSamePayload(previous, historyResult.value) ? previous : historyResult.value);
-      else {
-        if (!silent) setHistory(null);
-        nextErrors['Price history'] = String(historyResult.reason);
-      }
-      setLoadErrors((previous) => {
-        const next = { ...previous };
-        delete next['Price forecast'];
-        delete next['Price history'];
-        return { ...next, ...nextErrors };
-      });
+      const errs: Record<string, string> = {};
+      settle(a, setAnalysis, 'Price forecast', silent, errs);
+      settle(h, setHistory, 'Price history', silent, errs);
+      setLoadErrors(({ 'Price forecast': _a, 'Price history': _b, ...rest }) => ({ ...rest, ...errs }));
       setIsInitialLoad(false);
     } finally {
       setBusy(-1);
@@ -215,27 +218,14 @@ export const OverviewPage = () => {
     enrichInFlight.current = true;
     setBusy(1);
     try {
-      const [tftResult, explainResult] = await Promise.allSettled([
+      const [t, e] = await Promise.allSettled([
         fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
         fetchExplain(DEFAULT_COPPER_SYMBOL),
       ]);
-      const nextErrors: Record<string, string> = {};
-      if (tftResult.status === 'fulfilled') setTftAnalysis(previous => isSamePayload(previous, tftResult.value) ? previous : tftResult.value);
-      else {
-        if (!silent) setTftAnalysis(null);
-        nextErrors['Deep-learning forecast'] = String(tftResult.reason);
-      }
-      if (explainResult.status === 'fulfilled') setExplain(previous => isSamePayload(previous, explainResult.value) ? previous : explainResult.value);
-      else {
-        if (!silent) setExplain(null);
-        nextErrors['Model focus'] = String(explainResult.reason);
-      }
-      setLoadErrors((previous) => {
-        const next = { ...previous };
-        delete next['Deep-learning forecast'];
-        delete next['Model focus'];
-        return { ...next, ...nextErrors };
-      });
+      const errs: Record<string, string> = {};
+      settle(t, setTftAnalysis, 'Deep-learning forecast', silent, errs);
+      settle(e, setExplain, 'Model focus', silent, errs);
+      setLoadErrors(({ 'Deep-learning forecast': _t, 'Model focus': _e, ...rest }) => ({ ...rest, ...errs }));
     } finally {
       setBusy(-1);
       enrichInFlight.current = false;
@@ -289,22 +279,26 @@ export const OverviewPage = () => {
       ['news', 'news-intelligence'],
       ['map', 'market-map'],
     ];
-    const revealAll = () => setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
+    const revealAll = () => startTransition(() => {
+      setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
+    });
     if (typeof IntersectionObserver === 'undefined') {
       revealAll();
       return;
     }
     const observer = new IntersectionObserver((entries) => {
-      setDeferredPanels((previous) => {
-        let next = previous;
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const key = panels.find(([, id]) => id === (entry.target as HTMLElement).id)?.[0];
-          if (!key) continue;
-          next = advanceDeferredPanels(next, { type: 'reveal', key });
-          observer.unobserve(entry.target);
-        }
-        return next;
+      startTransition(() => {
+        setDeferredPanels((previous) => {
+          let next = previous;
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const key = panels.find(([, id]) => id === (entry.target as HTMLElement).id)?.[0];
+            if (!key) continue;
+            next = advanceDeferredPanels(next, { type: 'reveal', key });
+            observer.unobserve(entry.target);
+          }
+          return next;
+        });
       });
     }, { rootMargin: '600px 0px' });
     for (const [, id] of panels) {
@@ -564,11 +558,13 @@ export const OverviewPage = () => {
   }
 
   const handleStreamLensChange = (nextLens: OverviewStreamLens) => {
-    setStreamLens(nextLens);
     void playObservatoryChime({ volume: 0.3 });
-    if (nextLens !== 'all') {
-      setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
-    }
+    startTransition(() => {
+      setStreamLens(nextLens);
+      if (nextLens !== 'all') {
+        setDeferredPanels((prev) => advanceDeferredPanels(prev, { type: 'reveal-all' }));
+      }
+    });
   };
 
   const handleManualRefresh = () => {
@@ -614,7 +610,9 @@ export const OverviewPage = () => {
       <div className="cm-dashboard-page relative z-10 grid min-w-0 grid-cols-1">
 
         <header className="cm-dashboard-hero">
-          <VenusParticles />
+          <Suspense fallback={null}>
+            <VenusParticles />
+          </Suspense>
           <div className="cm-dashboard-hero-copy">
             <p className="cm-eyebrow cm-dashboard-hero-eyebrow" data-cm-route-reveal="copy">
               <BrandMark size={20} variant="small" />
@@ -718,7 +716,7 @@ export const OverviewPage = () => {
           <MetricTile
             label="T+1 XGBoost"
             value={tftImpulse}
-            delta={tftAnalysis?.t1_return != null ? `${tftImpulse === 'BULLISH' ? '▲' : tftImpulse === 'BEARISH' ? '▼' : '■'} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
+            delta={tftAnalysis?.t1_return != null ? `${dirGlyph(tftImpulse)[0]} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
             tone={t1Tone}
             badge="√252 DIAG"
             hint={tftMetrics?.directional_accuracy != null ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : 'Next-day diagnostic only'}
@@ -900,12 +898,8 @@ export const OverviewPage = () => {
                           </div>
                         </div>
 
-                        <div className={clsx(
-                          'cm-consensus-readout',
-                          tftDirection === 'BULLISH' ? 'text-[#74c7a9]' :
-                          tftDirection === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
-                        )}>
-                          <span aria-hidden="true">{tftDirection === 'BULLISH' ? '▲' : tftDirection === 'BEARISH' ? '▼' : '■'}</span>
+                        <div className={clsx('cm-consensus-readout', dirGlyph(tftDirection)[1])}>
+                          <span aria-hidden="true">{dirGlyph(tftDirection)[0]}</span>
                           <span>{tftDirection ?? 'Unavailable'}</span>
                         </div>
                       </div>
@@ -988,20 +982,11 @@ export const OverviewPage = () => {
                         </summary>
                         <div className="flex items-center justify-between py-2.5 border-t border-white/5">
                           <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              aria-hidden="true"
-                              className={clsx('text-[11px] leading-none',
-                                tftImpulse === 'BULLISH' ? 'text-[#74c7a9]' :
-                                tftImpulse === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
-                              )}
-                            >
-                              {tftImpulse === 'BULLISH' ? '▲' : tftImpulse === 'BEARISH' ? '▼' : '■'}
+                          <div className={clsx('flex items-center gap-1.5', dirGlyph(tftImpulse)[1])}>
+                            <span aria-hidden="true" className="text-[11px] leading-none">
+                              {dirGlyph(tftImpulse)[0]}
                             </span>
-                            <span className={clsx('text-xs font-bold tracking-wide cm-tabular',
-                              tftImpulse === 'BULLISH' ? 'text-[#74c7a9]' :
-                              tftImpulse === 'BEARISH' ? 'text-[#db8296]' : 'text-[#dda174]'
-                            )}>
+                            <span className="text-xs font-bold tracking-wide cm-tabular">
                               {tftImpulse}
                               {tftAnalysis.t1_return != null ? ` ${formatSignedPct(tftAnalysis.t1_return)}` : ''}
                             </span>
@@ -1100,17 +1085,15 @@ export const OverviewPage = () => {
                     )}
 
                     <div className="cm-driver-list">
-                      {visibleDrivers.map((inf: Influencer, i: number) => {
+                      {visibleDrivers.map((inf: Influencer) => {
                         const maxImp = topDrivers[0]?.importance || 1;
                         const label = formatDriverLabel(inf);
-                        const isInspected = inspectedDriver === inf.feature;
                         const rank = topDrivers.indexOf(inf) + 1;
                         return (
                           <div
                             key={inf.feature}
-                            className={clsx('cm-driver-row group', isInspected && 'is-inspected')}
-                            onMouseEnter={() => setInspectedDriver(inf.feature)}
-                            onMouseLeave={() => setInspectedDriver((cur) => (cur === inf.feature ? null : cur))}
+                            tabIndex={0}
+                            className="cm-driver-row group"
                           >
                             <div className="cm-driver-row-head">
                               <div className="flex items-start gap-2.5 min-w-0 flex-1">
@@ -1132,11 +1115,9 @@ export const OverviewPage = () => {
                               </div>
                             </div>
                             <div className="cm-driver-bar-track">
-                              <motion.div
+                              <div
                                 className="cm-driver-bar-fill"
-                                initial={false}
                                 style={{ transformOrigin: 'left', transform: `scaleX(${Math.max(0.04, Math.min(1, inf.importance / maxImp))})` }}
-                                transition={{ delay: 0.12 + (i * 0.06), duration: 0.6 }}
                               />
                             </div>
                             <div className="cm-driver-detail-line">

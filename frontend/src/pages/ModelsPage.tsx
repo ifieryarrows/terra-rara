@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { MetricCard as Metric } from '../components/ui/MetricCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ViewState } from '../components/ui/ViewState';
@@ -12,6 +13,8 @@ const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits
 
 export const ModelsPage = () => {
   const { data, isLoading, isError, refetch, isFetching } = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
+  const [configOpen, setConfigOpen] = useState(false);
+  const configJson = useMemo(() => (configOpen && data?.config ? JSON.stringify(data.config, null, 2) : ''), [configOpen, data?.config]);
   const header = <PageHeader eyebrow="02 / MODEL INTELLIGENCE" title="TFT-ASRO Model" description={<>Weekly strategy, daily diagnostics and the evidence behind each forecast.{data?.trained_at && <span className="block">{data.symbol} · Checkpoint trained {new Date(data.trained_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>}</>} actions={data?.quality_gate && <span className={`cm-filter-chip cm-tone-${data.quality_gate.passed ? 'good' : 'bad'}`}>Quality gate: {data.quality_gate.passed ? 'Passed' : 'Failed'}</span>}/>;
 
   if (isLoading) {
@@ -242,11 +245,13 @@ export const ModelsPage = () => {
 
       {/* Config */}
       {data.config && Object.keys(data.config).length > 0 && (
-        <details className="cm-data-disclosure">
+        <details className="cm-data-disclosure" onToggle={(e) => setConfigOpen(e.currentTarget.open)}>
           <summary>Training configuration</summary>
-          <pre>
-            {JSON.stringify(data.config, null, 2)}
-          </pre>
+          {configOpen && (
+            <pre>
+              {configJson}
+            </pre>
+          )}
         </details>
       )}
     </div>

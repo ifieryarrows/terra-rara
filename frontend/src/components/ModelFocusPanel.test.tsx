@@ -79,16 +79,20 @@ describe('ModelFocusPanel', () => {
     fireEvent.mouseEnter(bars[5]);
     expect(attentionCard).toHaveTextContent(attentionSeries[5].date!);
 
-    // Custom VSN feature template card opens on hover without native browser title tooltip
+    // Custom VSN feature template card renders in a persistent slot and updates on hover without native title tooltip
     const firstRow = screen.getByText('Copper close price').closest('.cm-focus-vsn-row')!;
     expect(firstRow).not.toHaveAttribute('title');
     fireEvent.mouseEnter(firstRow);
     const featureCard = screen.getByTestId('model-focus-feature-card');
     expect(featureCard).toBeVisible();
     expect(featureCard).toHaveTextContent('HG_F_close');
+    expect(featureCard).toHaveTextContent('VSN ENCODER FOCUS');
 
-    const details = screen.getByText('Raw JSON').closest('details');
-    expect(details?.querySelector('pre')?.textContent).toBe(JSON.stringify(payload, null, 2));
+    const details = screen.getByText('Raw JSON').closest('details')!;
+    expect(details.querySelector('pre')).toBeNull();
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    expect(details.querySelector('pre')?.textContent).toBe(JSON.stringify(payload, null, 2));
   });
 
   it('shows the empty state when the explanation is not available yet', () => {

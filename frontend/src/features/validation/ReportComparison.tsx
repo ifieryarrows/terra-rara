@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { DataTable } from '../../components/ui/DataTable';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 
@@ -6,6 +7,8 @@ const format = (value: unknown, percent = false) => finite(value) ? percent ? `$
 
 /** Renders only comparison fields actually emitted by the backend. No inferred winner. */
 export function ReportComparison({ data }: { data: Record<string, unknown> }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsJson = useMemo(() => (detailsOpen ? JSON.stringify(data, null, 2) : ''), [data, detailsOpen]);
   const metrics = [
     { label: 'Direction accuracy', tft: data.tft_da, theta: data.theta_da, percent: true, reading: 'Higher is better' },
     { label: 'Sharpe ratio', tft: data.tft_sharpe, theta: data.theta_sharpe, reading: 'Higher is better' },
@@ -19,6 +22,6 @@ export function ReportComparison({ data }: { data: Record<string, unknown> }) {
       <thead><tr><th scope="col">Metric</th><th scope="col">TFT-ASRO</th><th scope="col">Theta</th><th scope="col">Reading guide</th></tr></thead>
       <tbody>{metrics.map(metric => <tr key={metric.label}><th scope="row">{metric.label}</th><td>{format(metric.tft, metric.percent)}</td><td>{format(metric.theta, metric.percent)}</td><td>{metric.reading}</td></tr>)}</tbody>
     </DataTable>}
-    <details className="cm-data-disclosure mt-4"><summary>Comparison report details</summary><pre>{JSON.stringify(data, null, 2)}</pre></details>
+    <details className="cm-data-disclosure mt-4" onToggle={(e) => setDetailsOpen(e.currentTarget.open)}><summary>Comparison report details</summary>{detailsOpen && <pre>{detailsJson}</pre>}</details>
   </section>;
 }

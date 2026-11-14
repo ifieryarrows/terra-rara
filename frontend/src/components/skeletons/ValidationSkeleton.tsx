@@ -18,8 +18,8 @@ export function ValidationSkeleton({ header }: { header?: ReactNode }) {
       }
       actions={
         <>
-          <SkeletonBone className="w-24 h-7" rounded="full" />
-          <SkeletonBone className="w-24 h-7" rounded="md" />
+          <SkeletonBone className="w-24 h-9" rounded="full" />
+          <SkeletonBone className="w-24 h-9" rounded="md" />
         </>
       }
     />
@@ -54,7 +54,7 @@ export function ValidationSkeleton({ header }: { header?: ReactNode }) {
             <div key={idx} className="cm-metric">
               <p className="cm-metric-label">{item.label}</p>
               <p className="cm-metric-value">
-                <SkeletonBone className="w-24 h-7 my-1" rounded="md" />
+                <SkeletonBone className="w-24 h-7" rounded="md" />
               </p>
               {item.hasHint && (
                 <p className="cm-metric-hint">
@@ -87,8 +87,8 @@ export function ValidationSkeleton({ header }: { header?: ReactNode }) {
               {['Direction accuracy', 'Sharpe ratio', 'MAE'].map((label, idx) => (
                 <tr key={idx}>
                   <th scope="row">{label}</th>
-                  <td><SkeletonBone className="w-16 h-4" /></td>
-                  <td><SkeletonBone className="w-16 h-4" /></td>
+                  <td><SkeletonBone className="w-16 h-4 ml-auto" /></td>
+                  <td><SkeletonBone className="w-16 h-4 ml-auto" /></td>
                   <td><SkeletonBone className="w-24 h-3" /></td>
                 </tr>
               ))}
@@ -121,13 +121,13 @@ export function ValidationSkeleton({ header }: { header?: ReactNode }) {
             </thead>
             <tbody>
               {[1, 2, 3, 4, 5].map((windowNum) => (
-                <tr key={windowNum} className="border-t border-slate-800">
+                <tr key={windowNum}>
                   <th scope="row">{windowNum}</th>
-                  <td className="px-3 py-1.5"><SkeletonBone className="w-16 h-4" /></td>
-                  <td className="px-3 py-1.5"><SkeletonBone className="w-14 h-4" /></td>
-                  <td className="px-3 py-1.5"><SkeletonBone className="w-16 h-4" /></td>
-                  <td className="px-3 py-1.5"><SkeletonBone className="w-16 h-4" /></td>
-                  <td className="px-3 py-1.5"><SkeletonBone className="w-14 h-4" /></td>
+                  <td><SkeletonBone className="w-16 h-4 ml-auto" /></td>
+                  <td><SkeletonBone className="w-14 h-4 ml-auto" /></td>
+                  <td><SkeletonBone className="w-16 h-4 ml-auto" /></td>
+                  <td><SkeletonBone className="w-16 h-4 ml-auto" /></td>
+                  <td><SkeletonBone className="w-14 h-4 ml-auto" /></td>
                 </tr>
               ))}
             </tbody>

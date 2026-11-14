@@ -1,11 +1,11 @@
-import { Activity, Brain, BarChart3, Crosshair, Flame, Globe } from 'lucide-react';
+import { Activity, Brain, BarChart3, Cpu, Crosshair, Globe } from 'lucide-react';
 import { BrandMark } from '../ui/BrandMark';
 import { SkeletonBone } from './SkeletonBone';
 import { COPPER_INSTRUMENT } from '../../config/instruments';
 
-// Map skeleton matching OverviewPage MapSkeleton
-const MapSkeleton = () => (
-  <div className="cm-map-skeleton h-[400px] w-full flex items-center justify-center bg-midnight/50 rounded-xl" aria-hidden="true">
+// Map skeleton shared between OverviewSkeleton and OverviewPage; height is locked in workspace.css
+export const MapSkeleton = () => (
+  <div className="cm-map-skeleton w-full flex items-center justify-center" aria-hidden="true">
     <div className="flex flex-col items-center gap-3">
       <div className="cm-map-skeleton__visual" aria-hidden="true">
         <span className="cm-map-skeleton__orbit" />
@@ -114,31 +114,22 @@ export function OverviewSkeleton() {
         {/* Overview Tools Skeleton */}
         <div className="cm-overview-tools cm-glass-dock" data-cm-route-reveal="surface" aria-hidden="true">
           <nav aria-label="Market overview sections">
-            <a href="#price-forecast" tabIndex={-1}>
-              <Activity size={14} aria-hidden="true" />
-              <span>Price action</span>
-              <span className="cm-nav-chip">LIVE</span>
-            </a>
-            <a href="#weekly-outlook" tabIndex={-1}>
-              <Brain size={14} aria-hidden="true" />
-              <span>Weekly outlook</span>
-              <span className="cm-nav-chip cm-nav-chip--cyan">5D</span>
-            </a>
-            <a href="#market-drivers" tabIndex={-1}>
-              <BarChart3 size={14} aria-hidden="true" />
-              <span>Drivers</span>
-              <span className="cm-nav-chip">5</span>
-            </a>
-            <a href="#news-intelligence" tabIndex={-1}>
-              <Activity size={14} aria-hidden="true" />
-              <span>News flow</span>
-              <span className="cm-nav-chip">FEED</span>
-            </a>
-            <a href="#market-map" tabIndex={-1}>
-              <Globe size={14} aria-hidden="true" />
-              <span>Market map</span>
-              <span className="cm-nav-chip">GLOBAL</span>
-            </a>
+            {[
+              ['#price-forecast', Activity, 'Price action', 'LIVE', ''],
+              ['#weekly-outlook', Brain, 'Weekly outlook', '5D', 'cm-nav-chip--cyan'],
+              ['#market-drivers', BarChart3, 'Drivers', '5', ''],
+              ['#news-intelligence', Activity, 'News flow', 'FEED', ''],
+              ['#market-map', Globe, 'Market map', 'GLOBAL', ''],
+            ].map(([href, Icon, text, chip, extra]) => {
+              const NavIcon = Icon as typeof Activity;
+              return (
+                <a key={href as string} href={href as string} tabIndex={-1}>
+                  <NavIcon size={14} aria-hidden="true" />
+                  <span>{text as string}</span>
+                  <span className={`cm-nav-chip ${extra as string}`}>{chip as string}</span>
+                </a>
+              );
+            })}
           </nav>
           <button type="button" disabled tabIndex={-1} className="cm-button cm-button--secondary cm-refresh opacity-60 flex items-center gap-2">
             <SkeletonBone className="w-4 h-4 rounded-full" />
@@ -167,9 +158,9 @@ export function OverviewSkeleton() {
                     <fieldset className="cm-chart-window">
                       <legend>WINDOW</legend>
                       <div className="cm-chart-window-options">
-                        <button type="button" aria-pressed="true" disabled>30<span>D</span></button>
-                        <button type="button" aria-pressed="false" disabled>90<span>D</span></button>
-                        <button type="button" aria-pressed="false" disabled>180<span>D</span></button>
+                        {[30, 90, 180].map((d) => (
+                          <button key={d} type="button" aria-pressed={d === 30} disabled>{d}<span>D</span></button>
+                        ))}
                       </div>
                     </fieldset>
                   </div>
@@ -181,9 +172,7 @@ export function OverviewSkeleton() {
                   </div>
                   {/* Chart plot container skeleton matching .cm-price-plot */}
                   <div className="cm-price-plot cm-chart-skeleton-plot relative overflow-hidden flex flex-col justify-between">
-                    <div className="w-full h-px bg-white/5 my-auto" />
-                    <div className="w-full h-px bg-white/5 my-auto" />
-                    <div className="w-full h-px bg-white/5 my-auto" />
+                    {[0, 1, 2].map((i) => <div key={i} className="w-full h-px bg-white/5 my-auto" />)}
                     <div className="absolute inset-x-0 bottom-4 top-12 flex items-end px-4 opacity-30">
                       <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 500 150">
                         <path
@@ -299,20 +288,15 @@ export function OverviewSkeleton() {
                   <p className="cm-chart-note">
                     Weekly direction and daily risk-adjusted performance describe different horizons.
                   </p>
-                  <div className="cm-reliability-row">
-                    <span>
-                      <SkeletonBone className="w-36 h-3.5 mb-1.5" />
-                      <small><SkeletonBone className="w-28 h-3" /></small>
-                    </span>
-                    <SkeletonBone className="w-12 h-5" rounded="md" />
-                  </div>
-                  <div className="cm-reliability-row">
-                    <span>
-                      <SkeletonBone className="w-24 h-3.5 mb-1.5" />
-                      <small><SkeletonBone className="w-32 h-3" /></small>
-                    </span>
-                    <SkeletonBone className="w-12 h-5" rounded="md" />
-                  </div>
+                  {[['w-36', 'w-28'], ['w-24', 'w-32']].map(([top, sub], i) => (
+                    <div key={i} className="cm-reliability-row">
+                      <span>
+                        <SkeletonBone className={`${top} h-3.5 mb-1.5`} />
+                        <small><SkeletonBone className={`${sub} h-3`} /></small>
+                      </span>
+                      <SkeletonBone className="w-12 h-5" rounded="md" />
+                    </div>
+                  ))}
                   <span className="cm-text-link">Review model metrics →</span>
                 </div>
               </div>
@@ -326,7 +310,7 @@ export function OverviewSkeleton() {
               aria-label="Cuprum companion skeleton"
             >
               <h2 className="cm-panel-title">
-                <Flame size={18} aria-hidden="true" />
+                <Cpu size={18} aria-hidden="true" />
                 Cuprum · The little forge
               </h2>
               <div className="flex items-start gap-4" aria-hidden="true">
@@ -341,9 +325,7 @@ export function OverviewSkeleton() {
                   <SkeletonBone className="h-4 w-11/12" />
                   <SkeletonBone className="h-4" width="66%" />
                   <div className="space-y-2 pt-3">
-                    <SkeletonBone className="h-8 w-full" />
-                    <SkeletonBone className="h-8 w-full" />
-                    <SkeletonBone className="h-8" width="83%" />
+                    {[0, 1, 2].map((i) => <SkeletonBone key={i} className="h-8" width={i === 2 ? '83%' : undefined} />)}
                   </div>
                 </div>
               </div>

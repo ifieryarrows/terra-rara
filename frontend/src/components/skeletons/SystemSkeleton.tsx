@@ -11,8 +11,8 @@ export function SystemSkeleton({ header }: { header?: ReactNode }) {
       description="Infrastructure health, snapshot freshness and queue connectivity."
       actions={
         <>
-          <SkeletonBone className="w-20 h-7" rounded="full" />
-          <SkeletonBone className="w-24 h-7" rounded="md" />
+          <SkeletonBone className="w-20 h-9" rounded="full" />
+          <SkeletonBone className="w-24 h-9" rounded="md" />
         </>
       }
     />

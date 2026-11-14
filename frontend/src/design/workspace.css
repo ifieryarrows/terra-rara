@@ -106,6 +106,9 @@
 .cm-commentary { max-height: 22rem; overflow: auto; overflow-wrap: anywhere; }
 .cm-focus-vsn-row { position: relative; padding: .45rem .55rem; border-left: 2px solid transparent; border-radius: 0 .35rem .35rem 0; transition: background-color 160ms ease, border-color 160ms ease; cursor: pointer; }
 .cm-focus-vsn-row:hover, .cm-focus-vsn-row:focus-visible, .cm-focus-vsn-row[data-active="true"] { border-left-color: var(--cm-copper); background: color-mix(in srgb, var(--cm-copper) 7%, transparent); outline: none; }
+.cm-focus-feature-slot { min-height: 8.5rem; display: flex; flex-direction: column; }
+.cm-focus-feature-slot > .cm-focus-template-card { flex: 1; align-content: start; }
+#tft-focus { min-height: 46rem; }
 .cm-focus-template-card { display: grid; gap: .45rem; padding: .6rem 0 .6rem .95rem; border: 0; border-left: 2px solid var(--cm-copper); border-radius: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--cm-copper) 6%, transparent), transparent 65%); color: var(--cm-text); font-size: .74rem; line-height: 1.5; }
 .cm-focus-template-card--forecast { border-left-color: var(--cm-forecast); border-color: color-mix(in srgb, var(--cm-forecast) 34%, var(--cm-border)); }
 .cm-focus-template-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .75rem; color: var(--cm-muted); font: 600 .62rem/1.2 var(--cm-font-family); letter-spacing: .1em; text-transform: uppercase; }
@@ -1558,13 +1561,11 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-market-dashboard .cm-news-loading {
   min-height: 540px;
 }
+.cm-market-dashboard .cm-dashboard-market-map {
+  min-height: 705px;
+}
 .cm-market-dashboard .cm-map-skeleton {
   height: 705px;
-}
-@media (max-width: 639px) {
-  .cm-market-dashboard .cm-map-skeleton {
-    height: 812px;
-  }
 }
 .cm-market-dashboard .cm-dashboard-market-map > .cm-heatmap {
   width: 100%;
@@ -1641,7 +1642,9 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   .cm-heatmap-filter-group:not(.cm-heatmap-universe) { grid-column: 2; }
   .cm-heatmap-group-list { max-height: 7.8rem; }
   .cm-heatmap-snapshot { grid-column: 2; align-self: end; margin-top: 0; }
-  .cm-heatmap-stage { height: clamp(390px, 64vh, 680px) !important; min-height: 390px !important; }
+  .cm-heatmap-main > .cm-heatmap-stage { height: clamp(390px, 64vh, 680px) !important; min-height: 390px !important; }
+  .cm-market-dashboard .cm-dashboard-market-map { min-height: calc(clamp(390px, 64vh, 680px) + 17.5rem); }
+  .cm-market-dashboard .cm-map-skeleton { height: calc(clamp(390px, 64vh, 680px) + 17.5rem); }
   .cm-map-fullscreen .cm-heatmap-sidebar { grid-template-columns: minmax(0, 1fr); }
   .cm-map-fullscreen .cm-heatmap-sidebar-head,
   .cm-map-fullscreen .cm-heatmap-filters,
@@ -1710,7 +1713,9 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   .cm-heatmap-filter-group:not(.cm-heatmap-universe) { grid-column: auto; }
   .cm-heatmap-group-list { max-height: 6.2rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cm-heatmap-snapshot { grid-column: 2; }
-  .cm-heatmap-stage { height: clamp(360px, 60vh, 600px) !important; min-height: 360px !important; }
+  .cm-heatmap-main > .cm-heatmap-stage { height: clamp(360px, 60vh, 600px) !important; min-height: 360px !important; }
+  .cm-market-dashboard .cm-dashboard-market-map { min-height: calc(clamp(360px, 60vh, 600px) + 21rem); }
+  .cm-market-dashboard .cm-map-skeleton { height: calc(clamp(360px, 60vh, 600px) + 21rem); }
   .cm-map-fullscreen { grid-template-rows: minmax(0, 42dvh) minmax(0, 1fr); }
   .cm-map-fullscreen .cm-heatmap-stage { height: auto !important; min-height: 0 !important; }
 }
@@ -2560,7 +2565,8 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
   transition: opacity 160ms ease;
 }
 .cm-driver-row:hover .cm-driver-detail-line,
-.cm-driver-row.is-inspected .cm-driver-detail-line { opacity: 1; }
+.cm-driver-row:focus-within .cm-driver-detail-line,
+.cm-driver-row:focus-visible .cm-driver-detail-line { opacity: 1; }
 .cm-driver-detail-line code {
   color: color-mix(in srgb, var(--cm-copper) 88%, #fff);
   font-family: var(--cm-font-family);
