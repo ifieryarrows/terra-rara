@@ -293,7 +293,7 @@
 .cm-news-branch-metrics strong { grid-column:1/-1; color:var(--cm-forecast); font-size:.7rem; font-weight:500; }
 .cm-news-tone-snapshot { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:.5rem; color:var(--cm-muted); font: .56rem/1.4 var(--cm-font-family); }
 .cm-news-preview--static .cm-news-demo-stage { display:flex; flex-direction:column; gap:1rem; min-height:0; }
-.cm-news-preview--static .cm-news-sequence-layer { position:relative; inset:auto; opacity:1!important; transform:none!important; clip-path:none!important; }
+.cm-news-preview--static .cm-news-sequence-layer { position:relative; inset:auto; opacity:1!important; transform:none!important; clip-path:none!important; will-change:auto; }
 .cm-news-preview--static .cm-news-headline-copy { margin:1rem 0 0; }
 .cm-news-preview--static .cm-news-dial-face { opacity:1!important; transform:none!important; }
 .cm-news-preview--static .cm-news-branch-grid { grid-template-columns:1fr; }

@@ -26,18 +26,61 @@ export function CopperSignal({ progress }: { progress?: MotionValue<number> }) {
   useEffect(() => {
     if (reducedMotion || typeof window === 'undefined') return;
 
-    const handleMove = (event: PointerEvent) => {
-      if (event.pointerType === 'touch') return;
-      const rect = stageRef.current?.getBoundingClientRect();
-      const cx = rect ? rect.left + rect.width * 0.5 : window.innerWidth * 0.72;
-      const cy = rect ? rect.top + rect.height * 0.5 : window.innerHeight * 0.48;
-      const normX = Math.max(-1, Math.min(1, (event.clientX - cx) / Math.max(window.innerWidth * 0.45, 220)));
-      const normY = Math.max(-1, Math.min(1, (event.clientY - cy) / Math.max(window.innerHeight * 0.45, 220)));
+    const stage = stageRef.current;
+    let cx = window.innerWidth * 0.72;
+    let cy = window.innerHeight * 0.48;
+    let denomX = Math.max(window.innerWidth * 0.45, 220);
+    let denomY = Math.max(window.innerHeight * 0.45, 220);
+
+    const measureCenter = () => {
+      denomX = Math.max(window.innerWidth * 0.45, 220);
+      denomY = Math.max(window.innerHeight * 0.45, 220);
+      const rect = stage?.getBoundingClientRect();
+      if (rect && (rect.width > 0 || rect.height > 0)) {
+        cx = rect.left + rect.width * 0.5;
+        cy = rect.top + rect.height * 0.5;
+      } else {
+        cx = window.innerWidth * 0.72;
+        cy = window.innerHeight * 0.48;
+      }
+    };
+
+    measureCenter();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' && stage
+      ? new ResizeObserver(() => { measureCenter(); })
+      : null;
+    if (resizeObserver && stage) {
+      resizeObserver.observe(stage);
+    }
+    window.addEventListener('resize', measureCenter, { passive: true });
+
+    let frameId = 0;
+    let latestClientX = cx;
+    let latestClientY = cy;
+
+    const flushTilt = () => {
+      frameId = 0;
+      const normX = Math.max(-1, Math.min(1, (latestClientX - cx) / denomX));
+      const normY = Math.max(-1, Math.min(1, (latestClientY - cy) / denomY));
       targetTiltY.set(normX * 16);
       targetTiltX.set(-normY * 14);
     };
 
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      latestClientX = event.clientX;
+      latestClientY = event.clientY;
+      if (!frameId) {
+        frameId = window.requestAnimationFrame(flushTilt);
+      }
+    };
+
     const handleLeave = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
       targetTiltX.set(6);
       targetTiltY.set(-9);
     };
@@ -45,6 +88,9 @@ export function CopperSignal({ progress }: { progress?: MotionValue<number> }) {
     window.addEventListener('pointermove', handleMove, { passive: true });
     document.addEventListener('mouseleave', handleLeave, { passive: true });
     return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', measureCenter);
       window.removeEventListener('pointermove', handleMove);
       document.removeEventListener('mouseleave', handleLeave);
     };

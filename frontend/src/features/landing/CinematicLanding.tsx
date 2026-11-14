@@ -9,7 +9,7 @@ import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
 import { CosmicHud } from './CosmicHud';
-import { createCinematicSceneStepper } from './cinematic-scroll';
+import { createCinematicSceneStepper, type CinematicSceneGeometry } from './cinematic-scroll';
 import { useCinematicEntryReveal } from './cinematic-entry';
 import './cinematic.css';
 
@@ -49,13 +49,28 @@ function BackgroundWord({ progress, word, range, reverse = false, finale = false
   return <motion.span className={`cm-background-word${finale ? ' cm-background-word--finale' : ''}`} style={{ opacity, visibility, x, scale }}>{word}</motion.span>;
 }
 
+function useActiveVisibilityClass<T extends HTMLElement>(visibility: MotionValue<string>, activeClass: string) {
+  const elementRef = useRef<T>(null);
+  useEffect(() => {
+    const el = elementRef.current;
+    if (!el) return;
+    const sync = (value: string) => {
+      el.classList.toggle(activeClass, value === 'visible');
+    };
+    sync(visibility.get());
+    return visibility.on('change', sync);
+  }, [visibility, activeClass]);
+  return elementRef;
+}
+
 function SceneSurface({ progress, range, persist = false, className = '', children }: { progress: MotionValue<number>; range: [number, number, number, number]; persist?: boolean; className?: string; children: ReactNode }) {
   const opacity = useTransform(progress, range, persist ? [0, 1, 1, 1] : [0, 1, 1, 0]);
   const visibility = useTransform(opacity, value => value > .003 ? 'visible' : 'hidden');
   const x = useTransform(progress, range, persist ? [110, 0, -24, -24] : [110, 0, -24, -150]);
   const y = useTransform(progress, range, [34, 0, 0, -18]);
   const scale = useTransform(progress, range, [.95, 1, 1, .96]);
-  return <motion.div className={`cm-cinematic-surface ${className}`.trim()} style={{ opacity, visibility, x, y, scale }} aria-hidden="true">{children}</motion.div>;
+  const surfaceRef = useActiveVisibilityClass<HTMLDivElement>(visibility, 'cm-cinematic-surface--active');
+  return <motion.div ref={surfaceRef} className={`cm-cinematic-surface ${className}`.trim()} style={{ opacity, visibility, x, y, scale }} aria-hidden="true">{children}</motion.div>;
 }
 
 function DashboardComposition({ progress }: { progress: MotionValue<number> }) {
@@ -76,8 +91,9 @@ function HeroCopy({ progress, onNavigateAnchor }: { progress: MotionValue<number
   const y = useTransform(progress, [0, .165], [0, -40]);
   const visibility = useTransform(opacity, value => value > .003 ? 'visible' : 'hidden');
   const pointerEvents = useTransform(progress, value => value <= .14 ? 'auto' : 'none');
+  const blockRef = useActiveVisibilityClass<HTMLDivElement>(visibility, 'cm-cinematic-copy-block--active');
   return <article className="cm-cinematic-beat cm-cinematic-hero" aria-labelledby="hero-title">
-    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, visibility, pointerEvents }}>
+    <motion.div ref={blockRef} className="cm-cinematic-copy-block" style={{ opacity, y, visibility, pointerEvents }}>
       <p className="cm-eyebrow cm-brand-eyebrow" data-cm-route-reveal="copy"><BrandMark size={18} variant="small"/>COPPER INTELLIGENCE / TERRA RARA</p>
       <h1 id="hero-title" data-cm-route-reveal="copy">Read the market.<br/><span>See the structure.</span></h1>
       <p className="cm-hero-description" data-cm-route-reveal="copy">Behind every copper price, a bigger picture. Market context, news intelligence, and 5-day quantile forecasts in one workspace.</p>
@@ -102,8 +118,9 @@ function StoryCopy({ progress, beat }: { progress: MotionValue<number>; beat: ty
   const detailY = useTransform(progress, [start + .015, reveal + .02], [18, 0]);
   const visibility = useTransform(opacity, value => value > .003 ? 'visible' : 'hidden');
   const pointerEvents = useTransform(opacity, value => value > .12 ? 'auto' : 'none');
+  const blockRef = useActiveVisibilityClass<HTMLDivElement>(visibility, 'cm-cinematic-copy-block--active');
   return <article id={beat.id} className={`cm-cinematic-beat cm-cinematic-beat--${beat.id}`} aria-labelledby={`${beat.id}-title`}>
-    <motion.div className="cm-cinematic-copy-block" style={{ opacity, y, visibility, pointerEvents }}>
+    <motion.div ref={blockRef} className="cm-cinematic-copy-block" style={{ opacity, y, visibility, pointerEvents }}>
       <p className="cm-eyebrow"><span>{beat.number}</span> / {beat.label}</p>
       <motion.h2 id={`${beat.id}-title`} style={{ opacity: titleOpacity, y: titleY }}>{beat.title}</motion.h2>
       <motion.div style={{ opacity: detailOpacity, y: detailY }}>
@@ -143,19 +160,31 @@ function entryRevealProgressOrFallback(value: MotionValue<number>) {
 
 export function CinematicLanding({ quality = 'high', entry }: { quality?: ParticleQuality; entry?: CinematicEntryRenderer }) {
   const ref = useRef<HTMLElement>(null);
+  const geometryRef = useRef<CinematicSceneGeometry | null>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
   const entryRevealProgress = useCinematicEntryReveal(scrollYProgress);
-  const scrollToSceneProgress = useCallback((targetProgress: number) => {
+  const measureGeometry = useCallback((): CinematicSceneGeometry | null => {
     const scene = ref.current;
-    if (!scene) return;
+    if (!scene) return null;
     const rect = scene.getBoundingClientRect();
-    const top = rect.top + window.scrollY;
-    const length = Math.max(0, rect.height - window.innerHeight);
+    const scrollable = document.scrollingElement ?? document.documentElement;
+    const viewportHeight = window.innerHeight;
+    const next: CinematicSceneGeometry = {
+      top: rect.top + window.scrollY,
+      length: Math.max(0, rect.height - viewportHeight),
+      maxScrollTop: Math.max(0, scrollable.scrollHeight - viewportHeight),
+    };
+    geometryRef.current = next;
+    return next;
+  }, []);
+  const scrollToSceneProgress = useCallback((targetProgress: number) => {
+    const geometry = geometryRef.current ?? measureGeometry();
+    if (!geometry) return;
     window.scrollTo({
-      top: Math.round(top + length * targetProgress),
+      top: Math.round(geometry.top + geometry.length * targetProgress),
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
-  }, []);
+  }, [measureGeometry]);
   const handleNavigateAnchor = (event: MouseEvent<HTMLAnchorElement>) => {
     const hash = event.currentTarget.getAttribute('href') || '';
     const targetProgress = ANCHOR_PROGRESS[hash];
@@ -169,6 +198,22 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     let frame = 0;
     let x = 72;
     let y = 46;
+    let viewportWidth = window.innerWidth || 1;
+    let viewportHeight = window.innerHeight || 1;
+    const updateGeometry = () => {
+      viewportWidth = window.innerWidth || 1;
+      viewportHeight = window.innerHeight || 1;
+      measureGeometry();
+    };
+    updateGeometry();
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => { updateGeometry(); })
+      : null;
+    if (resizeObserver) {
+      resizeObserver.observe(scene);
+      resizeObserver.observe(document.documentElement);
+    }
+    window.addEventListener('resize', updateGeometry, { passive: true });
     const flush = () => {
       frame = 0;
       scene.style.setProperty('--pointer-x', `${x}%`);
@@ -176,17 +221,14 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     };
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(flush); };
     const onPointerMove = (event: PointerEvent) => {
-      x = event.clientX / window.innerWidth * 100;
-      y = event.clientY / window.innerHeight * 100;
+      x = event.clientX / viewportWidth * 100;
+      y = event.clientY / viewportHeight * 100;
       schedule();
     };
     const onPointerLeave = () => { x = 72; y = 46; schedule(); };
     const sceneStepper = createCinematicSceneStepper({
       // Progress mapping matches useScroll(offset: start start → end end).
-      getGeometry: () => {
-        const rect = scene.getBoundingClientRect();
-        return { top: rect.top + window.scrollY, length: Math.max(0, rect.height - window.innerHeight) };
-      },
+      getGeometry: () => geometryRef.current ?? measureGeometry(),
     });
     const onWheel = (event: WheelEvent) => { sceneStepper.handleWheel(event); };
     const onKeyDown = (event: KeyboardEvent) => { sceneStepper.handleKeyDown(event); };
@@ -195,6 +237,8 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     scene.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onKeyDown);
     return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateGeometry);
       scene.removeEventListener('pointermove', onPointerMove);
       scene.removeEventListener('pointerleave', onPointerLeave);
       scene.removeEventListener('wheel', onWheel);
@@ -202,7 +246,7 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
       sceneStepper.dispose();
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [measureGeometry]);
   return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
     <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality}/>
     <div className="cm-cinematic-copy">

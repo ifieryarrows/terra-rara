@@ -164,6 +164,21 @@ describe('cinematic scene stepper', () => {
     scene.dispose();
   });
 
+  it('uses cached maxScrollTop when provided without reading document scrollHeight on wheel', () => {
+    const scrollHeightSpy = vi.fn(() => 5_000);
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, get: scrollHeightSpy });
+
+    const scene = createCinematicSceneStepper({
+      getGeometry: () => ({ top: 0, length: 3_000, maxScrollTop: 1_000 }),
+    });
+
+    atScrollY(920);
+    expect(scene.handleWheel(wheel(240))).toBe(true);
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 1_000, behavior: 'smooth' });
+    expect(scrollHeightSpy).not.toHaveBeenCalled();
+    scene.dispose();
+  });
+
   it('leaves modified or interactive-focus key input to the browser', () => {
     const scene = stepper();
     expect(scene.handleKeyDown(key('ArrowDown', { ctrlKey: true }))).toBe(false);

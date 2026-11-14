@@ -31,6 +31,8 @@ export type CinematicSceneGeometry = {
   top: number;
   /** Scrollable length: section height minus viewport height. */
   length: number;
+  /** Optional cached maximum document scrollTop to avoid reading scrollHeight in wheel handlers. */
+  maxScrollTop?: number;
 };
 
 export type CinematicSceneStepper = {
@@ -81,7 +83,7 @@ export function createCinematicSceneStepper(options: {
   const findTarget = (direction: 1 | -1): number | null => {
     const geometry = options.getGeometry();
     if (!geometry) return null;
-    const bound = maxScrollTop();
+    const bound = geometry.maxScrollTop ?? maxScrollTop();
     const current = window.scrollY;
     const positions = CINEMATIC_RESTS.map(progress => Math.min(bound, Math.max(0, geometry.top + progress * geometry.length)));
     if (direction > 0) return positions.find(position => position > current + 1) ?? null;
