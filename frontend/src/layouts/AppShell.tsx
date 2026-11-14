@@ -230,7 +230,6 @@ const HeaderBarWithQuery = memo(function HeaderBarWithQuery({
     refetchInterval: isOverviewRoute ? false : 120_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: !isOverviewRoute,
   });
   const statusQuery = useSystemStatus();
   const isFetching = useIsFetching();
