@@ -387,9 +387,15 @@ def fit_weekly_interval_scale(
         eligible = [
             idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
         ]
-        if eligible:
+        target_band = [
+            idx
+            for idx in eligible
+            if float(target_coverage) <= float(coverages[idx]) <= min(0.85, float(target_coverage) + 0.03)
+        ]
+        pool = target_band or eligible
+        if pool:
             chosen_idx = min(
-                eligible,
+                pool,
                 key=lambda idx: (
                     float(interval_scores[idx]),
                     abs(float(coverages[idx]) - float(target_coverage)),
@@ -421,8 +427,13 @@ def fit_weekly_interval_scale(
     eligible_results = [
         row for row in candidate_results if row["coverage"] >= coverage_floor
     ]
+    target_band_results = [
+        row
+        for row in eligible_results
+        if float(target_coverage) <= row["coverage"] <= min(0.85, float(target_coverage) + 0.03)
+    ]
     selected_result = min(
-        eligible_results or candidate_results,
+        target_band_results or eligible_results or candidate_results,
         key=lambda row: (
             row["interval_score"],
             abs(row["coverage"] - float(target_coverage)),
@@ -788,27 +799,29 @@ def fit_direction_sign_calibration(
     oriented_weekly_pred = oriented_pred_path[:, :horizon, median_idx].sum(axis=1)
     oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
     weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
+    weekly_actual_positive_rate = float(np.mean(weekly_actual > 0.0)) if n else 0.0
+    positive_rate_drift = abs(weekly_pred_positive_rate - weekly_actual_positive_rate)
     weekly_sign_threshold = 0.0
     weekly_sign_threshold_validation_da = oriented_weekly_da
     weekly_sign_threshold_validation_pred_positive_rate = weekly_pred_positive_rate
 
-    # A constant positive forecast can look good when the validation window is
-    # majority-positive.  Fit a bounded threshold only for that structural
-    # failure mode.  The quantile grid is deliberately coarse to avoid fitting
-    # an arbitrary threshold to a small validation window.
-    if (
-        n >= min_samples
-        and (weekly_pred_positive_rate > 0.90 or weekly_pred_positive_rate < 0.10)
+    # Fit a bounded weekly decision threshold when the raw validation predictions
+    # suffer from structural sign collapse or severe bias drift (> 18 pp) relative
+    # to the validation positive rate. T+1 daily sign_multiplier remains fixed at 1.
+    if n >= min_samples and (
+        weekly_pred_positive_rate > 0.85
+        or weekly_pred_positive_rate < 0.15
+        or positive_rate_drift > 0.18
     ):
         candidate_thresholds = np.unique(
             np.concatenate(
                 [
                     np.array([0.0], dtype=np.float64),
-                    np.quantile(oriented_weekly_pred, np.linspace(0.15, 0.85, 8)),
+                    np.quantile(oriented_weekly_pred, np.linspace(0.10, 0.90, 15)),
                 ]
             )
         )
-        best: tuple[float, float, float, float] | None = None
+        best: tuple[float, float, float, float, float] | None = None
         for threshold in candidate_thresholds:
             adjusted = oriented_weekly_pred - float(threshold)
             predicted_rate = float(np.mean(adjusted > 0.0))
@@ -817,6 +830,7 @@ def fit_direction_sign_calibration(
             candidate_da = directional_accuracy(weekly_actual, adjusted)
             candidate_key = (
                 candidate_da,
+                -abs(predicted_rate - weekly_actual_positive_rate),
                 -abs(float(threshold)),
                 predicted_rate,
                 float(threshold),
@@ -825,13 +839,8 @@ def fit_direction_sign_calibration(
                 best = candidate_key
 
         if best is not None:
-            candidate_da, _, candidate_rate, best_threshold = best
-            # When the raw validation forecast is structurally sign-collapsed,
-            # a balanced candidate with DA >= 0.51 is preferable to retaining
-            # the majority-class DA of the collapsed forecast. This decision
-            # uses validation labels only and keeps the fixed sign-rate guard
-            # meaningful on the untouched test window.
-            if candidate_da >= 0.51:
+            candidate_da, _, _, candidate_rate, best_threshold = best
+            if candidate_da >= 0.51 or candidate_da >= max(0.50, oriented_weekly_da + 0.01):
                 weekly_sign_threshold = float(best_threshold)
                 weekly_sign_threshold_validation_da = float(candidate_da)
                 weekly_sign_threshold_validation_pred_positive_rate = float(candidate_rate)
@@ -1017,16 +1026,18 @@ def fit_weekly_magnitude_scale(
     raw_ratio = magnitude_ratio(weekly_actual, raw_weekly_pred)
 
     if weekly_median_cap is not None and float(weekly_median_cap) > 0.0:
-        bounded_path, _ = apply_weekly_median_cap_np(
+        bounded_path, cap_diag = apply_weekly_median_cap_np(
             pred_path,
             weekly_median_cap=weekly_median_cap,
             quantiles=quantiles,
             horizon=horizon,
         )
+        val_bound_rate = float(cap_diag.get("weekly_median_bound_applied_rate", 0.0))
         bounded_ordered = monotonic_quantiles_np(bounded_path, median_idx=median_idx)
         bounded_weekly_pred = bounded_ordered[:, :horizon, median_idx].sum(axis=1)
         bounded_ratio = magnitude_ratio(weekly_actual, bounded_weekly_pred)
     else:
+        val_bound_rate = 0.0
         bounded_ratio = raw_ratio
 
     selected_scale = 1.0
@@ -1040,12 +1051,23 @@ def fit_weekly_magnitude_scale(
         and (
             bounded_ratio < float(min_ratio_band)
             or bounded_ratio > float(max_ratio_band)
-            or raw_ratio > 1.50
+            or raw_ratio > 1.35
+            or (val_bound_rate > 0.25 and raw_ratio > 1.15)
         )
     ):
         candidate_scale = float(
             np.clip(float(target_ratio) / raw_ratio, float(min_scale), float(max_scale))
         )
+        if weekly_median_cap is not None and float(weekly_median_cap) > 0.0 and raw_weekly_pred.size:
+            q75_raw = float(np.quantile(np.abs(raw_weekly_pred), 0.75))
+            if q75_raw > float(weekly_median_cap) and (val_bound_rate > 0.25 or raw_ratio > 1.35):
+                cap_safe_scale = (0.95 * float(weekly_median_cap)) / max(q75_raw, 1e-9)
+                min_ratio_safe_scale = 0.82 / max(raw_ratio, 1e-9)
+                blended_cap_scale = max(cap_safe_scale, min_ratio_safe_scale)
+                if blended_cap_scale < candidate_scale:
+                    candidate_scale = float(
+                        np.clip(blended_cap_scale, float(min_scale), float(max_scale))
+                    )
         if abs(candidate_scale - 1.0) > 1e-3:
             scaled_path = apply_weekly_magnitude_scale_np(
                 pred_path,
@@ -1076,8 +1098,12 @@ def fit_weekly_magnitude_scale(
             improves_bounded = abs(candidate_bounded_ratio - float(target_ratio)) < abs(
                 bounded_ratio - float(target_ratio)
             )
-            improves_raw = raw_ratio > 1.50 and candidate_raw_ratio < raw_ratio
-            if (improves_bounded or improves_raw) and (
+            improves_raw = (raw_ratio > 1.35 or val_bound_rate > 0.25) and candidate_raw_ratio < raw_ratio
+            reduces_heavy_clipping = (
+                val_bound_rate > 0.25
+                and 0.70 <= candidate_bounded_ratio <= 1.35
+            )
+            if (improves_bounded or improves_raw or reduces_heavy_clipping) and (
                 0.65 <= candidate_bounded_ratio <= 1.35 or improves_bounded
             ):
                 selected_scale = candidate_scale

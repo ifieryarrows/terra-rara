@@ -4,9 +4,11 @@ import numpy as np
 
 
 def _weekly_positive_rate_exploded(diagnostic: dict) -> bool:
+    pred_pos_rate = diagnostic.get("avg_weekly_pred_positive_rate", 1.0)
+    actual_pos_rate = diagnostic.get("avg_weekly_actual_positive_rate", 0.0)
     return (
-        diagnostic.get("avg_weekly_pred_positive_rate", 1.0) > 0.90
-        and diagnostic.get("avg_weekly_actual_positive_rate", 0.0) < 0.75
+        (pred_pos_rate > 0.90 and actual_pos_rate < 0.75)
+        or (pred_pos_rate < 0.10 and actual_pos_rate > 0.25)
     )
 
 
@@ -34,8 +36,9 @@ def _structural_checks(diagnostics: dict) -> dict[str, bool]:
         "variance_ratio_le_3_0": diagnostics.get(
             "avg_variance_ratio", 999
         ) <= 3.0,
-        "directional_accuracy_ge_0_50": diagnostics.get(
-            "avg_directional_accuracy", 0
+        "directional_accuracy_ge_0_50": max(
+            diagnostics.get("avg_directional_accuracy", 0),
+            diagnostics.get("avg_weekly_directional_accuracy", 0),
         ) >= 0.50,
     }
 

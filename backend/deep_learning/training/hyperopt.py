@@ -347,7 +347,9 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
     metric_keys = (
         "avg_variance_ratio",
         "avg_directional_accuracy",
+        "avg_weekly_directional_accuracy",
         "avg_val_sharpe",
+        "avg_weekly_sharpe",
         "avg_raw_quantile_crossing_rate",
         "avg_quantile_crossing_rate",
         "avg_raw_median_sort_gap",
@@ -621,7 +623,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
 
     fold_scores: list[float] = []
     fold_da_list: list[float] = []
+    fold_weekly_da_list: list[float] = []
     fold_sharpe_list: list[float] = []
+    fold_weekly_sharpe_list: list[float] = []
     fold_vr_list: list[float] = []
     fold_crossing_list: list[float] = []
     fold_raw_crossing_list: list[float] = []
@@ -832,7 +836,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 fold_vr_penalty = 0.5 * (fold_vr - 1.5)
 
             fold_da = float(metrics.get("directional_accuracy", 0.5))
+            fold_weekly_da = float(metrics.get("weekly_directional_accuracy", 0.5))
             fold_sharpe = float(metrics.get("sharpe_ratio", 0.0))
+            fold_weekly_sharpe = float(
+                metrics.get(
+                    "weekly_sharpe_ratio_hac",
+                    metrics.get("weekly_sharpe_ratio", 0.0),
+                )
+            )
             fold_crossing_rate = float(metrics.get("quantile_crossing_rate", 0.0))
             fold_raw_crossing_rate = float(metrics.get("raw_quantile_crossing_rate", 0.0))
             fold_median_gap = float(metrics.get("median_sort_gap_max", 0.0))
@@ -951,7 +962,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
 
         fold_vr_list.append(fold_vr)
         fold_da_list.append(fold_da)
+        fold_weekly_da_list.append(fold_weekly_da)
         fold_sharpe_list.append(fold_sharpe)
+        fold_weekly_sharpe_list.append(fold_weekly_sharpe)
         fold_crossing_list.append(fold_crossing_rate)
         fold_raw_crossing_list.append(fold_raw_crossing_rate)
         fold_median_gap_list.append(fold_median_gap)
@@ -976,7 +989,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         # This ensures the hyperopt objective actively selects for directional
         # accuracy, not just low calibration loss.
         da_baseline = 0.50
-        da_adjustment = (fold_da - da_baseline) * 2.0  # reward when DA > 50%, penalty when < 50%
+        blended_fold_da = 0.5 * fold_da + 0.5 * fold_weekly_da
+        da_adjustment = (blended_fold_da - da_baseline) * 2.0  # reward when DA > 50%, penalty when < 50%
         crossing_penalty = 2.0 * max(0.0, fold_crossing_rate - 0.05)
         median_gap_penalty = 5.0 * max(0.0, fold_median_gap - 0.005)
         fold_score = fold_weekly_objective + fold_vr_penalty + crossing_penalty + median_gap_penalty - da_adjustment
@@ -1023,8 +1037,16 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             raise optuna.exceptions.TrialPruned()
 
         if (
-            fold_weekly_pred_positive_rate > 0.90
-            and fold_weekly_actual_positive_rate < 0.75
+            (
+                (
+                    fold_weekly_pred_positive_rate > 0.90
+                    and fold_weekly_actual_positive_rate < 0.75
+                )
+                or (
+                    fold_weekly_pred_positive_rate < 0.10
+                    and fold_weekly_actual_positive_rate > 0.25
+                )
+            )
             and fold_idx >= 1
             and not protect_trial
         ):
@@ -1106,7 +1128,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     # ---- cross-fold aggregation ----
     avg_score = float(np.mean(fold_scores))
     avg_da = float(np.mean(fold_da_list)) if fold_da_list else 0.5
+    avg_weekly_da = float(np.mean(fold_weekly_da_list)) if fold_weekly_da_list else 0.5
     avg_sharpe = float(np.mean(fold_sharpe_list)) if fold_sharpe_list else 0.0
+    avg_weekly_sharpe = (
+        float(np.mean(fold_weekly_sharpe_list)) if fold_weekly_sharpe_list else 0.0
+    )
     avg_vr = float(np.mean(fold_vr_list)) if fold_vr_list else 0.0
     avg_crossing = float(np.mean(fold_crossing_list)) if fold_crossing_list else 0.0
     avg_raw_crossing = (
@@ -1184,7 +1210,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
 
     trial.set_user_attr("avg_variance_ratio", round(avg_vr, 4))
     trial.set_user_attr("avg_directional_accuracy", round(avg_da, 4))
+    trial.set_user_attr("avg_weekly_directional_accuracy", round(avg_weekly_da, 4))
     trial.set_user_attr("avg_val_sharpe", round(avg_sharpe, 4))
+    trial.set_user_attr("avg_weekly_sharpe", round(avg_weekly_sharpe, 4))
     trial.set_user_attr("avg_raw_quantile_crossing_rate", round(avg_raw_crossing, 4))
     trial.set_user_attr("avg_quantile_crossing_rate", round(avg_crossing, 4))
     trial.set_user_attr("avg_raw_median_sort_gap", round(avg_raw_median_gap, 4))
@@ -1223,15 +1251,16 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             f"daily={avg_crossing:.6f}, weekly={avg_weekly_sorted_crossing:.6f}"
         )
 
-    # Soft penalty: avg DA below coin-flip
-    da_penalty = 2.0 * max(0.0, 0.50 - avg_da) if avg_da < 0.50 else 0.0
+    # Soft penalty: avg DA below coin-flip across both primary weekly & daily heads
+    effective_da = max(avg_da, avg_weekly_da)
+    da_penalty = 2.0 * max(0.0, 0.50 - effective_da) if effective_da < 0.50 else 0.0
 
     final_score = avg_score + consistency_penalty + da_penalty
     logger.info(
         "Trial %d [%d-fold CV]: avg_score=%.4f consistency=%.4f "
-        "da_penalty=%.4f → final=%.4f | DA=%.1f%% Sharpe=%.3f VR=%.3f",
+        "da_penalty=%.4f → final=%.4f | DA=%.1f%% WeeklyDA=%.1f%% Sharpe=%.3f WeeklySharpe=%.3f VR=%.3f",
         trial.number, n_folds, avg_score, consistency_penalty, da_penalty,
-        final_score, avg_da * 100, avg_sharpe, avg_vr,
+        final_score, avg_da * 100, avg_weekly_da * 100, avg_sharpe, avg_weekly_sharpe, avg_vr,
     )
     return final_score
 

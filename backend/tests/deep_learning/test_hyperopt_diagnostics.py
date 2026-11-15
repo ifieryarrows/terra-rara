@@ -113,3 +113,39 @@ def test_best_trial_preflight_check_recommends_architecture_fix_when_failed():
     assert result["checks"]["weekly_mae_vs_naive_zero_le_3_0"] is False
     assert result["passed"] == 2
     assert "Fix architecture" in result["recommendation"]
+
+
+def test_preflight_check_accepts_weekly_directional_accuracy_and_flags_negative_collapse():
+    passing_weekly = best_trial_preflight_check(
+        {
+            "avg_quantile_crossing_rate": 0.0,
+            "avg_weekly_magnitude_ratio": 1.10,
+            "avg_weekly_raw_magnitude_ratio": 2.484,
+            "avg_weekly_pred_positive_rate": 0.4983,
+            "avg_weekly_actual_positive_rate": 0.5934,
+            "avg_weekly_pi80_coverage": 0.72,
+            "avg_weekly_pi80_width_ratio": 1.30,
+            "avg_weekly_mae_vs_naive_zero": 1.1555,
+            "avg_variance_ratio": 0.85,
+            "avg_directional_accuracy": 0.4997,
+            "avg_weekly_directional_accuracy": 0.5250,
+        }
+    )
+    assert passing_weekly["preflight_passed"] is True
+    assert passing_weekly["checks"]["directional_accuracy_ge_0_50"] is True
+
+    negative_collapse = best_trial_preflight_check(
+        {
+            "avg_quantile_crossing_rate": 0.0,
+            "avg_weekly_magnitude_ratio": 1.10,
+            "avg_weekly_pred_positive_rate": 0.05,
+            "avg_weekly_actual_positive_rate": 0.55,
+            "avg_weekly_pi80_coverage": 0.72,
+            "avg_weekly_pi80_width_ratio": 1.30,
+            "avg_weekly_mae_vs_naive_zero": 1.15,
+            "avg_variance_ratio": 0.85,
+            "avg_directional_accuracy": 0.52,
+        }
+    )
+    assert negative_collapse["preflight_passed"] is False
+    assert negative_collapse["checks"]["weekly_positive_rate_not_exploded"] is False

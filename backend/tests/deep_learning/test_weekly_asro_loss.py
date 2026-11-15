@@ -378,3 +378,57 @@ def test_raw_pinball_shift_shortcut_matches_explicit_monotonic_transform():
         raw_ordered_pred.sum(dim=1), y_actual.sum(dim=1)
     )
     assert torch.allclose(loss.loss(y_pred, y_actual), expected, atol=1e-6, rtol=1e-6)
+
+
+def test_directional_sign_loss_minimum_at_ground_truth_without_explosion():
+    actual = torch.tensor([-0.025, -0.010, 0.012, 0.028], dtype=torch.float32)
+
+    loss_exact = tft_copper._directional_sign_loss(actual, actual, tanh_scale=20.0)
+    loss_inflated = tft_copper._directional_sign_loss(actual * 6.0, actual, tanh_scale=20.0)
+    loss_inverted = tft_copper._directional_sign_loss(-actual, actual, tanh_scale=20.0)
+
+    assert loss_exact.item() < 1e-5
+    assert loss_exact.item() < loss_inflated.item()
+    assert loss_inflated.item() < loss_inverted.item()
+
+
+def test_weekly_loss_retains_directional_and_positive_rate_gradients_past_cap():
+    # Every sample overshoots -weekly_median_cap (-0.025), creating a zero-gradient
+    # dead-zone in the bounded median path unless the leaky raw blend is active.
+    raw_pred = torch.full((8, 5, 7), -0.02, dtype=torch.float32, requires_grad=True)
+    actual = torch.tensor(
+        [
+            [0.003] * 5,
+            [-0.003] * 5,
+            [0.004] * 5,
+            [-0.004] * 5,
+            [0.002] * 5,
+            [-0.002] * 5,
+            [0.005] * 5,
+            [-0.005] * 5,
+        ],
+        dtype=torch.float32,
+    )
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=1.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=1.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=1.0,
+        lambda_interval=0.0,
+        weekly_median_cap=0.025,
+    )
+
+    total = loss.loss(raw_pred, actual)
+    total.backward()
+
+    assert raw_pred.grad is not None
+    median_grad = raw_pred.grad[..., 3]
+    assert torch.isfinite(median_grad).all()
+    assert median_grad.abs().max().item() > 1e-4

@@ -666,3 +666,49 @@ def test_fit_and_apply_weekly_magnitude_scale_keeps_predictions_in_gate_band():
     np.testing.assert_allclose(apply_weekly_magnitude_scale_np(well_scaled, 1.0), well_scaled)
 
 
+def test_fit_direction_sign_calibration_corrects_bearish_drift_without_daily_flip():
+    from deep_learning.training.metrics import fit_direction_sign_calibration
+
+    rng = np.random.default_rng(123)
+    n = 60
+    weekly_signal = rng.normal(0.0, 0.015, size=n)
+    # 55%+ positive actuals vs negatively shifted predictions (~13% predicted positive)
+    actual_path = np.tile((weekly_signal / 5.0 + 0.0005)[:, None], (1, 5))
+    # Deliberately invert T+1 noise slightly so daily flipped DA > base DA, proving daily stays fixed at 1
+    actual_path[:, 0] = -weekly_signal / 5.0
+    pred_center = weekly_signal - 0.018
+    offsets = np.array([-0.012, -0.008, -0.004, 0.0, 0.004, 0.008, 0.012])
+    pred_path = np.tile((pred_center / 5.0)[:, None, None], (1, 5, 1)) + offsets.reshape(1, 1, -1)
+
+    cal = fit_direction_sign_calibration(actual_path, pred_path, horizon=5, min_samples=20)
+    assert cal["daily_sign_multiplier"] == 1
+    assert cal["weekly_sign_threshold_applied"] is True
+    assert 0.25 <= cal["weekly_sign_threshold_validation_pred_positive_rate"] <= 0.75
+    assert cal["weekly_sign_threshold_validation_da"] >= 0.51
+
+
+def test_fit_weekly_magnitude_scale_reduces_heavy_cap_saturation():
+    from deep_learning.training.metrics import fit_weekly_magnitude_scale
+
+    rng = np.random.default_rng(99)
+    actual_path = rng.normal(0.0, 0.004, size=(40, 5))
+    offsets = np.array([-0.010, -0.006, -0.003, 0.0, 0.003, 0.006, 0.010])
+    # Raw weekly std ~ 0.045 vs cap 0.025 -> ~60%+ samples hit the cap, raw_ratio ~ 2.0
+    raw_signal = rng.normal(0.0, 0.008, size=(40, 5))
+    raw_pred = np.maximum(np.abs(actual_path) * 1.9, np.abs(raw_signal)) * np.sign(
+        np.where(raw_signal != 0.0, raw_signal, 1.0)
+    )
+    raw_pred_path = raw_pred[..., None] + offsets.reshape(1, 1, -1)
+
+    cal = fit_weekly_magnitude_scale(
+        actual_path,
+        raw_pred_path,
+        horizon=5,
+        weekly_median_cap=0.020,
+    )
+    assert cal["applied"] is True
+    assert 0.15 <= cal["scale"] < 1.0
+    assert cal["validation_raw_magnitude_ratio_after"] < cal["validation_raw_magnitude_ratio_before"]
+    assert 0.65 <= cal["validation_magnitude_ratio_after"] <= 1.35
+
+

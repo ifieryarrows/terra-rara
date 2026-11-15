@@ -194,6 +194,16 @@ def _validation_ranked_checkpoint_paths(
         ranked.append((Path(raw_path), score))
 
     ranked.sort(key=lambda item: (item[1], str(item[0])))
+    if len(ranked) > 1:
+        best_score = ranked[0][1]
+        max_allowed_score = (
+            best_score * 1.15
+            if best_score > 0.0
+            else best_score + 0.15 * max(1.0, abs(best_score))
+        )
+        ranked = [ranked[0]] + [
+            item for item in ranked[1:] if item[1] <= max_allowed_score
+        ]
     if not ranked:
         best_path = str(getattr(checkpoint_callback, "best_model_path", "") or "")
         if best_path:
@@ -1555,7 +1565,7 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
         if "lambda_dispersion" in params:
             params["lambda_dispersion"] = min(max(float(params["lambda_dispersion"]), 0.10), 0.25)
         if "lambda_positive_rate" in params:
-            params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.10), 0.75)
+            params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.35), 0.75)
         if "lambda_magnitude" in params:
             params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
         if "lambda_naive" in params:

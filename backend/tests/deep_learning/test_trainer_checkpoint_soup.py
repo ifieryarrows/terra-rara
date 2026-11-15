@@ -73,3 +73,33 @@ def test_uniform_checkpoint_soup_rejects_incompatible_state(tmp_path):
 
     with pytest.raises(RuntimeError, match="state keys differ"):
         _build_uniform_checkpoint_soup([best, incompatible], output)
+
+
+def test_validation_checkpoint_ranking_excludes_degraded_secondary_epochs(tmp_path):
+    best = tmp_path / "epoch-06.ckpt"
+    degraded = tmp_path / "epoch-09.ckpt"
+    near = tmp_path / "epoch-07.ckpt"
+    callback_degraded = SimpleNamespace(
+        best_k_models={
+            str(best): torch.tensor(4.6587),
+            str(degraded): torch.tensor(6.2654),
+        },
+        best_model_path=str(best),
+        best_model_score=torch.tensor(4.6587),
+    )
+    assert _validation_ranked_checkpoint_paths(callback_degraded, max_count=2) == [
+        (best, pytest.approx(4.6587))
+    ]
+
+    callback_close = SimpleNamespace(
+        best_k_models={
+            str(best): torch.tensor(4.6587),
+            str(near): torch.tensor(5.05),
+        },
+        best_model_path=str(best),
+        best_model_score=torch.tensor(4.6587),
+    )
+    assert _validation_ranked_checkpoint_paths(callback_close, max_count=2) == [
+        (best, pytest.approx(4.6587)),
+        (near, pytest.approx(5.05)),
+    ]

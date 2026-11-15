@@ -152,19 +152,32 @@ def _weekly_scale_losses(
         quality_band_deficit = torch.relu(0.65 - ratio)
         structural_explosion = torch.relu(ratio - 3.0)
         return (
-            torch.abs(torch.log(ratio))
-            + 4.0 * quality_band_excess.pow(2)
+            F.smooth_l1_loss(
+                torch.log(ratio.clamp_min(1e-4)),
+                torch.zeros_like(ratio),
+                beta=0.25,
+            )
+            + 2.0 * F.smooth_l1_loss(
+                quality_band_excess,
+                torch.zeros_like(quality_band_excess),
+                beta=0.50,
+            )
             + 4.0 * quality_band_deficit.pow(2)
-            + 4.0 * structural_explosion.pow(2)
+            + 2.5 * F.smooth_l1_loss(
+                structural_explosion,
+                torch.zeros_like(structural_explosion),
+                beta=0.50,
+            )
         )
 
     bounded_mag_loss = _bounded_scale_loss(mean_magnitude_ratio)
     if raw_pred_weekly_median is not None:
         raw_abs_mean = raw_pred_weekly_median.abs().mean() + eps
         raw_ratio = raw_abs_mean / actual_abs_mean
+        raw_excess = torch.relu(raw_ratio - 1.20)
         raw_mag_loss = (
             _bounded_scale_loss(raw_ratio)
-            + torch.relu(raw_ratio - 1.20).pow(2)
+            + F.smooth_l1_loss(raw_excess, torch.zeros_like(raw_excess), beta=0.50)
             + torch.relu(0.75 - raw_ratio).pow(2)
         )
         magnitude_loss = 0.5 * bounded_mag_loss + 0.5 * raw_mag_loss
@@ -188,7 +201,8 @@ def _weekly_scale_losses(
     zero_mae = actual_abs_mean
     naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
     mean_gap = (effective_pred_weekly_median.mean() - actual_ref.mean()) / zero_mae
-    bias_loss = 1.50 * torch.abs(mean_gap)
+    median_gap = (effective_pred_weekly_median.median() - actual_ref.median()) / actual_abs_median
+    bias_loss = 1.50 * torch.abs(mean_gap) + 0.50 * torch.abs(median_gap)
 
     return {
         "dispersion_loss": dispersion_loss,
@@ -217,8 +231,10 @@ def _weekly_positive_rate_loss(
     small batch-composition noise.
     """
     temp = max(float(temperature), eps)
-    pred_positive_probability = torch.sigmoid(pred_weekly_median / temp)
+    scaled_logits = pred_weekly_median / temp
+    pred_positive_probability = torch.sigmoid(scaled_logits)
     pred_positive_rate = pred_positive_probability.mean()
+    bounded_prob = torch.sigmoid(scaled_logits.clamp(min=-2.5, max=2.5))
     actual_positive_rate = (actual_weekly.detach() > 0).to(
         device=pred_weekly_median.device,
         dtype=pred_weekly_median.dtype,
@@ -234,7 +250,7 @@ def _weekly_positive_rate_loss(
         0.5 / (1.0 - positive_fraction),
     )
     sign_loss = F.binary_cross_entropy(
-        pred_positive_probability,
+        bounded_prob,
         actual_sign,
         weight=class_weights,
     )
@@ -250,10 +266,11 @@ def _weekly_positive_rate_loss(
         max=float(upper_bound),
     )
     upper = torch.maximum(upper, lower)
+    rate_calibration_loss = 0.5 * (pred_positive_rate - positive_fraction).pow(2)
     rate_band_loss = torch.relu(lower - pred_positive_rate).pow(2) + torch.relu(
         pred_positive_rate - upper
     ).pow(2)
-    return sign_loss + rate_band_loss
+    return sign_loss + rate_calibration_loss + rate_band_loss
 
 
 def _directional_sign_loss(
@@ -263,13 +280,19 @@ def _directional_sign_loss(
     tanh_scale: float,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """Magnitude-aware sign loss for a single forecast horizon."""
+    """Scale-matched directional sign and cosine alignment loss for a forecast horizon."""
     soft_prediction_sign = torch.tanh(prediction * float(tanh_scale))
-    actual_sign = torch.sign(actual).float()
-    weights = actual.abs() / actual.abs().mean().clamp_min(eps)
-    squared_error = (soft_prediction_sign - actual_sign).pow(2)
+    actual_detached = actual.detach()
+    soft_actual_sign = torch.tanh(actual_detached * float(tanh_scale))
+    actual_sign = torch.sign(actual_detached).float()
+    weights = actual_detached.abs() / actual_detached.abs().mean().clamp_min(eps)
+    squared_error = (soft_prediction_sign - soft_actual_sign).pow(2)
     wrong_sign_hinge = torch.relu(-soft_prediction_sign * actual_sign)
-    return (weights * squared_error).mean() + 0.25 * wrong_sign_hinge.mean()
+    pred_norm = prediction.pow(2).sum().add(eps).sqrt()
+    actual_norm = actual_detached.pow(2).sum().add(eps).sqrt()
+    cosine_sim = (prediction * actual_detached).sum() / (pred_norm * actual_norm)
+    cosine_loss = (1.0 - cosine_sim).clamp(min=0.0, max=2.0)
+    return (weights * squared_error).mean() + 0.25 * wrong_sign_hinge.mean() + 0.35 * cosine_loss
 
 
 def _weekly_interval_undercoverage_loss(
@@ -277,7 +300,7 @@ def _weekly_interval_undercoverage_loss(
     actual_weekly: torch.Tensor,
     quantiles: Sequence[float],
     *,
-    target_width_ratio: float = 0.70,
+    target_width_ratio: float = 0.85,
     eps: float = 1e-8,
 ) -> torch.Tensor:
     """Penalize weekly PI80 misses and deviation from the target interval scale."""
@@ -619,14 +642,16 @@ try:
                 weekly_q_loss = weekly_q_loss_bounded
 
             t1_q_loss = super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1])
+            effective_t1_median = 0.80 * median_path[:, 0] + 0.20 * raw_median_path[:, 0]
             t1_directional_loss = _directional_sign_loss(
-                median_path[:, 0],
+                effective_t1_median,
                 y_actual[:, 0],
                 tanh_scale=100.0,
                 eps=self.sharpe_eps,
             )
 
             pred_weekly_median = median_path.sum(dim=1)
+            effective_weekly_median = 0.80 * pred_weekly_median + 0.20 * raw_pred_weekly_median
             eps = self.sharpe_eps
             scale_losses = _weekly_scale_losses(
                 pred_weekly_median,
@@ -639,7 +664,7 @@ try:
             naive_relative_loss = scale_losses["naive_relative_loss"]
             bias_loss = scale_losses["bias_loss"]
             positive_rate_loss = _weekly_positive_rate_loss(
-                pred_weekly_median,
+                effective_weekly_median,
                 actual_weekly,
                 eps=eps,
             )
@@ -651,7 +676,7 @@ try:
             )
 
             directional_loss = _directional_sign_loss(
-                pred_weekly_median,
+                effective_weekly_median,
                 actual_weekly,
                 tanh_scale=20.0,
                 eps=eps,
