@@ -88,7 +88,7 @@ export function PriceTooltip({ active, payload, onActiveRowChange }: {
   const hasReturnRange = finite(row.returnQ10) && finite(row.returnQ90);
   const horizonTag = row.isForecast
     ? (finite(row.day) ? `T+${row.day} · 5D Path` : 'Daily forecast · USD')
-    : 'Observed close · USD';
+    : 'USD / lb';
 
   return (
     <div className="cm-chart-tooltip w-[min(18.5rem,80vw)] rounded-lg border border-white/10 bg-[#060a11]/94 px-3.5 py-2.5 text-xs text-slate-100 backdrop-blur-md">
@@ -179,12 +179,9 @@ const ChartHoverReadout = memo(function ChartHoverReadout({
             </span>
           </>
         ) : activeRow ? (
-          <>
-            <span className="inline-block w-[9.5rem] shrink-0 text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">Observed Close</span>
-            <span className="inline-block min-w-[11rem] shrink-0 text-slate-100">
-              Close <strong className="font-semibold text-white">{formatPrice(activeRow.price)}</strong>
-            </span>
-          </>
+          <span className="inline-block min-w-[11rem] shrink-0 text-slate-100">
+            Close <strong className="font-semibold text-white">{formatPrice(activeRow.price)}</strong>
+          </span>
         ) : (
           <>
             <span className="inline-block w-[9.5rem] shrink-0 text-[11px] font-semibold tracking-wider text-[#dda174] uppercase">
@@ -371,10 +368,6 @@ export const PriceForecastChart = memo(function PriceForecastChart({ history, fo
 
       {/* Laser series indicators */}
       <div className="cm-chart-legend" role="group" aria-label="Chart series">
-        <span>
-          <i className="cm-chart-key cm-chart-key--observed cm-laser-indicator cm-laser-indicator--copper" aria-hidden="true" />
-          Observed close
-        </span>
         <button
           type="button"
           aria-pressed={medianVisible}

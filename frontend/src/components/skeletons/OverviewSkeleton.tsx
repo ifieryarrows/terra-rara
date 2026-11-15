@@ -166,7 +166,6 @@ export function OverviewSkeleton() {
                   </div>
                   {/* Series Legend */}
                   <div className="cm-chart-legend" role="group" aria-label="Chart series">
-                    <span><i className="cm-chart-key cm-chart-key--observed" aria-hidden="true" />Observed close</span>
                     <button type="button" aria-pressed="true" disabled><i className="cm-chart-key cm-chart-key--median" aria-hidden="true" />Forecast median</button>
                     <button type="button" aria-pressed="true" disabled><i className="cm-chart-key cm-chart-key--range" aria-hidden="true" />Q10–Q90 range</button>
                   </div>

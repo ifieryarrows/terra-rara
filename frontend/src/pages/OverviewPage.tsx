@@ -34,8 +34,6 @@ import type {
 } from '../types';
 import {
   useSentimentSummary,
-  useSystemStatus,
-  useTftModelSummary,
 } from '../hooks/useQueries';
 import '../App.css';
 
@@ -182,8 +180,6 @@ export const OverviewPage = () => {
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
   const sentimentSummary = useSentimentSummary(7, 6);
-  const systemStatus = useSystemStatus();
-  const tftSummary = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
 
   const setBusy = useCallback((delta: 1 | -1) => {
     busyCount.current = Math.max(0, busyCount.current + delta);
@@ -581,19 +577,6 @@ export const OverviewPage = () => {
   const showNews = streamLens === 'all' || streamLens === 'news';
   const showMap = streamLens === 'all' || streamLens === 'map';
 
-  const pipelineStatus = systemStatus.data;
-  const activeGateSummary = tftSummary.data?.quality_gate;
-  const pipelineFreshnessLabel = pipelineStatus?.last_pipeline_run_at
-    ? new Date(pipelineStatus.last_pipeline_run_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-    : lastLiveUpdateAt
-      ? lastLiveUpdateAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-      : 'Standing by';
-  const pipelineTone: 'good' | 'bad' | 'neutral' =
-    pipelineStatus?.status === 'healthy'
-      ? 'good'
-      : pipelineStatus?.status === 'unhealthy'
-        ? 'bad'
-        : 'neutral';
   const spotTone: 'good' | 'bad' | 'copper' =
     quoteChange?.tone === 'positive'
       ? 'good'
@@ -704,7 +687,7 @@ export const OverviewPage = () => {
             value={tftDegraded ? 'Degraded' : formatSignedPct(tftReturn)}
             delta={tftWeeklyPrice != null && !tftDegraded ? `${tftBullish ? '▲' : '▼'} $${tftWeeklyPrice.toFixed(2)}` : undefined}
             tone={weeklyTone}
-            badge="√52"
+            badge="5D"
             hint={
               tftDegraded
                 ? 'Awaiting weekly refresh'
@@ -714,12 +697,12 @@ export const OverviewPage = () => {
             }
           />
           <MetricTile
-            label="T+1 XGBoost"
+            label="T+1 TFT Step 1"
             value={tftImpulse}
             delta={tftAnalysis?.t1_return != null ? `${dirGlyph(tftImpulse)[0]} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
             tone={t1Tone}
-            badge="√252 DIAG"
-            hint={tftMetrics?.directional_accuracy != null ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : 'Next-day diagnostic only'}
+            badge="T+1"
+            hint={tftMetrics?.directional_accuracy != null ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : 'Step-1 quantile median'}
           />
           <MetricTile
             label="7D News Sentiment"
@@ -774,13 +757,6 @@ export const OverviewPage = () => {
               </div>
             }
           />
-          <MetricTile
-            label="Pipeline & Gate"
-            value={activeGateSummary?.passed === true ? 'Gate Passed' : activeGateSummary?.passed === false ? 'Gate Held' : (pipelineStatus?.status ? pipelineStatus.status.toUpperCase() : 'ACTIVE')}
-            tone={pipelineTone}
-            badge={pipelineStatus?.models_found != null ? `${pipelineStatus.models_found} MODELS` : 'SYNC'}
-            hint={`Run ${pipelineFreshnessLabel}${pipelineStatus?.price_bar_staleness_days != null ? ` · ${pipelineStatus.price_bar_staleness_days}d bar age` : ''}`}
-          />
         </section>
 
         <div className="cm-overview-tools" data-cm-route-reveal="surface">
@@ -822,7 +798,7 @@ export const OverviewPage = () => {
                 className="cm-price-action-section"
                 headerExtra={
                   <span className="cm-panel-telemetry-meta">
-                    <span>{tftAnalysis ? '5D TFT-ASRO Overlay' : 'Observed Closes'}</span>
+                    <span>{tftAnalysis ? '5D TFT-ASRO Overlay' : 'Historical Closes'}</span>
                     {tftReferenceDate && <span>Ref {tftReferenceDate}</span>}
                   </span>
                 }
@@ -874,7 +850,7 @@ export const OverviewPage = () => {
                         <div>
                           <div className="mb-1.5 flex items-center gap-2.5 flex-wrap">
                             <span className="text-xs text-slate-400 uppercase tracking-widest">
-                              Expected 5D Performance · √52
+                              Expected 5D Performance
                             </span>
                             {tftBaselineIsStale && (
                               <span
@@ -973,41 +949,6 @@ export const OverviewPage = () => {
                           Based on forecast dispersion. This is separate from model quality and is not an investment safety rating.
                         </p>
                       </div>
-
-                      {/* Strictly separated single-step T+1 diagnostic readout */}
-                      <details className="cm-data-disclosure" open>
-                        <summary>
-                          <span>T+1 XGBoost diagnostic</span>
-                          <span className="cm-disclosure-sub">Next-day diagnostic · √252 · separate from 5D primary</span>
-                        </summary>
-                        <div className="flex items-center justify-between py-2.5 border-t border-white/5">
-                          <span className="text-xs text-slate-400 uppercase tracking-wider">T+1 Impulse</span>
-                          <div className={clsx('flex items-center gap-1.5', dirGlyph(tftImpulse)[1])}>
-                            <span aria-hidden="true" className="text-[11px] leading-none">
-                              {dirGlyph(tftImpulse)[0]}
-                            </span>
-                            <span className="text-xs font-bold tracking-wide cm-tabular">
-                              {tftImpulse}
-                              {tftAnalysis.t1_return != null ? ` ${formatSignedPct(tftAnalysis.t1_return)}` : ''}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="cm-diagnostic-metrics grid grid-cols-2 gap-2">
-                          <div>
-                            <span className="block text-xs text-slate-400 uppercase tracking-wider">Direction Score</span>
-                            <span className="font-mono cm-tabular text-xs text-gray-200">
-                              {tftMetrics?.directional_accuracy != null ? `${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : '--'}
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <span className="block text-xs text-slate-400 uppercase tracking-wider">Daily Sharpe (√252)</span>
-                            <span className="font-mono cm-tabular text-xs text-gray-200">
-                              {tftMetrics?.sharpe_ratio != null ? tftMetrics.sharpe_ratio.toFixed(2) : '--'}
-                            </span>
-                          </div>
-                        </div>
-                      </details>
                     </div>
                   );
                 })() : (
@@ -1157,30 +1098,6 @@ export const OverviewPage = () => {
                 }
               >
                 <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']} />
-                <div className="cm-pipeline-desk-snapshot">
-                  <div className="cm-pipeline-desk-row">
-                    <span>Horizon Alignment</span>
-                    <strong className="cm-tabular">
-                      {tftDirection && tftImpulse
-                        ? `${tftDirection} 5D · ${tftImpulse} T+1`
-                        : (tftDirection ?? 'Active')}
-                    </strong>
-                  </div>
-                  <div className="cm-pipeline-desk-row">
-                    <span>Last Pipeline Run</span>
-                    <strong className="cm-tabular">
-                      {pipelineStatus?.last_pipeline_status ? `${pipelineStatus.last_pipeline_status} · ${pipelineFreshnessLabel}` : pipelineFreshnessLabel}
-                    </strong>
-                  </div>
-                  <div className="cm-pipeline-desk-row">
-                    <span>Price Bar Freshness</span>
-                    <strong className="cm-tabular">
-                      {pipelineStatus?.price_bar_latest_date
-                        ? `${pipelineStatus.price_bar_latest_date} (${pipelineStatus.price_bar_staleness_days ?? 0}d)`
-                        : tftReferenceDate ?? 'Live stream'}
-                    </strong>
-                  </div>
-                </div>
               </GlassCard>
             )}
 

@@ -478,11 +478,9 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
 
     // Strict 5D vs T+1 separation + non-causal XAI focus disclosure
     expect(screen.getByText('5D TFT Primary')).toBeInTheDocument();
-    expect(screen.getAllByText(/√52/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('Expected 5D Performance · √52')).toBeInTheDocument();
-    expect(screen.getByText('T+1 XGBoost')).toBeInTheDocument();
-    expect(screen.getByText(/T\+1 XGBoost diagnostic/i)).toBeInTheDocument();
-    expect(screen.getByText(/√252 DIAG/i)).toBeInTheDocument();
+    expect(screen.getByText('Expected 5D Performance')).toBeInTheDocument();
+    expect(screen.getByText('T+1 TFT Step 1')).toBeInTheDocument();
+    expect(screen.queryByText(/√52|√252|Pipeline & Gate|Horizon Alignment|T\+1 XGBoost diagnostic/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Raw 5D Focus · Non-causal/i)).toBeInTheDocument();
     expect(screen.getByTestId('news-sentiment-readout')).toHaveTextContent(/▲\s*Bullish/);
     expect(screen.getByRole('meter', { name: /7D News Sentiment/i })).toHaveAttribute('value', '0.34');

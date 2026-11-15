@@ -127,7 +127,7 @@ it('does not turn missing daily Sharpe into a healthy status alongside weekly ac
   expect(screen.getByRole('link', { name: /Review model metrics/ })).toHaveAttribute('href', '/models');
 });
 
-it('renders complete reliability telemetry including RMSE/MAE, Sharpe, PI80, and gate state', () => {
+it('renders complete reliability telemetry including Sharpe, PI80, and gate state', () => {
   render(
     <MemoryRouter>
       <ModelReliability
@@ -135,8 +135,6 @@ it('renders complete reliability telemetry including RMSE/MAE, Sharpe, PI80, and
           weekly_directional_accuracy: 0.562,
           weekly_sample_count: 120,
           sharpe_ratio: 0.84,
-          rmse: 0.0184,
-          mae: 0.0132,
           variance_ratio: 0.92,
         }}
         unavailable={false}
@@ -146,6 +144,6 @@ it('renders complete reliability telemetry including RMSE/MAE, Sharpe, PI80, and
   expect(screen.getByText('Quality Gate Passed')).toBeVisible();
   expect(screen.getByText('56.2%')).toBeVisible();
   expect(screen.getByText('0.84')).toBeVisible();
-  expect(screen.getByText('0.0184 / 0.0132')).toBeVisible();
+  expect(screen.queryByText('RMSE / MAE')).not.toBeInTheDocument();
   expect(screen.getByText('VR 0.92')).toBeVisible();
 });

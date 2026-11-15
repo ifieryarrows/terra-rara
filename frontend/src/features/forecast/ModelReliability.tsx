@@ -38,8 +38,6 @@ export function ModelReliability({ metrics, unavailable }: { metrics?: TFTModelM
   const weekly = m.weekly_directional_accuracy;
   const dailySharpe = m.sharpe_ratio;
   const weeklySharpe = m.weekly_sharpe_ratio;
-  const rmse = m.rmse;
-  const mae = m.mae;
   const pi80 = m.weekly_pi80_coverage;
   const varianceRatio = m.variance_ratio;
   const predStd = m.pred_std;
@@ -59,7 +57,7 @@ export function ModelReliability({ metrics, unavailable }: { metrics?: TFTModelM
   if (finite(pi80)) gateChecks.push(pi80 >= 0.74 && pi80 <= 0.86);
 
   const anyGateBreach = gateChecks.some(ok => !ok);
-  const hasFullSummaryTelemetry = weeklyKnown && finite(dailySharpe) && (finite(rmse) || finite(mae));
+  const hasFullSummaryTelemetry = weeklyKnown && finite(dailySharpe);
 
   let gateLabel = 'Unavailable';
   let gateToneClass = 'text-slate-400';
@@ -216,7 +214,7 @@ export function ModelReliability({ metrics, unavailable }: { metrics?: TFTModelM
           <div className="cm-reliability-row">
             <div className="min-w-0 flex-1">
               <span>Weekly Sharpe</span>
-              <small>5D cumulative · √52 annualized · gate ≥ -0.20</small>
+              <small>5D cumulative · annualized · gate ≥ -0.20</small>
               {weeklySharpePct !== null && (
                 <div className="mt-1.5 h-1 w-full max-w-[11rem] overflow-hidden rounded-full bg-white/[0.06]" aria-hidden="true">
                   <div
@@ -247,18 +245,6 @@ export function ModelReliability({ metrics, unavailable }: { metrics?: TFTModelM
           </div>
           <strong className={!finite(dailySharpe) ? 'text-slate-400' : dailySharpe >= 0 ? 'cm-tone-good' : dailySharpe < -0.3 ? 'cm-tone-bad' : 'text-slate-100'}>
             {finite(dailySharpe) ? dailySharpe.toFixed(2) : '—'}
-          </strong>
-        </div>
-
-        <div className="cm-reliability-row">
-          <div className="min-w-0 flex-1">
-            <span>RMSE / MAE</span>
-            <small>Point forecast error · log-return scale</small>
-          </div>
-          <strong className="text-slate-100">
-            {finite(rmse) || finite(mae)
-              ? `${finite(rmse) ? rmse.toFixed(4) : '—'} / ${finite(mae) ? mae.toFixed(4) : '—'}`
-              : '—'}
           </strong>
         </div>
 
