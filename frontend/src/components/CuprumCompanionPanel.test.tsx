@@ -680,4 +680,33 @@ describe('CuprumCompanionPanel draggable dock, clamping, keyboard control & edge
     expect(tapSpy).toHaveBeenCalledTimes(3);
     expect(chirpSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('closes active dialogue when minimized and emits a subtle ambient cue during idle speech', () => {
+    vi.useFakeTimers();
+    const speakSpy = vi.spyOn(cosmicVision, 'playCuprumSpeakBlip').mockResolvedValue(true);
+
+    render(<CuprumCompanionPanel commentary={COMMENTARY_FIXTURE} explain={null} />);
+
+    // Open conversation, then minimize -> expanding should return cleanly to idle, not stale dialogue
+    fireEvent.click(screen.getByRole('button', { name: 'Talk to Cuprum' }));
+    expect(screen.getByTestId('cuprum-dialogue-bubble')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Cuprum' }));
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Cuprum' }));
+    expect(screen.queryByTestId('cuprum-dialogue-bubble')).not.toBeInTheDocument();
+
+    // Wait for idle chatter and confirm subtle low-volume cue plays instead of staying silent
+    speakSpy.mockClear();
+    act(() => {
+      vi.advanceTimersByTime(6_500);
+    });
+    expect(screen.getByTestId('cuprum-idle-bubble')).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(220);
+    });
+    expect(speakSpy).toHaveBeenCalled();
+    expect(speakSpy).toHaveBeenCalledWith(expect.objectContaining({ volume: 0.14 }));
+  });
 });

@@ -739,6 +739,21 @@ export function CuprumCompanionPanel({
     modeRef.current = mode;
   }, [mode]);
 
+  // Minimizing closes any active conversation or ambient line so expanding starts clean.
+  useEffect(() => {
+    if (!minimized) return;
+    if (ambientTimerRef.current !== null) {
+      window.clearTimeout(ambientTimerRef.current);
+      ambientTimerRef.current = null;
+    }
+    modeRef.current = 'idle';
+    setSession((prev) =>
+      prev.mode === 'idle' && !prev.idleLine && !prev.isTyping
+        ? prev
+        : advanceCuprumSession(prev, { type: 'close-dialogue' }),
+    );
+  }, [minimized]);
+
   // Ambient speech bubbles: first after a short welcome, then a long, irregular cadence.
   useEffect(() => {
     if (minimized || !isVisible || isDragging || mode !== 'idle' || idleLine || !inView || !docVisible) {

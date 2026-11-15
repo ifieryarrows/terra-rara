@@ -267,17 +267,21 @@ export const CuprumSpeechBubble = forwardRef<HTMLDivElement, CuprumSpeechBubbleP
         const targetCount = Math.min(text.length, Math.floor(elapsed / TYPE_INTERVAL_MS) + 1);
 
         if (targetCount > revealedCount) {
-          if (mode === 'dialogue') {
-            for (let i = revealedCount; i < targetCount; i += 1) {
-              const ch = text.charAt(i);
-              if (/\S/.test(ch)) {
-                if (spokenCount % 3 === 0) {
-                  void playCuprumSpeakBlip({ pitchStep: syllableStep });
-                  syllableStep += 1;
-                }
-                spokenCount += 1;
+          for (let i = revealedCount; i < targetCount; i += 1) {
+            const ch = text.charAt(i);
+            if (!/\S/.test(ch)) continue;
+
+            if (mode === 'dialogue') {
+              if (spokenCount % 3 === 0) {
+                void playCuprumSpeakBlip({ pitchStep: syllableStep });
+                syllableStep += 1;
               }
+            } else if (spokenCount === 0 || spokenCount === 6) {
+              // Gentle two-note ambient cue for spontaneous idle speech (activation-gated).
+              void playCuprumSpeakBlip({ pitchStep: syllableStep, volume: 0.14 });
+              syllableStep += 1;
             }
+            spokenCount += 1;
           }
           revealedCount = targetCount;
           if (speechTextRef.current) {
