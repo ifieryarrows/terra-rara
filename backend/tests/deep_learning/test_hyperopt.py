@@ -492,3 +492,44 @@ def test_run_hyperopt_persists_structural_failure_without_runtime_raise():
 
     assert "STRUCTURAL_FAILURE" in source
     assert "raise RuntimeError(structural_report" not in source
+
+
+def test_select_preflight_safe_trial_prefers_quality_gate_magnitude_compliance():
+    base_healthy = {
+        "avg_quantile_crossing_rate": 0.0,
+        "avg_weekly_pred_positive_rate": 0.50,
+        "avg_weekly_actual_positive_rate": 0.50,
+        "avg_weekly_pi80_coverage": 0.80,
+        "avg_weekly_pi80_width_ratio": 1.0,
+        "avg_weekly_mae_vs_naive_zero": 0.95,
+        "avg_variance_ratio": 1.0,
+        "avg_directional_accuracy": 0.54,
+    }
+    exploded_raw = _trial(
+        0,
+        "COMPLETE",
+        0.30,
+        {"lambda_magnitude": 0.50},
+        {
+            **base_healthy,
+            "avg_weekly_magnitude_ratio": 1.65,
+            "avg_weekly_raw_magnitude_ratio": 4.20,
+        },
+    )
+    gate_compliant = _trial(
+        1,
+        "COMPLETE",
+        0.45,
+        {"lambda_magnitude": 0.58},
+        {
+            **base_healthy,
+            "avg_weekly_magnitude_ratio": 1.05,
+            "avg_weekly_raw_magnitude_ratio": 1.25,
+        },
+    )
+
+    result = _build_result_payload(_study(exploded_raw, gate_compliant))
+
+    assert result["best_trial"] == 1
+    assert result["best_params"] == {"lambda_magnitude": 0.58}
+

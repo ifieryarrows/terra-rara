@@ -173,7 +173,23 @@ def _select_preflight_safe_trial(study, fold_diagnostics: list[dict]):
         if candidate["preflight_passed"]
     ]
     if eligible:
-        selected = min(eligible, key=lambda trial: float(trial.value))
+        gate_safe = [
+            trial
+            for trial in eligible
+            if 0.65 <= float(
+                trial.user_attrs.get(
+                    "avg_weekly_magnitude_ratio",
+                    diagnostics_by_trial.get(int(trial.number), {}).get("avg_weekly_magnitude_ratio", 1.0),
+                )
+            ) <= 1.35
+            and float(
+                trial.user_attrs.get(
+                    "avg_weekly_raw_magnitude_ratio",
+                    diagnostics_by_trial.get(int(trial.number), {}).get("avg_weekly_raw_magnitude_ratio", 1.0),
+                )
+            ) <= 3.0
+        ]
+        selected = min(gate_safe or eligible, key=lambda trial: float(trial.value))
         mode = "lowest_objective_preflight_pass"
     elif finite_trials:
         selected = min(finite_trials, key=lambda trial: float(trial.value))
@@ -337,6 +353,8 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "avg_raw_median_sort_gap",
         "avg_median_sort_gap",
         "avg_weekly_magnitude_ratio",
+        "avg_weekly_raw_magnitude_ratio",
+        "avg_weekly_median_bound_rate",
         "avg_weekly_pi80_coverage",
         "avg_weekly_pred_positive_rate",
         "avg_weekly_actual_positive_rate",
@@ -574,7 +592,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     import torch
     from deep_learning.data.dataset import build_cv_folds, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model
-    from deep_learning.training.callbacks import CurriculumLossScheduler
+    from deep_learning.training.callbacks import (
+        CurriculumLossScheduler,
+        WeeklyLossComponentLogger,
+    )
     from deep_learning.training.metrics import (
         apply_weekly_median_cap_np,
         cumulative_horizon,
@@ -608,6 +629,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_raw_median_gap_list: list[float] = []
     fold_weekly_objectives: list[float] = []
     fold_weekly_mr_list: list[float] = []
+    fold_weekly_raw_mr_list: list[float] = []
+    fold_weekly_bound_rate_list: list[float] = []
     fold_weekly_pi80_coverage_list: list[float] = []
     fold_weekly_pred_positive_rate_list: list[float] = []
     fold_weekly_actual_positive_rate_list: list[float] = []
@@ -677,6 +700,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             return float("inf")
 
         callbacks = [
+            WeeklyLossComponentLogger(),
             EarlyStopping(
                 monitor="val_loss",
                 patience=trial_cfg.training.early_stopping_patience,
@@ -821,6 +845,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 horizon=fold_cfg.forecast.primary_horizon_days,
             )
             fold_weekly_mr = float(metrics.get("weekly_magnitude_ratio", 1.0))
+            fold_weekly_raw_mr = float(metrics.get("weekly_raw_magnitude_ratio", fold_weekly_mr))
+            fold_weekly_bound_rate = float(metrics.get("weekly_median_bound_applied_rate", 0.0))
             fold_weekly_pi80_coverage = float(metrics.get("weekly_pi80_coverage", 0.0))
             fold_weekly_pred_positive_rate = float(metrics.get("weekly_pred_positive_rate", 0.5))
             fold_weekly_actual_positive_rate = float(metrics.get("weekly_actual_positive_rate", 0.5))
@@ -894,6 +920,14 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             )
             width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)
             tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)
+            raw_magnitude_penalty = (
+                0.40 * max(0.0, fold_weekly_raw_mr - 1.8)
+                + 2.0 * max(0.0, fold_weekly_raw_mr - 3.0)
+            )
+            bounded_magnitude_band_penalty = 1.50 * (
+                max(0.0, fold_weekly_mr - 1.30) + max(0.0, 0.70 - fold_weekly_mr)
+            )
+            bound_rate_penalty = 0.35 * max(0.0, fold_weekly_bound_rate - 0.30)
             fold_weekly_objective = (
                 0.35 * weekly_pinball
                 + 0.15 * (1.0 - float(metrics.get("weekly_directional_accuracy", 0.5)))
@@ -905,6 +939,9 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 + 0.10 * interval_score_penalty
                 + 0.05 * interval_score_96_penalty
                 + 0.25 * fold_weekly_sorted_crossing
+                + raw_magnitude_penalty
+                + bounded_magnitude_band_penalty
+                + bound_rate_penalty
             )
         except Exception as exc:
             logger.warning(
@@ -921,6 +958,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_raw_median_gap_list.append(fold_raw_median_gap)
         fold_weekly_objectives.append(fold_weekly_objective)
         fold_weekly_mr_list.append(fold_weekly_mr)
+        fold_weekly_raw_mr_list.append(fold_weekly_raw_mr)
+        fold_weekly_bound_rate_list.append(fold_weekly_bound_rate)
         fold_weekly_pi80_coverage_list.append(fold_weekly_pi80_coverage)
         fold_weekly_pred_positive_rate_list.append(fold_weekly_pred_positive_rate)
         fold_weekly_actual_positive_rate_list.append(fold_weekly_actual_positive_rate)
@@ -1078,6 +1117,12 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         float(np.mean(fold_raw_median_gap_list)) if fold_raw_median_gap_list else 0.0
     )
     avg_weekly_mr = float(np.mean(fold_weekly_mr_list)) if fold_weekly_mr_list else 1.0
+    avg_weekly_raw_mr = (
+        float(np.mean(fold_weekly_raw_mr_list)) if fold_weekly_raw_mr_list else avg_weekly_mr
+    )
+    avg_weekly_bound_rate = (
+        float(np.mean(fold_weekly_bound_rate_list)) if fold_weekly_bound_rate_list else 0.0
+    )
     avg_weekly_pi80_coverage = (
         float(np.mean(fold_weekly_pi80_coverage_list))
         if fold_weekly_pi80_coverage_list
@@ -1145,6 +1190,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_raw_median_sort_gap", round(avg_raw_median_gap, 4))
     trial.set_user_attr("avg_median_sort_gap", round(avg_median_gap, 4))
     trial.set_user_attr("avg_weekly_magnitude_ratio", round(avg_weekly_mr, 4))
+    trial.set_user_attr("avg_weekly_raw_magnitude_ratio", round(avg_weekly_raw_mr, 4))
+    trial.set_user_attr("avg_weekly_median_bound_rate", round(avg_weekly_bound_rate, 4))
     trial.set_user_attr("avg_weekly_pi80_coverage", round(avg_weekly_pi80_coverage, 4))
     trial.set_user_attr("avg_weekly_pred_positive_rate", round(avg_weekly_pred_positive_rate, 4))
     trial.set_user_attr("avg_weekly_actual_positive_rate", round(avg_weekly_actual_positive_rate, 4))
