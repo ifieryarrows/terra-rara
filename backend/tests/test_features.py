@@ -218,3 +218,67 @@ class TestTargetCreation:
         # Last value should be NaN (no future data)
         assert pd.isna(target.iloc[-1])
 
+
+class TestRowsToPriceDfHygiene:
+    def test_filters_leaked_synthetic_fixtures_and_deduplicates_calendar_days(self):
+        from app.features import _rows_to_price_df
+
+        rows = [
+            ("2025-01-28T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+            ("2025-01-28T05:00:00Z", 4.18, 4.25, 4.15, 4.22, 54000.0, 4.22),
+            ("2025-01-29T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+            ("2025-01-30T04:00:00Z", 4.22, 4.28, 4.20, 4.26, 48000.0, 4.26),
+            ("2025-01-30T05:00:00Z", 4.26, 4.30, 4.24, 4.29, 51000.0, 4.29),
+        ]
+
+        df = _rows_to_price_df(rows, "HG=F")
+
+        assert len(df) == 2
+        assert list(df.index) == list(pd.to_datetime(["2025-01-28", "2025-01-30"]))
+        assert df.loc[pd.Timestamp("2025-01-28"), "close"] == pytest.approx(4.22)
+        assert df.loc[pd.Timestamp("2025-01-30"), "close"] == pytest.approx(4.29)
+
+    def test_preserves_pure_synthetic_series_for_isolated_unit_tests(self):
+        from app.features import _rows_to_price_df
+
+        rows = [
+            ("2025-01-28T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+            ("2025-01-29T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+        ]
+
+        df = _rows_to_price_df(rows, "SYNTH")
+
+        assert len(df) == 2
+        assert (df["close"] == 102.0).all()
+
+    def test_filters_leaked_fixtures_when_close_is_near_102_by_volume_or_collision(self):
+        from app.features import _rows_to_price_df
+
+        # DX-Y.NYB has close ~104 (near 102.0) but 0.0 volume, whereas leaked fixture has 1000.0 volume
+        rows = [
+            ("2025-01-28T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+            ("2025-01-28T05:00:00Z", 103.5, 104.2, 103.1, 104.0, 0.0, 104.0),
+            ("2025-01-29T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
+            ("2025-01-30T05:00:00Z", 104.0, 104.8, 103.7, 104.5, 0.0, 104.5),
+        ]
+
+        df = _rows_to_price_df(rows, "DX-Y.NYB")
+
+        assert len(df) == 2
+        assert list(df.index) == list(pd.to_datetime(["2025-01-28", "2025-01-30"]))
+        assert (df["close"] > 103.5).all()
+
+    def test_preserves_exchange_calendar_date_and_drops_invalid_dates(self):
+        from app.features import _rows_to_price_df
+
+        rows = [
+            ("2025-01-28T00:00:00+09:00", 50.0, 51.0, 49.0, 50.5, 12000.0, 50.5),
+            ("not-a-date", 50.0, 51.0, 49.0, 50.5, 12000.0, 50.5),
+            ("2025-01-29T05:00:00Z", 50.5, 51.5, 50.0, 51.2, 13000.0, 51.2),
+        ]
+
+        df = _rows_to_price_df(rows, "ASIA")
+
+        assert list(df.index) == list(pd.to_datetime(["2025-01-28", "2025-01-29"]))
+
+

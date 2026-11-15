@@ -336,6 +336,71 @@ def _build_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
 # Price / technical features (reuses existing helpers)
 # ---------------------------------------------------------------------------
 
+def _sanitize_close_spikes(
+    close_series: pd.Series,
+    symbol: str = "target",
+    *,
+    max_abs_log_jump: float = 0.35,
+    confirm_bars: int = 2,
+    extreme_log_jump: float = 1.0,
+    extreme_confirm_bars: int = 3,
+) -> pd.Series:
+    """Replace transient corrupt price spikes causally without flatlining persistent shifts."""
+    close = close_series.astype(float).where(lambda s: s > 0.0).ffill()
+    if len(close) <= 1:
+        return close
+
+    close_vals = close.to_numpy(dtype=float, copy=False)
+    valid = np.isfinite(close_vals) & (close_vals > 0.0)
+    log_vals = np.zeros_like(close_vals)
+    log_vals[valid] = np.log(close_vals[valid])
+    has_jumps = bool((valid[1:] & valid[:-1] & (np.abs(np.diff(log_vals)) > max_abs_log_jump)).any())
+    if not has_jumps:
+        return close
+
+    close_vals = close_vals.copy()
+    repaired = 0
+    pending_anchor: float | None = None
+    pending_run = 0
+    for idx in range(1, len(close_vals)):
+        prev_val = close_vals[idx - 1]
+        cur_val = close_vals[idx]
+        if not (np.isfinite(prev_val) and prev_val > 0 and np.isfinite(cur_val) and cur_val > 0):
+            pending_anchor = None
+            pending_run = 0
+            continue
+        log_jump = abs(np.log(cur_val / prev_val))
+        if log_jump > max_abs_log_jump:
+            needed = extreme_confirm_bars if log_jump > extreme_log_jump else confirm_bars
+            if (
+                pending_anchor is not None
+                and abs(np.log(cur_val / pending_anchor)) <= max_abs_log_jump
+            ):
+                pending_run += 1
+                pending_anchor = cur_val
+            else:
+                pending_anchor = cur_val
+                pending_run = 1
+            if pending_run >= needed:
+                # Persistent shift confirmed purely from past/current bars; resume true level.
+                pending_anchor = None
+                pending_run = 0
+            else:
+                close_vals[idx] = prev_val
+                repaired += 1
+        else:
+            pending_anchor = None
+            pending_run = 0
+    if repaired:
+        logger.warning(
+            "Repaired %d corrupt single-day close spike(s) (> %.2f log jump) for %s",
+            repaired,
+            max_abs_log_jump,
+            symbol,
+        )
+    return pd.Series(close_vals, index=close_series.index, name=close_series.name)
+
+
 def _build_price_features(
     session,
     symbol: str,
@@ -354,6 +419,11 @@ def _build_price_features(
         price_df = load_price_data(session, symbol, start_date, end_date)
     if price_df.empty:
         return pd.DataFrame(), pd.DataFrame()
+
+    sanitized_close = _sanitize_close_spikes(price_df["close"], symbol=symbol)
+    if not sanitized_close.equals(price_df["close"]):
+        price_df = price_df.copy()
+        price_df["close"] = sanitized_close
 
     features = generate_symbol_features(price_df, symbol)
     return price_df, features
@@ -624,7 +694,7 @@ def build_tft_dataframe(
     calendar_features = _build_calendar_features(target_index)
 
     # ---- 6. Target: daily log-return path plus explicit weekly helpers ----
-    close = price_df["close"].astype(float)
+    close = _sanitize_close_spikes(price_df["close"], symbol=target_symbol)
     log_close = np.log(close)
 
     target_1d = log_close.shift(-cfg.forecast.auxiliary_horizon_days) - log_close
@@ -642,7 +712,13 @@ def build_tft_dataframe(
     observed_return_1d = log_close.diff().fillna(0.0)
     observed_return_1d.name = "observed_return_1d"
 
-    realized_vol_20d = target_1d.rolling(20, min_periods=10).std()
+    realized_vol_20d = (
+        observed_return_1d.rolling(20, min_periods=5)
+        .std()
+        .replace(0, np.nan)
+        .ffill()
+        .fillna(0.01)
+    )
     realized_vol_20d.name = "realized_vol_20d"
 
     material_move_5d = (

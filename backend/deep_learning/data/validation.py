@@ -39,6 +39,12 @@ def validate_weekly_target_contract(
         for col in ("target", "target_1d_log_return", "target_5d_log_return"):
             if df[col].isna().any():
                 raise ValueError(f"{col} contains NaN after feature-store construction")
+        valid_1d = df["target_1d_log_return"].dropna()
+        max_abs_1d = float(valid_1d.abs().max()) if not valid_1d.empty else 0.0
+        if max_abs_1d > 0.50:
+            raise ValueError(
+                f"Corrupt single-day log return detected in training frame: max_abs={max_abs_1d:.4f} > 0.50"
+            )
 
     comparable = df[["target", "target_1d_log_return"]].dropna()
     if not comparable.empty and not np.allclose(
