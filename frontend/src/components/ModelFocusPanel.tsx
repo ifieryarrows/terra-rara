@@ -530,30 +530,25 @@ const AttentionProfileSection = memo(function AttentionProfileSection({
         aria-live="polite"
         data-testid="model-focus-attention-card"
       >
-        <div className="cm-focus-template-head">
-          <span>
-            {activeSessionRank <= PEAK_CHIP_LIMIT ? `PEAK MEMORY ANCHOR · #${activeSessionRank}` : `SESSION MEMORY · RANK #${activeSessionRank} OF ${attentionBars.length}`}
-          </span>
-          <span>{activeSessionOffset === 0 ? 'REFERENCE CLOSE (T-0)' : `LOOKBACK T-${activeSessionOffset}D`}</span>
-        </div>
-        <div className="cm-focus-template-title">
-          <strong>{activeSession?.date ?? `Session ${activeSessionIdx + 1}`}</strong>
-          <code className="cm-focus-template-code">
-            {stepDayNumber ? `Feeds T+${stepDayNumber} → 5D outlook` : 'Feeds 5D outlook'}
-          </code>
-        </div>
-        <div className="cm-focus-template-metrics">
-          <div>
-            <small>Attention Share</small>
-            <span>{(activeSessionWeight * 100).toFixed(1)}%</span>
+        <div className="cm-focus-attention-readout">
+          <div className="cm-focus-attention-readout__id">
+            <span className="cm-focus-attention-readout__rank">
+              {activeSessionRank <= PEAK_CHIP_LIMIT ? `#${activeSessionRank} Peak` : `#${activeSessionRank} / ${attentionBars.length}`}
+            </span>
+            <strong>{activeSession?.date ?? `Session ${activeSessionIdx + 1}`}</strong>
+            <code className="cm-focus-template-code">
+              {activeSessionOffset === 0 ? 'T-0' : `T-${activeSessionOffset}D`}
+            </code>
           </div>
-          <div>
-            <small>Relative Density</small>
-            <span>{`${activeRelativeMultiple.toFixed(2)}× avg`}</span>
-          </div>
-          <div>
-            <small>Window Span</small>
-            <span>{attentionBars.length} sessions</span>
+          <div className="cm-focus-attention-readout__stats">
+            <span>
+              <small>Share</small>
+              <strong>{(activeSessionWeight * 100).toFixed(1)}%</strong>
+            </span>
+            <span>
+              <small>vs avg</small>
+              <strong>{activeRelativeMultiple.toFixed(2)}×</strong>
+            </span>
           </div>
         </div>
       </div>
@@ -563,13 +558,12 @@ const AttentionProfileSection = memo(function AttentionProfileSection({
 
 /**
  * Raw TFT-ASRO model focus for the latest forecast: top VSN encoder features
- * with their recent five-session delta, the encoder-window attention profile
- * and the raw payload. `data === null` is the normal "not built yet" state;
+ * with their recent five-session delta and the encoder-window attention profile.
+ * `data === null` is the normal "not built yet" state;
  * `error` carries the load failure when one occurred.
  */
 export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { data: ExplainResponse | null; error?: string | null }) {
   const uid = useId().replace(/:/g, '');
-  const [jsonOpen, setJsonOpen] = useState(false);
 
   const topEncoder = useMemo(() => {
     const entries = Array.isArray(data?.variable_selection?.encoder)
@@ -586,7 +580,6 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
   const maxAttentionWeight = attentionBars.reduce((max, point) => Math.max(max, finiteNumber(point?.weight) ?? 0), 0);
   const totalAttentionWeight = attentionBars.reduce((sum, point) => sum + (finiteNumber(point?.weight) ?? 0), 0);
   const meanAttentionWeight = attentionBars.length > 0 ? (totalAttentionWeight > 0 ? totalAttentionWeight / attentionBars.length : 1 / attentionBars.length) : 0;
-  const rawJson = useMemo(() => (jsonOpen && data ? JSON.stringify(data, null, 2) : ''), [data, jsonOpen]);
 
   const rankedSessions = useMemo(() => {
     return attentionBars
@@ -672,13 +665,12 @@ export const ModelFocusPanel = memo(function ModelFocusPanel({ data, error }: { 
         />
       )}
 
-      {referenceDate && <p className="cm-chart-note">{horizonLabel ? `Reference ${referenceDate} · predicts ${horizonLabel}` : `Reference ${referenceDate}`}</p>}
-      {notes && <p className="cm-chart-note">{notes}</p>}
-
-      <details className="cm-data-disclosure" onToggle={(e) => setJsonOpen(e.currentTarget.open)}>
-        <summary>Raw JSON</summary>
-        {jsonOpen && <pre>{rawJson}</pre>}
-      </details>
+      {(referenceDate || notes) && (
+        <div className="cm-focus-meta-footer">
+          {referenceDate && <p className="cm-chart-note">{horizonLabel ? `Reference ${referenceDate} · predicts ${horizonLabel}` : `Reference ${referenceDate}`}</p>}
+          {notes && <p className="cm-chart-note">{notes}</p>}
+        </div>
+      )}
     </div>
   );
 });

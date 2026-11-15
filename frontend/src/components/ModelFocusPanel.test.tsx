@@ -88,11 +88,7 @@ describe('ModelFocusPanel', () => {
     expect(featureCard).toHaveTextContent('HG_F_close');
     expect(featureCard).toHaveTextContent('VSN ENCODER FOCUS');
 
-    const details = screen.getByText('Raw JSON').closest('details')!;
-    expect(details.querySelector('pre')).toBeNull();
-    details.open = true;
-    fireEvent(details, new Event('toggle'));
-    expect(details.querySelector('pre')?.textContent).toBe(JSON.stringify(payload, null, 2));
+    expect(screen.queryByText('Raw JSON')).not.toBeInTheDocument();
   });
 
   it('shows the empty state when the explanation is not available yet', () => {
