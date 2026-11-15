@@ -217,26 +217,26 @@ describe('cosmicVision Observatory Audio Engine', () => {
 
     expect(await playObservatoryChime()).toBe(true);
     randomSpy.mockRestore();
-    // Slender serene cosmic button click: gentle rising crystal glide (960 -> 1176 Hz) + F#6/A6 void halo
-    expect(spy.oscFrequencies).toContain(960);
-    expect(spy.oscFrequencies).toContain(1176);
-    expect(spy.oscFrequencies).toContain(1480);
-    expect(spy.oscFrequencies).toContain(1764);
+    // Slender serene cosmic button click: gentle rising crystal glide (880 -> 1046.5 Hz) + E6/G6 void halo
+    expect(spy.oscFrequencies).toContain(880);
+    expect(spy.oscFrequencies).toContain(1046.5);
+    expect(spy.oscFrequencies).toContain(1318.51);
+    expect(spy.oscFrequencies).toContain(1567.98);
 
     expect(await playObservatoryNotification()).toBe(true);
-    // Preserved two-step ascending din-DIN notification motif: D5 (520 -> 588 Hz) -> A5 (784 -> 882 Hz + 1764 Hz)
-    expect(spy.oscFrequencies).toContain(520);
-    expect(spy.oscFrequencies).toContain(588);
+    // Preserved two-step ascending din-DIN notification motif: C5 (466.16 -> 523.25 Hz) -> G5 (698.46 -> 784 Hz + 1567.98 Hz)
+    expect(spy.oscFrequencies).toContain(466.16);
+    expect(spy.oscFrequencies).toContain(523.25);
+    expect(spy.oscFrequencies).toContain(698.46);
     expect(spy.oscFrequencies).toContain(784);
-    expect(spy.oscFrequencies).toContain(882);
 
     vi.advanceTimersByTime(100);
     expect(await playObservatoryHover()).toBe(true);
-    // Warm D-Lydian lowpass breath + highshelf attenuation matching milky-way-observatory.wav
+    // Warm Fmaj9/Cmaj9 lowpass breath + highshelf attenuation matching milky-way-observatory.wav
     expect(spy.filtersCreated.some((f) => f.type === 'lowpass' && f.freq === 950)).toBe(true);
     expect(spy.filtersCreated.some((f) => f.type === 'highshelf' && f.freq === 2800)).toBe(true);
-    expect(spy.oscFrequencies).toContain(220.5);
-    expect(spy.oscFrequencies).toContain(294);
+    expect(spy.oscFrequencies).toContain(196);
+    expect(spy.oscFrequencies).toContain(261.63);
   });
 
   it('plays distinct particle transition, Cuprum chirp, and Cuprum button tap sounds cleanly', async () => {

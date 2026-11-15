@@ -107,14 +107,14 @@ function startProceduralLanding(
   const now = ctx.currentTime;
   const oscNear = ctx.createOscillator();
   oscNear.type = 'sine';
-  oscNear.frequency.setValueAtTime(220, now);
+  oscNear.frequency.setValueAtTime(261.63, now);
   oscNear.connect(nearGain);
   oscNear.start(now);
   landingFallbackNear = oscNear;
 
   const oscDeep = ctx.createOscillator();
   oscDeep.type = 'sine';
-  oscDeep.frequency.setValueAtTime(110, now);
+  oscDeep.frequency.setValueAtTime(87.31, now);
   oscDeep.connect(deepGain);
   oscDeep.start(now);
   landingFallbackDeep = oscDeep;

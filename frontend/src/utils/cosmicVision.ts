@@ -25,7 +25,7 @@ const AUDIO_URLS = {
 type AudioCacheKey = keyof typeof AUDIO_URLS;
 type OneShotCooldownKey = Exclude<AudioCacheKey, 'drone'>;
 
-const DRONE_GAIN = 0.16;
+const DRONE_GAIN = 0.19;
 const HOVER_GAIN = 0.15;
 const CHIME_GAIN = 0.25;
 const NOTIFICATION_GAIN = 0.18;
@@ -363,7 +363,7 @@ class ObservatoryAudioEngine {
 
     const osc1 = ctx.createOscillator();
     osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(73.5, now);
+    osc1.frequency.setValueAtTime(87.31, now);
     const osc1Gain = ctx.createGain();
     osc1Gain.gain.setValueAtTime(0.42, now);
     osc1.connect(osc1Gain);
@@ -373,7 +373,7 @@ class ObservatoryAudioEngine {
 
     const osc2 = ctx.createOscillator();
     osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(110.25, now);
+    osc2.frequency.setValueAtTime(130.81, now);
     const osc2Gain = ctx.createGain();
     osc2Gain.gain.setValueAtTime(0.28, now);
     osc2.connect(osc2Gain);
@@ -529,14 +529,14 @@ class ObservatoryAudioEngine {
     airEnv.gain.exponentialRampToValueAtTime(0.14, start + 0.09);
     airEnv.gain.exponentialRampToValueAtTime(0.0001, start + 0.40);
 
-    // Slow, spacey D-Lydian cosmic pad voices matching milky-way-observatory.wav
+    // Slow, spacey Fmaj9/Cmaj9 cosmic pad voices matching milky-way-observatory.wav
     const rootOsc = ctx.createOscillator();
     rootOsc.type = 'sine';
-    rootOsc.frequency.setValueAtTime(220.5, start);
+    rootOsc.frequency.setValueAtTime(196, start);
 
     const octaveOsc = ctx.createOscillator();
     octaveOsc.type = 'sine';
-    octaveOsc.frequency.setValueAtTime(294, start);
+    octaveOsc.frequency.setValueAtTime(261.63, start);
 
     const padEnv = ctx.createGain();
     padEnv.gain.setValueAtTime(0.0001, start);
@@ -755,9 +755,9 @@ class ObservatoryAudioEngine {
         choke: true,
         fallback: (ctx, gain) =>
           this.playProceduralVoices(ctx, gain, [
-            ['sine', 960 * rate, 1176 * rate, 0.026, 0.16, 0.011, 0.24, 0.25],
-            ['sine', 1480 * rate, 1480 * rate, 0.02, 0.06, 0.014, 0.3, 0.31, 0.008],
-            ['sine', 1764 * rate, 1764 * rate, 0.02, 0.035, 0.018, 0.31, 0.32, 0.012],
+            ['sine', 880 * rate, 1046.5 * rate, 0.026, 0.16, 0.012, 0.24, 0.25],
+            ['sine', 1318.51 * rate, 1318.51 * rate, 0.02, 0.06, 0.014, 0.3, 0.31, 0.008],
+            ['sine', 1567.98 * rate, 1567.98 * rate, 0.02, 0.035, 0.018, 0.31, 0.32, 0.012],
           ]),
       },
       options,
@@ -775,9 +775,9 @@ class ObservatoryAudioEngine {
         maxVolume: 0.45,
         fallback: (ctx, gain) =>
           this.playProceduralVoices(ctx, gain, [
-            ['sine', 520, 588, 0.014, 0.12, 0.007, 0.11, 0.12],
-            ['sine', 784, 882, 0.074, 0.28, 0.009, 0.255, 0.265, 0.058],
-            ['sine', 1568, 1764, 0.074, 0.07, 0.009, 0.22, 0.23, 0.058],
+            ['sine', 466.16, 523.25, 0.014, 0.12, 0.008, 0.11, 0.12],
+            ['sine', 698.46, 784, 0.074, 0.28, 0.009, 0.255, 0.265, 0.058],
+            ['sine', 1396.91, 1567.98, 0.074, 0.07, 0.009, 0.22, 0.23, 0.058],
           ]),
       },
       options,
@@ -795,8 +795,8 @@ class ObservatoryAudioEngine {
         maxVolume: 0.65,
         fallback: (ctx, gain) =>
           this.playProceduralVoices(ctx, gain, [
-            ['sine', 147, 294, 1.35, 0.2, 1.35, 2.35, 2.4],
-            ['triangle', 220.5, 441, 1.35, 0.2, 1.35, 2.35, 2.4],
+            ['sine', 130.81, 261.63, 1.35, 0.2, 1.35, 2.35, 2.4],
+            ['triangle', 196, 392, 1.35, 0.2, 1.35, 2.35, 2.4],
           ]),
       },
       options,
@@ -814,8 +814,8 @@ class ObservatoryAudioEngine {
         maxVolume: 0.6,
         fallback: (ctx, gain) =>
           this.playProceduralVoices(ctx, gain, [
-            ['sine', 588, 294, 1.35, 0.16, 0.05, 1.48, 1.5],
-            ['triangle', 441, 220.5, 1.35, 0.16, 0.05, 1.48, 1.5],
+            ['sine', 523.25, 261.63, 1.35, 0.16, 0.05, 1.48, 1.5],
+            ['triangle', 392, 196, 1.35, 0.16, 0.05, 1.48, 1.5],
           ]),
       },
       options,
@@ -836,7 +836,7 @@ class ObservatoryAudioEngine {
         playbackRate: rate,
         requireActivation: true,
         fallback: (ctx, gain) =>
-          this.playProceduralVoices(ctx, gain, [['triangle', 485 * rate, 542 * rate, 0.032, 0.28, 0.006, 0.058, 0.062]]),
+          this.playProceduralVoices(ctx, gain, [['triangle', 440 * rate, 523.25 * rate, 0.032, 0.28, 0.006, 0.058, 0.062]]),
       },
       options,
     );
@@ -853,8 +853,8 @@ class ObservatoryAudioEngine {
         maxVolume: 0.55,
         fallback: (ctx, gain) =>
           this.playProceduralVoices(ctx, gain, [
-            ['triangle', 392, 507, 0.06, 0.34, 0.015, 0.095, 0.105],
-            ['sine', 588, 670, 0.16, 0.42, 0.016, 0.23, 0.24, 0.074],
+            ['triangle', 392, 523.25, 0.06, 0.34, 0.015, 0.095, 0.105],
+            ['sine', 587.33, 659.25, 0.16, 0.42, 0.016, 0.23, 0.24, 0.074],
           ]),
       },
       options,
@@ -871,7 +871,7 @@ class ObservatoryAudioEngine {
         defaultVolume: CUPRUM_TAP_GAIN,
         maxVolume: 0.5,
         fallback: (ctx, gain) =>
-          this.playProceduralVoices(ctx, gain, [['triangle', 740, 588, 0.025, 0.42, 0.005, 0.105, 0.115]]),
+          this.playProceduralVoices(ctx, gain, [['triangle', 784, 523.25, 0.025, 0.42, 0.005, 0.105, 0.115]]),
       },
       options,
     );
@@ -1019,7 +1019,7 @@ export function stopObservatoryAmbient(): void {
 }
 
 /**
- * Play the slow, spacey D-Lydian pad breath (`observatory-hover.wav`) on button hover.
+ * Play the slow, spacey Fmaj9/Cmaj9 pad breath (`observatory-hover.wav`) on button hover.
  */
 export function playObservatoryHover(options?: { force?: boolean; volume?: number }): Promise<boolean> {
   return sharedAudioEngine.playHover(options);
