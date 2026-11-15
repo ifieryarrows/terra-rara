@@ -10,13 +10,45 @@
   pointer-events: auto;
 }
 
-.cm-logo-transition__backdrop {
+.cm-logo-transition__snapshot {
   position: absolute;
   z-index: 1;
   inset: 0;
-  background: var(--cm-bg, #060a11);
-  opacity: .28;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(1);
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+.cm-logo-transition__snapshot[data-captured="true"] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.cm-logo-transition__snapshot-atmo,
+.cm-logo-transition__snapshot-particles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.cm-logo-transition__snapshot-particles {
+  z-index: 5;
+  display: block;
+  pointer-events: none;
+}
+
+.cm-logo-transition__backdrop {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(2, 4, 9, .44) 0%, rgba(2, 4, 9, .14) 34%, transparent 62%);
+  opacity: 0;
   animation: cm-logo-transition-cover 720ms cubic-bezier(.22, 1, .36, 1) both;
+  pointer-events: none;
 }
 
 .cm-logo-transition > .cm-terra-atmosphere--transition {
@@ -29,12 +61,12 @@
 
 @keyframes cm-logo-transition-cover {
   from { opacity: 0; }
-  to { opacity: .28; }
+  to { opacity: .85; }
 }
 
 .cm-logo-transition__particles {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   inset: 0;
   display: block;
   width: 100%;
@@ -46,7 +78,7 @@
 
 .cm-logo-transition__glow {
   position: absolute;
-  z-index: 3;
+  z-index: 4;
   top: 50%;
   left: 50%;
   width: min(34rem, 78vw, 70vh);
@@ -61,7 +93,7 @@
 
 .cm-logo-transition__mark {
   position: relative;
-  z-index: 4;
+  z-index: 5;
   opacity: 0;
   transform: scale(.94);
   transition: opacity 280ms ease, transform 560ms cubic-bezier(.22, 1, .36, 1);
@@ -92,10 +124,16 @@
   transition-duration: 220ms;
 }
 
+.cm-logo-transition--release .cm-logo-transition__snapshot[data-captured="true"] {
+  opacity: 0;
+  transform: scale(1.032);
+  transition: opacity 1.38s cubic-bezier(.38, .04, .22, 1), transform 1.46s cubic-bezier(.22, 1, .36, 1);
+}
+
 .cm-logo-transition--release .cm-logo-transition__backdrop {
   animation: none;
-  opacity: .12;
-  transition: opacity 1.52s ease-out;
+  opacity: 0;
+  transition: opacity .82s ease-out;
 }
 
 .cm-logo-transition--release .cm-logo-transition__glow {
@@ -115,6 +153,12 @@
   pointer-events: none;
 }
 
+.cm-logo-transition--reveal .cm-logo-transition__snapshot {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 280ms ease;
+}
+
 .cm-logo-transition--reveal .cm-logo-transition__backdrop {
   animation: none;
   opacity: 0;
@@ -131,6 +175,13 @@
   animation-duration: 160ms;
 }
 
+.cm-logo-transition--reduced .cm-logo-transition__snapshot[data-captured="true"],
+.cm-logo-transition--reduced.cm-logo-transition--release .cm-logo-transition__snapshot[data-captured="true"],
+.cm-logo-transition--reduced.cm-logo-transition--reveal .cm-logo-transition__snapshot {
+  transform: none;
+  transition-duration: 120ms;
+}
+
 .cm-logo-transition--reduced .cm-logo-transition__mark,
 .cm-logo-transition--reduced .cm-logo-transition__glow,
 .cm-logo-transition--reduced .cm-logo-transition__particles {
@@ -145,9 +196,60 @@
   transition-duration: 120ms;
 }
 
+@keyframes cm-route-depart-clear {
+  to { opacity: 0; }
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing:not(.cm-landing--cinematic) > main, .cm-route-loading) {
+  animation: cm-route-depart-clear 320ms ease-out both;
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] .cm-landing.cm-landing--cinematic > main {
+  animation: none;
+  opacity: 1;
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] .cm-landing.cm-landing--cinematic :is(.cm-cinematic-copy, .cm-cinematic-entry-layer, .cm-cosmic-hud-container, .cm-cinematic-symbol, .cm-dashboard-composition, .cm-background-typography, .cm-cinematic-progress) {
+  animation: cm-route-depart-clear 320ms ease-out both;
+}
+
+/* Hand off live Landing ParticleWorld cleanly to the 3D Galaxy -> Logo vortex field. */
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"][data-cm-galaxy-active="true"] .cm-landing .cm-particle-world {
+  opacity: 0;
+  transition: opacity 90ms ease-out;
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"], [data-cm-transition-phase="release"], [data-cm-transition-phase="reduced"]) .cm-landing.cm-landing--cinematic > main {
+  opacity: 1;
+  pointer-events: none;
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"], [data-cm-transition-phase="release"], [data-cm-transition-phase="reduced"]) .cm-landing.cm-landing--cinematic :is(.cm-cinematic-copy, .cm-cinematic-entry-layer, .cm-cosmic-hud-container, .cm-cinematic-symbol, .cm-dashboard-composition, .cm-background-typography, .cm-cinematic-progress) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* On reverse transitions (Dashboard -> Landing), keep Landing ParticleWorld hidden while the logo hovers and unfurl it in seamlessly as the logo particles disperse outward. */
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"]:is([data-cm-transition-phase="scatter"], [data-cm-transition-phase="assemble"], [data-cm-transition-phase="hold"]) .cm-landing.cm-landing--cinematic .cm-particle-world {
+  opacity: 0;
+}
+
+html[data-cm-logo-transition="true"][data-cm-route-transition="arriving"][data-cm-transition-phase="release"] .cm-landing.cm-landing--cinematic .cm-particle-world {
+  opacity: 1;
+  transition: opacity 760ms ease 560ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cm-logo-transition__backdrop { animation-duration: 160ms; }
+  .cm-logo-transition__snapshot {
+    transform: none !important;
+    transition-duration: 120ms !important;
+  }
   .cm-logo-transition__mark,
   .cm-logo-transition__glow,
   .cm-logo-transition__particles { transition-duration: 120ms; }
+  html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] :is(.cm-workspace-header, .cm-workspace-main, .cm-workspace-footer, .cm-landing:not(.cm-landing--cinematic) > main, .cm-route-loading),
+  html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] .cm-landing.cm-landing--cinematic :is(.cm-cinematic-copy, .cm-cinematic-entry-layer, .cm-cosmic-hud-container, .cm-cinematic-symbol, .cm-dashboard-composition, .cm-background-typography, .cm-cinematic-progress) {
+    animation-duration: 140ms;
+  }
 }

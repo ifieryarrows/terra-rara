@@ -1,10 +1,15 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import {
   advanceCinematicEntry,
   CINEMATIC_ENTRY_RESET,
   CINEMATIC_ENTRY_TRIGGER,
 } from '../features/landing/cinematic-entry';
-import { advanceLogoTransition, INITIAL_LOGO_TRANSITION_STATE } from '../components/ui/LogoTransition';
+import {
+  advanceLogoTransition,
+  captureOutgoingBackdrop,
+  INITIAL_LOGO_TRANSITION_STATE,
+} from '../components/ui/LogoTransition';
 import { createCuprumRuntime, resolveBearExhaustionStage } from './cuprumDialogue';
 import { advanceSpeechBubble, createInitialSpeechBubbleState } from '../components/CuprumSpeechBubble';
 import { advanceCuprumSession, INITIAL_CUPRUM_SESSION_STATE } from '../components/CuprumCompanionPanel';
@@ -85,6 +90,67 @@ describe('Frontend explicit state machines', () => {
         reducedMotion: true,
       });
       expect(reduced.phase).toBe('hold');
+    });
+
+    it('captures the outgoing landing atmosphere and dispatches particle snapshot before navigation', () => {
+      document.body.innerHTML = `
+        <div class="cm-landing">
+          <div class="cm-global-atmosphere cm-terra-atmosphere--landing-cinematic">
+            <div class="cm-atmosphere-base" style="background-color: rgb(0, 0, 0);"></div>
+            <div class="cm-atmosphere-glow cm-atmosphere-glow--copper" style="opacity: 0.03;"></div>
+            <div class="cm-atmosphere-glow cm-atmosphere-glow--blue" style="opacity: 0.03;"></div>
+            <div class="cm-atmosphere-band" style="opacity: 0;"></div>
+            <div class="cm-atmosphere-void" style="background-color: rgb(0, 0, 0); opacity: 1;"></div>
+            <div class="cm-atmosphere-stars" style="opacity: 0.56;"></div>
+          </div>
+          <canvas class="cm-particle-world" data-renderer="webgl2"></canvas>
+        </div>
+        <div id="snap-host" class="cm-logo-transition__snapshot">
+          <div class="cm-global-atmosphere cm-logo-transition__snapshot-atmo">
+            <div class="cm-atmosphere-base"></div>
+            <div class="cm-atmosphere-glow cm-atmosphere-glow--copper"></div>
+            <div class="cm-atmosphere-glow cm-atmosphere-glow--blue"></div>
+            <div class="cm-atmosphere-band"></div>
+            <div class="cm-atmosphere-void"></div>
+            <div class="cm-atmosphere-stars"><canvas class="cm-atmosphere-starfield"></canvas></div>
+            <div class="cm-atmosphere-grain"></div>
+          </div>
+          <canvas class="cm-logo-transition__snapshot-particles"></canvas>
+        </div>
+      `;
+
+      let snapshotRequested = false;
+      const onSnapshot = () => {
+        snapshotRequested = true;
+      };
+      window.addEventListener('cm:particle-snapshot', onSnapshot);
+
+      const host = document.getElementById('snap-host') as HTMLDivElement;
+      captureOutgoingBackdrop(host);
+
+      window.removeEventListener('cm:particle-snapshot', onSnapshot);
+
+      expect(snapshotRequested).toBe(true);
+      expect(host.dataset.captured).toBe('true');
+      expect(host.style.backgroundColor).toBe('rgb(0, 0, 0)');
+      const snapshotAtmo = host.querySelector('.cm-logo-transition__snapshot-atmo');
+      expect(snapshotAtmo?.classList.contains('cm-terra-atmosphere--landing-cinematic')).toBe(true);
+      expect(
+        (host.querySelector('.cm-atmosphere-void') as HTMLElement | null)?.style.opacity,
+      ).toBe('1');
+
+      // When GalaxyTransitionField has absorbed live galaxy particles, snapshot omits duplicate static galaxy
+      snapshotRequested = false;
+      delete host.dataset.captured;
+      document.documentElement.dataset.cmGalaxyActive = 'true';
+      window.addEventListener('cm:particle-snapshot', onSnapshot);
+      captureOutgoingBackdrop(host);
+      window.removeEventListener('cm:particle-snapshot', onSnapshot);
+      delete document.documentElement.dataset.cmGalaxyActive;
+
+      expect(snapshotRequested).toBe(false);
+      expect(host.dataset.captured).toBe('true');
+      document.body.innerHTML = '';
     });
   });
 

@@ -4,25 +4,14 @@ import { useReducedMotion } from 'framer-motion';
 import { BrandMark } from './BrandMark';
 import { playObservatoryDisperse, playObservatoryTransition } from '../../utils/cosmicVision';
 
-const TransitionAtmosphere = lazy(() => import('./TerraAtmosphere').then(module => ({ default: module.TerraAtmosphere })));
+const preloadAtmosphere = () => import('./TerraAtmosphere');
+const TransitionAtmosphere = lazy(() => preloadAtmosphere().then(module => ({ default: module.TerraAtmosphere })));
+const preloadGalaxyField = () => import('./GalaxyTransitionField');
+const GalaxyTransitionField = lazy(preloadGalaxyField);
 const transitionStylesReady = import('./LogoTransition.css').then(() => true, () => false);
 
 type TransitionPhase = 'scatter' | 'assemble' | 'hold' | 'release' | 'reveal';
 type TransitionOrigin = { left: number; top: number; width: number; height: number };
-type Particle = {
-  targetX: number;
-  targetY: number;
-  sourceX: number;
-  sourceY: number;
-  scatterX: number;
-  scatterY: number;
-  size: number;
-  alpha: number;
-  color: string;
-  delay: number;
-  twist: number;
-  rotation: number;
-};
 
 const SCATTER_MS = 420;
 const ASSEMBLE_MS = 1_520;
@@ -35,210 +24,6 @@ const ABOUT_REVEAL_MS = 1_200;
 const DASHBOARD_READY_TIMEOUT_MS = 15_000;
 const LOGO_SIZE = 224;
 const ROUTE_TRANSITION_MIN_HEIGHT = '--cm-route-transition-min-height';
-
-function createRandom(seed: number) {
-  let value = seed >>> 0;
-  return () => {
-    value = (value * 1_664_525 + 1_013_904_223) >>> 0;
-    return value / 4_294_967_296;
-  };
-}
-
-function cubicPoint(
-  p0: readonly [number, number],
-  p1: readonly [number, number],
-  p2: readonly [number, number],
-  p3: readonly [number, number],
-  t: number,
-): [number, number] {
-  const u = 1 - t;
-  const tt = t * t;
-  const uu = u * u;
-  const uuu = uu * u;
-  const ttt = tt * t;
-  return [
-    uuu * p0[0] + 3 * uu * t * p1[0] + 3 * u * tt * p2[0] + ttt * p3[0],
-    uuu * p0[1] + 3 * uu * t * p1[1] + 3 * u * tt * p2[1] + ttt * p3[1],
-  ];
-}
-
-function createParticles(width: number, height: number, origin: TransitionOrigin | null): Particle[] {
-  const random = createRandom(0x7e22a4);
-  const size = Math.min(LOGO_SIZE, width * .7, height * .46);
-  const scale = size / 48;
-  const centerX = width / 2;
-  const centerY = height / 2;
-  const source = origin && origin.width > 0 && origin.height > 0
-    ? origin
-    : { left: centerX - 18, top: centerY - 18, width: 36, height: 36 };
-  const particles: Particle[] = [];
-
-  const addParticle = (x: number, y: number, color: string, ring = false) => {
-    particles.push({
-      targetX: centerX + (x - 24) * scale,
-      targetY: centerY + (y - 24) * scale,
-      sourceX: source.left + random() * source.width,
-      sourceY: source.top + random() * source.height,
-      scatterX: random() * width,
-      scatterY: random() * height,
-      size: ring ? .85 + random() * .65 : .95 + random() * .85,
-      alpha: ring ? .64 + random() * .3 : .7 + random() * .28,
-      color,
-      delay: random() * .24,
-      twist: (random() - .5) * 32,
-      rotation: random() * Math.PI,
-    });
-  };
-
-  // Copper broken orbital ring matching BrandMark RING_TOP (2.634 -> 6.223 rad) & RING_BOT (0.392 -> 2.122 rad).
-  for (let index = 0; index < 54; index += 1) {
-    const t = index / 53;
-    const angle = 2.634 + t * (Math.PI * 2 - 0.060 - 2.634);
-    const radius = 14.8 + (random() - .5) * 1.4;
-    const copper = random() < .28 ? '#f7dcb8' : random() < .72 ? '#dda174' : '#b26b3e';
-    addParticle(24 + Math.cos(angle) * radius, 24 + Math.sin(angle) * radius, copper, true);
-  }
-  for (let index = 0; index < 26; index += 1) {
-    const t = index / 25;
-    const angle = 0.392 + t * (2.122 - 0.392);
-    const radius = 14.8 + (random() - .5) * 1.4;
-    const copper = random() < .24 ? '#f7dcb8' : random() < .7 ? '#dda174' : '#b26b3e';
-    addParticle(24 + Math.cos(angle) * radius, 24 + Math.sin(angle) * radius, copper, true);
-  }
-
-  // Sweeping Galactic Silver-Blue orbital swoosh (SWOOSH_MAIN + SWOOSH_ECHO).
-  for (let index = 0; index < 64; index += 1) {
-    const t = 0.04 + (index / 63) * 0.92;
-    const top = cubicPoint([2.20, 30.80], [17.03, 33.75], [30.56, 31.83], [45.80, 19.80], t);
-    const bot = cubicPoint([45.80, 19.80], [32.40, 32.44], [16.26, 38.90], [2.20, 30.80], 1 - t);
-    const mix = random();
-    const blue = random() < .3 ? '#edf4fe' : random() < .75 ? '#bdd2f1' : '#8eadde';
-    addParticle(top[0] + (bot[0] - top[0]) * mix, top[1] + (bot[1] - top[1]) * mix, blue);
-  }
-  for (let index = 0; index < 28; index += 1) {
-    const t = 0.06 + (index / 27) * 0.88;
-    const top = cubicPoint([7.40, 33.80], [18.96, 37.63], [30.40, 35.05], [42.60, 24.40], t);
-    const bot = cubicPoint([42.60, 24.40], [30.91, 35.10], [18.72, 39.11], [7.40, 33.80], 1 - t);
-    const mix = random();
-    addParticle(top[0] + (bot[0] - top[0]) * mix, top[1] + (bot[1] - top[1]) * mix, random() < .4 ? '#bdd2f1' : '#8eadde');
-  }
-
-  return particles;
-}
-
-function clamp01(value: number) {
-  return Math.max(0, Math.min(1, value));
-}
-
-function easeInOutCubic(value: number) {
-  return value < .5 ? 4 * value ** 3 : 1 - (-2 * value + 2) ** 3 / 2;
-}
-
-function easeOutCubic(value: number) {
-  return 1 - (1 - value) ** 3;
-}
-
-function LogoParticleField({ phase, reducedMotion, origin }: { phase: TransitionPhase; reducedMotion: boolean; origin: TransitionOrigin | null }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext('2d', { alpha: true });
-    if (!canvas || !context || reducedMotion) return;
-
-    let width = 1;
-    let height = 1;
-    let pixelRatio = 1;
-    let frame = 0;
-    let phaseStartedAt = performance.now();
-    let particles: Particle[] = [];
-
-    const resize = () => {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-      canvas.width = Math.max(1, Math.round(width * pixelRatio));
-      canvas.height = Math.max(1, Math.round(height * pixelRatio));
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      particles = createParticles(width, height, origin);
-    };
-
-    const draw = (now: number) => {
-      context.clearRect(0, 0, width, height);
-      const elapsed = now - phaseStartedAt;
-      const releaseProgress = easeInOutCubic(clamp01(elapsed / RELEASE_MS));
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const formProgress = easeInOutCubic(clamp01(elapsed / ASSEMBLE_MS));
-      const rotation = phase === 'assemble' ? (1 - formProgress) * .68 + Math.sin(formProgress * Math.PI) * .055 : 0;
-      const cos = Math.cos(rotation);
-      const sin = Math.sin(rotation);
-
-      if (phase === 'hold' || phase === 'reveal') return;
-
-      for (const particle of particles) {
-        let x = particle.sourceX;
-        let y = particle.sourceY;
-        let alpha = particle.alpha;
-        let size = particle.size;
-
-        if (phase === 'scatter') {
-          const progress = easeOutCubic(clamp01(elapsed / SCATTER_MS));
-          x += (particle.scatterX - x) * progress;
-          y += (particle.scatterY - y) * progress;
-          x += Math.sin(progress * Math.PI + particle.rotation) * particle.twist * .18;
-          y += Math.cos(progress * Math.PI + particle.rotation) * particle.twist * .18;
-        } else if (phase === 'assemble') {
-          const localProgress = clamp01((clamp01(elapsed / ASSEMBLE_MS) - particle.delay) / (1 - particle.delay));
-          const eased = easeInOutCubic(localProgress);
-          const offsetX = particle.targetX - centerX;
-          const offsetY = particle.targetY - centerY;
-          const targetX = centerX + offsetX * cos - offsetY * sin;
-          const targetY = centerY + offsetX * sin + offsetY * cos;
-          const arc = Math.sin(localProgress * Math.PI) * particle.twist * (1 - localProgress * .25);
-          x = particle.scatterX + (targetX + arc - particle.scatterX) * eased;
-          y = particle.scatterY + (targetY - arc * .55 - particle.scatterY) * eased;
-          x += Math.sin(now * .0012 + particle.rotation) * (1 - eased) * 2.4;
-          y += Math.cos(now * .0011 + particle.rotation * 1.3) * (1 - eased) * 2.4;
-          alpha *= .22 + eased * .78;
-        } else if (phase === 'release') {
-          const localProgress = clamp01((releaseProgress - particle.delay * .32) / (1 - particle.delay * .32));
-          const eased = easeInOutCubic(localProgress);
-          const arc = Math.sin(localProgress * Math.PI) * particle.twist * 1.2;
-          x = particle.targetX + (particle.scatterX - particle.targetX) * eased + arc;
-          y = particle.targetY + (particle.scatterY - particle.targetY) * eased - arc * .6;
-          alpha *= clamp01((1 - localProgress) / .3);
-          size *= 1 + localProgress * .28;
-        } else {
-          continue;
-        }
-
-        context.globalAlpha = Math.max(0, alpha);
-        context.fillStyle = particle.color;
-        context.beginPath();
-        context.ellipse(x, y, size, size * .72, particle.rotation, 0, Math.PI * 2);
-        context.fill();
-      }
-      context.globalAlpha = 1;
-
-      frame = window.requestAnimationFrame(draw);
-    };
-
-    resize();
-    window.addEventListener('resize', resize, { passive: true });
-    frame = window.requestAnimationFrame(now => {
-      phaseStartedAt = now;
-      draw(now);
-    });
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, [phase, reducedMotion, origin]);
-
-  return reducedMotion ? null : <canvas ref={canvasRef} className="cm-logo-transition__particles" aria-hidden="true"/>;
-}
 
 const TransitionContext = createContext<((to?: string, origin?: TransitionOrigin) => void) | null>(null);
 
@@ -291,14 +76,123 @@ export function advanceLogoTransition(
   }
 }
 
+const SNAPSHOT_ATMO_VARIANTS = [
+  'cm-terra-atmosphere--landing-cinematic',
+  'cm-terra-atmosphere--landing-static',
+  'cm-terra-atmosphere--workspace',
+] as const;
+
+export function captureOutgoingBackdrop(host: HTMLDivElement): void {
+  const sourceAtmo = document.querySelector<HTMLElement>(
+    '.cm-landing .cm-global-atmosphere, .cm-workspace .cm-global-atmosphere',
+  );
+  const snapshotAtmo = host.querySelector<HTMLElement>('.cm-logo-transition__snapshot-atmo');
+  const snapshotParticles = host.querySelector<HTMLCanvasElement>('.cm-logo-transition__snapshot-particles');
+
+  const bodyBg = getComputedStyle(document.body).backgroundColor;
+  let fallbackBg = bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent' ? bodyBg : '#060a11';
+
+  if (snapshotAtmo) {
+    for (const variant of SNAPSHOT_ATMO_VARIANTS) {
+      snapshotAtmo.classList.toggle(variant, Boolean(sourceAtmo?.classList.contains(variant)));
+    }
+
+    if (sourceAtmo) {
+      const copyLayer = (
+        selector: string,
+        props: ReadonlyArray<'backgroundColor' | 'backgroundImage' | 'opacity' | 'transform'>,
+      ): CSSStyleDeclaration | null => {
+        const src = sourceAtmo.querySelector<HTMLElement>(selector);
+        const dst = snapshotAtmo.querySelector<HTMLElement>(selector);
+        if (!dst) return null;
+        if (!src) {
+          dst.style.opacity = '0';
+          return null;
+        }
+        const computed = getComputedStyle(src);
+        for (const prop of props) {
+          const val = computed[prop];
+          if (val) dst.style[prop] = val;
+        }
+        return computed;
+      };
+
+      const baseComputed = copyLayer('.cm-atmosphere-base', ['backgroundColor', 'backgroundImage']);
+      copyLayer('.cm-atmosphere-glow--copper', ['opacity', 'transform']);
+      copyLayer('.cm-atmosphere-glow--blue', ['opacity', 'transform']);
+      copyLayer('.cm-atmosphere-band', ['opacity', 'transform']);
+      const voidComputed = copyLayer('.cm-atmosphere-void', ['backgroundColor', 'opacity']);
+      copyLayer('.cm-atmosphere-stars', ['opacity', 'transform']);
+
+      if (voidComputed && Number.parseFloat(voidComputed.opacity) >= 0.98) {
+        fallbackBg = voidComputed.backgroundColor || '#000000';
+      } else if (baseComputed?.backgroundColor && baseComputed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+        fallbackBg = baseComputed.backgroundColor;
+      }
+
+      const sourceStars = sourceAtmo.querySelector<HTMLCanvasElement>('.cm-atmosphere-starfield');
+      const targetStars = snapshotAtmo.querySelector<HTMLCanvasElement>('.cm-atmosphere-starfield');
+      if (sourceStars && targetStars && sourceStars.width > 0 && sourceStars.height > 0) {
+        targetStars.width = sourceStars.width;
+        targetStars.height = sourceStars.height;
+        const starCtx = get2dContext(targetStars);
+        if (starCtx) {
+          starCtx.clearRect(0, 0, targetStars.width, targetStars.height);
+          starCtx.drawImage(sourceStars, 0, 0);
+        }
+      }
+    }
+  }
+
+  host.style.backgroundColor = fallbackBg;
+
+  if (snapshotParticles) {
+    snapshotParticles.style.opacity = '0';
+    if (snapshotParticles.width > 0 && snapshotParticles.height > 0) {
+      get2dContext(snapshotParticles)?.clearRect(0, 0, snapshotParticles.width, snapshotParticles.height);
+    }
+    if (!document.documentElement.dataset.cmGalaxyActive && document.querySelector('.cm-landing .cm-particle-world[data-renderer]')) {
+      window.dispatchEvent(new CustomEvent('cm:particle-snapshot', {
+        detail: {
+          drawTo: (sourceCanvas: HTMLCanvasElement) => {
+            if (sourceCanvas.width <= 0 || sourceCanvas.height <= 0) return;
+            snapshotParticles.width = sourceCanvas.width;
+            snapshotParticles.height = sourceCanvas.height;
+            const ctx = get2dContext(snapshotParticles);
+            if (ctx) {
+              ctx.clearRect(0, 0, snapshotParticles.width, snapshotParticles.height);
+              ctx.drawImage(sourceCanvas, 0, 0);
+              snapshotParticles.style.opacity = '1';
+            }
+          },
+        },
+      }));
+    }
+  }
+
+  host.dataset.captured = 'true';
+}
+
+function get2dContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) return null;
+  try {
+    return canvas.getContext('2d');
+  } catch {
+    return null;
+  }
+}
+
 export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { pathname, key } = useLocation();
   const reducedMotionPreference = useReducedMotion();
   const [machine, setMachine] = useState<LogoTransitionState>(INITIAL_LOGO_TRANSITION_STATE);
-  const { active, phase, reducedMotion, origin } = machine;
+  const [targetKind, setTargetKind] = useState<'dashboard' | 'landing'>('dashboard');
+  const { active, phase, reducedMotion } = machine;
   const started = useRef(false);
   const navigationStarted = useRef(false);
+  const snapshotCaptured = useRef(false);
+  const snapshotHostRef = useRef<HTMLDivElement>(null);
   const destination = useRef('/dashboard');
   const previousPathnameRef = useRef(pathname);
   const previousLocationKey = useRef(key);
@@ -307,13 +201,24 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   const startTransition = useCallback((to = '/dashboard', source?: TransitionOrigin) => {
     if (started.current) return;
     started.current = true;
+    snapshotCaptured.current = false;
+    const nextTargetKind = canonicalPath(new URL(to, window.location.origin).pathname) === '/dashboard'
+      ? 'dashboard'
+      : 'landing';
+    setTargetKind(nextTargetKind);
+    if (nextTargetKind === 'dashboard') {
+      void preloadAtmosphere();
+    }
     void playObservatoryTransition({ volume: 0.44 });
     if (genericRevealTimer.current !== undefined) {
       window.clearTimeout(genericRevealTimer.current);
       genericRevealTimer.current = undefined;
     }
     delete document.documentElement.dataset.cmTabTransition;
-    void transitionStylesReady.then(stylesReady => {
+    void Promise.all([
+      transitionStylesReady,
+      reducedMotionPreference ? Promise.resolve(true) : preloadGalaxyField().then(() => true, () => false),
+    ]).then(([stylesReady]) => {
       if (!stylesReady) {
         started.current = false;
         navigate(to, { preventScrollReset: true });
@@ -345,6 +250,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
     delete root.dataset.cmTransitionPhase;
     delete root.dataset.cmRouteTransition;
     delete root.dataset.cmLogoTransition;
+    delete root.dataset.cmGalaxyActive;
   }, []);
 
   useLayoutEffect(() => {
@@ -373,12 +279,20 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       }
     }
     if (active) {
+      if (phase === 'hold' && !snapshotCaptured.current) {
+        snapshotCaptured.current = true;
+        if (snapshotHostRef.current) {
+          captureOutgoingBackdrop(snapshotHostRef.current);
+        }
+      }
       root.dataset.cmTransitionPhase = reducedMotion ? 'reduced' : phase;
       return;
     }
+    snapshotCaptured.current = false;
     delete root.dataset.cmTransitionPhase;
     delete root.dataset.cmRouteTransition;
     delete root.dataset.cmLogoTransition;
+    delete root.dataset.cmGalaxyActive;
     root.style.removeProperty(ROUTE_TRANSITION_MIN_HEIGHT);
   }, [active, phase, reducedMotion, key, pathname]);
 
@@ -522,6 +436,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
       destination.current = '/dashboard';
       started.current = false;
       navigationStarted.current = false;
+      snapshotCaptured.current = false;
     }, reducedMotion ? 160 : revealDuration);
     return () => window.clearTimeout(timer);
   }, [active, phase, reducedMotion]);
@@ -529,9 +444,33 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
   return <TransitionContext.Provider value={startTransition}>
     {children}
     {active && <div className={`cm-logo-transition cm-logo-transition--${phase}${reducedMotion ? ' cm-logo-transition--reduced' : ''}`} role="status" aria-live="polite" aria-label="Opening CopperMind workspace">
-      <Suspense fallback={null}><TransitionAtmosphere className="cm-terra-atmosphere--transition"/></Suspense>
+      {targetKind === 'dashboard' && phase !== 'scatter' && phase !== 'assemble'
+        ? <Suspense fallback={null}><TransitionAtmosphere className="cm-terra-atmosphere--transition"/></Suspense>
+        : null}
+      <div ref={snapshotHostRef} className="cm-logo-transition__snapshot" aria-hidden="true">
+        <div className="cm-global-atmosphere cm-logo-transition__snapshot-atmo">
+          <div className="cm-atmosphere-base"/>
+          <div className="cm-atmosphere-glow cm-atmosphere-glow--copper"/>
+          <div className="cm-atmosphere-glow cm-atmosphere-glow--blue"/>
+          <div className="cm-atmosphere-band"/>
+          <div className="cm-atmosphere-void"/>
+          <div className="cm-atmosphere-stars">
+            <canvas className="cm-atmosphere-starfield" aria-hidden="true"/>
+          </div>
+          <div className="cm-atmosphere-grain"/>
+        </div>
+        <canvas className="cm-logo-transition__snapshot-particles" aria-hidden="true"/>
+      </div>
       <div className="cm-logo-transition__backdrop"/>
-      <LogoParticleField phase={phase} reducedMotion={reducedMotion} origin={origin}/>
+      <Suspense fallback={null}>
+        <GalaxyTransitionField
+          phase={phase}
+          reducedMotion={reducedMotion}
+          scatterMs={SCATTER_MS}
+          assembleMs={ASSEMBLE_MS}
+          releaseMs={RELEASE_MS}
+        />
+      </Suspense>
       <div className="cm-logo-transition__glow" aria-hidden="true"/>
       <div className="cm-logo-transition__mark" aria-hidden="true"><BrandMark size={LOGO_SIZE} variant="primary"/></div>
       <span className="sr-only">Opening CopperMind workspace</span>

@@ -1910,6 +1910,24 @@ export function ParticleWorld({ progress, releaseProgress, quality = 'high' }: {
       schedule();
     };
     const onVisibility = () => schedule();
+    const onSnapshot = (event: Event) => {
+      const detail = (event as CustomEvent<{ drawTo?: (source: HTMLCanvasElement) => void }>).detail;
+      if (typeof detail?.drawTo !== 'function') return;
+      renderer.draw(particleProgress, smoothPointerX, smoothPointerY, elapsed, scrollImpulse, travelDistance, warpVelocity);
+      detail.drawTo(activeCanvas);
+    };
+    const onGalaxyState = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        state?: { progress: number; pointerX: number; pointerY: number; elapsed: number };
+      }>).detail;
+      if (!detail) return;
+      detail.state = {
+        progress: particleProgress,
+        pointerX: smoothPointerX,
+        pointerY: smoothPointerY,
+        elapsed,
+      };
+    };
     const resizeObserver = new ResizeObserver(resize);
     const intersectionObserver = new IntersectionObserver(entries => { visible = entries[0]?.isIntersecting ?? false; if (visible) schedule(); });
     const unsubscribe = progress.on('change', () => {
@@ -1925,6 +1943,8 @@ export function ParticleWorld({ progress, releaseProgress, quality = 'high' }: {
     document.documentElement.addEventListener('mouseleave', onPointerLeave, { passive: true });
     window.addEventListener('blur', onPointerLeave);
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('cm:particle-snapshot', onSnapshot);
+    window.addEventListener('cm:galaxy-state', onGalaxyState);
     return () => {
       unsubscribe();
       unsubscribeRelease?.();
@@ -1934,6 +1954,8 @@ export function ParticleWorld({ progress, releaseProgress, quality = 'high' }: {
       document.documentElement.removeEventListener('mouseleave', onPointerLeave);
       window.removeEventListener('blur', onPointerLeave);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('cm:particle-snapshot', onSnapshot);
+      window.removeEventListener('cm:galaxy-state', onGalaxyState);
       if (frame) window.cancelAnimationFrame(frame);
       renderer.dispose();
     };
