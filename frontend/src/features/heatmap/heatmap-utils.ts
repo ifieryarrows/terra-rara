@@ -1,7 +1,9 @@
 const TOOLTIP_WIDTH = 292;
 const TOOLTIP_HEIGHT = 154;
 const TOOLTIP_GAP = 14;
-const PANEL_WIDTH = 380;
+export const HEATMAP_PANEL_WIDTH = 300;
+export const HEATMAP_PANEL_DEFAULT_HEIGHT = 316;
+export const HEATMAP_PANEL_MAX_HEIGHT = 360;
 const PANEL_GAP = 18;
 const PANEL_POINTER_Y_OFFSET = 48;
 
@@ -145,15 +147,15 @@ export function computePanelPosition(
   viewportHeight: number,
 ) {
   if (viewportWidth <= 640) {
-    return { mode: 'sheet' as const, left: 0, top: 0, width: viewportWidth, maxHeight: Math.min(560, viewportHeight * 0.78) };
+    return { mode: 'sheet' as const, left: 0, top: 0, width: viewportWidth, maxHeight: Math.min(HEATMAP_PANEL_MAX_HEIGHT, viewportHeight * 0.78) };
   }
   const margin = 10;
-  const width = Math.min(PANEL_WIDTH, Math.max(300, bounds.width - margin * 2));
+  const width = Math.min(HEATMAP_PANEL_WIDTH, Math.max(240, bounds.width - margin * 2));
   const roomRight = bounds.right - anchor.right - margin;
   const roomLeft = anchor.left - bounds.left - margin;
   let left = roomRight >= width || roomRight >= roomLeft ? anchor.right + margin : anchor.left - width - margin;
   left = Math.max(bounds.left + margin, Math.min(left, bounds.right - width - margin));
-  const maxHeight = Math.min(560, bounds.height - margin * 2, viewportHeight - margin * 2);
+  const maxHeight = Math.min(HEATMAP_PANEL_MAX_HEIGHT, bounds.height - margin * 2, viewportHeight - margin * 2);
   let top = Math.max(bounds.top + margin, anchor.top);
   if (top + maxHeight > Math.min(bounds.bottom, viewportHeight) - margin) {
     top = Math.max(bounds.top + margin, Math.min(bounds.bottom, viewportHeight) - maxHeight - margin);
@@ -167,18 +169,18 @@ export function computePointerPanelPosition(
   bounds: RectBounds,
   viewportWidth: number,
   viewportHeight: number,
-  panelWidth = PANEL_WIDTH,
-  panelHeight = 480,
+  panelWidth = HEATMAP_PANEL_WIDTH,
+  panelHeight = HEATMAP_PANEL_DEFAULT_HEIGHT,
   avoidRect?: RectBounds,
 ) {
   if (viewportWidth <= 640) {
-    return { mode: 'sheet' as const, left: 0, top: 0, width: viewportWidth, maxHeight: Math.min(560, viewportHeight * 0.78) };
+    return { mode: 'sheet' as const, left: 0, top: 0, width: viewportWidth, maxHeight: Math.min(HEATMAP_PANEL_MAX_HEIGHT, viewportHeight * 0.78) };
   }
   const margin = 10;
   const rightEdge = Math.min(bounds.right, viewportWidth);
   const bottomEdge = Math.min(bounds.bottom, viewportHeight);
-  const width = Math.min(panelWidth, Math.max(300, bounds.width - margin * 2));
-  const height = Math.min(panelHeight, Math.max(180, bottomEdge - bounds.top - margin * 2));
+  const width = Math.min(panelWidth, Math.max(240, bounds.width - margin * 2));
+  const height = Math.min(panelHeight, Math.max(160, bottomEdge - bounds.top - margin * 2));
   // The stock rect chooses a stable opening side, while the pointer drives the
   // actual position at a 1:1 rate. Anchoring to the far edge of a large stock
   // made the card feel detached; scaling the cell into a short lane made it
@@ -195,7 +197,7 @@ export function computePointerPanelPosition(
   if (!avoidRect && top + height > bottomEdge - margin) top = y - height - PANEL_GAP;
   left = Math.max(bounds.left + margin, Math.min(left, rightEdge - width - margin));
   top = Math.max(bounds.top + margin, Math.min(top, bottomEdge - height - margin));
-  return { mode: 'float' as const, left, top, width, maxHeight: Math.min(560, bottomEdge - bounds.top - margin * 2) };
+  return { mode: 'float' as const, left, top, width, maxHeight: Math.min(HEATMAP_PANEL_MAX_HEIGHT, bottomEdge - bounds.top - margin * 2) };
 }
 
 export function normalizeLogoTicker(ticker: string): string {

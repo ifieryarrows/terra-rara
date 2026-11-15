@@ -463,7 +463,7 @@ describe('heatmap interaction primitives', () => {
     fireEvent.pointerMove(map, { clientX: 220, clientY: 180 });
     await vi.advanceTimersByTimeAsync(90);
     const panel = screen.getByLabelText(/Semiconductors category details/i);
-    expect(panel.style.width).toBe('380px');
+    expect(panel.style.width).toBe('300px');
     expect(panel.style.transition).toBe('');
     expect(panel.style.transform).toContain('translate3d(238px');
     expect(within(panel).getByText('Technology - Semiconductors')).toBeVisible();
@@ -556,7 +556,7 @@ describe('heatmap interaction primitives', () => {
     );
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     expect(within(panel).getAllByText('S0')).toHaveLength(1);
-    expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '360px' });
+    expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '200px' });
     expect(within(panel).getAllByTestId('peer-row').length).toBeLessThan(leaves.length - 1);
     expect(within(panel).queryByText('Recent')).toBeNull();
   });
@@ -665,6 +665,7 @@ describe('heatmap interaction primitives', () => {
       />,
     );
     expect(screen.getByText('No recent news is available for AMD.')).toBeVisible();
+    expect(screen.getByTestId('category-news-slot').className).toContain('h-[24px]');
   });
 
   it('highlights via dedicated GPU overlays immediately while retaining panel hover intent', async () => {
@@ -749,8 +750,8 @@ describe('heatmap interaction primitives', () => {
       );
       const panel = screen.getByLabelText(/Semiconductors category details/i);
       expect(panel.style.position).toBe('absolute');
-      expect(Number.parseInt(panel.style.maxHeight, 10)).toBeLessThanOrEqual(164);
-      expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '56px' });
+      expect(Number.parseInt(panel.style.maxHeight, 10)).toBeLessThanOrEqual(144);
+      expect(within(panel).getByTestId('peer-list')).toHaveStyle({ height: '48px' });
       fireEvent.click(within(panel).getByRole('button', { name: 'Close category details' }));
       expect(onClose).toHaveBeenCalledTimes(1);
       unmount();
@@ -901,8 +902,8 @@ describe('heatmap interaction primitives', () => {
     );
     const panel = screen.getByLabelText(/Semiconductors category details/i);
     // 14 peers > 8 threshold -> virtualized (only visible rows + overscan, or < 14 when scrolled/large)
-    // With MAX_VISIBLE_ROWS=9 + OVERSCAN*2=12, 14 peers fits in 0..14; test with 30 peers to verify slicing below length.
-    expect(panel.querySelector('.h-\\[80px\\]')).toBeTruthy();
+    // With MAX_VISIBLE_ROWS=8 + OVERSCAN*2=12, 14 peers fits in 0..14; test with 30 peers to verify slicing below length.
+    expect(within(panel).getByTestId('category-news-slot').className).toContain('h-[38px]');
 
     cleanup();
     const thirtyOneLeaves = [selected, ...Array.from({ length: 30 }, (_, index) => ({
