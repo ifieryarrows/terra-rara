@@ -27,6 +27,7 @@ Outputs:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import wave
 import numpy as np
@@ -462,7 +463,14 @@ def synthesize_landing_voyage(sample_rate: int = SAMPLE_RATE) -> tuple[np.ndarra
 
 
 def main() -> None:
-    landing_near, landing_deep = synthesize_landing_voyage()
+    parser = argparse.ArgumentParser(description="Generate procedural Milky Way Observatory UI & Cuprum SFX.")
+    parser.add_argument(
+        "--include-landing",
+        action="store_true",
+        help="Also overwrite custom landing-voyage-near.wav / landing-voyage-deep.wav with procedural fallback stems.",
+    )
+    args = parser.parse_args()
+
     artifacts = [
         ("hover", ROOT_DIR / "observatory-hover.wav", synthesize_hover(), False),
         ("click", ROOT_DIR / "observatory-chime.wav", synthesize_click(), False),
@@ -472,9 +480,15 @@ def main() -> None:
         ("cuprum_chirp", ROOT_DIR / "cuprum-chirp.wav", synthesize_cuprum_chirp(), False),
         ("cuprum_tap", ROOT_DIR / "cuprum-tap.wav", synthesize_cuprum_tap(), False),
         ("cuprum_speak", ROOT_DIR / "cuprum-speak.wav", synthesize_cuprum_speak(), False),
-        ("landing_near", ROOT_DIR / "landing-voyage-near.wav", landing_near, True),
-        ("landing_deep", ROOT_DIR / "landing-voyage-deep.wav", landing_deep, True),
     ]
+    if args.include_landing:
+        landing_near, landing_deep = synthesize_landing_voyage()
+        artifacts.extend(
+            [
+                ("landing_near", ROOT_DIR / "landing-voyage-near.wav", landing_near, True),
+                ("landing_deep", ROOT_DIR / "landing-voyage-deep.wav", landing_deep, True),
+            ]
+        )
 
     for label, path, arr, is_loop in artifacts:
         if is_loop:

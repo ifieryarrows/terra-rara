@@ -2,7 +2,7 @@ import { getObservatoryAudioCore } from '../../utils/cosmicVision';
 
 const LANDING_NEAR_WAV_URL = '/audio/landing-voyage-near.wav';
 const LANDING_DEEP_WAV_URL = '/audio/landing-voyage-deep.wav';
-const LANDING_GAIN = 0.17;
+const LANDING_GAIN = 0.15;
 
 let landingActive = false;
 let landingSessionId = 0;
@@ -34,12 +34,12 @@ function computeLandingMix(progress: number, velocity: number): {
   const deep = Math.min(1.0, 0.24 + 0.74 * Math.pow(p, 0.82));
   const baseCutoff =
     p < 0.70
-      ? 2500 - p * 1200
+      ? 2400 - p * 1215
       : p < 0.84
-        ? 1660 + ((p - 0.70) / 0.14) * 1650
-        : 3310 - ((p - 0.84) / 0.16) * 450;
-  const cutoff = Math.min(4800, baseCutoff + v * 780);
-  const rate = 1 + p * 0.015 + v * 0.02;
+        ? 1550 + ((p - 0.70) / 0.14) * 1650
+        : 3200 - ((p - 0.84) / 0.16) * 550;
+  const cutoff = Math.min(4400, baseCutoff + v * 650);
+  const rate = 1 + p * 0.004;
   return { near, deep, cutoff, rate };
 }
 
@@ -54,7 +54,7 @@ function applyLandingMix(nowOffset = 0.08): void {
     landingDeepGain?.gain.setTargetAtTime(deep, now, nowOffset);
     landingFilter?.frequency.setTargetAtTime(cutoff, now, nowOffset);
     landingNearSrc?.playbackRate.setTargetAtTime(rate, now, 0.14);
-    landingDeepSrc?.playbackRate.setTargetAtTime(1 + (rate - 1) * 0.65, now, 0.14);
+    landingDeepSrc?.playbackRate.setTargetAtTime(rate, now, 0.14);
   } catch {
     // Ignore parameter automation errors in minimal mocks
   }

@@ -25,7 +25,7 @@ const AUDIO_URLS = {
 type AudioCacheKey = keyof typeof AUDIO_URLS;
 type OneShotCooldownKey = Exclude<AudioCacheKey, 'drone'>;
 
-const DRONE_GAIN = 0.19;
+const DRONE_GAIN = 0.11;
 const HOVER_GAIN = 0.15;
 const CHIME_GAIN = 0.25;
 const NOTIFICATION_GAIN = 0.18;
@@ -349,7 +349,7 @@ class ObservatoryAudioEngine {
       if (!this.htmlAudio) {
         const audio = new Audio(DRONE_WAV_URL);
         audio.loop = true;
-        audio.volume = 0.22;
+        audio.volume = 0.12;
         this.htmlAudio = audio;
       }
       void this.htmlAudio.play()?.catch(() => {});
