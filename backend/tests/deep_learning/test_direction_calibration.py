@@ -1,7 +1,9 @@
 import numpy as np
 
+from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
 from deep_learning.training.metrics import (
     apply_daily_sign_correction_np,
+    apply_direction_sign_multiplier_np,
     apply_weekly_sign_correction_np,
     apply_weekly_sign_threshold_np,
     fit_direction_sign_calibration,
@@ -122,3 +124,35 @@ def test_daily_sign_correction_only_changes_first_prediction_step():
     assert np.allclose(corrected[:, 1:4], 1.0)
     assert np.allclose(corrected[:, 4], 3.0)
     assert np.allclose(corrected[:, :, 3].sum(axis=1), pred[:, :, 3].sum(axis=1))
+
+
+def test_apply_direction_sign_multiplier_preserves_softplus_logit_intervals():
+    import torch
+
+    # Raw TFT softplus logits: positive step logits around median m=0.01
+    raw = np.tile(np.array([1.30, 0.90, 1.05, 0.01, 1.10, 0.85, 1.15], dtype=float), (2, 5, 1))
+    ordered_orig = enforce_monotonic_quantiles(torch.tensor(raw)).numpy()
+
+    flipped_raw = apply_direction_sign_multiplier_np(raw, -1)
+    ordered_flipped = enforce_monotonic_quantiles(torch.tensor(flipped_raw)).numpy()
+
+    np.testing.assert_allclose(ordered_flipped[..., 3], -ordered_orig[..., 3], atol=1e-12)
+    np.testing.assert_allclose(ordered_flipped, -ordered_orig[..., ::-1], atol=1e-12)
+
+
+def test_fit_direction_sign_calibration_recenters_collapsed_forecast_without_global_flip():
+    # Validation has 65% positive actuals while raw forecast is 96% negative-collapsed
+    # with random ordering among predictions (flipped DA = 65% >= 55% would previously flip!).
+    rng = np.random.default_rng(11)
+    n = 60
+    actual_signs = np.array([1.0] * 39 + [-1.0] * 21)
+    actual = np.repeat((actual_signs * 0.005)[:, None], 5, axis=1)
+    # Mix a few slightly positive so pred_pos_rate = 0.05 (< 0.15)
+    raw_med = np.concatenate([np.full(57, -0.02), np.full(3, 0.005)]) + rng.normal(0.0, 0.002, n)
+    pred = _quantile_path(np.repeat((raw_med / 5.0)[:, None], 5, axis=1))
+
+    cal = fit_direction_sign_calibration(actual, pred, horizon=5, min_samples=30)
+
+    assert cal["direction_sign_multiplier"] == 1
+    assert cal["weekly_sign_threshold_applied"] is True
+    assert 0.25 <= cal["weekly_sign_threshold_validation_pred_positive_rate"] <= 0.75

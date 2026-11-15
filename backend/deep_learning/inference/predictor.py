@@ -560,7 +560,13 @@ class TFTPredictor:
             else:
                 pred_for_format = pred_np.reshape(1, -1)
 
-            pred_for_format = pred_for_format * self._direction_sign_multiplier
+            if int(self._direction_sign_multiplier) != 1:
+                from deep_learning.training.metrics import apply_direction_sign_multiplier_np
+
+                pred_for_format = apply_direction_sign_multiplier_np(
+                    pred_for_format,
+                    self._direction_sign_multiplier,
+                )
             if abs(self._weekly_sign_threshold) > 1e-12:
                 from deep_learning.training.metrics import apply_weekly_sign_correction_np
 

@@ -404,12 +404,13 @@ def fit_weekly_interval_scale(
             )
             selection_method = "validation_interval_score_with_one_observation_floor"
         else:
-            # Defensive fallback for pathological inputs; preserve the original
-            # target-closest behavior rather than silently widening the interval.
+            # Defensive fallback for pathological inputs; select closest to target
+            # coverage first, breaking ties by lower interval score.
             chosen_idx = min(
                 range(len(candidates)),
                 key=lambda idx: (
                     abs(float(coverages[idx]) - float(target_coverage)),
+                    float(interval_scores[idx]),
                     float(candidates[idx]),
                 ),
             )
@@ -432,14 +433,24 @@ def fit_weekly_interval_scale(
         for row in eligible_results
         if float(target_coverage) <= row["coverage"] <= min(0.85, float(target_coverage) + 0.03)
     ]
-    selected_result = min(
-        target_band_results or eligible_results or candidate_results,
-        key=lambda row: (
-            row["interval_score"],
-            abs(row["coverage"] - float(target_coverage)),
-            row["power"],
-        ),
-    )
+    if target_band_results or eligible_results:
+        selected_result = min(
+            target_band_results or eligible_results,
+            key=lambda row: (
+                row["interval_score"],
+                abs(row["coverage"] - float(target_coverage)),
+                row["power"],
+            ),
+        )
+    else:
+        selected_result = min(
+            candidate_results,
+            key=lambda row: (
+                abs(row["coverage"] - float(target_coverage)),
+                row["interval_score"],
+                row["power"],
+            ),
+        )
     selected_power = float(selected_result["power"])
     calibration_metadata = {
         "weekly_interval_conditioning_enabled": conditioning_enabled,
@@ -739,6 +750,44 @@ def tail_capture_rate(
     return directional_accuracy(y_actual[tail_mask], y_pred[tail_mask])
 
 
+def apply_direction_sign_multiplier_np(
+    pred: np.ndarray,
+    multiplier: int,
+) -> np.ndarray:
+    """Apply global sign flip respecting both additive quantiles and softplus logits."""
+    arr = np.asarray(pred, dtype=np.float64).copy()
+    mult = int(multiplier)
+    if mult not in (-1, 1):
+        raise ValueError(f"Direction sign multiplier must be -1 or 1, got {multiplier!r}")
+    if mult == 1 or arr.size == 0:
+        return arr
+    if arr.ndim < 2 or arr.shape[-1] < 1:
+        raise ValueError(f"Expected quantile tensor [..., q], got {arr.shape}")
+
+    q_dim = arr.shape[-1]
+    median_idx = q_dim // 2
+    if q_dim == 1:
+        return -arr
+
+    lower = arr[..., :median_idx]
+    upper = arr[..., median_idx + 1 :]
+    is_ordered_quantile_space = bool(
+        np.all(lower <= arr[..., median_idx : median_idx + 1] + 1e-12)
+        and np.all(upper >= arr[..., median_idx : median_idx + 1] - 1e-12)
+        and np.any(arr[..., -1] > arr[..., 0] + 1e-12)
+    )
+    if is_ordered_quantile_space:
+        return -arr[..., ::-1].copy()
+
+    arr[..., median_idx] = -arr[..., median_idx]
+    if lower.shape[-1] == upper.shape[-1] and lower.shape[-1] > 0:
+        old_lower = lower.copy()
+        old_upper = upper.copy()
+        arr[..., :median_idx] = old_upper[..., ::-1]
+        arr[..., median_idx + 1 :] = old_lower[..., ::-1]
+    return arr
+
+
 def fit_direction_sign_calibration(
     y_actual_path: np.ndarray,
     y_pred_quantiles_path: np.ndarray,
@@ -782,10 +831,14 @@ def fit_direction_sign_calibration(
     flipped_daily_sharpe = sharpe_ratio(np.sign(-daily_pred) * daily_actual) if n else 0.0
     base_daily_tail = tail_capture_rate(daily_actual, daily_pred) if n else 0.0
     flipped_daily_tail = tail_capture_rate(daily_actual, -daily_pred) if n else 0.0
+    raw_daily_pos_rate = float(np.mean(daily_pred > 0.0)) if n else 0.0
+    raw_weekly_pos_rate = float(np.mean(weekly_pred > 0.0)) if n else 0.0
 
     sign_multiplier = 1
     if (
         n >= min_samples
+        and 0.20 <= raw_daily_pos_rate <= 0.80
+        and 0.20 <= raw_weekly_pos_rate <= 0.80
         and base_daily_da <= 0.45
         and flipped_daily_da >= 0.55
         and base_weekly_da <= 0.45
@@ -795,7 +848,7 @@ def fit_direction_sign_calibration(
     ):
         sign_multiplier = -1
 
-    oriented_pred_path = pred_path * sign_multiplier
+    oriented_pred_path = apply_direction_sign_multiplier_np(pred_path, sign_multiplier)
     oriented_weekly_pred = oriented_pred_path[:, :horizon, median_idx].sum(axis=1)
     oriented_weekly_da = directional_accuracy(weekly_actual, oriented_weekly_pred) if n else 0.0
     weekly_pred_positive_rate = float(np.mean(oriented_weekly_pred > 0.0)) if n else 0.0
@@ -840,7 +893,15 @@ def fit_direction_sign_calibration(
 
         if best is not None:
             candidate_da, _, _, candidate_rate, best_threshold = best
-            if candidate_da >= 0.51 or candidate_da >= max(0.50, oriented_weekly_da + 0.01):
+            is_sign_collapsed = (
+                weekly_pred_positive_rate > 0.85
+                or weekly_pred_positive_rate < 0.15
+            )
+            if (
+                is_sign_collapsed
+                or candidate_da >= 0.51
+                or candidate_da >= max(0.50, oriented_weekly_da + 0.01)
+            ):
                 weekly_sign_threshold = float(best_threshold)
                 weekly_sign_threshold_validation_da = float(candidate_da)
                 weekly_sign_threshold_validation_pred_positive_rate = float(candidate_rate)
@@ -995,9 +1056,9 @@ def fit_weekly_magnitude_scale(
     horizon: int = 5,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     weekly_median_cap: float | None = None,
-    target_ratio: float = 1.0,
+    target_ratio: float = 0.88,
     min_ratio_band: float = 0.85,
-    max_ratio_band: float = 1.15,
+    max_ratio_band: float = 1.05,
     min_scale: float = 0.15,
     max_scale: float = 1.35,
     min_samples: int = 10,
@@ -1061,8 +1122,8 @@ def fit_weekly_magnitude_scale(
         if weekly_median_cap is not None and float(weekly_median_cap) > 0.0 and raw_weekly_pred.size:
             q75_raw = float(np.quantile(np.abs(raw_weekly_pred), 0.75))
             if q75_raw > float(weekly_median_cap) and (val_bound_rate > 0.25 or raw_ratio > 1.35):
-                cap_safe_scale = (0.95 * float(weekly_median_cap)) / max(q75_raw, 1e-9)
-                min_ratio_safe_scale = 0.82 / max(raw_ratio, 1e-9)
+                cap_safe_scale = (0.85 * float(weekly_median_cap)) / max(q75_raw, 1e-9)
+                min_ratio_safe_scale = 0.78 / max(raw_ratio, 1e-9)
                 blended_cap_scale = max(cap_safe_scale, min_ratio_safe_scale)
                 if blended_cap_scale < candidate_scale:
                     candidate_scale = float(

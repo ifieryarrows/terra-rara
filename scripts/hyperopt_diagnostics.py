@@ -36,10 +36,12 @@ def _structural_checks(diagnostics: dict) -> dict[str, bool]:
         "variance_ratio_le_3_0": diagnostics.get(
             "avg_variance_ratio", 999
         ) <= 3.0,
-        "directional_accuracy_ge_0_50": max(
-            diagnostics.get("avg_directional_accuracy", 0),
-            diagnostics.get("avg_weekly_directional_accuracy", 0),
-        ) >= 0.50,
+        "directional_accuracy_ge_0_50": (
+            diagnostics.get("avg_weekly_directional_accuracy", 0.0) >= 0.50
+            if "avg_weekly_directional_accuracy" in diagnostics
+            else diagnostics.get("avg_directional_accuracy", 0.0) >= 0.50
+        )
+        and diagnostics.get("avg_weekly_sharpe", 0.0) >= -0.20,
     }
 
 

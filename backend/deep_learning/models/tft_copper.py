@@ -734,6 +734,36 @@ except ImportError:
     WeeklyASROPFLoss = None  # type: ignore[assignment,misc]
 
 
+def _initialize_tft_output_layer(model, quantiles: Sequence[float]) -> None:
+    """Initialize output layer weights and quantile step biases to empirical return scale."""
+    output_layer = getattr(model, "output_layer", None)
+    if output_layer is None:
+        return
+    layers = (
+        list(output_layer)
+        if isinstance(output_layer, torch.nn.ModuleList)
+        else [output_layer]
+    )
+    q_dim = len(quantiles)
+    median_idx = q_dim // 2
+    default_biases = (
+        (1.20, 0.95, 1.07, 0.0, 1.07, 0.95, 1.20)
+        if q_dim == 7
+        else tuple(0.0 if idx == median_idx else 1.05 for idx in range(q_dim))
+    )
+    with torch.no_grad():
+        for layer in layers:
+            weight = getattr(layer, "weight", None)
+            bias = getattr(layer, "bias", None)
+            if weight is None or weight.ndim < 2 or weight.shape[0] != q_dim:
+                continue
+            for idx in range(q_dim):
+                weight[idx].mul_(0.02 if idx == median_idx else 0.10)
+            if bias is not None and bias.shape[0] == q_dim:
+                for idx, val in enumerate(default_biases):
+                    bias[idx].fill_(val)
+
+
 def create_tft_model(
     training_dataset,
     cfg: Optional[TFTASROConfig] = None,
@@ -831,6 +861,7 @@ def create_tft_model(
         log_interval=10,
         log_val_interval=1,
     )
+    _initialize_tft_output_layer(model, quantiles)
 
     # Apply weight decay post-construction by patching each param group.
     # pytorch_forecasting's TFT does not expose optimizer_kwargs in from_dataset(),

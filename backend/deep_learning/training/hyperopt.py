@@ -188,6 +188,12 @@ def _select_preflight_safe_trial(study, fold_diagnostics: list[dict]):
                     diagnostics_by_trial.get(int(trial.number), {}).get("avg_weekly_raw_magnitude_ratio", 1.0),
                 )
             ) <= 3.0
+            and float(
+                trial.user_attrs.get(
+                    "avg_weekly_sharpe",
+                    diagnostics_by_trial.get(int(trial.number), {}).get("avg_weekly_sharpe", 0.0),
+                )
+            ) >= -0.20
         ]
         selected = min(gate_safe or eligible, key=lambda trial: float(trial.value))
         mode = "lowest_objective_preflight_pass"
@@ -939,6 +945,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 max(0.0, fold_weekly_mr - 1.30) + max(0.0, 0.70 - fold_weekly_mr)
             )
             bound_rate_penalty = 0.35 * max(0.0, fold_weekly_bound_rate - 0.30)
+            weekly_sharpe_penalty = 0.50 * max(0.0, 0.25 - fold_weekly_sharpe)
+            weekly_da_shortfall_penalty = 2.00 * max(0.0, 0.51 - fold_weekly_da)
             fold_weekly_objective = (
                 0.35 * weekly_pinball
                 + 0.15 * (1.0 - float(metrics.get("weekly_directional_accuracy", 0.5)))
@@ -953,6 +961,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 + raw_magnitude_penalty
                 + bounded_magnitude_band_penalty
                 + bound_rate_penalty
+                + weekly_sharpe_penalty
+                + weekly_da_shortfall_penalty
             )
         except Exception as exc:
             logger.warning(

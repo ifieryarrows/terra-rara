@@ -878,6 +878,7 @@ def train_tft_model(
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
+            apply_direction_sign_multiplier_np,
             apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
             cumulative_horizon,
@@ -900,7 +901,10 @@ def train_tft_model(
                 direction_calibration.get("direction_sign_multiplier", 1)
             )
             daily_sign_multiplier = 1
-            oriented_val_pred_np = val_pred_np * direction_sign_multiplier
+            oriented_val_pred_np = apply_direction_sign_multiplier_np(
+                val_pred_np,
+                direction_sign_multiplier,
+            )
             oriented_val_pred_np = apply_weekly_sign_correction_np(
                 oriented_val_pred_np,
                 float(direction_calibration.get("weekly_sign_threshold", 0.0)),
@@ -1024,6 +1028,7 @@ def train_tft_model(
     if test_dl is not None:
         import torch
         from deep_learning.training.metrics import (
+            apply_direction_sign_multiplier_np,
             apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
         )
@@ -1035,7 +1040,7 @@ def train_tft_model(
         ensemble_size = 1
         logger.info("Promoted checkpoint evaluation: 1 model")
 
-        pred_np = pred_np * direction_sign_multiplier
+        pred_np = apply_direction_sign_multiplier_np(pred_np, direction_sign_multiplier)
         pred_np = apply_weekly_sign_correction_np(
             pred_np,
             weekly_sign_threshold,
@@ -1257,6 +1262,7 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
+            apply_direction_sign_multiplier_np,
             apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
             apply_weekly_median_cap_np,
@@ -1272,7 +1278,7 @@ def _write_conformal_calibration_artifact(
         )
         if y_actual_path is None or len(y_actual_path) == 0:
             return None
-        pred_np = pred_np * int(direction_sign_multiplier)
+        pred_np = apply_direction_sign_multiplier_np(pred_np, int(direction_sign_multiplier))
         pred_np = apply_weekly_sign_correction_np(
             pred_np,
             float(weekly_sign_threshold),

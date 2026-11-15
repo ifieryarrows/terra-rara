@@ -149,3 +149,28 @@ def test_preflight_check_accepts_weekly_directional_accuracy_and_flags_negative_
     )
     assert negative_collapse["preflight_passed"] is False
     assert negative_collapse["checks"]["weekly_positive_rate_not_exploded"] is False
+
+
+def test_preflight_check_rejects_sub50_weekly_da_or_negative_weekly_sharpe():
+    base = {
+        "avg_quantile_crossing_rate": 0.0,
+        "avg_weekly_magnitude_ratio": 1.05,
+        "avg_weekly_pred_positive_rate": 0.50,
+        "avg_weekly_actual_positive_rate": 0.52,
+        "avg_weekly_pi80_coverage": 0.78,
+        "avg_weekly_pi80_width_ratio": 1.10,
+        "avg_weekly_mae_vs_naive_zero": 1.05,
+        "avg_variance_ratio": 0.85,
+        "avg_directional_accuracy": 0.53,
+    }
+    weak_weekly_da = best_trial_preflight_check(
+        {**base, "avg_weekly_directional_accuracy": 0.455, "avg_weekly_sharpe": 0.10}
+    )
+    assert weak_weekly_da["preflight_passed"] is False
+    assert weak_weekly_da["checks"]["directional_accuracy_ge_0_50"] is False
+
+    weak_weekly_sharpe = best_trial_preflight_check(
+        {**base, "avg_weekly_directional_accuracy": 0.52, "avg_weekly_sharpe": -0.67}
+    )
+    assert weak_weekly_sharpe["preflight_passed"] is False
+    assert weak_weekly_sharpe["checks"]["directional_accuracy_ge_0_50"] is False
