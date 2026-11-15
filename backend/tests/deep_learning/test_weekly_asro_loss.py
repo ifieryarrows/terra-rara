@@ -289,3 +289,92 @@ def test_weekly_loss_penalizes_raw_q50_saturation_before_bounding():
     )
 
     assert loss.loss(pred_saturated, actual) > loss.loss(pred_in_range, actual)
+
+
+def test_weekly_loss_preserves_nonzero_raw_scale_gradient_above_cap():
+    actual = torch.tensor(
+        [
+            [0.004, 0.004, 0.002, 0.002, 0.002],
+            [-0.004, -0.004, -0.002, -0.002, -0.002],
+            [0.005, 0.003, 0.002, 0.001, 0.001],
+            [-0.005, -0.003, -0.002, -0.001, -0.001],
+        ]
+    )
+    # 5x actual exceeds weekly_median_cap=0.025 cleanly on every sample
+    raw_pred = _path_from_median(actual * 5.0, spread=0.002).requires_grad_(True)
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=1.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
+        weekly_median_cap=0.025,
+    )
+
+    total = loss.loss(raw_pred, actual)
+    total.backward()
+
+    assert raw_pred.grad is not None
+    median_grad = raw_pred.grad[..., 3]
+    assert torch.isfinite(median_grad).all()
+    assert median_grad.abs().max().item() > 1e-4
+
+
+def test_weekly_interval_undercoverage_loss_stays_bounded_on_extreme_width():
+    actual_weekly = torch.tensor([-0.02, -0.01, 0.01, 0.02])
+    median = torch.zeros_like(actual_weekly)
+    extreme_wide = torch.stack(
+        [median - 1.0, median - 0.8, median - 0.4, median, median + 0.4, median + 0.8, median + 1.0],
+        dim=1,
+    )
+    loss_val = tft_copper._weekly_interval_undercoverage_loss(
+        extreme_wide,
+        actual_weekly,
+        QUANTILES,
+    )
+    assert torch.isfinite(loss_val)
+    assert loss_val.item() < 5.0
+
+
+def test_raw_pinball_shift_shortcut_matches_explicit_monotonic_transform():
+    from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
+
+    torch.manual_seed(7)
+    y_pred = torch.randn(4, 5, 7) * 0.03
+    y_actual = torch.randn(4, 5) * 0.01
+    bounded_pred = tft_copper._bound_weekly_median_path(
+        y_pred, median_idx=3, weekly_median_cap=0.025, horizon=5
+    )
+    ordered_pred = enforce_monotonic_quantiles(bounded_pred, median_idx=3)
+    raw_ordered_pred = enforce_monotonic_quantiles(y_pred, median_idx=3)
+
+    median_shift_sum = (y_pred[..., 3] - ordered_pred[..., 3]).sum(dim=1, keepdim=True)
+    shortcut_weekly = ordered_pred.sum(dim=1) + median_shift_sum
+    assert torch.allclose(shortcut_weekly, raw_ordered_pred.sum(dim=1), atol=1e-6, rtol=1e-6)
+
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=1.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
+        weekly_median_cap=0.025,
+    )
+    expected = 0.7 * loss._pinball(ordered_pred.sum(dim=1), y_actual.sum(dim=1)) + 0.3 * loss._pinball(
+        raw_ordered_pred.sum(dim=1), y_actual.sum(dim=1)
+    )
+    assert torch.allclose(loss.loss(y_pred, y_actual), expected, atol=1e-6, rtol=1e-6)

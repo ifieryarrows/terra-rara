@@ -265,3 +265,103 @@ def test_predict_staleness_preserves_healthy_forecast_without_lazy_ingest(monkey
     assert result["baseline_staleness_days"] == 5
     assert result["lazy_ingest_triggered"] is False
     assert not hasattr(predictor, "_trigger_lazy_ingest")
+
+
+def test_predict_loads_and_applies_weekly_magnitude_scale_and_cap(monkeypatch, price_session, tmp_path):
+    import json
+    from deep_learning.contract import FORECAST_CONTRACT_VERSION, RETURN_SPACE, TARGET_RETURN_TYPE
+
+    fake_pf = types.ModuleType("pytorch_forecasting")
+    fake_pf.TimeSeriesDataSet = _FakeTimeSeriesDataSet
+    monkeypatch.setitem(sys.modules, "pytorch_forecasting", fake_pf)
+
+    class _WeeklyFakeModel:
+        dataset_parameters = {
+            "time_varying_unknown_reals": ["feat"],
+            "time_varying_known_reals": [],
+            "max_encoder_length": 2,
+            "max_prediction_length": 5,
+        }
+
+        def predict(self, _dl, mode=None):
+            assert mode == "quantiles"
+            # Raw weekly median = 5 * 0.02 = 0.10
+            base = np.full((1, 5, 7), 0.02, dtype=float)
+            offsets = np.array([-0.015, -0.010, -0.005, 0.0, 0.005, 0.010, 0.015])
+            return base + offsets.reshape(1, 1, -1)
+
+    import deep_learning.data.feature_store as feature_store
+
+    def fake_build_tft_dataframe(_session, _cfg, *, drop_missing_target=True):
+        index = pd.to_datetime(["2026-04-22", "2026-04-23", "2026-04-24"])
+        master = pd.DataFrame(
+            {
+                "feat": [1.0, 1.1, 1.2],
+                "target": [0.001, -0.002, 0.0],
+                "target_1d_log_return": [0.001, -0.002, 0.0],
+                "target_5d_log_return": [0.01, 0.02, 0.0],
+                "realized_vol_20d": [0.01, 0.01, 0.01],
+                "material_move_5d": [0.0, 1.0, 0.0],
+                "group_id": ["copper", "copper", "copper"],
+                "time_idx": [0, 1, 2],
+            },
+            index=index,
+        )
+        return master, ["feat"], [], ["target"], 6.0180
+
+    monkeypatch.setattr(feature_store, "build_tft_dataframe", fake_build_tft_dataframe)
+
+    ckpt_path = tmp_path / "best_tft_asro.ckpt"
+    ckpt_path.write_bytes(b"stub")
+    meta_path = tmp_path / "tft_metadata.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "forecast_contract_version": FORECAST_CONTRACT_VERSION,
+                "target_return_type": TARGET_RETURN_TYPE,
+                "primary_horizon_days": 5,
+                "return_space": RETURN_SPACE,
+                "config": {"weekly_median_cap": 0.030},
+                "direction_calibration": {
+                    "direction_sign_multiplier": 1,
+                    "weekly_sign_threshold": 0.0,
+                    "weekly_magnitude_scale": 0.50,
+                },
+                "magnitude_calibration": {"scale": 0.50},
+                "interval_calibration": {"weekly_interval_scale": 1.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import deep_learning.models.hub as hub_module
+
+    monkeypatch.setattr(hub_module, "validate_artifact_manifest", lambda _dir: True)
+
+    cfg = TFTASROConfig(
+        model=TFTModelConfig(max_encoder_length=2, max_prediction_length=5),
+        training=TrainingConfig(best_model_path=str(ckpt_path)),
+        feature_store=FeatureStoreConfig(target_symbol="HG=F", mrmr_top_k=0),
+    )
+    predictor = TFTPredictor(checkpoint_path=str(ckpt_path), cfg=cfg)
+    predictor._validate_checkpoint_contract()
+    predictor._model = _WeeklyFakeModel()
+    monkeypatch.setattr(
+        predictor,
+        "_check_price_freshness",
+        lambda _session, _symbol: (1, False),
+    )
+
+    assert predictor._weekly_magnitude_scale == pytest.approx(0.50)
+    assert predictor._weekly_median_cap == pytest.approx(0.030)
+
+    result = predictor.predict(price_session, "HG=F")
+
+    assert "error" not in result
+    # 0.10 * 0.50 = 0.05 -> then capped at weekly_median_cap=0.030 log return!
+    expected_weekly_simple = float(np.exp(0.030) - 1.0)
+    assert result["weekly_log_return"] == pytest.approx(0.030, rel=1e-4)
+    assert result["weekly_return"] == pytest.approx(expected_weekly_simple, rel=1e-4)
+    assert result["model_info"]["weekly_magnitude_scale"] == pytest.approx(0.50)
+    assert result["model_info"]["weekly_median_cap"] == pytest.approx(0.030)
+

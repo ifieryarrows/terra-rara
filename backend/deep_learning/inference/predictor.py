@@ -144,6 +144,8 @@ class TFTPredictor:
         self._direction_sign_multiplier = 1
         self._daily_sign_multiplier = 1
         self._weekly_sign_threshold = 0.0
+        self._weekly_magnitude_scale = 1.0
+        self._weekly_median_cap: Optional[float] = None
         self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
         self._weekly_interval_conditioning: dict = {}
@@ -286,6 +288,35 @@ class TFTPredictor:
                 "Incompatible TFT checkpoint: invalid validation-fitted weekly sign threshold. Retraining required."
             )
         self._weekly_sign_threshold = weekly_sign_threshold
+        magnitude_cal = metadata.get("magnitude_calibration") or {}
+        weekly_magnitude_scale = float(
+            direction_calibration.get(
+                "weekly_magnitude_scale",
+                magnitude_cal.get("scale", 1.0),
+            )
+            or 1.0
+        )
+        if not np.isfinite(weekly_magnitude_scale) or weekly_magnitude_scale <= 0.0 or weekly_magnitude_scale > 5.0:
+            raise IncompatibleTFTCheckpointError(
+                "Incompatible TFT checkpoint: invalid validation-fitted weekly magnitude scale. Retraining required."
+            )
+        self._weekly_magnitude_scale = weekly_magnitude_scale
+        raw_cap = config.get(
+            "weekly_median_cap",
+            (metadata.get("target_scale_audit") or {}).get(
+                "weekly_median_cap",
+                metadata.get("weekly_median_cap"),
+            ),
+        )
+        if raw_cap is not None:
+            cap_val = float(raw_cap)
+            if not np.isfinite(cap_val) or cap_val <= 0.0:
+                raise IncompatibleTFTCheckpointError(
+                    "Incompatible TFT checkpoint: invalid training weekly_median_cap. Retraining required."
+                )
+            self._weekly_median_cap = cap_val
+        else:
+            self._weekly_median_cap = None
         weekly_direction_model = metadata.get("weekly_direction_model") or {}
         if weekly_direction_model.get("enabled"):
             required_fields = {"feature_names", "mean", "scale", "coef", "intercept"}
@@ -561,6 +592,14 @@ class TFTPredictor:
                     threshold=float(self._weekly_direction_model.get("decision_threshold", 0.50)),
                     horizon=self.cfg.forecast.primary_horizon_days,
                 )[0]
+            if abs(self._weekly_magnitude_scale - 1.0) > 1e-6:
+                from deep_learning.training.metrics import apply_weekly_magnitude_scale_np
+
+                pred_for_format = apply_weekly_magnitude_scale_np(
+                    pred_for_format[None, ...],
+                    self._weekly_magnitude_scale,
+                    quantiles=tuple(self.cfg.model.quantiles),
+                )[0]
             if self._weekly_interval_conditioning:
                 from deep_learning.training.metrics import apply_weekly_interval_scale_np
 
@@ -593,6 +632,20 @@ class TFTPredictor:
                     self._weekly_interval_scale,
                     quantiles=tuple(self.cfg.model.quantiles),
                 )[0]
+            if self._weekly_median_cap is not None and self._weekly_median_cap > 0.0:
+                from deep_learning.training.metrics import apply_weekly_median_cap_np
+
+                effective_horizon = min(
+                    int(self.cfg.forecast.primary_horizon_days),
+                    int(pred_for_format.shape[0]),
+                )
+                if effective_horizon > 0:
+                    pred_for_format = apply_weekly_median_cap_np(
+                        pred_for_format[None, ...],
+                        weekly_median_cap=self._weekly_median_cap,
+                        quantiles=tuple(self.cfg.model.quantiles),
+                        horizon=effective_horizon,
+                    )[0][0]
 
         except IncompatibleTFTCheckpointError as exc:
             logger.warning("TFT checkpoint incompatible: %s", exc)
@@ -638,6 +691,8 @@ class TFTPredictor:
             "direction_sign_multiplier": self._direction_sign_multiplier,
             "daily_sign_multiplier": self._daily_sign_multiplier,
             "weekly_sign_threshold": self._weekly_sign_threshold,
+            "weekly_magnitude_scale": self._weekly_magnitude_scale,
+            "weekly_median_cap": self._weekly_median_cap,
             "weekly_direction_model_enabled": bool(self._weekly_direction_model),
             "weekly_interval_scale": self._weekly_interval_scale,
             "weekly_interval_conditioning_enabled": bool(self._weekly_interval_conditioning),

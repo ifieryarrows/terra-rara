@@ -847,6 +847,14 @@ def train_tft_model(
         "fit_split": "validation",
         "sample_count": 0,
         "direction_sign_multiplier": 1,
+        "weekly_magnitude_scale": 1.0,
+    }
+    magnitude_calibration = {
+        "fit_split": "validation",
+        "sample_count": 0,
+        "applied": False,
+        "scale": 1.0,
+        "weekly_magnitude_scale": 1.0,
     }
     interval_calibration = {
         "fit_split": "validation",
@@ -860,11 +868,13 @@ def train_tft_model(
     val_pred_np = None
     try:
         from deep_learning.training.metrics import (
+            apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
             cumulative_horizon,
             directional_accuracy,
             fit_direction_sign_calibration,
             fit_weekly_interval_scale,
+            fit_weekly_magnitude_scale,
         )
 
         val_pred_np, val_actual_path = _predict_quantiles_to_np(
@@ -943,6 +953,20 @@ def train_tft_model(
                         weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
                 else:
                     weekly_direction_model["reason"] = "validation_origin_count_mismatch"
+            magnitude_calibration = fit_weekly_magnitude_scale(
+                val_actual_path,
+                oriented_val_pred_np,
+                horizon=cfg.forecast.primary_horizon_days,
+                quantiles=tuple(cfg.model.quantiles),
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            )
+            weekly_magnitude_scale = float(magnitude_calibration.get("scale", 1.0))
+            direction_calibration["weekly_magnitude_scale"] = weekly_magnitude_scale
+            oriented_val_pred_np = apply_weekly_magnitude_scale_np(
+                oriented_val_pred_np,
+                weekly_magnitude_scale,
+                quantiles=tuple(cfg.model.quantiles),
+            )
             if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
                 validation_interval_conditioning_values = _weekly_interval_conditioning_values(
                     master_df,
@@ -975,8 +999,11 @@ def train_tft_model(
     # OOS replay showed that they can reverse the held-out direction.
     daily_sign_multiplier = 1
     weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
+    weekly_magnitude_scale = float(magnitude_calibration.get("scale", 1.0))
+    direction_calibration.setdefault("weekly_magnitude_scale", weekly_magnitude_scale)
     weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
     logger.info("Validation-only direction calibration: %s", direction_calibration)
+    logger.info("Validation-only magnitude calibration: %s", magnitude_calibration)
     logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
 
     # ---- 8. Evaluate on the promoted best checkpoint ----
@@ -987,6 +1014,7 @@ def train_tft_model(
     if test_dl is not None:
         import torch
         from deep_learning.training.metrics import (
+            apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
         )
 
@@ -1025,6 +1053,11 @@ def train_tft_model(
                 threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
                 horizon=cfg.forecast.primary_horizon_days,
             )
+        pred_np = apply_weekly_magnitude_scale_np(
+            pred_np,
+            weekly_magnitude_scale,
+            quantiles=tuple(cfg.model.quantiles),
+        )
         test_interval_conditioning_values = None
         if interval_calibration.get("weekly_interval_conditioning_enabled"):
             test_interval_conditioning_values = _weekly_interval_conditioning_values(
@@ -1057,6 +1090,7 @@ def train_tft_model(
         direction_sign_multiplier=direction_sign_multiplier,
         daily_sign_multiplier=daily_sign_multiplier,
         weekly_sign_threshold=weekly_sign_threshold,
+        weekly_magnitude_scale=weekly_magnitude_scale,
         weekly_direction_model=weekly_direction_model,
         validation_start_time=train_cutoff - 1,
         validation_end_time=val_cutoff - cfg.forecast.primary_horizon_days,
@@ -1119,6 +1153,7 @@ def train_tft_model(
         "data_snapshot": _build_data_snapshot_metadata(master_df),
         "runtime_environment": _runtime_environment_metadata(),
         "direction_calibration": direction_calibration,
+        "magnitude_calibration": magnitude_calibration,
         "weekly_direction_model": weekly_direction_model,
         "interval_calibration": interval_calibration,
         "checkpoint_selection": checkpoint_selection,
@@ -1190,6 +1225,7 @@ def _write_conformal_calibration_artifact(
     direction_sign_multiplier: int = 1,
     daily_sign_multiplier: int = 1,
     weekly_sign_threshold: float = 0.0,
+    weekly_magnitude_scale: float = 1.0,
     weekly_direction_model: Optional[dict] = None,
     validation_start_time: Optional[int] = None,
     validation_end_time: Optional[int] = None,
@@ -1211,6 +1247,7 @@ def _write_conformal_calibration_artifact(
             rolling_conformal_adjustment,
         )
         from deep_learning.training.metrics import (
+            apply_weekly_magnitude_scale_np,
             apply_weekly_sign_correction_np,
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
@@ -1255,6 +1292,11 @@ def _write_conformal_calibration_artifact(
                 threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
                 horizon=cfg.forecast.primary_horizon_days,
             )
+        pred_np = apply_weekly_magnitude_scale_np(
+            pred_np,
+            float(weekly_magnitude_scale),
+            quantiles=tuple(cfg.model.quantiles),
+        )
         interval_calibration = weekly_interval_calibration or {}
         effective_interval_scale = float(
             interval_calibration.get("weekly_interval_scale", weekly_interval_scale)

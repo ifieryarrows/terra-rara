@@ -631,3 +631,38 @@ def test_weekly_annualisation_factor_uses_52():
     expected_sharpe_52 = sharpe_ratio(strategy_returns, annualisation=52.0)
     assert np.isclose(weekly_metrics["weekly_sharpe_ratio"], expected_sharpe_52, rtol=1e-5)
 
+
+def test_fit_and_apply_weekly_magnitude_scale_keeps_predictions_in_gate_band():
+    from deep_learning.training.metrics import (
+        apply_weekly_magnitude_scale_np,
+        fit_weekly_magnitude_scale,
+    )
+
+    rng = np.random.default_rng(7)
+    actual_path = rng.normal(0.0, 0.01, size=(40, 5))
+    offsets = np.array([-0.015, -0.010, -0.005, 0.0, 0.005, 0.010, 0.015])
+    # Model over-predicts by 3.5x before validation magnitude calibration
+    raw_pred = (actual_path * 3.5)[..., None] + offsets.reshape(1, 1, -1)
+
+    cal = fit_weekly_magnitude_scale(
+        actual_path,
+        raw_pred,
+        horizon=5,
+        weekly_median_cap=0.030,
+    )
+    assert cal["applied"] is True
+    assert 0.15 <= cal["scale"] < 0.50
+    assert cal["validation_raw_magnitude_ratio_before"] > 3.0
+    assert 0.70 <= cal["validation_magnitude_ratio_after"] <= 1.30
+
+    scaled = apply_weekly_magnitude_scale_np(raw_pred, cal["scale"])
+    assert np.all(np.diff(scaled, axis=-1) >= -1e-12)
+
+    # Already-calibrated predictions should remain unchanged (scale == 1.0)
+    well_scaled = actual_path[..., None] + offsets.reshape(1, 1, -1)
+    cal_ok = fit_weekly_magnitude_scale(actual_path, well_scaled, horizon=5, weekly_median_cap=0.05)
+    assert cal_ok["applied"] is False
+    assert cal_ok["scale"] == 1.0
+    np.testing.assert_allclose(apply_weekly_magnitude_scale_np(well_scaled, 1.0), well_scaled)
+
+

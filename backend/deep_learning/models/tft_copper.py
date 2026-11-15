@@ -111,11 +111,16 @@ def _weekly_saturation_loss(
     # one per sample.  This creates deployment margin without letting extreme
     # initialization outliers dominate the objective again.
     moderate_violation_barrier = torch.tanh(above_cap_excess).pow(2)
+    # Keep a sublinear sqrt restoring penalty on moderate excess above the cap
+    # so gradients remain strong at 1.2x-5x violations while staying sublinear
+    # on extreme initialization outliers.
+    sqrt_excess_penalty = torch.sqrt(1.0 + above_cap_excess) - 1.0
 
     return (
         0.10 * _robust_squared(near_cap_excess).mean()
         + 2.0 * _robust_squared(above_cap_excess).mean()
         + moderate_violation_barrier.mean()
+        + 1.5 * sqrt_excess_penalty.mean()
     )
 
 
@@ -123,20 +128,23 @@ def _weekly_scale_losses(
     pred_weekly_median: torch.Tensor,
     actual_weekly: torch.Tensor,
     eps: float = 1e-8,
+    raw_pred_weekly_median: Optional[torch.Tensor] = None,
 ) -> dict[str, torch.Tensor]:
     """
     Scale diagnostics used by WeeklyASROPFLoss.
 
     Hyperopt promotes on weekly_magnitude_ratio, so the loss must penalize the
     same failure mode directly instead of relying only on slowly growing
-    log-ratio pressure.
+    log-ratio pressure. When raw_pred_weekly_median is provided, also apply
+    scale penalties before cap clipping so gradients never zero out at the cap.
     """
+    actual_ref = actual_weekly.clamp(min=-0.25, max=0.25)
     pred_abs_median = pred_weekly_median.abs().median() + eps
-    actual_abs_median = actual_weekly.abs().median() + eps
+    actual_abs_median = actual_ref.abs().median() + eps
     magnitude_ratio = pred_abs_median / actual_abs_median
 
     pred_abs_mean = pred_weekly_median.abs().mean() + eps
-    actual_abs_mean = actual_weekly.abs().mean() + eps
+    actual_abs_mean = actual_ref.abs().mean() + eps
     mean_magnitude_ratio = pred_abs_mean / actual_abs_mean
 
     def _bounded_scale_loss(ratio: torch.Tensor) -> torch.Tensor:
@@ -150,23 +158,23 @@ def _weekly_scale_losses(
             + 4.0 * structural_explosion.pow(2)
         )
 
-    # The median ratio remains available as the production diagnostic, but a
-    # batch median is an order statistic: its active element can change after
-    # an otherwise negligible floating-point perturbation.  Feeding that
-    # gradient into the optimizer made otherwise identical CPU runs follow
-    # different paths.  Use the smooth mean ratio for optimization while
-    # preserving the median ratio used by hyperopt and the quality gate.
-    magnitude_loss = _bounded_scale_loss(mean_magnitude_ratio)
+    bounded_mag_loss = _bounded_scale_loss(mean_magnitude_ratio)
+    if raw_pred_weekly_median is not None:
+        raw_abs_mean = raw_pred_weekly_median.abs().mean() + eps
+        raw_ratio = raw_abs_mean / actual_abs_mean
+        raw_mag_loss = (
+            _bounded_scale_loss(raw_ratio)
+            + torch.relu(raw_ratio - 1.20).pow(2)
+            + torch.relu(0.75 - raw_ratio).pow(2)
+        )
+        magnitude_loss = 0.5 * bounded_mag_loss + 0.5 * raw_mag_loss
+        effective_pred_weekly_median = 0.5 * pred_weekly_median + 0.5 * raw_pred_weekly_median
+    else:
+        magnitude_loss = bounded_mag_loss
+        effective_pred_weekly_median = pred_weekly_median
 
-    pred_std = pred_weekly_median.std(unbiased=False) + eps
-    actual_std = actual_weekly.std(unbiased=False) + eps
-    # A batch can temporarily collapse to almost one weekly value.  The raw
-    # log-ratio then reaches ~15 and its 1/pred_std derivative overwhelms the
-    # rest of the objective, making cross-run CPU round-off choose a different
-    # basin.  Keep the dispersion signal in a broad, pre-specified [0.25, 4]
-    # ratio band and use a smooth-L1 penalty; this still discourages material
-    # under/over-dispersion without allowing one pathological batch to steer
-    # the whole epoch.
+    pred_std = effective_pred_weekly_median.std(unbiased=False) + eps
+    actual_std = actual_ref.std(unbiased=False) + eps
     dispersion_log_error = torch.log(
         (pred_std / actual_std).clamp(min=0.25, max=4.0)
     )
@@ -176,16 +184,10 @@ def _weekly_scale_losses(
         beta=0.5,
     )
 
-    model_mae = torch.mean(torch.abs(pred_weekly_median - actual_weekly))
+    model_mae = torch.mean(torch.abs(effective_pred_weekly_median - actual_ref))
     zero_mae = actual_abs_mean
     naive_relative_loss = torch.relu((model_mae / zero_mae) - 1.0)
-    mean_gap = (pred_weekly_median.mean() - actual_weekly.mean()) / zero_mae
-    median_gap = (
-        (pred_weekly_median.median() - actual_weekly.median())
-        / actual_abs_median
-    )
-    # As above, keep the median gap as a diagnostic but avoid its
-    # order-statistic gradient in the train objective.
+    mean_gap = (effective_pred_weekly_median.mean() - actual_ref.mean()) / zero_mae
     bias_loss = 1.50 * torch.abs(mean_gap)
 
     return {
@@ -286,20 +288,25 @@ def _weekly_interval_undercoverage_loss(
     upper = pred_weekly_quantiles[:, q90_idx]
     width = torch.clamp(upper - lower, min=0.0)
 
-    actual_scale = actual_weekly.abs().mean().clamp_min(eps)
+    actual_ref = actual_weekly.clamp(min=-0.25, max=0.25)
+    actual_scale = actual_ref.abs().mean().clamp_min(eps)
     miss_loss = (
-        torch.relu(lower - actual_weekly)
-        + torch.relu(actual_weekly - upper)
+        torch.relu(lower - actual_ref)
+        + torch.relu(actual_ref - upper)
     ).mean() / actual_scale
 
-    actual_std = actual_weekly.std(unbiased=False).clamp_min(eps)
+    actual_std = actual_ref.std(unbiased=False).clamp_min(eps)
     width_ratio = width.mean() / (2.56 * actual_std + eps)
     target_width = torch.as_tensor(
         float(target_width_ratio),
         device=pred_weekly_quantiles.device,
         dtype=pred_weekly_quantiles.dtype,
     )
-    width_scale_loss = (width_ratio - target_width).pow(2)
+    width_scale_loss = F.smooth_l1_loss(
+        width_ratio.clamp(max=4.0),
+        target_width.clamp(max=4.0),
+        beta=0.25,
+    )
     return miss_loss + width_scale_loss
 
 
@@ -440,6 +447,11 @@ try:
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
+            self.register_buffer(
+                "_pinball_q_buf",
+                torch.tensor(quantiles, dtype=torch.float32).view(1, -1),
+                persistent=False,
+            )
             self.reset_component_accumulators()
 
         def reset_component_accumulators(self) -> None:
@@ -539,7 +551,7 @@ try:
             }
 
         def _pinball(self, pred: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
-            q = torch.tensor(self.quantiles, device=pred.device, dtype=pred.dtype).view(1, -1)
+            q = self._pinball_q_buf.to(device=pred.device, dtype=pred.dtype)
             err = actual.unsqueeze(-1) - pred
             return torch.maximum(q * err, (q - 1.0) * err).mean()
 
@@ -592,7 +604,20 @@ try:
             pred_weekly_quantiles = ordered_pred.sum(dim=1)
             actual_weekly = y_actual.sum(dim=1)
 
-            weekly_q_loss = self._pinball(pred_weekly_quantiles, actual_weekly)
+            weekly_q_loss_bounded = self._pinball(pred_weekly_quantiles, actual_weekly)
+            if self.weekly_median_cap is not None and float(self.weekly_median_cap) > 0.0:
+                # Non-median quantile spreads from enforce_monotonic_quantiles depend only on
+                # non-median channels (untouched by _bound_weekly_median_path), so the raw
+                # ordered weekly sum equals pred_weekly_quantiles shifted by the median diff.
+                median_shift_sum = (raw_median_path - median_path).sum(dim=1, keepdim=True)
+                weekly_q_loss_raw = self._pinball(
+                    pred_weekly_quantiles + median_shift_sum,
+                    actual_weekly,
+                )
+                weekly_q_loss = 0.7 * weekly_q_loss_bounded + 0.3 * weekly_q_loss_raw
+            else:
+                weekly_q_loss = weekly_q_loss_bounded
+
             t1_q_loss = super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1])
             t1_directional_loss = _directional_sign_loss(
                 median_path[:, 0],
@@ -603,7 +628,12 @@ try:
 
             pred_weekly_median = median_path.sum(dim=1)
             eps = self.sharpe_eps
-            scale_losses = _weekly_scale_losses(pred_weekly_median, actual_weekly, eps=eps)
+            scale_losses = _weekly_scale_losses(
+                pred_weekly_median,
+                actual_weekly,
+                eps=eps,
+                raw_pred_weekly_median=raw_pred_weekly_median,
+            )
             dispersion_loss = scale_losses["dispersion_loss"]
             magnitude_loss = scale_losses["magnitude_loss"]
             naive_relative_loss = scale_losses["naive_relative_loss"]

@@ -954,6 +954,150 @@ def apply_weekly_sign_correction_np(
     return arr
 
 
+def apply_weekly_magnitude_scale_np(
+    pred: np.ndarray,
+    scale: float = 1.0,
+    *,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+) -> np.ndarray:
+    """Scale the median return path while shifting quantiles uniformly to preserve order."""
+    arr = np.asarray(pred, dtype=np.float64).copy()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [n,horizon,q] predictions, got {arr.shape}")
+    if arr.shape[-1] != len(quantiles):
+        raise ValueError(
+            f"Quantile dim mismatch: prediction has {arr.shape[-1]}, config has {len(quantiles)}"
+        )
+    s = float(scale)
+    if not np.isfinite(s) or s <= 0.0:
+        raise ValueError(f"Weekly magnitude scale must be finite and positive, got {scale!r}")
+    if abs(s - 1.0) <= 1e-6 or arr.shape[0] == 0:
+        return arr
+
+    median_idx = len(quantiles) // 2
+    median = arr[..., median_idx : median_idx + 1]
+    return arr + (s - 1.0) * median
+
+
+def fit_weekly_magnitude_scale(
+    y_actual_path: np.ndarray,
+    y_pred_quantiles_path: np.ndarray,
+    *,
+    horizon: int = 5,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    weekly_median_cap: float | None = None,
+    target_ratio: float = 1.0,
+    min_ratio_band: float = 0.85,
+    max_ratio_band: float = 1.15,
+    min_scale: float = 0.15,
+    max_scale: float = 1.35,
+    min_samples: int = 10,
+) -> dict[str, float | int | bool | str]:
+    """Fit a validation-only median magnitude scale multiplier.
+
+    Rescales over- or under-confident raw median paths using chronological
+    validation targets so validation predictions do not saturate against
+    weekly_median_cap and test/live magnitude ratios remain inside gate bounds.
+    """
+    actual_path = np.asarray(y_actual_path, dtype=np.float64)
+    pred_path = np.asarray(y_pred_quantiles_path, dtype=np.float64)
+    if actual_path.ndim < 2 or pred_path.ndim != 3:
+        raise ValueError("Magnitude calibration requires [n,horizon] targets and [n,horizon,q] predictions")
+    if actual_path.shape[1] < horizon or pred_path.shape[1] < horizon:
+        raise ValueError(f"Magnitude calibration requires a {horizon}-step prediction path")
+
+    n = min(len(actual_path), len(pred_path))
+    median_idx = len(quantiles) // 2
+    actual_path = actual_path[:n]
+    pred_path = pred_path[:n]
+    weekly_actual = cumulative_horizon(actual_path, horizon=horizon)
+
+    raw_ordered = monotonic_quantiles_np(pred_path, median_idx=median_idx)
+    raw_weekly_pred = raw_ordered[:, :horizon, median_idx].sum(axis=1)
+    raw_ratio = magnitude_ratio(weekly_actual, raw_weekly_pred)
+
+    if weekly_median_cap is not None and float(weekly_median_cap) > 0.0:
+        bounded_path, _ = apply_weekly_median_cap_np(
+            pred_path,
+            weekly_median_cap=weekly_median_cap,
+            quantiles=quantiles,
+            horizon=horizon,
+        )
+        bounded_ordered = monotonic_quantiles_np(bounded_path, median_idx=median_idx)
+        bounded_weekly_pred = bounded_ordered[:, :horizon, median_idx].sum(axis=1)
+        bounded_ratio = magnitude_ratio(weekly_actual, bounded_weekly_pred)
+    else:
+        bounded_ratio = raw_ratio
+
+    selected_scale = 1.0
+    applied = False
+    raw_ratio_after = raw_ratio
+    bounded_ratio_after = bounded_ratio
+
+    if (
+        n >= int(min_samples)
+        and raw_ratio > 1e-6
+        and (
+            bounded_ratio < float(min_ratio_band)
+            or bounded_ratio > float(max_ratio_band)
+            or raw_ratio > 1.50
+        )
+    ):
+        candidate_scale = float(
+            np.clip(float(target_ratio) / raw_ratio, float(min_scale), float(max_scale))
+        )
+        if abs(candidate_scale - 1.0) > 1e-3:
+            scaled_path = apply_weekly_magnitude_scale_np(
+                pred_path,
+                candidate_scale,
+                quantiles=quantiles,
+            )
+            scaled_raw_ordered = monotonic_quantiles_np(scaled_path, median_idx=median_idx)
+            scaled_raw_weekly = scaled_raw_ordered[:, :horizon, median_idx].sum(axis=1)
+            candidate_raw_ratio = magnitude_ratio(weekly_actual, scaled_raw_weekly)
+            if weekly_median_cap is not None and float(weekly_median_cap) > 0.0:
+                scaled_bounded_path, _ = apply_weekly_median_cap_np(
+                    scaled_path,
+                    weekly_median_cap=weekly_median_cap,
+                    quantiles=quantiles,
+                    horizon=horizon,
+                )
+                scaled_bounded_ordered = monotonic_quantiles_np(
+                    scaled_bounded_path,
+                    median_idx=median_idx,
+                )
+                candidate_bounded_ratio = magnitude_ratio(
+                    weekly_actual,
+                    scaled_bounded_ordered[:, :horizon, median_idx].sum(axis=1),
+                )
+            else:
+                candidate_bounded_ratio = candidate_raw_ratio
+
+            improves_bounded = abs(candidate_bounded_ratio - float(target_ratio)) < abs(
+                bounded_ratio - float(target_ratio)
+            )
+            improves_raw = raw_ratio > 1.50 and candidate_raw_ratio < raw_ratio
+            if (improves_bounded or improves_raw) and (
+                0.65 <= candidate_bounded_ratio <= 1.35 or improves_bounded
+            ):
+                selected_scale = candidate_scale
+                applied = True
+                raw_ratio_after = candidate_raw_ratio
+                bounded_ratio_after = candidate_bounded_ratio
+
+    return {
+        "fit_split": "validation",
+        "sample_count": int(n),
+        "applied": bool(applied),
+        "scale": float(selected_scale),
+        "weekly_magnitude_scale": float(selected_scale),
+        "validation_raw_magnitude_ratio_before": float(raw_ratio),
+        "validation_magnitude_ratio_before": float(bounded_ratio),
+        "validation_raw_magnitude_ratio_after": float(raw_ratio_after),
+        "validation_magnitude_ratio_after": float(bounded_ratio_after),
+    }
+
+
 def prediction_interval_coverage(
     y_actual: np.ndarray,
     lower: np.ndarray,
