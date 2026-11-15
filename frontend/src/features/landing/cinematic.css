@@ -105,6 +105,19 @@
 .cm-landing--quality-balanced .cm-cinematic-surface .cm-preview { box-shadow: 0 1rem 2.75rem #00000038; }
 .cm-landing--quality-balanced .cm-cinematic-surface--active .cm-preview { backdrop-filter: blur(10px); }
 
+/* Avoid per-frame Retina WebGL readback/blur compositing stalls on macOS. */
+.cm-cinematic--mac .cm-cinematic-surface--active .cm-preview,
+.cm-cinematic--mac .cm-cinematic-copy-block--active .cm-story-tags li,
+.cm-cinematic--mac .cm-hud-toggle,
+.cm-cinematic--mac .cm-cosmic-ruler-readout,
+.cm-cinematic--mac .cm-cosmic-reticle { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.cm-cinematic--mac .cm-cinematic-surface--active .cm-preview { background: linear-gradient(155deg, rgba(8, 13, 22, 0.90), rgba(6, 10, 17, 0.94)); }
+.cm-cinematic--mac .cm-cinematic-surface--forecast.cm-cinematic-surface--active .cm-preview { background: radial-gradient(120% 100% at 80% 10%, rgba(142, 173, 222, 0.06), transparent 55%), linear-gradient(160deg, rgba(7, 11, 19, 0.88), rgba(6, 10, 17, 0.93)); }
+.cm-cinematic--mac .cm-cinematic-copy-block--active .cm-story-tags li { background: #060a11cc; }
+.cm-cinematic--mac .cm-hud-toggle,
+.cm-cinematic--mac .cm-cosmic-ruler-readout,
+.cm-cinematic--mac .cm-cosmic-reticle { background: #060a11eb; }
+
 @media (max-width: 1023px) {
   .cm-cinematic-beat { align-items: flex-end; padding: 3.5rem clamp(1.25rem, 4vw, 2rem) calc(2.25rem + env(safe-area-inset-bottom, 0px)); }
   .cm-cinematic-copy-block { width: min(100%, 36rem); }

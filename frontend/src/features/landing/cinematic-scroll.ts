@@ -13,6 +13,25 @@
 export const CINEMATIC_STEP_LOCK_MS = 900;
 const WHEEL_GESTURE_GAP_MS = 260;
 
+type NavigatorWithUAData = Pick<Navigator, 'platform' | 'userAgent'> & {
+  userAgentData?: { platform?: string };
+};
+
+/** Detect macOS desktop browsers so Windows/Linux wheel stepping stays unchanged. */
+export function isMacPlatform(
+  nav: NavigatorWithUAData | undefined = typeof navigator !== 'undefined' ? (navigator as NavigatorWithUAData) : undefined,
+): boolean {
+  if (!nav) return false;
+  const uaPlatform = nav.userAgentData?.platform;
+  if (typeof uaPlatform === 'string' && uaPlatform.length > 0) {
+    return /mac/i.test(uaPlatform);
+  }
+  const platform = nav.platform ?? '';
+  if (/^Mac/i.test(platform)) return true;
+  const ua = nav.userAgent ?? '';
+  return /\bMacintosh\b|\bMac OS X\b/i.test(ua) && !/\biPhone\b|\biPad\b|\biPod\b/i.test(ua);
+}
+
 /**
  * Reading rest points as story progress (0 = hero rest, 1 = story end).
  *

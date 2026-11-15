@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CINEMATIC_RESTS, createCinematicSceneStepper, type CinematicSceneStepper } from './cinematic-scroll';
+import { CINEMATIC_RESTS, createCinematicSceneStepper, isMacPlatform, type CinematicSceneStepper } from './cinematic-scroll';
 
 const GEOMETRY = { top: 0, length: 3_000 };
 const restY = (index: number) => CINEMATIC_RESTS[index] * GEOMETRY.length;
@@ -189,5 +189,15 @@ describe('cinematic scene stepper', () => {
     button.remove();
     expect(window.scrollTo).not.toHaveBeenCalled();
     scene.dispose();
+  });
+
+  it('detects macOS platforms accurately without matching Windows, Linux, or iOS', () => {
+    expect(isMacPlatform({ platform: 'MacIntel', userAgent: '', userAgentData: { platform: 'macOS' } })).toBe(true);
+    expect(isMacPlatform({ platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' })).toBe(true);
+    expect(isMacPlatform({ platform: '', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)' })).toBe(true);
+    expect(isMacPlatform({ platform: 'Win32', userAgent: 'Windows NT 10.0', userAgentData: { platform: 'Windows' } })).toBe(false);
+    expect(isMacPlatform({ platform: 'Linux x86_64', userAgent: 'X11; Linux x86_64' })).toBe(false);
+    expect(isMacPlatform({ platform: 'iPhone', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' })).toBe(false);
+    expect(isMacPlatform(undefined)).toBe(false);
   });
 });

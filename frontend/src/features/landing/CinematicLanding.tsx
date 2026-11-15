@@ -9,7 +9,7 @@ import { TerraAtmosphere } from '../../components/ui/TerraAtmosphere';
 import { ForecastPreview, MarketPreview, NewsPreview } from './Previews';
 import { ParticleWorld, type ParticleQuality } from './ParticleWorld';
 import { CosmicHud } from './CosmicHud';
-import { createCinematicSceneStepper, type CinematicSceneGeometry } from './cinematic-scroll';
+import { createCinematicSceneStepper, isMacPlatform, type CinematicSceneGeometry } from './cinematic-scroll';
 import { useCinematicEntryReveal } from './cinematic-entry';
 import './cinematic.css';
 
@@ -161,6 +161,7 @@ function entryRevealProgressOrFallback(value: MotionValue<number>) {
 export function CinematicLanding({ quality = 'high', entry }: { quality?: ParticleQuality; entry?: CinematicEntryRenderer }) {
   const ref = useRef<HTMLElement>(null);
   const geometryRef = useRef<CinematicSceneGeometry | null>(null);
+  const isMac = isMacPlatform();
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
   const entryRevealProgress = useCinematicEntryReveal(scrollYProgress);
   const measureGeometry = useCallback((): CinematicSceneGeometry | null => {
@@ -234,20 +235,24 @@ export function CinematicLanding({ quality = 'high', entry }: { quality?: Partic
     const onKeyDown = (event: KeyboardEvent) => { sceneStepper.handleKeyDown(event); };
     scene.addEventListener('pointermove', onPointerMove, { passive: true });
     scene.addEventListener('pointerleave', onPointerLeave, { passive: true });
-    scene.addEventListener('wheel', onWheel, { passive: false });
+    if (!isMac) {
+      scene.addEventListener('wheel', onWheel, { passive: false });
+    }
     window.addEventListener('keydown', onKeyDown);
     return () => {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', updateGeometry);
       scene.removeEventListener('pointermove', onPointerMove);
       scene.removeEventListener('pointerleave', onPointerLeave);
-      scene.removeEventListener('wheel', onWheel);
+      if (!isMac) {
+        scene.removeEventListener('wheel', onWheel);
+      }
       window.removeEventListener('keydown', onKeyDown);
       sceneStepper.dispose();
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [measureGeometry]);
-  return <section ref={ref} id="research" className="cm-cinematic cm-story cm-story--enhanced" aria-label="A connected copper research journey">
+  }, [measureGeometry, isMac]);
+  return <section ref={ref} id="research" className={`cm-cinematic cm-story cm-story--enhanced${isMac ? ' cm-cinematic--mac' : ''}`} aria-label="A connected copper research journey">
     <StickyWorld progress={scrollYProgress} releaseProgress={entryRevealProgress} quality={quality}/>
     <div className="cm-cinematic-copy">
       <HeroCopy progress={scrollYProgress} onNavigateAnchor={handleNavigateAnchor}/>

@@ -137,4 +137,58 @@ describe('CosmicHud observatory scale ruler and sensory controls', () => {
     await user.click(soundBtn);
     expect(soundBtn).toHaveTextContent('SOUND: ON');
   });
+
+  it('leaves wheel scrolling native and tags macOS cinematic scenes while keeping Windows wheel stepping active', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }));
+    vi.stubGlobal('IntersectionObserver', class { observe = vi.fn(); unobserve = vi.fn(); disconnect = vi.fn(); });
+    vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); unobserve = vi.fn(); disconnect = vi.fn(); });
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(null);
+    Object.defineProperty(window, 'scrollTo', { configurable: true, value: vi.fn() });
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 5_000 });
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0, writable: true });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0, bottom: 4000, left: 0, right: 1280, width: 1280, height: 4000, x: 0, y: 0, toJSON: () => ({}),
+    });
+
+    const navSpy = vi.spyOn(window, 'navigator', 'get').mockReturnValue({
+      ...window.navigator,
+      platform: 'MacIntel',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    });
+
+    const { container: macContainer, unmount: unmountMac } = render(
+      <MemoryRouter>
+        <CinematicLanding quality="balanced" />
+      </MemoryRouter>,
+    );
+    const macScene = macContainer.querySelector('#research')!;
+    expect(macScene).toHaveClass('cm-cinematic--mac');
+    const macWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    macScene.dispatchEvent(macWheel);
+    expect(macWheel.defaultPrevented).toBe(false);
+    unmountMac();
+
+    navSpy.mockReturnValue({
+      ...window.navigator,
+      platform: 'Win32',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    });
+    const { container: winContainer } = render(
+      <MemoryRouter>
+        <CinematicLanding quality="balanced" />
+      </MemoryRouter>,
+    );
+    const winScene = winContainer.querySelector('#research')!;
+    expect(winScene).not.toHaveClass('cm-cinematic--mac');
+    const winWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 });
+    winScene.dispatchEvent(winWheel);
+    expect(winWheel.defaultPrevented).toBe(true);
+  });
 });
