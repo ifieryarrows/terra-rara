@@ -81,12 +81,14 @@ def test_select_features_preserves_known(sample_df):
 
 def test_select_features_forces_sentiment_regime_and_preserves_forbidden(sample_df):
     df = sample_df.copy()
+    n = len(df)
     df["target_5d_log_return"] = sample_df["target"] * 5
     df["target_1d_log_return"] = sample_df["target"]
     df["realized_vol_20d"] = 0.01
     df["material_move_5d"] = 0.0
-    df["sentiment_index"] = 0.0
-    df["regime_usd_pressure"] = 1.0
+    # Provide healthy non-degenerate variance and coverage (>= 8%)
+    df["sentiment_index"] = np.sin(np.linspace(0, 6.0, n)) * 0.4
+    df["regime_usd_pressure"] = (np.arange(n) % 4 == 0).astype(float)
     filtered, unknown, _ = select_features(
         df,
         target_col="target_5d_log_return",
@@ -101,6 +103,23 @@ def test_select_features_forces_sentiment_regime_and_preserves_forbidden(sample_
     assert "target_1d_log_return" in filtered.columns
     assert "target_1d_log_return" not in unknown
     assert "material_move_5d" not in unknown
+
+
+def test_select_features_drops_zero_variance_and_sparse_forced_columns(sample_df):
+    df = sample_df.copy()
+    df["sentiment_index"] = 0.0  # zero variance
+    sparse = np.zeros(len(df), dtype=float)
+    sparse[:3] = 1.0  # < 8% non-mode coverage on n=200
+    df["regime_usd_pressure"] = sparse
+    _filtered, unknown, _ = select_features(
+        df,
+        target_col="target",
+        mrmr_top_k=3,
+        known_features=[],
+        forced_unknown_features=["sentiment_index", "regime_usd_pressure"],
+    )
+    assert "sentiment_index" not in unknown
+    assert "regime_usd_pressure" not in unknown
 
 
 def test_select_features_fits_mrmr_on_explicit_training_frame(monkeypatch, sample_df):

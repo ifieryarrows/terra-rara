@@ -42,6 +42,8 @@ def run_backtest(
     y_pred_q90: Optional[np.ndarray] = None,
     window_size: int = 50,
     step_size: int = 10,
+    annualisation: float = 252.0,
+    use_hac: bool = False,
 ) -> dict:
     """
     Walk-forward backtest across overlapping windows.
@@ -53,6 +55,8 @@ def run_backtest(
         y_pred_q90:     Optional Q90 predictions.
         window_size:    Evaluation window size.
         step_size:      Step between consecutive windows.
+        annualisation:  Annualisation factor (252.0 for daily T+1, 52.0 for 5-day cumulative).
+        use_hac:        Whether to apply Newey-West HAC variance adjustment to Sharpe.
 
     Returns:
         Dict with per-window metrics and aggregate summary.
@@ -60,15 +64,20 @@ def run_backtest(
     from deep_learning.training.metrics import (
         directional_accuracy,
         sharpe_ratio,
+        sharpe_ratio_hac,
         sortino_ratio,
         tail_capture_rate,
         prediction_interval_coverage,
     )
 
+    y_actual = np.asarray(y_actual, dtype=float)
+    y_pred_median = np.asarray(y_pred_median, dtype=float)
     n = len(y_actual)
+    if n == 0:
+        return {"error": "No samples for backtest"}
     if n < window_size:
         window_size = n
-        step_size = n
+        step_size = max(1, n)
 
     windows = []
     start = 0
@@ -78,15 +87,24 @@ def run_backtest(
         yp = y_pred_median[start:end]
 
         strategy_returns = np.sign(yp) * ya
+        if use_hac:
+            win_sharpe = sharpe_ratio_hac(strategy_returns, annualisation=annualisation)
+        else:
+            win_sharpe = sharpe_ratio(strategy_returns, annualisation=annualisation)
+
+        mae_val = float(np.abs(ya - yp).mean())
+        naive_zero_mae = float(np.abs(ya).mean())
+        mae_vs_naive = float(mae_val / naive_zero_mae) if naive_zero_mae > 1e-12 else 1.0
 
         w = {
             "start": start,
             "end": end,
             "da": directional_accuracy(ya, yp),
-            "sharpe": sharpe_ratio(strategy_returns),
-            "sortino": sortino_ratio(strategy_returns),
+            "sharpe": win_sharpe,
+            "sortino": sortino_ratio(strategy_returns, annualisation=annualisation),
             "tail_capture": tail_capture_rate(ya, yp),
-            "mae": float(np.abs(ya - yp).mean()),
+            "mae": mae_val,
+            "mae_vs_naive_zero": mae_vs_naive,
             "rmse": float(np.sqrt(((ya - yp) ** 2).mean())),
             "pred_std": float(yp.std()),
             "actual_std": float(ya.std()),
@@ -98,8 +116,8 @@ def run_backtest(
             w["variance_ratio"] = 0.0
 
         if y_pred_q10 is not None and y_pred_q90 is not None:
-            q10 = y_pred_q10[start:end]
-            q90 = y_pred_q90[start:end]
+            q10 = np.asarray(y_pred_q10[start:end], dtype=float)
+            q90 = np.asarray(y_pred_q90[start:end], dtype=float)
             w["pi80_coverage"] = prediction_interval_coverage(ya, q10, q90)
 
         windows.append(w)
@@ -115,13 +133,14 @@ def run_backtest(
         "step_size": step_size,
         "total_samples": n,
         "mean_da": float(df["da"].mean()),
-        "std_da": float(df["da"].std()),
+        "std_da": float(df["da"].std()) if len(df) > 1 else 0.0,
         "min_da": float(df["da"].min()),
         "max_da": float(df["da"].max()),
         "mean_sharpe": float(df["sharpe"].mean()),
-        "std_sharpe": float(df["sharpe"].std()),
+        "std_sharpe": float(df["sharpe"].std()) if len(df) > 1 else 0.0,
         "mean_vr": float(df["variance_ratio"].mean()),
         "mean_mae": float(df["mae"].mean()),
+        "mean_mae_vs_naive_zero": float(df["mae_vs_naive_zero"].mean()),
         "mean_tail_capture": float(df["tail_capture"].mean()),
         "da_above_50pct": float((df["da"] > 0.50).mean()),
         "sharpe_positive_pct": float((df["sharpe"] > 0).mean()),

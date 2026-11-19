@@ -224,47 +224,116 @@ class PriceFetcher:
         start_date: str,
         end_date: Optional[str] = None,
         frequency: str = "W-FRI",
-        progress_callback=None
+        progress_callback=None,
+        chunk_size: int = 25,
     ) -> dict[str, pd.DataFrame]:
         """
-        Fetch prices for multiple symbols.
-        
-        Args:
-            symbols: List of ticker symbols
-            start_date: Start date
-            end_date: End date
-            frequency: Resample frequency
-            progress_callback: Optional callback(current, total, symbol)
-            
-        Returns:
-            Dict mapping symbol to DataFrame
+        Fetch prices for multiple symbols using cache + chunked yf.download prefetch
+        with per-symbol fallback.
         """
-        results = {}
+        from screener.core.cache import FetchParams
+
+        if end_date is None:
+            end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        results: dict[str, pd.DataFrame] = {}
         total = len(symbols)
-        
-        for i, symbol in enumerate(symbols):
-            if progress_callback:
-                progress_callback(i + 1, total, symbol)
-            
+        uncached: list[str] = []
+
+        # 1. Serve cached symbols first
+        for symbol in symbols:
+            if self.cache:
+                params = FetchParams(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    interval="1d",
+                    resample_rule=frequency,
+                    price_field=self.config.price_field,
+                    auto_adjust=True,
+                    actions=True,
+                )
+                cached = self.cache.get(params)
+                if cached is not None:
+                    self.fetch_stats["cached"] += 1
+                    results[symbol] = cached
+                    continue
+            uncached.append(symbol)
+
+        # 2. Chunked batch download for uncached symbols when yf.download is available
+        if uncached and hasattr(yf, "download"):
+            remaining_uncached: list[str] = []
+            for start_idx in range(0, len(uncached), chunk_size):
+                chunk = uncached[start_idx:start_idx + chunk_size]
+                if len(chunk) <= 1:
+                    remaining_uncached.extend(chunk)
+                    continue
+                self.rate_limiter.wait()
+                try:
+                    batch_df = yf.download(
+                        chunk,
+                        start=start_date,
+                        end=end_date,
+                        interval="1d",
+                        group_by="ticker",
+                        auto_adjust=True,
+                        threads=True,
+                        progress=False,
+                    )
+                    if batch_df is None or batch_df.empty:
+                        remaining_uncached.extend(chunk)
+                        continue
+                    for symbol in chunk:
+                        sub = None
+                        if isinstance(batch_df.columns, pd.MultiIndex) and symbol in batch_df.columns.get_level_values(0):
+                            sub = batch_df[symbol]
+                        elif self.config.price_field in batch_df.columns and len(chunk) == 1:
+                            sub = batch_df
+                        weekly = self._process_to_weekly(sub.dropna(how="all"), frequency) if sub is not None and not sub.empty else None
+                        if weekly is not None:
+                            if self.cache:
+                                params = FetchParams(
+                                    symbol=symbol,
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    interval="1d",
+                                    resample_rule=frequency,
+                                    price_field=self.config.price_field,
+                                    auto_adjust=True,
+                                    actions=True,
+                                )
+                                self.cache.put(params, weekly)
+                            self.fetch_stats["fetched"] += 1
+                            results[symbol] = weekly
+                        else:
+                            remaining_uncached.append(symbol)
+                except Exception as exc:
+                    logger.debug("Batch yfinance prefetch chunk failed, falling back: %s", exc)
+                    remaining_uncached.extend(chunk)
+            uncached = remaining_uncached
+
+        # 3. Per-symbol fallback for any remaining uncached or failed chunk entries
+        for symbol in uncached:
             df = self.fetch_weekly_prices(
                 symbol=symbol,
                 start_date=start_date,
                 end_date=end_date,
-                frequency=frequency
+                frequency=frequency,
             )
-            
             if df is not None:
                 results[symbol] = df
-            
-            if (i + 1) % 50 == 0:
-                logger.info(f"Fetched {i + 1}/{total} symbols...")
-        
+
+        if progress_callback:
+            for i, symbol in enumerate(symbols):
+                progress_callback(i + 1, total, symbol)
+
         logger.info(
-            f"Fetch complete: {len(results)}/{total} successful, "
-            f"{self.fetch_stats['cached']} cached, "
-            f"{self.fetch_stats['failed']} failed"
+            "Fetch complete: %d/%d successful, %d cached, %d failed",
+            len(results),
+            total,
+            self.fetch_stats["cached"],
+            self.fetch_stats["failed"],
         )
-        
         return results
     
     def get_stats(self) -> dict:

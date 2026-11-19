@@ -124,36 +124,54 @@ def _configure_tft_reproducibility() -> None:
     configure_tft_reproducibility()
 
 KNOWN_GOOD_CONFIG = {
-    "max_encoder_length": 50,
-    "hidden_size": 48,
+    "max_encoder_length": 10,
+    "hidden_size": 12,
     "attention_head_size": 2,
-    "dropout": 0.30,
-    "hidden_continuous_size": 16,
-    "learning_rate": 2e-4,
-    "weight_decay": 5e-5,
+    "dropout": 0.35,
+    "hidden_continuous_size": 6,
+    "learning_rate": 5e-4,
+    "output_head_lr_mult": 0.05,
+    "weight_decay": 1e-2,
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
-    "lambda_weekly_quantile": 0.70,
-    "lambda_t1_quantile": 0.20,
-    "lambda_t1_directional": 0.20,
-    "lambda_dispersion": 0.20,
-    "lambda_magnitude": 0.58,
-    "lambda_naive": 0.45,
-    "lambda_bias": 0.19,
-    "lambda_directional": 0.25,
-    "lambda_saturation": 0.35,
-    "lambda_positive_rate": 0.75,
-    "lambda_interval": 0.40,
+    "lambda_weekly_quantile": 1.00,
+    "lambda_t1_quantile": 0.25,
+    "lambda_t1_directional": 0.0,
+    "lambda_dispersion": 0.0,
+    "lambda_magnitude": 0.0,
+    "lambda_naive": 0.0,
+    "lambda_bias": 0.0,
+    "lambda_drift_prior": 1.0,
+    "lambda_directional": 0.0,
+    "lambda_saturation": 0.0,
+    "lambda_positive_rate": 0.0,
+    "lambda_interval": 0.0,
     "batch_size": 32,
 }
 
 CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
+    "max_encoder_length",
+    "hidden_size",
+    "hidden_continuous_size",
+    "attention_head_size",
+    "dropout",
+    "learning_rate",
+    "output_head_lr_mult",
+    "weight_decay",
+    "batch_size",
+    "lambda_weekly_quantile",
+    "lambda_t1_quantile",
+    "lambda_t1_directional",
+    "lambda_dispersion",
     "lambda_magnitude",
     "lambda_naive",
     "lambda_bias",
+    "lambda_drift_prior",
     "lambda_directional",
+    "lambda_saturation",
     "lambda_positive_rate",
+    "lambda_interval",
 )
 
 DETERMINISTIC_WEEKLY_CONFIG = dict(KNOWN_GOOD_CONFIG)
@@ -197,9 +215,9 @@ def _validation_ranked_checkpoint_paths(
     if len(ranked) > 1:
         best_score = ranked[0][1]
         max_allowed_score = (
-            best_score * 1.15
+            best_score * 1.03
             if best_score > 0.0
-            else best_score + 0.15 * max(1.0, abs(best_score))
+            else best_score + 0.03 * max(1.0, abs(best_score))
         )
         ranked = [ranked[0]] + [
             item for item in ranked[1:] if item[1] <= max_allowed_score
@@ -352,6 +370,8 @@ def _compute_test_metrics_from_quantiles(
     weekly_interval_scale: float = 1.0,
     weekly_interval_calibration: Optional[dict] = None,
     weekly_interval_conditioning_values: Optional[np.ndarray] = None,
+    weekly_cqr_params: Optional[dict] = None,
+    realized_vol: Optional[np.ndarray] = None,
 ) -> dict[str, float]:
     from deep_learning.training.metrics import evaluate_quantile_predictions
 
@@ -370,6 +390,10 @@ def _compute_test_metrics_from_quantiles(
     effective_scale = float(calibration.get("weekly_interval_scale", weekly_interval_scale))
     if effective_scale != 1.0:
         evaluator_kwargs["weekly_interval_scale"] = effective_scale
+    if weekly_cqr_params is not None:
+        evaluator_kwargs["weekly_cqr_params"] = weekly_cqr_params
+    if realized_vol is not None:
+        evaluator_kwargs["realized_vol"] = realized_vol
     if calibration.get("weekly_interval_conditioning_enabled"):
         if weekly_interval_conditioning_values is None:
             raise RuntimeError(
@@ -433,6 +457,48 @@ def _weekly_interval_conditioning_values(
             f"{len(selected)} != {expected_count}"
         )
     return pd.to_numeric(selected[feature_name], errors="coerce").to_numpy(dtype=np.float64)
+
+
+def _dataset_origin_conditioning_values(
+    feature_frame: Optional[pd.DataFrame],
+    dataset,
+    *,
+    feature_name: str,
+    horizon: int,
+    start_exclusive: int,
+    end_inclusive: int,
+    expected_count: int,
+) -> np.ndarray:
+    """Extract condition values aligned directly via TimeSeriesDataSet global ``time_idx`` origins."""
+    if feature_frame is None or feature_name not in feature_frame.columns:
+        raise RuntimeError(f"Weekly interval conditioning feature is missing: {feature_name}")
+    ds_index = getattr(dataset, "index", None)
+    if (
+        ds_index is not None
+        and "time" in ds_index
+        and "sequence_length" in ds_index
+        and "time_idx" in feature_frame.columns
+    ):
+        origin_time = (
+            ds_index["time"].to_numpy(dtype=int)
+            + ds_index["sequence_length"].to_numpy(dtype=int)
+            - int(horizon)
+            - 1
+        )[: int(expected_count)]
+        if len(origin_time) == int(expected_count):
+            lookup = feature_frame.drop_duplicates(subset=["time_idx"]).set_index("time_idx")[feature_name]
+            values = pd.to_numeric(lookup.reindex(origin_time), errors="coerce").to_numpy(
+                dtype=np.float64
+            )
+            if np.isfinite(values).all():
+                return values
+    return _weekly_interval_conditioning_values(
+        feature_frame,
+        feature_name=feature_name,
+        start_exclusive=start_exclusive,
+        end_inclusive=end_inclusive,
+        expected_count=expected_count,
+    )
 
 
 def _log_weekly_alignment_sample(
@@ -588,35 +654,10 @@ def train_tft_model(
     weekly_direction_model: dict = {
         "version": 1,
         "enabled": False,
-        "reason": "weekly_direction_model_not_used",
+        "reason": "disabled_raw_logit_distortion_removed",
         "fit_split": "train",
         "horizon": int(cfg.forecast.primary_horizon_days),
     }
-    if use_asro and cfg.forecast.primary_horizon_days == 5:
-        try:
-            from deep_learning.training.direction_model import fit_weekly_direction_model
-
-            weekly_direction_model = fit_weekly_direction_model(
-                master_df,
-                list(tv_unknown),
-                train_cutoff=train_cutoff,
-                horizon=cfg.forecast.primary_horizon_days,
-                max_encoder_length=cfg.model.max_encoder_length,
-                target_col=cfg.forecast.primary_target_col,
-            )
-            logger.info(
-                "Weekly direction model fitted on train origins=%s; awaiting validation selection",
-                weekly_direction_model.get("train_origin_count", 0),
-            )
-        except Exception as exc:
-            weekly_direction_model = {
-                "version": 1,
-                "enabled": False,
-                "reason": f"fit_failed:{type(exc).__name__}",
-                "fit_split": "train",
-                "horizon": int(cfg.forecast.primary_horizon_days),
-            }
-            logger.warning("Weekly direction model unavailable: %s", exc)
 
     train_scale_audit = summarize_dataloader_target_scale(
         train_dl,
@@ -663,7 +704,13 @@ def train_tft_model(
     )
 
     # ---- 3. Model ----
-    model = create_tft_model(training_ds, cfg, use_asro=use_asro)
+    weekly_target_scale = float(train_scale_audit.get("actual_weekly_std") or 0.0) or None
+    model = create_tft_model(
+        training_ds,
+        cfg,
+        use_asro=use_asro,
+        weekly_target_scale=weekly_target_scale,
+    )
 
     # Log active config so every run is fully reproducible from logs
     n_batches = len(train_dl)
@@ -718,21 +765,11 @@ def train_tft_model(
     ckpt_dir = Path(cfg.training.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    # For the weekly ASRO path, the framework's ``val_loss`` is the base
-    # quantile metric and omits the direction, scale, dispersion and interval
-    # terms used by the production contract. WeeklyLossComponentLogger logs
-    # the complete validation objective plus a validation-only sign-collapse
-    # guard before checkpoint selection and early stopping run.
-    monitor_metric = (
-        "val_weekly_loss"
-        if use_asro and cfg.forecast.primary_horizon_days == 5
-        else "val_loss"
-    )
-    checkpoint_filename = (
-        "tft-asro-{epoch:02d}-{val_weekly_loss:.4f}"
-        if monitor_metric == "val_weekly_loss"
-        else "tft-asro-{epoch:02d}-{val_loss:.4f}"
-    )
+    # WeeklyASROPFLoss overrides Metric.update() so val_loss equals the exact
+    # undivided sample-weighted validation objective; WeeklyLossComponentLogger
+    # logs component breakdowns alongside val_loss.
+    monitor_metric = "val_loss"
+    checkpoint_filename = "tft-asro-{epoch:02d}-{val_loss:.4f}"
 
     callbacks = [
         # Must run before EarlyStopping/ModelCheckpoint so the monitored
@@ -801,6 +838,9 @@ def train_tft_model(
         "test_labels_used": False,
     }
     if best_path:
+        import shutil
+        from deep_learning.models.tft_copper import load_tft_model
+
         source_count = (
             2 if use_asro and cfg.forecast.primary_horizon_days == 5 else 1
         )
@@ -811,7 +851,31 @@ def train_tft_model(
         source_paths = [path for path, _score in ranked_checkpoints]
         _build_uniform_checkpoint_soup(source_paths, final_path)
         if len(source_paths) > 1:
-            checkpoint_selection["method"] = "uniform_top2_weight_soup"
+            best_score = float(ranked_checkpoints[0][1])
+            soup_accepted = False
+            try:
+                souped_model = load_tft_model(str(final_path))
+                val_results = trainer.validate(souped_model, dataloaders=val_dl, verbose=False)
+                soup_score = float((val_results[0] if val_results else {}).get(monitor_metric, float("inf")))
+                if math.isfinite(soup_score) and soup_score <= best_score:
+                    checkpoint_selection["method"] = "uniform_top2_weight_soup"
+                    checkpoint_selection["soup_val_score"] = soup_score
+                    soup_accepted = True
+                else:
+                    logger.info(
+                        "Reverting top-2 checkpoint soup (val=%.6f > best=%.6f) -> single best %s",
+                        soup_score,
+                        best_score,
+                        source_paths[0].name,
+                    )
+            except Exception as exc:
+                logger.warning("Checkpoint soup validation failed (%s); keeping single best", exc)
+
+            if not soup_accepted:
+                shutil.copy2(source_paths[0], final_path)
+                source_paths = [source_paths[0]]
+                ranked_checkpoints = [ranked_checkpoints[0]]
+                checkpoint_selection["method"] = "best_validation_checkpoint_soup_reverted"
         checkpoint_selection.update(
             {
                 "source_count": len(source_paths),
@@ -850,13 +914,17 @@ def train_tft_model(
                 exc,
             )
 
-    # ---- 7. Fit validation-only direction calibration, then evaluate test ----
-    # This catches a stable global sign inversion without consulting any test
-    # labels. The selected multiplier is persisted and reused by live inference.
+    # ---- 7. Fit validation-only ordered Split CQR, then evaluate test ----
+    # Median point forecasts come directly from the trained proper-scoring model
+    # (without raw-logit sign/magnitude hacks). Uncertainty intervals [q10, q90]
+    # and [q02, q98] are calibrated in ordered weekly space on the chronological
+    # validation split using Volatility-Normalized Split CQR and evaluated identically
+    # on held-out test and live inference.
     direction_calibration = {
         "fit_split": "validation",
         "sample_count": 0,
         "direction_sign_multiplier": 1,
+        "weekly_sign_threshold": 0.0,
         "weekly_magnitude_scale": 1.0,
     }
     magnitude_calibration = {
@@ -873,166 +941,91 @@ def train_tft_model(
         "validation_pi80_coverage": 0.0,
         "target_pi80_coverage": 0.80,
     }
-    validation_interval_conditioning_values = None
+    weekly_cqr_params: Optional[dict] = None
     val_actual_path = None
     val_pred_np = None
     try:
+        from deep_learning.calibration.conformal import fit_weekly_cqr
+        from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
         from deep_learning.training.metrics import (
-            apply_direction_sign_multiplier_np,
-            apply_weekly_magnitude_scale_np,
-            apply_weekly_sign_correction_np,
+            apply_weekly_median_cap_np,
             cumulative_horizon,
-            directional_accuracy,
-            fit_direction_sign_calibration,
-            fit_weekly_interval_scale,
-            fit_weekly_magnitude_scale,
+            monotonic_quantiles_np,
         )
 
         val_pred_np, val_actual_path = _predict_quantiles_to_np(
             evaluation_model, val_dl, cfg, return_y=True
         )
         if val_actual_path is not None and len(val_actual_path) > 0:
-            direction_calibration = fit_direction_sign_calibration(
-                val_actual_path,
-                val_pred_np,
-                horizon=cfg.forecast.primary_horizon_days,
-            )
-            direction_sign_multiplier = int(
-                direction_calibration.get("direction_sign_multiplier", 1)
-            )
-            daily_sign_multiplier = 1
-            oriented_val_pred_np = apply_direction_sign_multiplier_np(
-                val_pred_np,
-                direction_sign_multiplier,
-            )
-            oriented_val_pred_np = apply_weekly_sign_correction_np(
-                oriented_val_pred_np,
-                float(direction_calibration.get("weekly_sign_threshold", 0.0)),
-                horizon=cfg.forecast.primary_horizon_days,
-            )
-            if weekly_direction_model.get("coef"):
-                from deep_learning.training.direction_model import (
-                    apply_weekly_direction_model,
-                    predict_weekly_direction,
-                )
+            n_val = min(len(val_actual_path), len(val_pred_np))
+            direction_calibration["sample_count"] = int(n_val)
+            magnitude_calibration["sample_count"] = int(n_val)
+            interval_calibration["sample_count"] = int(n_val)
 
-                val_direction_probability = predict_weekly_direction(
-                    weekly_direction_model,
-                    master_df,
-                    start_exclusive=train_cutoff - 1,
-                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
-                )
-                if len(val_direction_probability) == len(oriented_val_pred_np):
-                    candidate_val_pred_np = apply_weekly_direction_model(
-                        oriented_val_pred_np,
-                        val_direction_probability,
-                        threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
-                        horizon=cfg.forecast.primary_horizon_days,
-                    )
-                    actual_weekly = cumulative_horizon(
-                        val_actual_path,
-                        horizon=cfg.forecast.primary_horizon_days,
-                    )
-                    base_weekly_da = directional_accuracy(
-                        actual_weekly,
-                        cumulative_horizon(
-                            oriented_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
-                            horizon=cfg.forecast.primary_horizon_days,
-                        ),
-                    )
-                    candidate_weekly_da = directional_accuracy(
-                        actual_weekly,
-                        cumulative_horizon(
-                            candidate_val_pred_np[:, :, len(cfg.model.quantiles) // 2],
-                            horizon=cfg.forecast.primary_horizon_days,
-                        ),
-                    )
-                    candidate_rate = float(np.mean(val_direction_probability >= 0.50))
-                    if (
-                        candidate_weekly_da >= 0.51
-                        and candidate_weekly_da >= base_weekly_da + 0.01
-                        and 0.25 <= candidate_rate <= 0.75
-                    ):
-                        weekly_direction_model["enabled"] = True
-                        weekly_direction_model["reason"] = "validation_improved"
-                        weekly_direction_model["validation_sample_count"] = int(len(actual_weekly))
-                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
-                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
-                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
-                        oriented_val_pred_np = candidate_val_pred_np
-                    else:
-                        weekly_direction_model["reason"] = "validation_selection_rejected"
-                        weekly_direction_model["validation_base_weekly_da"] = float(base_weekly_da)
-                        weekly_direction_model["validation_weekly_da"] = float(candidate_weekly_da)
-                        weekly_direction_model["validation_pred_positive_rate"] = candidate_rate
-                else:
-                    weekly_direction_model["reason"] = "validation_origin_count_mismatch"
-            magnitude_calibration = fit_weekly_magnitude_scale(
-                val_actual_path,
-                oriented_val_pred_np,
-                horizon=cfg.forecast.primary_horizon_days,
-                quantiles=tuple(cfg.model.quantiles),
-                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-            )
-            weekly_magnitude_scale = float(magnitude_calibration.get("scale", 1.0))
-            direction_calibration["weekly_magnitude_scale"] = weekly_magnitude_scale
-            oriented_val_pred_np = apply_weekly_magnitude_scale_np(
-                oriented_val_pred_np,
-                weekly_magnitude_scale,
-                quantiles=tuple(cfg.model.quantiles),
-            )
+            val_realized_vol = None
             if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
-                validation_interval_conditioning_values = _weekly_interval_conditioning_values(
-                    master_df,
-                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
-                    start_exclusive=train_cutoff - 1,
-                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
-                    expected_count=len(oriented_val_pred_np),
-                )
-            interval_calibration = fit_weekly_interval_scale(
-                val_actual_path,
-                oriented_val_pred_np,
+                try:
+                    val_realized_vol = _dataset_origin_conditioning_values(
+                        master_df,
+                        validation_ds,
+                        feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                        horizon=cfg.forecast.primary_horizon_days,
+                        start_exclusive=train_cutoff - 1,
+                        end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                        expected_count=n_val,
+                    )
+                except Exception as vol_exc:
+                    logger.debug("Validation realized_vol lookup skipped: %s", vol_exc)
+
+            val_eval_pred, _ = apply_weekly_median_cap_np(
+                val_pred_np[:n_val],
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
-                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-                conditioning_values=validation_interval_conditioning_values,
-                conditioning_feature=(
-                    WEEKLY_INTERVAL_CONDITIONING_FEATURE
-                    if validation_interval_conditioning_values is not None
-                    else None
-                ),
+            )
+            median_idx = len(cfg.model.quantiles) // 2
+            val_ordered = monotonic_quantiles_np(val_eval_pred, median_idx=median_idx)
+            val_weekly_q = aggregate_weekly_quantiles_np(
+                val_ordered[:, : cfg.forecast.primary_horizon_days, :],
+                median_idx=median_idx,
+            )
+            val_weekly_actual = cumulative_horizon(
+                val_actual_path[:n_val],
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+            weekly_cqr_params = fit_weekly_cqr(
+                val_weekly_actual,
+                val_weekly_q,
+                quantiles=tuple(cfg.model.quantiles),
+                realized_vol=val_realized_vol,
+            )
+            interval_calibration.update(
+                {
+                    "cqr_enabled": bool(weekly_cqr_params.get("cqr_enabled", False)),
+                    "q_hat_80": float(weekly_cqr_params.get("q_hat_80", 0.0) or 0.0),
+                    "q_hat_96": float(weekly_cqr_params.get("q_hat_96", 0.0) or 0.0),
+                    "vol_normalized": bool(weekly_cqr_params.get("vol_normalized", False)),
+                    "validation_pi80_coverage": float(
+                        weekly_cqr_params.get("validation_pi80_coverage_calibrated", 0.0) or 0.0
+                    ),
+                }
             )
     except Exception as exc:
         logger.warning(
-            "Validation calibration unavailable; retaining raw intervals/orientation: %s",
+            "Validation Split CQR unavailable; retaining raw RSS intervals: %s",
             exc,
         )
 
-    direction_sign_multiplier = int(direction_calibration.get("direction_sign_multiplier", 1))
-    # T+1-only validation flips are intentionally not promoted after the fixed
-    # OOS replay showed that they can reverse the held-out direction.
+    direction_sign_multiplier = 1
     daily_sign_multiplier = 1
-    weekly_sign_threshold = float(direction_calibration.get("weekly_sign_threshold", 0.0))
-    weekly_magnitude_scale = float(magnitude_calibration.get("scale", 1.0))
-    direction_calibration.setdefault("weekly_magnitude_scale", weekly_magnitude_scale)
-    weekly_interval_scale = float(interval_calibration.get("weekly_interval_scale", 1.0))
-    logger.info("Validation-only direction calibration: %s", direction_calibration)
-    logger.info("Validation-only magnitude calibration: %s", magnitude_calibration)
-    logger.info("Validation-only weekly interval calibration: %s", interval_calibration)
+    weekly_sign_threshold = 0.0
+    weekly_magnitude_scale = 1.0
+    weekly_interval_scale = 1.0
+    logger.info("Validation-only Split CQR calibration: %s", weekly_cqr_params or interval_calibration)
 
     # ---- 8. Evaluate on the promoted best checkpoint ----
-    # Keep gate evaluation identical to the checkpoint loaded by production.
-    # A top-k snapshot ensemble would evaluate a different artifact than the
-    # one copied to best_tft_asro.ckpt and calibrated above.
     test_metrics = {}
     if test_dl is not None:
-        import torch
-        from deep_learning.training.metrics import (
-            apply_direction_sign_multiplier_np,
-            apply_weekly_magnitude_scale_np,
-            apply_weekly_sign_correction_np,
-        )
-
         # Single-pass prediction and target extraction (eliminates dataloader double-iteration)
         pred_np, y_actual_path = _predict_quantiles_to_np(
             evaluation_model, test_dl, cfg, return_y=True
@@ -1040,57 +1033,27 @@ def train_tft_model(
         ensemble_size = 1
         logger.info("Promoted checkpoint evaluation: 1 model")
 
-        pred_np = apply_direction_sign_multiplier_np(pred_np, direction_sign_multiplier)
-        pred_np = apply_weekly_sign_correction_np(
-            pred_np,
-            weekly_sign_threshold,
-            horizon=cfg.forecast.primary_horizon_days,
-        )
-        if weekly_direction_model.get("enabled"):
-            from deep_learning.training.direction_model import (
-                apply_weekly_direction_model,
-                predict_weekly_direction,
-            )
-
-            test_direction_probability = predict_weekly_direction(
-                weekly_direction_model,
-                master_df,
-                start_exclusive=val_cutoff - 1,
-                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
-            )
-            if len(test_direction_probability) != len(pred_np):
-                raise RuntimeError(
-                    "Weekly direction model origin count does not match the untouched test window"
+        test_realized_vol = None
+        if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
+            try:
+                test_realized_vol = _dataset_origin_conditioning_values(
+                    master_df,
+                    test_ds,
+                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=val_cutoff - 1,
+                    end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                    expected_count=len(pred_np),
                 )
-            pred_np = apply_weekly_direction_model(
-                pred_np,
-                test_direction_probability,
-                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
-                horizon=cfg.forecast.primary_horizon_days,
-            )
-        pred_np = apply_weekly_magnitude_scale_np(
-            pred_np,
-            weekly_magnitude_scale,
-            quantiles=tuple(cfg.model.quantiles),
-        )
-        test_interval_conditioning_values = None
-        if interval_calibration.get("weekly_interval_conditioning_enabled"):
-            test_interval_conditioning_values = _weekly_interval_conditioning_values(
-                master_df,
-                feature_name=str(
-                    interval_calibration["weekly_interval_conditioning_feature"]
-                ),
-                start_exclusive=val_cutoff - 1,
-                end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
-                expected_count=len(pred_np),
-            )
+            except Exception as vol_exc:
+                logger.debug("Test realized_vol lookup skipped: %s", vol_exc)
+
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
             cfg,
-            weekly_interval_scale=weekly_interval_scale,
-            weekly_interval_calibration=interval_calibration,
-            weekly_interval_conditioning_values=test_interval_conditioning_values,
+            weekly_cqr_params=weekly_cqr_params,
+            realized_vol=test_realized_vol,
         )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -1111,6 +1074,7 @@ def train_tft_model(
         validation_end_time=val_cutoff - cfg.forecast.primary_horizon_days,
         weekly_interval_scale=weekly_interval_scale,
         weekly_interval_calibration=interval_calibration,
+        weekly_cqr_params=weekly_cqr_params,
     )
 
     # ---- 8. Variable importance ----
@@ -1246,21 +1210,22 @@ def _write_conformal_calibration_artifact(
     validation_end_time: Optional[int] = None,
     weekly_interval_scale: float = 1.0,
     weekly_interval_calibration: Optional[dict] = None,
+    weekly_cqr_params: Optional[dict] = None,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
 
-    If the validation window is too small, the adjustment is intentionally
-    zero; this preserves interval honesty without leaking test information.
+    Writes both Split / Volatility-Normalized CQR parameters and backward-compatible
+    scalar conformal keys so production inference and legacy consumers agree.
     """
     try:
-        import torch
-
         from deep_learning.calibration.conformal import (
             apply_conformal_interval,
+            fit_weekly_cqr,
             interval_coverage,
             rolling_conformal_adjustment,
         )
+        from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
         from deep_learning.training.metrics import (
             apply_direction_sign_multiplier_np,
             apply_weekly_magnitude_scale_np,
@@ -1268,7 +1233,6 @@ def _write_conformal_calibration_artifact(
             apply_weekly_median_cap_np,
             apply_weekly_interval_scale_np,
             cumulative_horizon,
-            cumulative_quantiles,
             monotonic_quantiles_np,
         )
 
@@ -1320,24 +1284,33 @@ def _write_conformal_calibration_artifact(
         interval_kwargs = {
             "quantiles": tuple(cfg.model.quantiles),
         }
-        if interval_calibration.get("weekly_interval_conditioning_enabled"):
-            if validation_start_time is None or validation_end_time is None:
-                raise ValueError(
-                    "Validation time bounds are required for weekly interval conditioning"
+        val_realized_vol = None
+        if (
+            feature_frame is not None
+            and WEEKLY_INTERVAL_CONDITIONING_FEATURE in feature_frame.columns
+            and validation_start_time is not None
+            and validation_end_time is not None
+        ):
+            try:
+                val_realized_vol = _dataset_origin_conditioning_values(
+                    feature_frame,
+                    getattr(val_dl, "dataset", None),
+                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=validation_start_time,
+                    end_inclusive=validation_end_time,
+                    expected_count=len(pred_np),
                 )
-            conditioning_feature = str(
-                interval_calibration["weekly_interval_conditioning_feature"]
-            )
-            validation_conditioning_values = _weekly_interval_conditioning_values(
-                feature_frame,
-                feature_name=conditioning_feature,
-                start_exclusive=validation_start_time,
-                end_inclusive=validation_end_time,
-                expected_count=len(pred_np),
-            )
+            except Exception:
+                val_realized_vol = None
+        if interval_calibration.get("weekly_interval_conditioning_enabled"):
+            if val_realized_vol is None:
+                raise ValueError(
+                    "Validation realized volatility values missing for conditioning"
+                )
             interval_kwargs.update(
                 {
-                    "conditioning_values": validation_conditioning_values,
+                    "conditioning_values": val_realized_vol,
                     "conditioning_reference": interval_calibration.get(
                         "weekly_interval_conditioning_reference"
                     ),
@@ -1378,9 +1351,15 @@ def _write_conformal_calibration_artifact(
             eval_pred_np,
             median_idx=len(cfg.model.quantiles) // 2,
         )
-        weekly_quantiles = cumulative_quantiles(
-            ordered_pred_np,
-            horizon=cfg.forecast.primary_horizon_days,
+        weekly_quantiles = aggregate_weekly_quantiles_np(
+            ordered_pred_np[:, : cfg.forecast.primary_horizon_days, :],
+            median_idx=len(cfg.model.quantiles) // 2,
+        )
+        cqr_data = weekly_cqr_params or fit_weekly_cqr(
+            weekly_actual,
+            weekly_quantiles,
+            quantiles=tuple(cfg.model.quantiles),
+            realized_vol=val_realized_vol[:n] if val_realized_vol is not None else None,
         )
         q = tuple(cfg.model.quantiles)
         q10_idx = q.index(0.10)
@@ -1438,6 +1417,13 @@ def _write_conformal_calibration_artifact(
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "target": "weekly_5d_log_return",
             "alpha": 0.20,
+            "cqr_enabled": bool(cqr_data.get("cqr_enabled", False)),
+            "method": cqr_data.get("method", "split_cqr_vol_normalized"),
+            "q_hat_80": float(cqr_data.get("q_hat_80", 0.0) or 0.0),
+            "q_hat_96": float(cqr_data.get("q_hat_96", 0.0) or 0.0),
+            "median_val_vol": cqr_data.get("median_val_vol"),
+            "vol_normalized": bool(cqr_data.get("vol_normalized", False)),
+            "min_half_width_retention": float(cqr_data.get("min_half_width_retention", 0.35) or 0.35),
             "global_adjustment": float(global_adj),
             "base_conformal_adjustment": float(conformal_adj),
             "width_floor_adjustment": float(width_floor_adjustment),
@@ -1482,6 +1468,12 @@ def _write_conformal_calibration_artifact(
             ),
             "validation_pi80_coverage": validation_pi80_coverage,
             "calibrated_validation_pi80_coverage": calibrated_validation_pi80_coverage,
+            "cqr_validation_pi80_coverage": float(
+                cqr_data.get("validation_pi80_coverage_calibrated", validation_pi80_coverage) or 0.0
+            ),
+            "cqr_validation_pi96_coverage": float(
+                cqr_data.get("validation_pi96_coverage_calibrated", 0.0) or 0.0
+            ),
             "validation_pi80_width": validation_pi80_width,
             "calibrated_validation_pi80_width": calibrated_validation_pi80_width,
             "validation_pi80_width_ratio": validation_pi80_width_ratio,
@@ -1506,8 +1498,6 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
     best hyperparameters onto cfg and return the updated config.  This connects
     the hyperopt step to the final training run so search results are not wasted.
     """
-    # optuna_results.json is saved at tft/ root (alongside best_tft_asro.ckpt),
-    # not inside the checkpoints/ subdirectory.
     results_path = Path(cfg.training.best_model_path).parent / "optuna_results.json"
     if not results_path.exists():
         logger.info(
@@ -1545,39 +1535,23 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             )
             return _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
 
-        # Guard against legacy optuna_results.json files produced before the
-        # 2026-04-27 metric/coherence fixes.  Reusing those artifacts with
-        # run_hyperopt=false can otherwise re-apply the known weak-direction
-        # regime (for example lambda_madl=0.2).
         params = dict(params)
-        if "lambda_vol" in params:
-            params["lambda_vol"] = max(float(params["lambda_vol"]), 0.30)
-        if "lambda_quantile" in params:
-            params["lambda_quantile"] = min(max(float(params["lambda_quantile"]), 0.25), 0.40)
-        if "lambda_madl" in params:
-            params["lambda_madl"] = max(float(params["lambda_madl"]), 0.30)
-        if "max_encoder_length" in params and int(params["max_encoder_length"]) < 40:
-            logger.warning(
-                "Optuna max_encoder_length=%s is below weekly-safe floor; clamping to 40",
-                params["max_encoder_length"],
-            )
-            params["max_encoder_length"] = 40
+        if "max_encoder_length" in params:
+            params["max_encoder_length"] = min(max(int(params["max_encoder_length"]), 10), 90)
+        if "hidden_size" in params:
+            params["hidden_size"] = min(max(int(params["hidden_size"]), 8), 128)
+        if "hidden_continuous_size" in params:
+            params["hidden_continuous_size"] = min(max(int(params["hidden_continuous_size"]), 4), 64)
+        if "attention_head_size" in params:
+            params["attention_head_size"] = min(max(int(params["attention_head_size"]), 1), 8)
+        if "dropout" in params:
+            params["dropout"] = min(max(float(params["dropout"]), 0.05), 0.60)
         if "learning_rate" in params:
-            params["learning_rate"] = min(float(params["learning_rate"]), 6e-4)
+            params["learning_rate"] = min(max(float(params["learning_rate"]), 1e-5), 1e-2)
         if "weight_decay" in params:
-            params["weight_decay"] = min(float(params["weight_decay"]), 5e-4)
-        if "lambda_directional" in params:
-            params["lambda_directional"] = min(max(float(params["lambda_directional"]), 0.15), 0.30)
-        if "lambda_dispersion" in params:
-            params["lambda_dispersion"] = min(max(float(params["lambda_dispersion"]), 0.10), 0.25)
-        if "lambda_positive_rate" in params:
-            params["lambda_positive_rate"] = min(max(float(params["lambda_positive_rate"]), 0.35), 0.75)
-        if "lambda_magnitude" in params:
-            params["lambda_magnitude"] = min(max(float(params["lambda_magnitude"]), 0.50), 0.58)
-        if "lambda_naive" in params:
-            params["lambda_naive"] = min(max(float(params["lambda_naive"]), 0.35), 0.45)
-        if "lambda_bias" in params:
-            params["lambda_bias"] = min(max(float(params["lambda_bias"]), 0.14), 0.19)
+            params["weight_decay"] = min(max(float(params["weight_decay"]), 0.0), 5e-2)
+        if "batch_size" in params:
+            params["batch_size"] = min(max(int(params["batch_size"]), 8), 128)
 
         controlled_params = dict(KNOWN_GOOD_CONFIG)
         controlled_params.update({
@@ -1604,7 +1578,7 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     model_overrides = {
         k: params[k] for k in (
             "hidden_size", "attention_head_size", "dropout",
-            "hidden_continuous_size", "learning_rate",
+            "hidden_continuous_size", "learning_rate", "output_head_lr_mult",
             "gradient_clip_val", "max_encoder_length",
             "weight_decay",
         ) if k in params
@@ -1619,9 +1593,10 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     }
     weekly_loss_overrides = {
         k: params[k] for k in (
-            "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_directional",
-            "lambda_dispersion", "lambda_magnitude", "lambda_naive", "lambda_bias",
-            "lambda_saturation", "lambda_positive_rate", "lambda_interval",
+            "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_t1_directional",
+            "lambda_directional", "lambda_dispersion", "lambda_magnitude",
+            "lambda_naive", "lambda_bias", "lambda_drift_prior", "lambda_saturation",
+            "lambda_positive_rate", "lambda_interval",
             "weekly_median_cap_abs_median_multiple",
             "weekly_median_cap_mean_abs_multiple", "weekly_median_cap_std_multiple",
         ) if k in params

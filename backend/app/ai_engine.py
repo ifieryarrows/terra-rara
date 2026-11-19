@@ -2706,8 +2706,8 @@ def _load_filesystem_model_bundle(target_symbol: str) -> tuple[Optional[xgb.Boos
 def train_xgboost_model(
     session: Session,
     target_symbol: str = "HG=F",
-    lookback_days: int = 365,
-    validation_days: int = 30,
+    lookback_days: int = 730,
+    validation_days: int = 60,
     early_stopping_rounds: int = 10
 ) -> Optional[dict]:
     """

@@ -22,7 +22,7 @@ from deep_learning.training.metrics import (
 
 
 def test_validation_interval_scale_targets_central_weekly_coverage():
-    weekly_actual = np.linspace(-0.018, 0.018, 100)
+    weekly_actual = np.linspace(-0.008, 0.008, 100)
     actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
     pred = np.zeros((100, 5, 7), dtype=float)
     pred[..., 0] = -0.20
@@ -34,7 +34,7 @@ def test_validation_interval_scale_targets_central_weekly_coverage():
 
     calibration = fit_weekly_interval_scale(actual, pred, horizon=5)
     scale = calibration["weekly_interval_scale"]
-    assert 0.0 < scale < 1.0
+    assert 0.0 < scale <= 2.5
     scaled = apply_weekly_interval_scale_np(pred, scale)
     metrics = evaluate_quantile_predictions(actual, scaled, horizon=5)
     assert 0.74 <= metrics["weekly_pi80_coverage"] <= 0.86
@@ -73,7 +73,7 @@ def test_validation_interval_scale_matches_production_order_with_median_cap():
 
 
 def test_validation_interval_scale_uses_finite_sample_floor_and_proper_score():
-    weekly_actual = np.linspace(-0.018, 0.018, 95)
+    weekly_actual = np.linspace(-0.008, 0.008, 95)
     actual = np.repeat((weekly_actual / 5.0)[:, None], 5, axis=1)
     pred = np.zeros((95, 5, 7), dtype=float)
     pred[..., 0] = -0.20

@@ -93,8 +93,6 @@ def test_build_result_payload_handles_all_pruned_trials():
         "weekly_mae_vs_naive_explosion": 0,
         "weekly_interval_width_explosion": 0,
         "weekly_tail_width_explosion": 0,
-        "weekly_raw_crossing_prune": 0,
-        "weekly_overcoverage_width_explosion": 0,
         "error": 0,
     }
     assert result["fold_diagnostics"] == []
@@ -133,21 +131,21 @@ def test_build_result_payload_prefers_preflight_safe_trial_over_lower_objective(
                 0,
                 "COMPLETE",
                 0.10,
-                {"lambda_positive_rate": 0.50},
-                {**healthy, "avg_directional_accuracy": 0.49},
+                {"lambda_directional": 0.15},
+                {**healthy, "avg_weekly_directional_accuracy": 0.44},
             ),
             _trial(
                 1,
                 "COMPLETE",
                 0.50,
-                {"lambda_positive_rate": 0.75},
-                {**healthy, "avg_directional_accuracy": 0.52},
+                {"lambda_directional": 0.25},
+                {**healthy, "avg_weekly_directional_accuracy": 0.52},
             ),
         )
     )
 
     assert result["best_trial"] == 1
-    assert result["best_params"] == {"lambda_positive_rate": 0.75}
+    assert result["best_params"] == {"lambda_directional": 0.25}
     assert result["best_trial_preflight"]["preflight_passed"] is True
     assert result["best_trial_selection"]["mode"] == "lowest_objective_preflight_pass"
     assert result["best_trial_selection"]["preflight_eligible_trials"] == [1]
@@ -394,15 +392,13 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 
 
 def test_known_good_trial_includes_weekly_loss_search_params():
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_weekly_quantile"] == 0.70
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_dispersion"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_magnitude"] == 0.58
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_naive"] == 0.45
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_bias"] == 0.19
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.25
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_positive_rate"] == 0.75
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_interval"] == 0.40
+    assert KNOWN_GOOD_TRIAL_PARAMS["max_encoder_length"] == 10
+    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_size"] == 12
+    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_continuous_size"] == 6
+    assert KNOWN_GOOD_TRIAL_PARAMS["attention_head_size"] == 2
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.25
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 1.0
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.0
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -419,14 +415,16 @@ def test_hyperopt_reports_weekly_objective_label():
 def test_hyperopt_objective_penalizes_interval_width_and_overcoverage():
     source = inspect.getsource(hyperopt_module)
 
-    assert "coverage_penalty = abs(fold_weekly_pi80_coverage - 0.80)" in source
-    assert "width_penalty = max(0.0, fold_weekly_pi80_width_ratio - 1.5)" in source
-    assert "tail_width_penalty = max(0.0, fold_weekly_pi96_width_ratio - 3.0)" in source
-    assert "interval_score_penalty" in source
+    assert "pinball_norm" in source
+    assert "interval_norm" in source
+    assert "mae_excess_penalty" in source
+    assert "sharpe_bonus" in source
     assert "weekly_interval_width_explosion" in source
     assert "weekly_tail_width_explosion" in source
-    assert "weekly_raw_crossing_prune" in source
-    assert "weekly_overcoverage_width_explosion" in source
+    assert "fold_weekly_pi80_width_ratio > 4.0" in source
+    assert "fold_weekly_pi96_width_ratio > 4.0" in source
+    assert "crossing_prune" in source
+    assert "weekly_raw_crossing_prune" not in source
 
 
 def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
@@ -434,56 +432,37 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
 
     cfg = create_trial_config(trial, get_tft_config())
 
-    assert cfg.model.max_encoder_length == 50
-    assert cfg.model.hidden_size == 48
-    assert cfg.model.attention_head_size == 2
-    assert cfg.model.dropout == 0.30
-    assert cfg.model.hidden_continuous_size == 16
-    assert cfg.model.learning_rate == 2e-4
-    assert cfg.model.gradient_clip_val == 1.0
-    assert cfg.model.weight_decay == 5e-5
-
-    assert cfg.asro.lambda_vol == 0.30
-    assert cfg.asro.lambda_quantile == 0.25
-    assert cfg.asro.lambda_madl == 0.40
-
+    assert cfg.model.max_encoder_length in {10, 15, 20}
+    assert cfg.model.hidden_size in {12, 16}
+    assert cfg.model.attention_head_size in {1, 2}
+    assert cfg.model.hidden_continuous_size in {6, 8}
     assert cfg.training.batch_size == 32
+    assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
+    assert cfg.weekly_loss.lambda_t1_quantile in {0.15, 0.25, 0.35}
+    assert cfg.weekly_loss.lambda_drift_prior in {0.5, 1.0, 2.0}
+    assert cfg.weekly_loss.lambda_directional in {0.0, 0.03}
+    assert cfg.weekly_loss.lambda_dispersion == 0.0
+    assert cfg.weekly_loss.lambda_magnitude == 0.0
+    assert cfg.weekly_loss.lambda_naive == 0.0
+    assert cfg.weekly_loss.lambda_positive_rate == 0.0
+    assert cfg.weekly_loss.lambda_interval == 0.0
 
-    assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
-    assert cfg.weekly_loss.lambda_t1_quantile == 0.20
-    assert cfg.weekly_loss.lambda_dispersion == 0.20
-    assert cfg.weekly_loss.lambda_t1_directional == 0.20
-    assert cfg.weekly_loss.weekly_median_cap is None
-    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 1.20
-    assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
-    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
-    assert cfg.weekly_loss.lambda_saturation == 0.35
-    assert cfg.weekly_loss.lambda_positive_rate in {0.15, 0.35, 0.50, 0.75}
-    assert cfg.weekly_loss.lambda_interval == 0.40
-
-    assert trial.float_ranges == {}
-    assert trial.categorical_choices == {
-        "lambda_magnitude": [0.50, 0.55, 0.58],
-        "lambda_naive": [0.35, 0.40, 0.45],
-        "lambda_bias": [0.14, 0.17, 0.19],
-        "lambda_directional": [0.15, 0.20, 0.25],
-        "lambda_positive_rate": [0.15, 0.35, 0.50, 0.75],
-    }
-    assert "lambda_interval" not in trial.categorical_choices
+    assert "learning_rate" in trial.float_ranges
+    assert "dropout" in trial.categorical_choices
+    assert "max_encoder_length" in trial.categorical_choices
+    assert "hidden_size" in trial.categorical_choices
 
 
 def test_hyperopt_objective_penalizes_positive_rate_and_prunes_explosions():
     source = inspect.getsource(hyperopt_module)
 
-    assert "positive_rate_penalty = abs(" in source
     assert "weekly_pred_positive_rate" in source
     assert "weekly_actual_positive_rate" in source
-    assert "fold_weekly_pred_positive_rate > 0.90" in source
-    assert "fold_weekly_actual_positive_rate < 0.75" in source
+    assert "fold_weekly_pred_positive_rate > 0.94" in source
     assert "weekly_positive_rate_explosion" in source
     assert "fold_weekly_pi80_coverage < 0.15" in source
     assert "weekly_pi80_undercoverage" in source
-    assert "fold_weekly_mae_vs_naive_zero > 3.0" in source
+    assert "fold_weekly_mae_vs_naive_zero > 2.5" in source
     assert "weekly_mae_vs_naive_explosion" in source
 
 

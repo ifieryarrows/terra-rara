@@ -147,6 +147,7 @@ class Evaluator:
         sign_flip_epsilon: float = 0.05,
         min_is_corr_threshold: float = 0.5,
         min_obs: int = 104,
+        min_oos_obs: int = 40,
         controls: Optional[dict[str, pd.Series]] = None,
         enable_partial_corr: bool = True
     ):
@@ -177,6 +178,7 @@ class Evaluator:
         self.sign_flip_epsilon = sign_flip_epsilon
         self.min_is_corr_threshold = min_is_corr_threshold
         self.min_obs = min_obs
+        self.min_oos_obs = min_oos_obs
         self.controls = controls or {}
         self.enable_partial_corr = enable_partial_corr
         
@@ -311,7 +313,7 @@ class Evaluator:
             candidate=candidate_oos,
             target_ticker="HG=F",
             candidate_ticker=ticker,
-            min_obs=10  # OOS can be shorter
+            min_obs=min(self.min_oos_obs, 20),
         )
         
         if pairwise_oos.valid:

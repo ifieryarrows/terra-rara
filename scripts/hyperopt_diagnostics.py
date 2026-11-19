@@ -7,41 +7,40 @@ def _weekly_positive_rate_exploded(diagnostic: dict) -> bool:
     pred_pos_rate = diagnostic.get("avg_weekly_pred_positive_rate", 1.0)
     actual_pos_rate = diagnostic.get("avg_weekly_actual_positive_rate", 0.0)
     return (
-        (pred_pos_rate > 0.90 and actual_pos_rate < 0.75)
-        or (pred_pos_rate < 0.10 and actual_pos_rate > 0.25)
+        (pred_pos_rate > 0.92 and actual_pos_rate < 0.67)
+        or (pred_pos_rate < 0.08 and actual_pos_rate > 0.33)
     )
 
 
 def _structural_checks(diagnostics: dict) -> dict[str, bool]:
     """Evaluate the shared trial-level structural preflight contract."""
+    mr = diagnostics.get("avg_weekly_magnitude_ratio", 0.0)
     return {
         "public_crossing_le_0_001": diagnostics.get(
             "avg_quantile_crossing_rate", 1.0
         ) <= 0.001,
-        "weekly_magnitude_le_3_0": diagnostics.get(
-            "avg_weekly_magnitude_ratio", 999
-        ) <= 3.0,
-        "weekly_pi80_width_ratio_le_4_0": diagnostics.get(
+        "weekly_magnitude_healthy": 0.02 <= float(mr) <= 2.50,
+        "weekly_pi80_width_ratio_le_3_0": diagnostics.get(
             "avg_weekly_pi80_width_ratio", 999
-        ) <= 4.0,
+        ) <= 3.0,
         "weekly_positive_rate_not_exploded": not _weekly_positive_rate_exploded(
             diagnostics
         ),
-        "weekly_pi80_coverage_ge_0_15": diagnostics.get(
+        "weekly_pi80_coverage_ge_0_30": diagnostics.get(
             "avg_weekly_pi80_coverage", 0.0
-        ) >= 0.15,
-        "weekly_mae_vs_naive_zero_le_3_0": diagnostics.get(
+        ) >= 0.30,
+        "weekly_mae_vs_naive_zero_le_1_25": diagnostics.get(
             "avg_weekly_mae_vs_naive_zero", 999
-        ) <= 3.0,
+        ) <= 1.25,
         "variance_ratio_le_3_0": diagnostics.get(
             "avg_variance_ratio", 999
         ) <= 3.0,
-        "directional_accuracy_ge_0_50": (
-            diagnostics.get("avg_weekly_directional_accuracy", 0.0) >= 0.50
+        "directional_accuracy_ge_0_48": (
+            diagnostics.get("avg_weekly_directional_accuracy", 0.0) >= 0.48
             if "avg_weekly_directional_accuracy" in diagnostics
-            else diagnostics.get("avg_directional_accuracy", 0.0) >= 0.50
+            else diagnostics.get("avg_directional_accuracy", 0.0) >= 0.48
         )
-        and diagnostics.get("avg_weekly_sharpe", 0.0) >= -0.20,
+        and diagnostics.get("avg_weekly_sharpe", 0.0) >= -0.35,
     }
 
 

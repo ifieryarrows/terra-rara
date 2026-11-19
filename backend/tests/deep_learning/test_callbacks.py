@@ -131,7 +131,7 @@ def test_weekly_loss_logger_publishes_validation_objective():
     )
     pl_module.log.assert_any_call(
         "val_weekly_gate_loss",
-        0.51,
+        0.42,
         on_step=False,
         on_epoch=True,
         prog_bar=False,

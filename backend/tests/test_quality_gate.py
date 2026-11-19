@@ -34,11 +34,25 @@ GOOD_QUANTILE = {
 
 
 def test_quality_gate_rejects_negative_sharpe_but_not_low_da():
-    passed, reasons = evaluate_quality_gate(da=0.4377, sharpe=-2.4054, vr=0.9424, **GOOD_QUANTILE, **GOOD_WEEKLY)
+    # Weekly-primary contract: T+1 Sharpe triggers a diagnostic warning, while
+    # negative weekly HAC Sharpe below -0.35 blocks promotion cleanly.
+    t1_only_passed, t1_only_reasons = evaluate_quality_gate(
+        da=0.4377, sharpe=-2.4054, vr=0.9424, **GOOD_QUANTILE, **GOOD_WEEKLY
+    )
+    assert t1_only_passed is True, t1_only_reasons
+    t1_warnings = evaluate_quality_gate_warnings(vr=0.9424, sharpe_ratio=-2.4054)
+    assert any("T1Sharpe=-2.4054" in w for w in t1_warnings)
 
-    assert passed is False
-    assert not any("DA=" in reason for reason in reasons)
-    assert any("Sharpe=" in reason for reason in reasons)
+    weekly_failed, weekly_reasons = evaluate_quality_gate(
+        da=0.4377,
+        sharpe=0.0,
+        vr=0.9424,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_sharpe_ratio_hac": -0.45},
+    )
+    assert weekly_failed is False
+    assert not any("DA=" in reason for reason in weekly_reasons)
+    assert any("WeeklySharpe=-0.4500" in reason for reason in weekly_reasons)
 
 
 def test_quality_gate_asserts_public_quantile_incoherence():
@@ -70,14 +84,63 @@ def test_quality_gate_fails_when_weekly_metrics_missing():
 
 
 def test_quality_gate_relaxes_only_weekly_da_for_small_sample():
-    passed, reasons = evaluate_quality_gate(
+    # n < 150 -> min_weekly_da = 0.45
+    passed_small, reasons_small = evaluate_quality_gate(
         da=0.52,
         sharpe=0.0,
         vr=1.0,
         **GOOD_QUANTILE,
-        **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.515, "weekly_sample_count": 50},
+        **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.46, "weekly_sample_count": 105},
     )
-    assert passed is True, reasons
+    assert passed_small is True, reasons_small
+
+    # 150 <= n < 300 -> min_weekly_da = 0.47
+    failed_mid, reasons_mid = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.0,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.46, "weekly_sample_count": 180},
+    )
+    assert failed_mid is False
+    assert "WeeklyDA=0.4600 < 0.47" in reasons_mid
+
+    # n >= 300 -> min_weekly_da = 0.49
+    failed_large, reasons_large = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.0,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_directional_accuracy": 0.48, "weekly_sample_count": 320},
+    )
+    assert failed_large is False
+    assert "WeeklyDA=0.4800 < 0.49" in reasons_large
+
+
+def test_quality_gate_magnitude_floor_mae_cap_and_low_magnitude_warning():
+    # Bayes-optimal low-magnitude MR=0.03 passes gate with non-blocking warning
+    passed_low_mr, reasons_low_mr = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.0,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_magnitude_ratio": 0.03, "weekly_mae_vs_naive_zero": 1.05},
+    )
+    assert passed_low_mr is True, reasons_low_mr
+    warns = evaluate_quality_gate_warnings(vr=1.0, weekly_magnitude_ratio=0.03)
+    assert any("WeeklyMagnitudeRatio=0.0300 < 0.05" in w for w in warns)
+
+    # Collapse below 0.02 and MAE > 1.12 fail
+    failed, reasons = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.0,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_magnitude_ratio": 0.01, "weekly_mae_vs_naive_zero": 1.13},
+    )
+    assert failed is False
+    assert "WeeklyMagnitudeCollapse=0.0100 < 0.02" in reasons
+    assert "WeeklyMAEvsNaiveZero=1.1300 > 1.12" in reasons
 
 
 def test_quality_gate_does_not_fail_on_low_t1_da_alone():
@@ -114,7 +177,7 @@ def test_quality_gate_rejects_weekly_pi96_width_explosion():
     )
 
     assert passed is False
-    assert "WeeklyPI96WidthRatio=10.6438 > 3.0" in reasons
+    assert "WeeklyPI96WidthRatio=10.6438 > 3.2" in reasons
 
 
 def test_quality_gate_rejects_weekly_majority_sign_collapse():
@@ -260,7 +323,7 @@ def test_serialized_metric_mapping_uses_full_gate_contract():
 def test_quality_gate_warns_on_low_weekly_sharpe():
     warnings = evaluate_quality_gate_warnings(
         vr=1.0,
-        weekly_sharpe_ratio=0.12,
+        weekly_sharpe_ratio=-0.12,
     )
-    assert any("WeeklySharpe=0.1200 < 0.20" in w for w in warnings)
+    assert any("WeeklySharpe=-0.1200 < 0.00" in w for w in warnings)
 

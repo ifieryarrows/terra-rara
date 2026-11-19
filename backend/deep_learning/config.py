@@ -70,26 +70,21 @@ class LMEConfig:
 
 @dataclass(frozen=True)
 class TFTModelConfig:
-    max_encoder_length: int = 60
+    max_encoder_length: int = 10
     max_prediction_length: int = 5
-    # It.4 known-good default: post-MRMR feature count supports 48 hidden units
-    # and produced the first quality-gate passing TFT-ASRO run.
-    hidden_size: int = 48
-    # attention_head_size 4→2: fewer heads for a small, single-series dataset.
+    # Compact capacity with differential head LR prevents gradient ping-pong on
+    # raw daily log-return targets (~17k params vs 510k previously).
+    hidden_size: int = 12
     attention_head_size: int = 2
-    # It.4 used 0.30: enough regularisation for the small sample regime without
-    # collapsing the output range.
-    dropout: float = 0.30
-    hidden_continuous_size: int = 16   # was 32; paired reduction with hidden_size
+    dropout: float = 0.35
+    hidden_continuous_size: int = 6
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
-    # It.4 known-good learning rate.
-    learning_rate: float = 2e-4
+    learning_rate: float = 5e-4
+    output_head_lr_mult: float = 0.05
     reduce_on_plateau_patience: int = 4
-    # clip 0.5→1.0: tanh-based Sharpe gradients are inherently bounded;
-    # relaxing the clip lets the model escape flat regions more aggressively.
-    gradient_clip_val: float = 1.0
-    # L2 regularisation via AdamW; prevents large weight growth on small datasets.
-    weight_decay: float = 5e-5
+    gradient_clip_val: float = 0.5
+    # L2 regularisation via AdamW; prevents weight growth on small financial series.
+    weight_decay: float = 1e-2
 
 
 @dataclass(frozen=True)
@@ -136,70 +131,40 @@ class ASROConfig:
 
 @dataclass(frozen=True)
 class WeeklyLossConfig:
-    lambda_weekly_quantile: float = 0.70
-    lambda_t1_quantile: float = 0.20
-    # Keep the validated T+1 directional baseline. A higher weight was tested
-    # on the fixed OOS snapshot and degraded weekly magnitude and PI80.
-    lambda_t1_directional: float = 0.20
-    # Reduced from 0.35 to 0.20: dispersion loss was dominating weekly quantile
-    # loss in CI training logs, starving the directional signal.  Magnitude
-    # loss handles scale control more directly via gate-aligned penalties.
-    lambda_dispersion: float = 0.20
-    lambda_magnitude: float = 0.58
-    lambda_naive: float = 0.45
-    lambda_bias: float = 0.19
-    # Increased from 0.20 to 0.25: CI callback logged "directional loss is
-    # below 5% of total loss" across nearly every epoch.
-    lambda_directional: float = 0.25
-    # Reduced from 0.50 to 0.35: saturation was adding weight that competed
-    # with directional learning without directly addressing any gate metric.
-    lambda_saturation: float = 0.35
-    # Increased from 0.15 to 0.75 after the deterministic validation run still
-    # produced a 95%+ positive weekly forecast.  The component is a detached
-    # training-only sign/rate loss; increasing its weight addresses the
-    # collapse without changing any evaluation or promotion threshold.
-    lambda_positive_rate: float = 0.75
-    # The fixed OOS replay still produced a validation PI80 width ratio above
-    # the train-objective target despite the interval component being only a
-    # small fraction of the loss. Increase its optimization weight so the
-    # quantile head learns narrower, regime-sensitive spreads; gate thresholds
-    # and validation-only calibration remain unchanged.
-    lambda_interval: float = 0.40
-    # Keep the structural median cap close to the train-window weekly scale.
-    # The previous 1.25x setting left the fresh immutable-snapshot replay at
-    # WeeklyMR=1.3866 even after checkpoint averaging. A fixed 1.20x remains
-    # derived solely from training targets and replayed all three retained
-    # top-2 artifacts inside the unchanged gate without changing direction or
-    # interval calibration.
-    weekly_median_cap_abs_median_multiple: float = 1.20
-    weekly_median_cap_mean_abs_multiple: float = 1.6
-    weekly_median_cap_std_multiple: float = 1.2
+    # Proper-scoring core: scale-normalized weekly quantile pinball + auxiliary
+    # T+1 quantile pinball + gentle bias guard (directional surrogate default 0.0
+    # avoids cross-regime threshold flip instability on compact samples).
+    # Legacy heuristic batch penalties default to 0.0 (fields kept for backward compat).
+    lambda_weekly_quantile: float = 1.00
+    lambda_t1_quantile: float = 0.25
+    lambda_t1_directional: float = 0.0
+    lambda_dispersion: float = 0.0
+    lambda_magnitude: float = 0.0
+    lambda_naive: float = 0.0
+    lambda_bias: float = 0.0
+    lambda_drift_prior: float = 1.0
+    lambda_directional: float = 0.0
+    lambda_saturation: float = 0.0
+    lambda_positive_rate: float = 0.0
+    lambda_interval: float = 0.0
+    # Safety anomaly ceiling only — never clip realistic forecasts during normal operation.
+    weekly_median_cap_abs_median_multiple: float = 5.0
+    weekly_median_cap_mean_abs_multiple: float = 4.5
+    weekly_median_cap_std_multiple: float = 3.5
     weekly_median_cap: Optional[float] = None
 
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    max_epochs: int = 100
-    # patience 10→15: with 19 batches/epoch (vs 4 before) each epoch carries
-    # more information; give the model more time to converge.
-    early_stopping_patience: int = 15
-    # batch_size 64→16: 313 samples / 64 = 4 batches/epoch → noisy gradients.
-    # 313 / 16 ≈ 19 batches/epoch gives stable, consistent gradient estimates.
-    batch_size: int = 16
+    max_epochs: int = 60
+    early_stopping_patience: int = 10
+    batch_size: int = 32
     val_ratio: float = 0.15
-    test_ratio: float = 0.10
-    # 730→1095: 3 years of history yields ~500 training samples (up from ~313).
-    # Improves the feature-to-sample ratio from ~200:313 to ~60:500 (after
-    # MRMR pruning).  Walk-forward CV ensures older regime shifts don't
-    # pollute validation metrics.
-    lookback_days: int = 1095
+    test_ratio: float = 0.15
+    lookback_days: int = 1825
     seed: int = 42
     num_workers: int = 0
-    # 25→15: CI budget fix. 15 trials × 3 folds × 25 epochs ≈ 108 min;
-    # final trainer adds ~40-50 min → total ~155 min < 180 min limit.
     optuna_n_trials: int = 30
-    # Walk-Forward temporal CV folds for hyperopt (REG-2026-001 P2).
-    # Set to 1 to disable CV and fall back to single-split behaviour.
     cv_n_folds: int = 3
     checkpoint_dir: str = ""
     best_model_path: str = ""
@@ -212,9 +177,7 @@ class FeatureStoreConfig:
     max_ffill: int = 3
     calendar_features: bool = True
     macro_event_features: bool = True
-    # MRMR pre-filter: reduce unknown features to top-K by mutual information
-    # relevance minus pairwise redundancy.  Set to 0 to disable.
-    mrmr_top_k: int = 80
+    mrmr_top_k: int = 12
 
 
 @dataclass

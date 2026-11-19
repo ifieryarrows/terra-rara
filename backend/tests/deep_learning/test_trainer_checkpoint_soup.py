@@ -94,12 +94,12 @@ def test_validation_checkpoint_ranking_excludes_degraded_secondary_epochs(tmp_pa
     callback_close = SimpleNamespace(
         best_k_models={
             str(best): torch.tensor(4.6587),
-            str(near): torch.tensor(5.05),
+            str(near): torch.tensor(4.78),
         },
         best_model_path=str(best),
         best_model_score=torch.tensor(4.6587),
     )
     assert _validation_ranked_checkpoint_paths(callback_close, max_count=2) == [
         (best, pytest.approx(4.6587)),
-        (near, pytest.approx(5.05)),
+        (near, pytest.approx(4.78)),
     ]

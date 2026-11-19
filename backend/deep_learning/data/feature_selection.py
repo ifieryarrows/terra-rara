@@ -49,9 +49,96 @@ def _mutual_info_relevance(
     return pd.Series(mi, index=X.columns)
 
 
+def _hybrid_relevance(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    spearman_weight: float = 0.85,
+    n_neighbors: int = 5,
+) -> pd.Series:
+    """Combine |Spearman| rank correlation with MI so directional signals outrank pure volatility."""
+    from scipy.stats import spearmanr
+
+    mi = _mutual_info_relevance(X, y, n_neighbors=n_neighbors)
+    mi_arr = np.nan_to_num(mi.reindex(X.columns).to_numpy(dtype=np.float64), nan=0.0)
+
+    y_vals = y.to_numpy(dtype=np.float64)
+    y_constant = np.nanstd(y_vals) < 1e-12
+    sp_vals: list[float] = []
+    for col in X.columns:
+        try:
+            col_vals = X[col].to_numpy(dtype=np.float64)
+            if y_constant or np.nanstd(col_vals) < 1e-12:
+                sp_vals.append(0.0)
+                continue
+            stat = spearmanr(col_vals, y_vals).statistic
+            sp_vals.append(abs(float(stat)) if stat is not None and np.isfinite(stat) else 0.0)
+        except Exception:
+            sp_vals.append(0.0)
+    sp_arr = np.asarray(sp_vals, dtype=np.float64)
+
+    mi_norm = mi_arr / max(float(mi_arr.max()) if mi_arr.size else 0.0, 1e-12)
+    sp_norm = sp_arr / max(float(sp_arr.max()) if sp_arr.size else 0.0, 1e-12)
+    combined = spearman_weight * sp_norm + (1.0 - spearman_weight) * mi_norm
+    return pd.Series(combined, index=X.columns)
+
+
 def _pairwise_correlation(X: pd.DataFrame) -> pd.DataFrame:
     """Absolute Pearson correlation matrix."""
     return X.corr().abs()
+
+
+def _filter_healthy_training_features(
+    df: pd.DataFrame,
+    candidate_cols: list[str],
+    *,
+    min_std: float = 1e-8,
+    min_non_mode_rate: float = 0.08,
+) -> tuple[list[str], dict[str, str]]:
+    """Drop zero-variance or sparse-backfill features using training split only."""
+    if not candidate_cols or len(df) == 0:
+        return list(candidate_cols), {}
+
+    enforce_distribution_checks = len(df) >= 100
+    kept: list[str] = []
+    dropped: dict[str, str] = {}
+    for col in candidate_cols:
+        if col not in df.columns:
+            continue
+        series = pd.to_numeric(df[col], errors="coerce")
+        valid = series.dropna()
+        if valid.empty:
+            dropped[col] = "all_nan"
+            continue
+        if not enforce_distribution_checks:
+            kept.append(col)
+            continue
+
+        arr = valid.to_numpy(dtype=np.float64)
+        if not np.isfinite(arr).all():
+            dropped[col] = "non_finite"
+            continue
+        std = float(np.std(arr))
+        if std < min_std:
+            dropped[col] = "zero_variance"
+            continue
+
+        mode_val = float(valid.mode().iloc[0])
+        non_mode_rate = float((np.abs(arr - mode_val) > 1e-12).mean())
+        if non_mode_rate < min_non_mode_rate:
+            dropped[col] = f"sparse_coverage({non_mode_rate:.3f}<{min_non_mode_rate:.2f})"
+            continue
+
+        kept.append(col)
+
+    if dropped:
+        logger.info(
+            "Filtered %d unhealthy training features (%s): %s",
+            len(dropped),
+            f"n={len(df)}",
+            dict(list(dropped.items())[:10]),
+        )
+    return kept, dropped
 
 
 def mrmr_select(
@@ -59,21 +146,16 @@ def mrmr_select(
     target_col: str = "target",
     top_k: int = 80,
     exclude_cols: Optional[list[str]] = None,
+    max_pairwise_corr: float = 0.85,
+    forced_cols: Optional[list[str]] = None,
 ) -> list[str]:
     """
-    Minimum Redundancy Maximum Relevance feature selection.
+    Scale-consistent Minimum Redundancy Maximum Relevance (mRMR-Q) selection.
 
-    Greedily selects features that are highly relevant to the target while
-    being minimally redundant with already-selected features.
-
-    Args:
-        df:          DataFrame containing features and the target column.
-        target_col:  Name of the target column.
-        top_k:       Number of features to select.
-        exclude_cols: Columns to exclude from selection (e.g. time_idx, group_id).
-
-    Returns:
-        List of selected feature names, ordered by selection round.
+    Combines normalized |Spearman| directional relevance with mutual information
+    to prevent volatility-only features from crowding out directional signals,
+    respects pre-seeded ``forced_cols`` within the ``top_k`` budget, and caps
+    pairwise collinearity.
     """
     if exclude_cols is None:
         exclude_cols = []
@@ -83,6 +165,10 @@ def mrmr_select(
 
     if top_k <= 0:
         return []
+
+    healthy_cols, _ = _filter_healthy_training_features(df, feature_cols)
+    if healthy_cols:
+        feature_cols = healthy_cols
 
     if len(feature_cols) <= top_k:
         logger.info("MRMR: %d features <= top_k=%d, skipping selection", len(feature_cols), top_k)
@@ -99,41 +185,67 @@ def mrmr_select(
         logger.warning("MRMR: only %d valid samples, skipping", len(X))
         return feature_cols
 
-    relevance = _mutual_info_relevance(X, y)
+    relevance = _hybrid_relevance(X, y)
     corr_matrix = _pairwise_correlation(X)
 
-    # Vectorized running-sum MRMR: update running correlation sum in O(N) per step
     n_feats = len(feature_cols)
     rel_arr = np.nan_to_num(
         relevance.reindex(feature_cols).to_numpy(dtype=np.float64),
         nan=0.0,
     )
+    rel_max = float(rel_arr.max()) if len(rel_arr) else 0.0
+    rel_norm = rel_arr / max(rel_max, 1e-12)
     corr_arr = np.nan_to_num(
         corr_matrix.reindex(index=feature_cols, columns=feature_cols).to_numpy(dtype=np.float64),
         nan=0.0,
     )
 
+    col_to_idx = {c: i for i, c in enumerate(feature_cols)}
+    forced_indices: list[int] = []
+    if forced_cols:
+        seen_forced: set[int] = set()
+        for col in forced_cols:
+            idx = col_to_idx.get(col)
+            if idx is not None and idx not in seen_forced:
+                forced_indices.append(idx)
+                seen_forced.add(idx)
+
     selected_indices: list[int] = []
     selected_mask = np.zeros(n_feats, dtype=bool)
     running_corr_sum = np.zeros(n_feats, dtype=np.float64)
+    max_corr_to_selected = np.zeros(n_feats, dtype=np.float64)
 
-    first_idx = int(np.argmax(rel_arr))
-    selected_indices.append(first_idx)
-    selected_mask[first_idx] = True
-    running_corr_sum += corr_arr[:, first_idx]
+    if forced_indices:
+        for idx in forced_indices:
+            selected_indices.append(idx)
+            selected_mask[idx] = True
+            running_corr_sum += corr_arr[:, idx]
+            max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, idx])
+    else:
+        first_idx = int(np.argmax(rel_norm))
+        selected_indices.append(first_idx)
+        selected_mask[first_idx] = True
+        running_corr_sum += corr_arr[:, first_idx]
+        max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, first_idx])
 
-    for k in range(1, top_k):
-        redundancy = running_corr_sum / k
-        scores = rel_arr - redundancy
+    while len(selected_indices) < top_k:
+        redundancy = running_corr_sum / max(1, len(selected_indices))
+        scores = rel_norm / (redundancy + 0.50)
         scores[selected_mask] = -np.inf
 
-        best_idx = int(np.argmax(scores))
-        if scores[best_idx] == -np.inf:
-            break
+        eligible_scores = scores.copy()
+        eligible_scores[max_corr_to_selected > max_pairwise_corr] = -np.inf
+        best_idx = int(np.argmax(eligible_scores))
+        if eligible_scores[best_idx] == -np.inf:
+            # Fallback if hard collinearity cap exhausted all candidates before top_k
+            best_idx = int(np.argmax(scores))
+            if scores[best_idx] == -np.inf:
+                break
 
         selected_indices.append(best_idx)
         selected_mask[best_idx] = True
         running_corr_sum += corr_arr[:, best_idx]
+        max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, best_idx])
 
     selected = [feature_cols[i] for i in selected_indices]
 
@@ -253,26 +365,41 @@ def select_features(
         c for c in df.columns
         if c not in preserve_cols and c not in forbidden
     ]
-    forced_unknown = [
+    raw_forced_unknown = [
         c for c in forced_unknown_features
         if c in df.columns and c not in preserve_cols
     ]
 
-    if len(unknown_candidates) <= mrmr_top_k:
+    healthy_unknown, _ = _filter_healthy_training_features(selection_df, unknown_candidates)
+    healthy_set = set(healthy_unknown)
+    forced_unknown = [c for c in raw_forced_unknown if c in healthy_set]
+    if len(raw_forced_unknown) != len(forced_unknown):
+        deferred = [c for c in raw_forced_unknown if c not in healthy_set]
+        logger.info("Deferred sparse/constant forced features: %s", deferred)
+
+    # Preserve healthy candidates while keeping non-empty fallback when synthetic frames fail filter
+    effective_candidates = healthy_unknown if healthy_unknown else unknown_candidates
+
+    if len(effective_candidates) <= mrmr_top_k:
         logger.info(
-            "Feature selection: %d unknown features <= top_k=%d, no pruning needed",
-            len(unknown_candidates), mrmr_top_k,
+            "Feature selection: %d unknown features <= top_k=%d, pruning unhealthy only",
+            len(effective_candidates), mrmr_top_k,
         )
-        selected = sorted(set(unknown_candidates) | set(forced_unknown))
+        selected = sorted(set(effective_candidates) | set(forced_unknown))
         keep_cols = [c for c in list(preserve_cols) + selected if c in df.columns]
         return df[keep_cols].copy(), selected, known_features
 
-    selected_unknown = mrmr_select(
-        selection_df,
-        target_col=target_col,
-        top_k=mrmr_top_k,
-        exclude_cols=list(preserve_cols | forbidden),
-    )
+    mrmr_kwargs: dict = {
+        "target_col": target_col,
+        "top_k": mrmr_top_k,
+        "exclude_cols": list(
+            preserve_cols | forbidden | (set(unknown_candidates) - set(effective_candidates))
+        ),
+    }
+    if forced_unknown:
+        mrmr_kwargs["forced_cols"] = forced_unknown
+
+    selected_unknown = mrmr_select(selection_df, **mrmr_kwargs)
     selected_unknown = sorted(set(selected_unknown) | set(forced_unknown))
 
     keep_cols = list(preserve_cols) + selected_unknown

@@ -372,50 +372,62 @@ def generate_symbol_features(
     sma_windows: list[int] = [5, 10, 20],
     ema_windows: list[int] = [5, 10, 20],
     rsi_window: int = 14,
-    vol_window: int = 10
+    vol_window: int = 10,
+    include_raw_ma: bool = True,
 ) -> pd.DataFrame:
     """
     Generate features for a single symbol.
-    
-    Features:
-    - ret1: 1-day return
-    - lag_ret1_k: lagged returns
-    - SMA_w: simple moving averages
-    - EMA_w: exponential moving averages
-    - RSI_14: relative strength index
-    - vol_10: rolling volatility
+
+    When ``include_raw_ma`` is True (legacy default), raw SMA_w/EMA_w levels
+    are emitted alongside stationary features. When False, non-stationary raw
+    price levels are replaced by stationary relative ratios and multi-horizon
+    log returns to prevent OOD covariate shift across price regimes.
     """
     features = pd.DataFrame(index=df.index)
     prefix = f"{symbol}_" if symbol else ""
-    
-    close = df["close"]
-    
+
+    close = df["close"].astype(float)
+
     # Returns
     ret1 = compute_returns(close, 1)
     features[f"{prefix}ret1"] = ret1
-    
+
     # Lagged returns
     for lag in include_lags:
         features[f"{prefix}lag_ret1_{lag}"] = ret1.shift(lag)
-    
-    # SMA
-    for w in sma_windows:
-        features[f"{prefix}SMA_{w}"] = compute_sma(close, w)
-    
-    # EMA
-    for w in ema_windows:
-        features[f"{prefix}EMA_{w}"] = compute_ema(close, w)
-    
+
+    # Moving averages / stationary trend ratios
+    sma_20 = compute_sma(close, 20)
+    if include_raw_ma:
+        for w in sma_windows:
+            features[f"{prefix}SMA_{w}"] = compute_sma(close, w)
+        for w in ema_windows:
+            features[f"{prefix}EMA_{w}"] = compute_ema(close, w)
+    else:
+        safe_close = close.where(close > 0.0, np.nan)
+        for w in sma_windows:
+            sma_w = sma_20 if w == 20 else compute_sma(close, w)
+            features[f"{prefix}close_sma_{w}_ratio"] = (safe_close / sma_w.replace(0, np.nan)) - 1.0
+        if 5 in ema_windows and 20 in ema_windows:
+            ema_fast = compute_ema(close, 5)
+            ema_slow = compute_ema(close, 20)
+            features[f"{prefix}ema_fast_slow_spread"] = (ema_fast / ema_slow.replace(0, np.nan)) - 1.0
+        for h in (5, 10, 20):
+            prev = safe_close.shift(h)
+            features[f"{prefix}ret{h}"] = np.log(safe_close / prev.where(prev > 0.0, np.nan))
+        vol_short = compute_volatility(ret1, 5)
+        vol_long = compute_volatility(ret1, 20)
+        features[f"{prefix}vol_5_20_ratio"] = vol_short / vol_long.replace(0, np.nan)
+
     # RSI
     features[f"{prefix}RSI_{rsi_window}"] = compute_rsi(close, rsi_window)
-    
+
     # Volatility
     features[f"{prefix}vol_{vol_window}"] = compute_volatility(ret1, vol_window)
-    
+
     # Price level (normalized by SMA for scale invariance)
-    sma_20 = compute_sma(close, 20)
     features[f"{prefix}price_sma_ratio"] = close / sma_20.replace(0, np.nan)
-    
+
     return features
 
 
@@ -667,22 +679,28 @@ def _humanize_symbol(sym: str) -> str:
 
 
 _INDICATOR_LABEL_MAP: dict[str, str] = {
-    "ret1":            "1-day price change",
-    "ret2":            "2-day price change",
-    "ret5":            "5-day price change",
-    "ret10":           "10-day price change",
-    "RSI_14":          "14-day price momentum",
-    "SMA_5":           "5-day moving average",
-    "SMA_10":          "10-day moving average",
-    "SMA_20":          "20-day moving average",
-    "EMA_5":           "5-day weighted moving average",
-    "EMA_10":          "10-day weighted moving average",
-    "EMA_20":          "20-day weighted moving average",
-    "vol_5":           "5-day price volatility",
-    "vol_10":          "10-day price volatility",
-    "vol_20":          "20-day price volatility",
-    "price_sma_ratio": "Price vs. 20-day average",
-    "target":          "Model target (next-day change)",
+    "ret1":                 "1-day price change",
+    "ret2":                 "2-day price change",
+    "ret5":                 "5-day price change",
+    "ret10":                "10-day price change",
+    "ret20":                "20-day price change",
+    "RSI_14":               "14-day price momentum",
+    "SMA_5":                "5-day moving average",
+    "SMA_10":               "10-day moving average",
+    "SMA_20":               "20-day moving average",
+    "EMA_5":                "5-day weighted moving average",
+    "EMA_10":               "10-day weighted moving average",
+    "EMA_20":               "20-day weighted moving average",
+    "close_sma_5_ratio":    "Price vs. 5-day average",
+    "close_sma_10_ratio":   "Price vs. 10-day average",
+    "close_sma_20_ratio":   "Price vs. 20-day average",
+    "ema_fast_slow_spread": "5-day vs. 20-day EMA spread",
+    "vol_5":                "5-day price volatility",
+    "vol_10":               "10-day price volatility",
+    "vol_20":               "20-day price volatility",
+    "vol_5_20_ratio":       "5-day vs. 20-day volatility ratio",
+    "price_sma_ratio":      "Price vs. 20-day average",
+    "target":               "Model target (next-day change)",
 }
 
 
@@ -701,6 +719,9 @@ def _label_indicator(token: str) -> str:
     m_vol = re.match(r"^vol_(\d+)$", t_lower)
     if m_vol:
         return f"{m_vol.group(1)}-day price volatility"
+    m_csma = re.match(r"^close_sma_(\d+)_ratio$", t_lower)
+    if m_csma:
+        return f"Price vs. {m_csma.group(1)}-day average"
     m_rsi = re.match(r"^rsi_(\d+)$", t_lower)
     if m_rsi:
         return f"{m_rsi.group(1)}-day price momentum"
@@ -721,7 +742,7 @@ def _label_indicator(token: str) -> str:
     return token.replace("_", " ").lower()
 
 _KNOWN_INDICATOR_PREFIXES = frozenset(
-    {"ret", "lag_ret", "sma", "ema", "rsi", "vol", "price_sma", "to_sma", "target"}
+    {"ret", "lag_ret", "sma", "ema", "rsi", "vol", "price_sma", "close_sma", "to_sma", "target"}
 )
 
 
@@ -756,7 +777,10 @@ def describe_feature(feature: str) -> dict[str, str]:
         first_token = feature.split("_", 1)[0].lower()
         if (
             first_token in _KNOWN_INDICATOR_PREFIXES
-            or any(feature.lower().startswith(p) for p in ("ret", "vol_", "sma_", "ema_", "rsi_", "price_sma", "to_sma"))
+            or any(
+                feature.lower().startswith(p)
+                for p in ("ret", "vol_", "sma_", "ema_", "rsi_", "price_sma", "close_sma", "to_sma")
+            )
         ):
             symbol = "HG=F"
             token = feature
@@ -779,7 +803,7 @@ def describe_feature(feature: str) -> dict[str, str]:
         category = "Momentum"
     elif t.startswith("vol"):
         category = "Volatility"
-    elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t or "to_sma" in t:
+    elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t or "close_sma" in t or "to_sma" in t:
         category = "Trend"
     elif symbol and symbol != "HG=F":
         category = "Macro" if symbol in {"DX-Y.NYB", "^TNX", "^VIX", "^GSPC", "^DJI", "^IXIC"} else "Sector"

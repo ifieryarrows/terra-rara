@@ -559,24 +559,39 @@ def ingest_prices(session: Session) -> dict:
     # Overlap buffer: re-fetch last 3 days to catch any corrections/adjustments
     OVERLAP_DAYS = 3
     
-    from app.price_utils import finite_number, finite_positive_price, latest_finite_price_dates, latest_finite_price_bar
+    from app.price_utils import (
+        earliest_finite_price_dates,
+        finite_number,
+        finite_positive_price,
+        latest_finite_price_bar,
+        latest_finite_price_dates,
+    )
     latest_dates = latest_finite_price_dates(session, symbols)
+    earliest_dates = earliest_finite_price_dates(session, symbols)
 
     symbol_params = []
     for symbol in symbols:
-        # Check latest bar in DB for incremental fetch (batch map with single-query fallback)
+        # Check latest and earliest bars in DB to detect historical lookback gaps
         latest_bar = latest_dates.get(symbol)
         if latest_bar is None:
             latest_price_bar = latest_finite_price_bar(session, symbol)
             latest_bar = latest_price_bar.date if latest_price_bar is not None else None
 
+        earliest_bar = earliest_dates.get(symbol)
+        if earliest_bar is not None and earliest_bar.tzinfo is None:
+            earliest_bar = earliest_bar.replace(tzinfo=timezone.utc)
+
         if latest_bar:
-            # Incremental: fetch from (latest - overlap) to now
             latest_date = latest_bar
             if latest_date.tzinfo is None:
                 latest_date = latest_date.replace(tzinfo=timezone.utc)
-            start_date = latest_date - timedelta(days=OVERLAP_DAYS)
-            mode = "incremental"
+            # If lookback_days expanded significantly (>45d gap before earliest DB bar), backfill history
+            if earliest_bar is not None and (earliest_bar - full_start_date).days > 45:
+                start_date = full_start_date
+                mode = "backfill_gap"
+            else:
+                start_date = latest_date - timedelta(days=OVERLAP_DAYS)
+                mode = "incremental"
         else:
             # First time: full lookback
             start_date = full_start_date

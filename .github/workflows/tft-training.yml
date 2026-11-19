@@ -2,8 +2,8 @@ name: TFT-ASRO Training Pipeline
 
 on:
     schedule:
-        # Weekly retrain: every Sunday at 22:00 UTC (01:00 Istanbul Monday)
-        - cron: "0 22 * * 0"
+        # Weekly retrain: every Sunday at 21:00 UTC (00:00 Istanbul Monday)
+        - cron: "0 21 * * 0"
 
     workflow_dispatch:
         inputs:
@@ -144,6 +144,7 @@ jobs:
                   python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 8
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
+                  HF_TOKEN: ${{ secrets.HF_TOKEN }}
               continue-on-error: true
 
             - name: Run Optuna hyperparameter search
@@ -159,12 +160,16 @@ jobs:
             - name: Upload Optuna results artifact
               uses: actions/upload-artifact@v4
               with:
-                  # trainer.py reads optuna_results.json from tft/ root via
-                  # _apply_optuna_results(). The train job restores it there.
+                  # trainer.py reads optuna_results.json and feature_snapshot.pkl
+                  # from tft/ root so train uses the exact same snapshot/params.
                   name: optuna-results-${{ github.run_id }}
                   path: |
                       /tmp/models/tft/optuna_results.json
                       /tmp/models/tft/hyperopt_environment.txt
+                      /tmp/models/tft/feature_snapshot.pkl
+                      /tmp/models/tft/feature_snapshot.pkl.json
+                      /tmp/models/tft/pca_finbert.joblib
+                  if-no-files-found: warn
                   retention-days: 7
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -218,6 +223,15 @@ jobs:
             - name: Create model directory
               run: mkdir -p /tmp/models/tft/checkpoints
 
+            - name: Download Optuna results artifact
+              # Restores optuna_results.json (and any captured feature snapshot)
+              # before an explicit feature_snapshot_run_id override.
+              if: ${{ needs.hyperopt.result == 'success' }}
+              uses: actions/download-artifact@v4
+              with:
+                  name: optuna-results-${{ github.run_id }}
+                  path: /tmp/models/tft/
+
             - name: Download immutable feature snapshot
               if: ${{ github.event.inputs.feature_snapshot_run_id != '' }}
               uses: actions/download-artifact@v4
@@ -239,16 +253,6 @@ jobs:
             - name: Record training environment
               working-directory: backend
               run: python -m pip freeze | sort > /tmp/models/tft/environment.txt
-
-            - name: Download Optuna results artifact
-              # Only attempt download when hyperopt actually ran and succeeded.
-              if: ${{ needs.hyperopt.result == 'success' }}
-              uses: actions/download-artifact@v4
-              with:
-                  name: optuna-results-${{ github.run_id }}
-                  # Restores optuna_results.json to tft/ root so that
-                  # _apply_optuna_results() in trainer.py picks it up.
-                  path: /tmp/models/tft/
 
             - name: Download replayed Optuna results artifact
               # A normal train replay may reuse a validation-selected artifact
@@ -365,4 +369,6 @@ jobs:
         uses: ./.github/workflows/backtest.yml
         secrets: inherit
         with:
+            oos_start: ""
+            oos_end: ""
             include_tft: "true"

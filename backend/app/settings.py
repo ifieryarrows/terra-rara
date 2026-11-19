@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     
     # Price data (yfinance) - Dashboard symbols (backward compatible)
     yfinance_symbols: str = "HG=F,DX-Y.NYB,CL=F,FXI,COPX,COPJ,BHP,FCX,SCCO,RIO,TECK,LUN.TO,IVN.TO,2899.HK"
-    lookback_days: int = 730  # 2 years for better pattern learning
+    lookback_days: int = 1825  # 5 years to match TFT macro/cycle training window
     
     # Fuzzy deduplication
     fuzzy_dedup_threshold: int = 85
@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     # TFT-ASRO Deep Learning
     tft_enabled: bool = True
     tft_embedding_batch_size: int = 64
-    tft_pca_dim: int = 32
+    tft_pca_dim: int = 8
     tft_embedding_backfill_days: int = 30
     tft_train_on_pipeline: bool = False
     nasdaq_data_link_api_key: Optional[str] = None

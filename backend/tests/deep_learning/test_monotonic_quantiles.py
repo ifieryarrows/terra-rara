@@ -28,18 +28,19 @@ def test_default_monotonic_gap_scale_matches_deterministic_recovery_config():
 def test_initialize_tft_output_layer_calibrates_initial_median_and_pi80_width():
     from types import SimpleNamespace
 
+    from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_torch
     from deep_learning.models.tft_copper import _initialize_tft_output_layer
 
     quantiles = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
-    layer = torch.nn.Linear(48, len(quantiles))
+    layer = torch.nn.Linear(24, len(quantiles))
     stub_model = SimpleNamespace(output_layer=layer)
     _initialize_tft_output_layer(stub_model, quantiles)
 
     torch.manual_seed(0)
-    hidden = torch.randn(32, 5, 48)
+    hidden = torch.randn(32, 5, 24)
     raw = layer(hidden)
     ordered = enforce_monotonic_quantiles(raw, median_idx=3)
-    weekly = ordered.sum(dim=1)
+    weekly = aggregate_weekly_quantiles_torch(ordered, median_idx=3)
     weekly_median_abs_mean = weekly[:, 3].abs().mean().item()
     weekly_pi80_width = (weekly[:, 5] - weekly[:, 1]).mean().item()
 

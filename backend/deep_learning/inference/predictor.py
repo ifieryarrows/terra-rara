@@ -660,13 +660,22 @@ class TFTPredictor:
             logger.error("TFT prediction failed: %s", exc)
             return {"error": str(exc)}
 
+        conformal_artifact = self._load_conformal_artifact()
         conformal_adjustment = self._conformal_adjustment_for_latest_regime(master_df)
+        latest_realized_vol = None
+        if "realized_vol_20d" in master_df.columns and not master_df.empty:
+            val_vol = pd.to_numeric(master_df.iloc[-1].get("realized_vol_20d"), errors="coerce")
+            if pd.notna(val_vol) and np.isfinite(float(val_vol)) and float(val_vol) > 0.0:
+                latest_realized_vol = float(val_vol)
+
         result = format_prediction(
             pred_for_format,
             quantiles=self.cfg.model.quantiles,
             baseline_price=baseline_price,
             reference_price_date=reference_price_date,
             conformal_adjustment=conformal_adjustment,
+            weekly_cqr_params=conformal_artifact if conformal_artifact.get("cqr_enabled") else None,
+            realized_vol=latest_realized_vol,
         )
 
         # The decoder frame is the authority for horizon/date alignment. Do
@@ -790,14 +799,24 @@ class TFTPredictor:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    def _load_conformal_artifact(self) -> dict[str, Any]:
+        try:
+            path = Path(self._checkpoint_path).parent / "conformal_calibration.json"
+            if not path.exists():
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.debug("Conformal calibration artifact unavailable: %s", exc)
+            return {}
+
     def _conformal_adjustment_for_latest_regime(self, master_df: pd.DataFrame) -> float:
         try:
             from deep_learning.calibration.conformal import bucketize_regime, select_bucket_adjustment
 
-            path = Path(self._checkpoint_path).parent / "conformal_calibration.json"
-            if not path.exists() or master_df.empty:
+            calibration = self._load_conformal_artifact()
+            if not calibration or master_df.empty:
                 return 0.0
-            calibration = json.loads(path.read_text(encoding="utf-8"))
             bucket = bucketize_regime(master_df.iloc[-1])
             return select_bucket_adjustment(calibration, bucket)
         except Exception as exc:
@@ -1020,6 +1039,12 @@ def get_tft_predictor(cfg: Optional[TFTASROConfig] = None) -> TFTPredictor:
     if _predictor is None:
         _predictor = TFTPredictor(cfg=cfg)
     return _predictor
+
+
+def reset_cached_predictor() -> None:
+    """Clear the cached predictor singleton so refreshed HF Hub checkpoints reload."""
+    global _predictor
+    _predictor = None
 
 
 def generate_tft_analysis(

@@ -57,8 +57,9 @@ def main() -> int:
     weekly_samples = metrics.get("weekly_sample_count")
     weekly_pred_positive_rate = metrics.get("weekly_pred_positive_rate")
     weekly_actual_positive_rate = metrics.get("weekly_actual_positive_rate")
-    weekly_raw_magnitude_ratio = metrics.get("weekly_raw_magnitude_ratio")
-    weekly_median_bound_applied_rate = metrics.get("weekly_median_bound_applied_rate")
+    weekly_mae_naive = metrics.get("weekly_mae_vs_naive_zero")
+    weekly_sharpe_hac = metrics.get("weekly_sharpe_ratio_hac") or metrics.get("weekly_sharpe_ratio")
+    weekly_pinball = metrics.get("weekly_pinball_loss")
 
     print(
         "Quality gate metrics: "
@@ -68,9 +69,10 @@ def main() -> int:
     )
     print(
         "Weekly gate metrics: "
-        f"WeeklyDA={weekly_da} WeeklyMR={weekly_mr} "
-        f"WeeklyTail={weekly_tail} WeeklyPI80={weekly_pi80} "
-        f"WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
+        f"WeeklyDA={weekly_da} WeeklySharpeHAC={weekly_sharpe_hac} WeeklyMR={weekly_mr} "
+        f"WeeklyMAEvsNaive={weekly_mae_naive} WeeklyPinball={weekly_pinball} "
+        f"WeeklyPI80={weekly_pi80} WeeklyPI80WidthRatio={weekly_pi80_width_ratio} "
+        f"WeeklyPI96={weekly_pi96} WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
         f"WeeklyQCross={weekly_qcross} WeeklySortedQCross={weekly_sorted_qcross} "
         f"WeeklyPredPositive={weekly_pred_positive_rate} "
         f"WeeklyActualPositive={weekly_actual_positive_rate} "

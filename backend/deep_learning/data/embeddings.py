@@ -253,15 +253,19 @@ def _insert_embedding_batch(
             index_elements=[NewsEmbedding.news_processed_id]
         )
     )
-    result = session.execute(statement)
-    inserted = max(0, int(result.rowcount or 0))
+    try:
+        result = session.execute(statement.returning(NewsEmbedding.news_processed_id))
+        inserted = len(result.scalars().all())
+    except Exception:
+        result = session.execute(statement)
+        inserted = max(0, int(result.rowcount or 0))
     return inserted, len(payloads) - inserted
 
 
 def backfill_embeddings(
     *,
     days: int = 180,
-    pca_dim: int = 32,
+    pca_dim: int = 8,
     batch_size: int = 64,
 ) -> dict[str, int]:
     """
@@ -279,8 +283,9 @@ def backfill_embeddings(
 
     cfg = get_tft_config()
     pca_path = Path(cfg.embedding.pca_model_path)
+    target_pca_version = f"pca{pca_dim}_v1"
 
-    stats = {"embedded": 0, "skipped": 0, "pca_fitted": False}
+    stats = {"embedded": 0, "skipped": 0, "pca_fitted": False, "reprojected": 0}
 
     with SessionLocal() as session:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -325,6 +330,16 @@ def backfill_embeddings(
         full_embeddings = extract_embeddings_batch(texts, batch_size=batch_size)
         logger.info("Extracted %d embeddings, shape=%s", len(full_embeddings), full_embeddings.shape)
 
+        if not pca_path.exists():
+            repo_id = getattr(getattr(cfg, "training", None), "hf_model_repo", None)
+            if repo_id:
+                try:
+                    from deep_learning.models.hub import download_pca_artifact
+
+                    download_pca_artifact(pca_path.parent, repo_id)
+                except Exception as exc:
+                    logger.debug("Optional Hub PCA fetch skipped: %s", exc)
+
         pca = load_pca(str(pca_path)) if pca_path.exists() else None
         existing_components = (
             int(getattr(pca, "n_components_", getattr(pca, "n_components", 0)) or 0)
@@ -344,21 +359,84 @@ def backfill_embeddings(
         ):
             logger.info("Loaded existing PCA model from %s", pca_path)
         else:
-            # IncrementalPCA fitted with n_samples == n_components emits an
-            # empty-slice warning for noise variance, while fewer samples can
-            # silently produce a lower-dimensional model than pca_dim. Wait
-            # for enough data instead of persisting an invalid/mislabeled PCA.
-            if len(full_embeddings) <= pca_dim:
+            hist_rows = (
+                session.query(NewsEmbedding.embedding_full)
+                .filter(NewsEmbedding.embedding_full.isnot(None))
+                .order_by(NewsEmbedding.id.desc())
+                .limit(2000)
+                .all()
+            )
+            hist_vecs = []
+            for h_row in hist_rows:
+                raw_blob = h_row[0] if isinstance(h_row, tuple) else getattr(h_row, "embedding_full", None)
+                if not raw_blob:
+                    continue
+                arr = np.frombuffer(raw_blob, dtype=np.float32).copy()
+                if len(arr) == _EMBEDDING_DIM and np.all(np.isfinite(arr)):
+                    hist_vecs.append(arr)
+
+            fit_matrix = (
+                np.vstack([np.stack(hist_vecs), full_embeddings])
+                if hist_vecs
+                else full_embeddings
+            )
+
+            # IncrementalPCA fitted with n_samples <= n_components either raises
+            # or emits an empty-slice warning / produces fewer than pca_dim axes.
+            if len(fit_matrix) <= pca_dim:
                 logger.info(
                     "Deferring PCA fit: need more than %d samples for %d components; have %d",
                     pca_dim,
                     pca_dim,
-                    len(full_embeddings),
+                    len(fit_matrix),
                 )
                 stats["pca_deferred"] = True
                 return stats
-            pca = fit_pca(full_embeddings, n_components=pca_dim, save_path=str(pca_path))
+            pca = fit_pca(fit_matrix, n_components=pca_dim, save_path=str(pca_path))
             stats["pca_fitted"] = True
+
+            # Align legacy/mismatched PCA rows onto the newly fitted orthonormal basis.
+            mismatch_rows = (
+                session.query(NewsEmbedding.id, NewsEmbedding.embedding_full)
+                .filter(NewsEmbedding.embedding_full.isnot(None))
+                .filter(
+                    NewsEmbedding.pca_version.is_(None)
+                    | (NewsEmbedding.pca_version != target_pca_version)
+                )
+                .order_by(NewsEmbedding.id.asc())
+                .all()
+            )
+            reproj_ids: list[int] = []
+            reproj_vecs: list[np.ndarray] = []
+            for m_row in mismatch_rows:
+                row_id = int(m_row[0] if isinstance(m_row, tuple) else m_row.id)
+                raw_blob = m_row[1] if isinstance(m_row, tuple) else m_row.embedding_full
+                if not raw_blob:
+                    continue
+                arr = np.frombuffer(raw_blob, dtype=np.float32).copy()
+                if len(arr) == _EMBEDDING_DIM and np.all(np.isfinite(arr)):
+                    reproj_ids.append(row_id)
+                    reproj_vecs.append(arr)
+
+            if reproj_vecs:
+                reproj_reduced = reduce_embeddings(np.stack(reproj_vecs), pca)
+                updates = [
+                    {
+                        "id": row_id,
+                        "embedding_pca": embedding_to_bytes(reproj_reduced[idx]),
+                        "pca_version": target_pca_version,
+                    }
+                    for idx, row_id in enumerate(reproj_ids)
+                ]
+                for start in range(0, len(updates), 200):
+                    session.bulk_update_mappings(NewsEmbedding, updates[start : start + 200])
+                    session.commit()
+                stats["reprojected"] = len(updates)
+                logger.info(
+                    "Reprojected %d existing embeddings to %s",
+                    len(updates),
+                    target_pca_version,
+                )
 
         reduced = reduce_embeddings(full_embeddings, pca)
 
@@ -367,7 +445,7 @@ def backfill_embeddings(
                 "news_processed_id": article_id,
                 "embedding_full": embedding_to_bytes(full_embeddings[idx]),
                 "embedding_pca": embedding_to_bytes(reduced[idx]),
-                "pca_version": f"pca{pca_dim}_v1",
+                "pca_version": target_pca_version,
             }
             for idx, article_id in enumerate(ids)
         ]
@@ -429,7 +507,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FinBERT embedding backfill")
     parser.add_argument("--backfill", action="store_true")
     parser.add_argument("--days", type=int, default=180)
-    parser.add_argument("--pca-dim", type=int, default=32)
+    parser.add_argument("--pca-dim", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=64)
     args = parser.parse_args()
 

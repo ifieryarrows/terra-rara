@@ -16,15 +16,16 @@ import pandas as pd
 import torch
 
 from app.accel import (
-    fast_fit_weekly_interval_grid,
     fast_monotonic_quantiles_np,
     fast_quantile_crossing_rate,
     fast_quantile_median_sort_gap,
     fast_sharpe_ratio_hac,
     fast_softplus_np,
 )
+from deep_learning.calibration.conformal import apply_weekly_cqr
 from deep_learning.models.monotonic_quantiles import (
     DEFAULT_MONOTONIC_GAP_SCALE,
+    aggregate_weekly_quantiles_np,
     enforce_monotonic_quantiles,
 )
 
@@ -62,13 +63,13 @@ def cumulative_horizon(values: np.ndarray, horizon: int = 5) -> np.ndarray:
 
 
 def cumulative_quantiles(pred: np.ndarray, horizon: int = 5) -> np.ndarray:
-    """Sum same-quantile daily path values into approximate weekly quantiles."""
+    """Aggregate daily quantile predictions to ``horizon``-day cumulative quantiles via RSS."""
     arr = np.asarray(pred, dtype=np.float64)
     if arr.ndim != 3:
         raise ValueError(f"Expected [n, horizon, q], got shape {arr.shape}")
     if arr.shape[1] < horizon:
         raise ValueError(f"Need at least {horizon} horizons, got {arr.shape[1]}")
-    return arr[:, :horizon, :].sum(axis=1)
+    return aggregate_weekly_quantiles_np(arr[:, :horizon, :])
 
 
 def monotonic_quantiles_np(
@@ -367,22 +368,33 @@ def fit_weekly_interval_scale(
         clipped_ratio_cond = None
 
     for power in power_candidates:
-        coverages, interval_scores = fast_fit_weekly_interval_grid(
-            actual_weekly=actual_weekly,
-            weekly_base=weekly_base,
-            offset_active=offset_active,
-            centered_active=centered_active,
-            candidates=candidates,
-            clipped_ratio_cond=clipped_ratio_cond,
-            power=float(power),
-            n_low=n_low,
-            n_high=n_high,
-            min_scale=float(conditioning_min_scale),
-            max_scale=float(conditioning_max_scale),
-            min_gap=min_gap,
-            gap_scale=gap_scale,
-            alpha=0.20,
-        )
+        if clipped_ratio_cond is not None:
+            factors = clipped_ratio_cond ** float(power)
+            mult = np.clip(
+                candidates[:, None] * factors[None, :],
+                float(conditioning_min_scale),
+                float(conditioning_max_scale),
+            )[:, :, None, None]
+        else:
+            mult = candidates[:, None, None, None]
+
+        x = offset_active[None, ...] + mult * centered_active[None, ...]
+        sp = fast_softplus_np(x)
+        day_low = float(n_low) * min_gap + gap_scale * sp[:, :, :, :n_low].sum(axis=3)
+        day_high = float(n_high) * min_gap + gap_scale * sp[:, :, :, n_low:].sum(axis=3)
+        low_offset = np.sqrt(np.sum(day_low * day_low, axis=2))
+        high_offset = np.sqrt(np.sum(day_high * day_high, axis=2))
+
+        lo = weekly_base[None, :] - low_offset
+        hi = weekly_base[None, :] + high_offset
+        y_row = actual_weekly[None, :]
+        inv_alpha_2 = 2.0 / 0.20
+
+        coverages = ((y_row >= lo) & (y_row <= hi)).mean(axis=1)
+        width = hi - lo
+        below = np.maximum(lo - y_row, 0.0)
+        above = np.maximum(y_row - hi, 0.0)
+        interval_scores = (width + inv_alpha_2 * below + inv_alpha_2 * above).mean(axis=1)
 
         eligible = [
             idx for idx, coverage in enumerate(coverages) if coverage >= coverage_floor
@@ -1315,26 +1327,53 @@ def compute_all_metrics(
     return metrics
 
 
+def pinball_loss_np(
+    y_actual: np.ndarray,
+    y_pred_quantiles: np.ndarray,
+    quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+) -> float:
+    """Mean multi-quantile pinball loss in return units (strictly proper scoring rule)."""
+    y = np.asarray(y_actual, dtype=np.float64).reshape(-1, 1)
+    q_pred = np.asarray(y_pred_quantiles, dtype=np.float64)
+    q_arr = np.asarray(quantiles, dtype=np.float64).reshape(1, -1)
+    if y.shape[0] == 0 or q_pred.shape[0] == 0:
+        return 0.0
+    n = min(y.shape[0], q_pred.shape[0])
+    err = y[:n] - q_pred[:n]
+    return float(np.mean(np.maximum(q_arr * err, (q_arr - 1.0) * err)))
+
+
 def compute_weekly_metrics(
     y_actual_path: np.ndarray,
     y_pred_quantiles_path: np.ndarray,
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
     annualisation: float | None = None,
+    weekly_cqr_params: dict | None = None,
+    realized_vol: np.ndarray | None = None,
+    empirical_train_weekly: np.ndarray | None = None,
 ) -> dict[str, float]:
     """
-    Compute weekly-first metrics from a daily log-return path.
+    Compute weekly-first metrics from a daily log-return path using RSS quantile
+    aggregation and optional ordered-space Split CQR calibration.
 
     Internal evaluation remains in log-return space. Public API/UI conversion
     to simple returns happens only during inference formatting.
     """
     weekly_actual = cumulative_horizon(y_actual_path, horizon=horizon)
     raw_path = np.asarray(y_pred_quantiles_path, dtype=np.float64)
-    ordered_path = monotonic_quantiles_np(raw_path, median_idx=len(quantiles) // 2)
-    raw_weekly_quantiles = cumulative_quantiles(raw_path, horizon=horizon)
-    weekly_quantiles = cumulative_quantiles(ordered_path, horizon=horizon)
-
     median_idx = len(quantiles) // 2
+    ordered_path = monotonic_quantiles_np(raw_path, median_idx=median_idx)
+    raw_weekly_quantiles = aggregate_weekly_quantiles_np(raw_path[:, :horizon, :], median_idx=median_idx)
+    weekly_quantiles = aggregate_weekly_quantiles_np(ordered_path[:, :horizon, :], median_idx=median_idx)
+    if weekly_cqr_params:
+        weekly_quantiles = apply_weekly_cqr(
+            weekly_quantiles,
+            quantiles=tuple(quantiles),
+            cqr_params=weekly_cqr_params,
+            realized_vol=realized_vol,
+        )
+
     q10_idx = quantiles.index(0.10)
     q90_idx = quantiles.index(0.90)
     q02_idx = quantiles.index(0.02)
@@ -1451,6 +1490,25 @@ def compute_weekly_metrics(
         weekly_quantiles[:, q98_idx],
         alpha=0.04,
     )
+    w_pinball = pinball_loss_np(weekly_actual, weekly_quantiles, quantiles=tuple(quantiles))
+    weekly_metrics["weekly_pinball_loss"] = w_pinball
+    ref_sample = (
+        np.asarray(empirical_train_weekly, dtype=np.float64)
+        if empirical_train_weekly is not None and len(empirical_train_weekly) > 0
+        else weekly_actual
+    )
+    if len(ref_sample) > 0 and len(weekly_actual) > 0:
+        emp_q = np.quantile(ref_sample, list(quantiles)).reshape(1, -1)
+        emp_pinball = pinball_loss_np(
+            weekly_actual,
+            np.repeat(emp_q, len(weekly_actual), axis=0),
+            quantiles=tuple(quantiles),
+        )
+        weekly_metrics["weekly_pinball_skill_vs_empirical"] = (
+            float(1.0 - (w_pinball / emp_pinball)) if emp_pinball > 1e-12 else 0.0
+        )
+    else:
+        weekly_metrics["weekly_pinball_skill_vs_empirical"] = 0.0
     weekly_metrics["weekly_sample_count"] = int(len(weekly_actual))
     return weekly_metrics
 
@@ -1470,6 +1528,8 @@ def evaluate_quantile_predictions(
     weekly_interval_conditioning_max_factor: float = 2.0,
     weekly_interval_conditioning_min_scale: float = 0.20,
     weekly_interval_conditioning_max_scale: float = 2.50,
+    weekly_cqr_params: dict | None = None,
+    realized_vol: np.ndarray | None = None,
 ) -> dict[str, float]:
     """
     Evaluate multi-horizon quantile predictions through the production metric path.
@@ -1535,11 +1595,18 @@ def evaluate_quantile_predictions(
     metrics["raw_median_sort_gap_max"] = raw_gap_max
 
     n_path = min(len(y_actual_path), len(pred_np))
+    weekly_metrics_kwargs: dict[str, object] = {
+        "quantiles": quantiles,
+        "horizon": horizon,
+    }
+    if weekly_cqr_params is not None:
+        weekly_metrics_kwargs["weekly_cqr_params"] = weekly_cqr_params
+    if realized_vol is not None:
+        weekly_metrics_kwargs["realized_vol"] = realized_vol[:n_path]
     weekly_metrics = compute_weekly_metrics(
         y_actual_path[:n_path],
         eval_pred_np[:n_path],
-        quantiles=quantiles,
-        horizon=horizon,
+        **weekly_metrics_kwargs,
     )
     metrics.update(weekly_metrics)
     if weekly_median_cap is not None:
@@ -1565,4 +1632,7 @@ def evaluate_quantile_predictions(
             cap_value / actual_mean_abs if actual_mean_abs > 1e-12 else 0.0
         )
         metrics["weekly_magnitude_ratio"] = metrics["weekly_bounded_magnitude_ratio"]
+    else:
+        metrics.setdefault("weekly_raw_magnitude_ratio", metrics.get("weekly_magnitude_ratio"))
+        metrics.setdefault("weekly_median_bound_applied_rate", 0.0)
     return metrics

@@ -39,21 +39,37 @@ def validate_weekly_target_contract(
         for col in ("target", "target_1d_log_return", "target_5d_log_return"):
             if df[col].isna().any():
                 raise ValueError(f"{col} contains NaN after feature-store construction")
-        valid_1d = df["target_1d_log_return"].dropna()
-        max_abs_1d = float(valid_1d.abs().max()) if not valid_1d.empty else 0.0
-        if max_abs_1d > 0.50:
-            raise ValueError(
-                f"Corrupt single-day log return detected in training frame: max_abs={max_abs_1d:.4f} > 0.50"
-            )
+        for col in ("target", "target_1d_log_return"):
+            valid_1d = df[col].dropna()
+            max_abs_1d = float(valid_1d.abs().max()) if not valid_1d.empty else 0.0
+            if max_abs_1d > 0.50:
+                raise ValueError(
+                    f"Corrupt single-day log return detected in training frame ({col}): max_abs={max_abs_1d:.4f} > 0.50"
+                )
 
-    comparable = df[["target", "target_1d_log_return"]].dropna()
-    if not comparable.empty and not np.allclose(
-        comparable["target"].to_numpy(),
-        comparable["target_1d_log_return"].to_numpy(),
-        atol=1e-10,
-        equal_nan=True,
-    ):
-        raise ValueError("target and target_1d_log_return are not identical")
+    if len(df) >= 2:
+        next_realized = pd.to_numeric(df["target"].iloc[1:], errors="coerce").to_numpy(dtype=float)
+        prev_fwd_1d = pd.to_numeric(df["target_1d_log_return"].iloc[:-1], errors="coerce").to_numpy(dtype=float)
+        if mode == "train":
+            finite_mask = np.isfinite(next_realized) & np.isfinite(prev_fwd_1d)
+            if finite_mask.any() and not np.allclose(
+                next_realized[finite_mask],
+                prev_fwd_1d[finite_mask],
+                atol=1e-10,
+            ):
+                raise ValueError("Causal alignment broken: target[t+1] does not match target_1d_log_return[t]")
+        else:
+            # In inference mode, trailing unknown bars have dummy target_1d_log_return=0.0;
+            # verify causal alignment on all bars except dummy trailing placeholders.
+            non_dummy = np.isfinite(next_realized) & np.isfinite(prev_fwd_1d) & (np.abs(prev_fwd_1d) > 1e-12)
+            if len(next_realized) > 1:
+                non_dummy[-1] = False
+            if non_dummy.any() and not np.allclose(
+                next_realized[non_dummy],
+                prev_fwd_1d[non_dummy],
+                atol=1e-10,
+            ):
+                raise ValueError("Causal alignment broken: target[t+1] does not match target_1d_log_return[t]")
 
     material_values = set(df["material_move_5d"].dropna().unique())
     if not material_values.issubset({0.0, 1.0}):

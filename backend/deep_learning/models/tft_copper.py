@@ -24,6 +24,9 @@ from deep_learning.contract import RETURN_SPACE, log_to_simple_return
 from deep_learning.config import TFTASROConfig, get_tft_config
 from deep_learning.models.monotonic_quantiles import (
     DEFAULT_MONOTONIC_GAP_SCALE,
+    aggregate_cumulative_quantiles_np,
+    aggregate_weekly_quantiles_np,
+    aggregate_weekly_quantiles_torch,
     enforce_monotonic_quantiles,
     validate_monotonicity,
 )
@@ -432,25 +435,25 @@ try:
 
 
     class WeeklyASROPFLoss(_PFQuantileLoss):
-        """Weekly-first ASRO loss over a 5-step daily log-return path."""
+        """Scale-normalized weekly ASRO + quantile loss over a 5-step log-return path."""
 
         def __init__(
             self,
             quantiles: list,
-            lambda_weekly_quantile: float = 0.70,
-            lambda_t1_quantile: float = 0.20,
-            # Keep the standalone loss API neutral by default; production
-            # training passes the configured 0.20 weight explicitly.
+            lambda_weekly_quantile: float = 1.00,
+            lambda_t1_quantile: float = 0.25,
             lambda_t1_directional: float = 0.0,
-            lambda_dispersion: float = 0.20,
-            lambda_directional: float = 0.25,
-            lambda_magnitude: float = 0.58,
-            lambda_naive: float = 0.45,
-            lambda_bias: float = 0.19,
-            lambda_saturation: float = 0.35,
-            lambda_positive_rate: float = 0.75,
-            lambda_interval: float = 0.15,
+            lambda_dispersion: float = 0.0,
+            lambda_directional: float = 0.14,
+            lambda_magnitude: float = 0.0,
+            lambda_naive: float = 0.0,
+            lambda_bias: float = 0.02,
+            lambda_drift_prior: float = 0.0,
+            lambda_saturation: float = 0.0,
+            lambda_positive_rate: float = 0.0,
+            lambda_interval: float = 0.0,
             weekly_median_cap: Optional[float] = None,
+            weekly_target_scale: Optional[float] = None,
             sharpe_eps: float = 1e-8,
             debug_mode: bool = False,
         ):
@@ -463,10 +466,16 @@ try:
             self.lambda_magnitude = lambda_magnitude
             self.lambda_naive = lambda_naive
             self.lambda_bias = lambda_bias
+            self.lambda_drift_prior = lambda_drift_prior
             self.lambda_saturation = lambda_saturation
             self.lambda_positive_rate = lambda_positive_rate
             self.lambda_interval = lambda_interval
             self.weekly_median_cap = weekly_median_cap
+            self.weekly_target_scale = (
+                float(weekly_target_scale)
+                if weekly_target_scale is not None and float(weekly_target_scale) > 0.0
+                else None
+            )
             self.sharpe_eps = sharpe_eps
             self.debug_mode = debug_mode
             self.median_idx = len(quantiles) // 2
@@ -477,6 +486,36 @@ try:
             )
             self.reset_component_accumulators()
 
+        def update(self, y_pred: torch.Tensor, target) -> None:  # type: ignore[override]
+            """Accumulate scalar weekly loss without MultiHorizonMetric's 1/(B*H) dilution."""
+            if isinstance(target, (list, tuple)):
+                y_actual = target[0]
+            else:
+                y_actual = target
+
+            if isinstance(y_actual, torch.nn.utils.rnn.PackedSequence):
+                from pytorch_forecasting.utils import unpack_sequence
+
+                y_unpacked, lengths = unpack_sequence(y_actual)
+                target_arg = y_unpacked
+            else:
+                target_arg = y_actual
+                lengths = torch.full(
+                    (y_actual.size(0),),
+                    fill_value=y_actual.size(1),
+                    dtype=torch.long,
+                    device=y_actual.device,
+                )
+
+            loss_val = self.loss(y_pred, target_arg)
+            if loss_val.ndim > 0:
+                loss_val = loss_val.mean()
+            sample_weight = lengths.sum().to(dtype=loss_val.dtype, device=loss_val.device).clamp_min(1.0)
+            if not torch.isfinite(loss_val):
+                loss_val = torch.tensor(1e9, dtype=loss_val.dtype, device=loss_val.device)
+            self.losses = self.losses + loss_val * sample_weight
+            self.lengths = self.lengths + sample_weight
+
         def reset_component_accumulators(self) -> None:
             self._component_sums = {
                 "weekly_q": 0.0,
@@ -486,6 +525,7 @@ try:
                 "magnitude": 0.0,
                 "naive": 0.0,
                 "bias": 0.0,
+                "drift_prior": 0.0,
                 "saturation": 0.0,
                 "positive_rate": 0.0,
                 "interval": 0.0,
@@ -503,6 +543,7 @@ try:
             magnitude_loss: torch.Tensor,
             naive_relative_loss: torch.Tensor,
             bias_loss: torch.Tensor,
+            drift_prior_loss: torch.Tensor,
             saturation_loss: torch.Tensor,
             positive_rate_loss: torch.Tensor,
             interval_loss: torch.Tensor,
@@ -516,6 +557,7 @@ try:
             self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
             self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
             self._component_sums["bias"] += float(bias_loss.detach().mean().cpu())
+            self._component_sums["drift_prior"] += float(drift_prior_loss.detach().mean().cpu())
             self._component_sums["saturation"] += float(saturation_loss.detach().mean().cpu())
             self._component_sums["positive_rate"] += float(positive_rate_loss.detach().mean().cpu())
             self._component_sums["interval"] += float(interval_loss.detach().mean().cpu())
@@ -535,6 +577,7 @@ try:
                     "magnitude_loss_mean": 0.0,
                     "naive_loss_mean": 0.0,
                     "bias_loss_mean": 0.0,
+                    "drift_prior_loss_mean": 0.0,
                     "saturation_loss_mean": 0.0,
                     "positive_rate_loss_mean": 0.0,
                     "interval_loss_mean": 0.0,
@@ -544,17 +587,18 @@ try:
                 }
 
             components = {
-                "weekly_q": self._component_sums["weekly_q"],
-                "t1_q": self._component_sums["t1_q"],
-                "t1_directional": self._component_sums["t1_directional"],
-                "dispersion": self._component_sums["dispersion"],
-                "magnitude": self._component_sums["magnitude"],
-                "naive": self._component_sums["naive"],
-                "bias": self._component_sums["bias"],
-                "saturation": self._component_sums["saturation"],
-                "positive_rate": self._component_sums["positive_rate"],
-                "interval": self._component_sums["interval"],
-                "directional": self._component_sums["directional"],
+                "weekly_q": abs(self.lambda_weekly_quantile) * self._component_sums["weekly_q"],
+                "t1_q": abs(self.lambda_t1_quantile) * self._component_sums["t1_q"],
+                "t1_directional": abs(self.lambda_t1_directional) * self._component_sums["t1_directional"],
+                "dispersion": abs(self.lambda_dispersion) * self._component_sums["dispersion"],
+                "magnitude": abs(self.lambda_magnitude) * self._component_sums["magnitude"],
+                "naive": abs(self.lambda_naive) * self._component_sums["naive"],
+                "bias": abs(self.lambda_bias) * self._component_sums["bias"],
+                "drift_prior": abs(self.lambda_drift_prior) * self._component_sums["drift_prior"],
+                "saturation": abs(self.lambda_saturation) * self._component_sums["saturation"],
+                "positive_rate": abs(self.lambda_positive_rate) * self._component_sums["positive_rate"],
+                "interval": abs(self.lambda_interval) * self._component_sums["interval"],
+                "directional": abs(self.lambda_directional) * self._component_sums["directional"],
             }
             return {
                 "n_batches": n_batches,
@@ -565,6 +609,7 @@ try:
                 "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
                 "naive_loss_mean": self._component_sums["naive"] / n_batches,
                 "bias_loss_mean": self._component_sums["bias"] / n_batches,
+                "drift_prior_loss_mean": self._component_sums["drift_prior"] / n_batches,
                 "saturation_loss_mean": self._component_sums["saturation"] / n_batches,
                 "positive_rate_loss_mean": self._component_sums["positive_rate"] / n_batches,
                 "interval_loss_mean": self._component_sums["interval"] / n_batches,
@@ -586,13 +631,19 @@ try:
 
             y_actual = y_actual.float()
             y_pred = y_pred.float()
+            zero = y_pred.sum() * 0.0
+
             raw_median_path = y_pred[..., self.median_idx]
             raw_horizon = min(int(y_actual.shape[1]), int(raw_median_path.shape[1]))
             raw_pred_weekly_median = raw_median_path[:, :raw_horizon].sum(dim=1)
-            saturation_loss = _weekly_saturation_loss(
-                raw_pred_weekly_median,
-                weekly_median_cap=self.weekly_median_cap,
-                eps=self.sharpe_eps,
+            saturation_loss = (
+                _weekly_saturation_loss(
+                    raw_pred_weekly_median,
+                    weekly_median_cap=self.weekly_median_cap,
+                    eps=self.sharpe_eps,
+                )
+                if self.lambda_saturation != 0.0
+                else zero
             )
 
             bounded_pred = _bound_weekly_median_path(
@@ -624,93 +675,149 @@ try:
                 ), "Monotonic transform must preserve the median quantile exactly"
 
             median_path = ordered_pred[..., self.median_idx]
-            pred_weekly_quantiles = ordered_pred.sum(dim=1)
+            pred_weekly_quantiles = aggregate_weekly_quantiles_torch(
+                ordered_pred,
+                median_idx=self.median_idx,
+            )
             actual_weekly = y_actual.sum(dim=1)
 
-            weekly_q_loss_bounded = self._pinball(pred_weekly_quantiles, actual_weekly)
+            horizon_days = max(int(y_actual.shape[1]), 1)
+            if self.weekly_target_scale is not None:
+                scale_w = torch.as_tensor(
+                    self.weekly_target_scale,
+                    device=y_pred.device,
+                    dtype=y_pred.dtype,
+                ).clamp_min(0.005)
+            else:
+                scale_w = (
+                    actual_weekly.detach().pow(2).mean().sqrt().clamp_min(0.005)
+                )
+            scale_1d = scale_w / math.sqrt(float(horizon_days))
+
+            weekly_q_loss_bounded = self._pinball(pred_weekly_quantiles, actual_weekly) / scale_w
             if self.weekly_median_cap is not None and float(self.weekly_median_cap) > 0.0:
-                # Non-median quantile spreads from enforce_monotonic_quantiles depend only on
-                # non-median channels (untouched by _bound_weekly_median_path), so the raw
-                # ordered weekly sum equals pred_weekly_quantiles shifted by the median diff.
                 median_shift_sum = (raw_median_path - median_path).sum(dim=1, keepdim=True)
                 weekly_q_loss_raw = self._pinball(
                     pred_weekly_quantiles + median_shift_sum,
                     actual_weekly,
-                )
-                weekly_q_loss = 0.7 * weekly_q_loss_bounded + 0.3 * weekly_q_loss_raw
+                ) / scale_w
+                weekly_q_loss = 0.85 * weekly_q_loss_bounded + 0.15 * weekly_q_loss_raw
             else:
                 weekly_q_loss = weekly_q_loss_bounded
 
-            t1_q_loss = super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1])
+            t1_q_loss = (
+                super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1]).mean() / scale_1d
+                if self.lambda_t1_quantile != 0.0
+                else zero
+            )
             effective_t1_median = 0.80 * median_path[:, 0] + 0.20 * raw_median_path[:, 0]
-            t1_directional_loss = _directional_sign_loss(
-                effective_t1_median,
-                y_actual[:, 0],
-                tanh_scale=100.0,
-                eps=self.sharpe_eps,
+            t1_directional_loss = (
+                _directional_sign_loss(
+                    effective_t1_median,
+                    y_actual[:, 0],
+                    tanh_scale=100.0,
+                    eps=self.sharpe_eps,
+                )
+                if self.lambda_t1_directional != 0.0
+                else zero
             )
 
             pred_weekly_median = median_path.sum(dim=1)
             effective_weekly_median = 0.80 * pred_weekly_median + 0.20 * raw_pred_weekly_median
             eps = self.sharpe_eps
-            scale_losses = _weekly_scale_losses(
-                pred_weekly_median,
-                actual_weekly,
-                eps=eps,
-                raw_pred_weekly_median=raw_pred_weekly_median,
-            )
-            dispersion_loss = scale_losses["dispersion_loss"]
-            magnitude_loss = scale_losses["magnitude_loss"]
-            naive_relative_loss = scale_losses["naive_relative_loss"]
-            bias_loss = scale_losses["bias_loss"]
-            positive_rate_loss = _weekly_positive_rate_loss(
-                effective_weekly_median,
-                actual_weekly,
-                eps=eps,
-            )
-            interval_loss = _weekly_interval_undercoverage_loss(
-                pred_weekly_quantiles,
-                actual_weekly,
-                self.quantiles,
-                eps=eps,
-            )
 
-            directional_loss = _directional_sign_loss(
-                effective_weekly_median,
-                actual_weekly,
-                tanh_scale=20.0,
-                eps=eps,
+            # Smooth, scale-matched ASRO directional utility (slope 1/scale_w prevents outward median bloat)
+            if self.lambda_directional != 0.0:
+                pos = torch.tanh(effective_weekly_median / scale_w)
+                norm_actual = actual_weekly.detach() / scale_w
+                directional_loss = (norm_actual.abs() - pos * norm_actual).mean()
+            else:
+                directional_loss = zero
+
+            # Scale-consistent bias regularizer (O(0.1) in normalized units)
+            if self.lambda_bias != 0.0:
+                bias_loss = (
+                    (effective_weekly_median.mean() - actual_weekly.detach().mean()).abs()
+                    / scale_w
+                )
+            else:
+                bias_loss = zero
+
+            # Zero-drift prior penalizes unconditional mean shift on financial returns
+            if self.lambda_drift_prior != 0.0:
+                drift_prior_loss = (effective_weekly_median.mean() / scale_w).pow(2)
+            else:
+                drift_prior_loss = zero
+
+            # Optional legacy heuristic components computed only when explicitly enabled
+            if (
+                self.lambda_dispersion != 0.0
+                or self.lambda_magnitude != 0.0
+                or self.lambda_naive != 0.0
+            ):
+                scale_losses = _weekly_scale_losses(
+                    pred_weekly_median,
+                    actual_weekly,
+                    eps=eps,
+                    raw_pred_weekly_median=raw_pred_weekly_median,
+                )
+                dispersion_loss = scale_losses["dispersion_loss"]
+                magnitude_loss = scale_losses["magnitude_loss"]
+                naive_relative_loss = scale_losses["naive_relative_loss"]
+            else:
+                dispersion_loss = zero
+                magnitude_loss = zero
+                naive_relative_loss = zero
+
+            positive_rate_loss = (
+                _weekly_positive_rate_loss(
+                    effective_weekly_median,
+                    actual_weekly,
+                    eps=eps,
+                )
+                if self.lambda_positive_rate != 0.0
+                else zero
+            )
+            interval_loss = (
+                _weekly_interval_undercoverage_loss(
+                    pred_weekly_quantiles,
+                    actual_weekly,
+                    self.quantiles,
+                    eps=eps,
+                )
+                if self.lambda_interval != 0.0
+                else zero
             )
 
             def _to_scalar(x: torch.Tensor) -> torch.Tensor:
-                # pytorch_forecasting metrics can return per-sample tensors;
-                # weekly objective needs a single scalar to avoid ambiguous
-                # boolean comparisons in tests and stable optimizer behaviour.
                 return x.mean() if x.ndim > 0 else x
 
             weekly_q_loss = _to_scalar(weekly_q_loss)
             t1_q_loss = _to_scalar(t1_q_loss)
             t1_directional_loss = _to_scalar(t1_directional_loss)
+            dispersion_loss = _to_scalar(dispersion_loss)
             magnitude_loss = _to_scalar(magnitude_loss)
             naive_relative_loss = _to_scalar(naive_relative_loss)
             bias_loss = _to_scalar(bias_loss)
+            drift_prior_loss = _to_scalar(drift_prior_loss)
             saturation_loss = _to_scalar(saturation_loss)
             positive_rate_loss = _to_scalar(positive_rate_loss)
             interval_loss = _to_scalar(interval_loss)
             directional_loss = _to_scalar(directional_loss)
 
             total_loss = (
-                self.lambda_weekly_quantile * _to_scalar(weekly_q_loss)
-                + self.lambda_t1_quantile * _to_scalar(t1_q_loss)
-                + self.lambda_t1_directional * _to_scalar(t1_directional_loss)
-                + self.lambda_dispersion * _to_scalar(dispersion_loss)
-                + self.lambda_magnitude * _to_scalar(magnitude_loss)
-                + self.lambda_naive * _to_scalar(naive_relative_loss)
-                + self.lambda_bias * _to_scalar(bias_loss)
-                + self.lambda_saturation * _to_scalar(saturation_loss)
-                + self.lambda_positive_rate * _to_scalar(positive_rate_loss)
-                + self.lambda_interval * _to_scalar(interval_loss)
-                + self.lambda_directional * _to_scalar(directional_loss)
+                self.lambda_weekly_quantile * weekly_q_loss
+                + self.lambda_t1_quantile * t1_q_loss
+                + self.lambda_t1_directional * t1_directional_loss
+                + self.lambda_dispersion * dispersion_loss
+                + self.lambda_magnitude * magnitude_loss
+                + self.lambda_naive * naive_relative_loss
+                + self.lambda_bias * bias_loss
+                + self.lambda_drift_prior * drift_prior_loss
+                + self.lambda_saturation * saturation_loss
+                + self.lambda_positive_rate * positive_rate_loss
+                + self.lambda_interval * interval_loss
+                + self.lambda_directional * directional_loss
             )
 
             self._record_components(
@@ -721,6 +828,7 @@ try:
                 magnitude_loss,
                 naive_relative_loss,
                 bias_loss,
+                drift_prior_loss,
                 saturation_loss,
                 positive_rate_loss,
                 interval_loss,
@@ -746,10 +854,12 @@ def _initialize_tft_output_layer(model, quantiles: Sequence[float]) -> None:
     )
     q_dim = len(quantiles)
     median_idx = q_dim // 2
+    # RSS-calibrated initial step biases corresponding to empirical weekly spread
+    # (~+/-2.0% PI50, ~+/-3.8% PI80, ~+/-6.5% PI96 across sqrt(5) trading days).
     default_biases = (
-        (1.20, 0.95, 1.07, 0.0, 1.07, 0.95, 1.20)
+        (2.29, 1.83, 1.94, 0.0, 1.94, 1.83, 2.29)
         if q_dim == 7
-        else tuple(0.0 if idx == median_idx else 1.05 for idx in range(q_dim))
+        else tuple(0.0 if idx == median_idx else 1.85 for idx in range(q_dim))
     )
     with torch.no_grad():
         for layer in layers:
@@ -768,6 +878,7 @@ def create_tft_model(
     training_dataset,
     cfg: Optional[TFTASROConfig] = None,
     use_asro: bool = True,
+    weekly_target_scale: Optional[float] = None,
 ):
     """
     Instantiate a TFT model from a training dataset and config.
@@ -798,11 +909,13 @@ def create_tft_model(
             lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
             lambda_naive=cfg.weekly_loss.lambda_naive,
             lambda_bias=cfg.weekly_loss.lambda_bias,
+            lambda_drift_prior=cfg.weekly_loss.lambda_drift_prior,
             lambda_directional=cfg.weekly_loss.lambda_directional,
             lambda_saturation=cfg.weekly_loss.lambda_saturation,
             lambda_positive_rate=cfg.weekly_loss.lambda_positive_rate,
             lambda_interval=cfg.weekly_loss.lambda_interval,
             weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            weekly_target_scale=weekly_target_scale,
         )
         logger.info(
             "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f t1_dir=%.2f dispersion=%.2f "
@@ -857,34 +970,53 @@ def create_tft_model(
         hidden_continuous_size=cfg.model.hidden_continuous_size,
         output_size=len(quantiles),
         loss=loss,
+        optimizer="adamw",
         reduce_on_plateau_patience=cfg.model.reduce_on_plateau_patience,
         log_interval=10,
         log_val_interval=1,
     )
     _initialize_tft_output_layer(model, quantiles)
 
-    # Apply weight decay post-construction by patching each param group.
-    # pytorch_forecasting's TFT does not expose optimizer_kwargs in from_dataset(),
-    # so we reach into the already-configured optimizer after the first
-    # configure_optimizers call, which Lightning triggers during fit().
-    _weight_decay = cfg.model.weight_decay
-    if _weight_decay > 0:
-        _orig_configure_optimizers = model.configure_optimizers
+    # Configure AdamW with differential learning rates so the unnormalized linear
+    # quantile output head updates conservatively (preventing epoch-to-epoch
+    # prediction sign ping-pong) while applying configured weight decay to body params.
+    _base_lr = float(cfg.model.learning_rate)
+    _head_lr = _base_lr * float(cfg.model.output_head_lr_mult)
+    _weight_decay = float(cfg.model.weight_decay)
+    _lr_patience = int(cfg.model.reduce_on_plateau_patience)
 
-        def _wd_configure_optimizers():
-            result = _orig_configure_optimizers()
-            # result may be a single optimizer or a Lightning dict/list
-            opts = result if isinstance(result, (list, tuple)) else [result]
-            for item in opts:
-                opt = item.get("optimizer", item) if isinstance(item, dict) else item
-                if hasattr(opt, "param_groups"):
-                    for pg in opt.param_groups:
-                        if pg.get("weight_decay", 0.0) == 0.0:
-                            pg["weight_decay"] = _weight_decay
-            return result
+    def _differential_configure_optimizers(m=model):
+        head_params = []
+        body_params = []
+        for name, param in m.named_parameters():
+            if not param.requires_grad:
+                continue
+            if "output_layer" in name:
+                head_params.append(param)
+            else:
+                body_params.append(param)
+        param_groups = [{"params": body_params, "lr": _base_lr, "weight_decay": _weight_decay}]
+        if head_params:
+            param_groups.append({"params": head_params, "lr": _head_lr, "weight_decay": 0.0})
+        optimizer = torch.optim.AdamW(param_groups)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=_lr_patience,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"},
+        }
 
-        model.configure_optimizers = _wd_configure_optimizers
-        logger.info("Weight decay %.1e applied to optimizer param groups", _weight_decay)
+    model.configure_optimizers = _differential_configure_optimizers
+    logger.info(
+        "Configured AdamW | body_lr=%.1e head_lr=%.1e weight_decay=%.1e",
+        _base_lr,
+        _head_lr,
+        _weight_decay,
+    )
 
     model.save_hyperparameters(ignore=['loss', 'logging_metrics'])
 
@@ -1245,6 +1377,8 @@ def format_prediction(
     baseline_price: float = 1.0,
     reference_price_date: Optional[str] = None,
     conformal_adjustment: float = 0.0,
+    weekly_cqr_params: Optional[Dict[str, Any]] = None,
+    realized_vol: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Convert daily log-return TFT quantiles into public simple-return fields.
@@ -1345,6 +1479,7 @@ def format_prediction(
             return None
         return float(baseline_price * np.exp(cum_log_return))
 
+    cum_quantiles_rss = aggregate_cumulative_quantiles_np(bounded_pred, median_idx=median_idx)
     daily_forecasts = []
     cum_log_median = 0.0
     forecast_dates: list[Optional[str]] = []
@@ -1361,7 +1496,7 @@ def format_prediction(
         raw_med = float(raw_pred[d, median_idx])
         daily_log = float(bounded_pred[d, median_idx])
         cum_log_median += daily_log
-        cum_q = bounded_pred[: d + 1, :].sum(axis=0)
+        cum_q = cum_quantiles_rss[d]
 
         daily_forecasts.append(
             {
@@ -1382,13 +1517,40 @@ def format_prediction(
         )
 
     first = daily_forecasts[0]
-    weekly_quantile_logs = bounded_pred.sum(axis=0)
+    weekly_quantile_logs = aggregate_weekly_quantiles_np(bounded_pred, median_idx=median_idx)
     weekly_log_return = float(weekly_quantile_logs[median_idx])
     weekly_q10_log_raw = float(weekly_quantile_logs[q10_idx])
     weekly_q90_log_raw = float(weekly_quantile_logs[q90_idx])
-    conformal_adjustment = max(float(conformal_adjustment or 0.0), 0.0)
-    weekly_q10_log_cal = weekly_q10_log_raw - conformal_adjustment
-    weekly_q90_log_cal = weekly_q90_log_raw + conformal_adjustment
+    if weekly_cqr_params and bool(weekly_cqr_params.get("cqr_enabled", False)):
+        from deep_learning.calibration.conformal import apply_weekly_cqr
+
+        weekly_calibrated_logs = apply_weekly_cqr(
+            weekly_quantile_logs,
+            quantiles=tuple(q_list),
+            cqr_params=weekly_cqr_params,
+            realized_vol=realized_vol,
+        )
+        weekly_q10_log_cal = float(weekly_calibrated_logs[q10_idx])
+        weekly_q90_log_cal = float(weekly_calibrated_logs[q90_idx])
+        weekly_q02_log_cal = float(weekly_calibrated_logs[q02_idx])
+        weekly_q98_log_cal = float(weekly_calibrated_logs[q98_idx])
+        conformal_adjustment = float(
+            max(
+                0.0,
+                max(weekly_q10_log_raw - weekly_q10_log_cal, weekly_q90_log_cal - weekly_q90_log_raw),
+            )
+        )
+        interval_calibrated = True
+        if daily_forecasts:
+            daily_forecasts[-1]["price_q10"] = _price(weekly_q10_log_cal)
+            daily_forecasts[-1]["price_q90"] = _price(weekly_q90_log_cal)
+            daily_forecasts[-1]["price_q02"] = _price(weekly_q02_log_cal)
+            daily_forecasts[-1]["price_q98"] = _price(weekly_q98_log_cal)
+    else:
+        conformal_adjustment = max(float(conformal_adjustment or 0.0), 0.0)
+        weekly_q10_log_cal = weekly_q10_log_raw - conformal_adjustment
+        weekly_q90_log_cal = weekly_q90_log_raw + conformal_adjustment
+        interval_calibrated = conformal_adjustment > 0
 
     q10_price = first.get("price_q10")
     q90_price = first.get("price_q90")
@@ -1433,7 +1595,7 @@ def format_prediction(
         "weekly_log_return_q10_calibrated": weekly_q10_log_cal,
         "weekly_log_return_q90_calibrated": weekly_q90_log_cal,
         "weekly_interval_calibration_adjustment": conformal_adjustment,
-        "weekly_interval_calibrated": conformal_adjustment > 0,
+        "weekly_interval_calibrated": bool(interval_calibrated),
         "prediction_horizon_days": n_days,
         "daily_forecasts": daily_forecasts,
         "reference_price": float(baseline_price) if _valid_price_base() else None,

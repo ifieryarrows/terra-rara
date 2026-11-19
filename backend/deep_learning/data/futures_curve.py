@@ -132,12 +132,14 @@ def build_futures_features_from_yfinance(
     zscore_std = features["futures_spread_pct"].rolling(60, min_periods=10).std().replace(0, np.nan)
     features["futures_spread_zscore"] = (features["futures_spread_pct"] - zscore_mean) / zscore_std
 
-    # Utilize Rust-accelerated fast_ols_row_slope via compute_curve_slope across term-structure maturities
+    # Utilize Rust-accelerated fast_ols_row_slope across relative (spot-normalized)
+    # term-structure maturities so curve slope stays stationary across price regimes.
+    safe_close = close.replace(0, np.nan)
     curve_df = compute_curve_slope({
-        "1_spot": close,
-        "2_5d": ma_5,
-        "3_20d": ma_20,
-        "4_60d": ma_60,
+        "1_spot": close / safe_close,
+        "2_5d": ma_5 / safe_close,
+        "3_20d": ma_20 / safe_close,
+        "4_60d": ma_60 / safe_close,
     })
     if not curve_df.empty and "futures_curve_slope" in curve_df.columns:
         features["futures_curve_slope"] = curve_df["futures_curve_slope"]

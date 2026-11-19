@@ -117,7 +117,7 @@ class WeeklyLossComponentLogger(pl.Callback):
         )
         pl_module.log(
             "val_weekly_gate_loss",
-            float(stats["total_loss_mean"] + stats["positive_rate_loss_mean"]),
+            float(stats["total_loss_mean"]),
             on_step=False,
             on_epoch=True,
             prog_bar=False,

@@ -344,7 +344,10 @@ def test_weekly_interval_undercoverage_loss_stays_bounded_on_extreme_width():
 
 
 def test_raw_pinball_shift_shortcut_matches_explicit_monotonic_transform():
-    from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
+    from deep_learning.models.monotonic_quantiles import (
+        aggregate_weekly_quantiles_torch,
+        enforce_monotonic_quantiles,
+    )
 
     torch.manual_seed(7)
     y_pred = torch.randn(4, 5, 7) * 0.03
@@ -353,11 +356,7 @@ def test_raw_pinball_shift_shortcut_matches_explicit_monotonic_transform():
         y_pred, median_idx=3, weekly_median_cap=0.025, horizon=5
     )
     ordered_pred = enforce_monotonic_quantiles(bounded_pred, median_idx=3)
-    raw_ordered_pred = enforce_monotonic_quantiles(y_pred, median_idx=3)
-
-    median_shift_sum = (y_pred[..., 3] - ordered_pred[..., 3]).sum(dim=1, keepdim=True)
-    shortcut_weekly = ordered_pred.sum(dim=1) + median_shift_sum
-    assert torch.allclose(shortcut_weekly, raw_ordered_pred.sum(dim=1), atol=1e-6, rtol=1e-6)
+    weekly_ordered = aggregate_weekly_quantiles_torch(ordered_pred, median_idx=3)
 
     loss = tft_copper.WeeklyASROPFLoss(
         QUANTILES,
@@ -374,10 +373,17 @@ def test_raw_pinball_shift_shortcut_matches_explicit_monotonic_transform():
         lambda_interval=0.0,
         weekly_median_cap=0.025,
     )
-    expected = 0.7 * loss._pinball(ordered_pred.sum(dim=1), y_actual.sum(dim=1)) + 0.3 * loss._pinball(
-        raw_ordered_pred.sum(dim=1), y_actual.sum(dim=1)
-    )
+    actual_weekly = y_actual.sum(dim=1)
+    scale_w = (actual_weekly ** 2).mean().sqrt().clamp_min(0.005)
+    median_shift_sum = (y_pred[..., 3] - ordered_pred[..., 3]).sum(dim=1, keepdim=True)
+    expected = (
+        0.85 * loss._pinball(weekly_ordered, actual_weekly)
+        + 0.15 * loss._pinball(weekly_ordered + median_shift_sum, actual_weekly)
+    ) / scale_w
     assert torch.allclose(loss.loss(y_pred, y_actual), expected, atol=1e-6, rtol=1e-6)
+    # Verify MultiHorizonMetric forward/update does NOT dilute loss by B*H (160x fix)
+    metric_val = loss(y_pred, y_actual)
+    assert torch.allclose(metric_val, expected, atol=1e-6, rtol=1e-6)
 
 
 def test_directional_sign_loss_minimum_at_ground_truth_without_explosion():

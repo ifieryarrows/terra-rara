@@ -16,7 +16,11 @@ def test_default_config_creates_valid_instance():
     assert isinstance(cfg, TFTASROConfig)
     assert cfg.embedding.full_dim == 768
     assert cfg.embedding.pca_dim == 8
-    assert cfg.model.hidden_size == 48
+    assert cfg.model.hidden_size == 12
+    assert cfg.model.hidden_continuous_size == 6
+    assert cfg.model.max_encoder_length == 10
+    assert cfg.model.attention_head_size == 2
+    assert cfg.feature_store.mrmr_top_k == 12
     assert len(cfg.model.quantiles) == 7
 
 
@@ -40,48 +44,56 @@ def test_asro_lambda_defaults():
 
 def test_model_defaults_match_known_good_config():
     cfg = get_tft_config()
-    assert cfg.model.dropout == 0.30
-    assert cfg.model.learning_rate == 2e-4
-    assert cfg.model.weight_decay == 5e-5
+    assert cfg.model.dropout == 0.35
+    assert cfg.model.learning_rate == 5e-4
+    assert cfg.model.output_head_lr_mult == 0.05
+    assert cfg.model.weight_decay == 1e-2
 
 
 def test_known_good_overlay_includes_batch_size_fallback():
     cfg = get_tft_config()
     updated = _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
 
-    assert updated.model.hidden_size == 48
+    assert updated.model.hidden_size == 12
+    assert updated.model.hidden_continuous_size == 6
+    assert updated.model.max_encoder_length == 10
+    assert updated.model.learning_rate == 5e-4
+    assert updated.model.output_head_lr_mult == 0.05
+    assert updated.model.weight_decay == 1e-2
     assert updated.asro.lambda_quantile == 0.25
     assert updated.asro.lambda_madl == 0.40
-    assert updated.weekly_loss.lambda_weekly_quantile == 0.70
-    assert updated.weekly_loss.lambda_t1_quantile == 0.20
-    assert updated.weekly_loss.lambda_dispersion == 0.20
-    assert updated.weekly_loss.lambda_magnitude == 0.58
-    assert updated.weekly_loss.lambda_naive == 0.45
-    assert updated.weekly_loss.lambda_bias == 0.19
-    assert updated.weekly_loss.lambda_t1_directional == 0.20
-    assert updated.weekly_loss.lambda_directional == 0.25
-    assert updated.weekly_loss.lambda_saturation == 0.35
-    assert updated.weekly_loss.lambda_positive_rate == 0.75
-    assert updated.weekly_loss.lambda_interval == 0.40
+    assert updated.weekly_loss.lambda_weekly_quantile == 1.00
+    assert updated.weekly_loss.lambda_t1_quantile == 0.25
+    assert updated.weekly_loss.lambda_directional == 0.0
+    assert updated.weekly_loss.lambda_bias == 0.0
+    assert updated.weekly_loss.lambda_drift_prior == 1.0
+    assert updated.weekly_loss.lambda_dispersion == 0.0
+    assert updated.weekly_loss.lambda_magnitude == 0.0
+    assert updated.weekly_loss.lambda_naive == 0.0
+    assert updated.weekly_loss.lambda_t1_directional == 0.0
+    assert updated.weekly_loss.lambda_saturation == 0.0
+    assert updated.weekly_loss.lambda_positive_rate == 0.0
+    assert updated.weekly_loss.lambda_interval == 0.0
     assert updated.training.batch_size == 32
 
 
 def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     cfg = get_tft_config()
-    assert cfg.weekly_loss.lambda_weekly_quantile == 0.70
-    assert cfg.weekly_loss.lambda_t1_quantile == 0.20
-    assert cfg.weekly_loss.lambda_dispersion == 0.20
-    assert cfg.weekly_loss.lambda_magnitude == 0.58
-    assert cfg.weekly_loss.lambda_naive == 0.45
-    assert cfg.weekly_loss.lambda_bias == 0.19
-    assert cfg.weekly_loss.lambda_t1_directional == 0.20
-    assert cfg.weekly_loss.lambda_directional == 0.25
-    assert cfg.weekly_loss.lambda_saturation == 0.35
-    assert cfg.weekly_loss.lambda_positive_rate == 0.75
-    assert cfg.weekly_loss.lambda_interval == 0.40
-    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 1.20
-    assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 1.6
-    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 1.2
+    assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
+    assert cfg.weekly_loss.lambda_t1_quantile == 0.25
+    assert cfg.weekly_loss.lambda_directional == 0.0
+    assert cfg.weekly_loss.lambda_bias == 0.0
+    assert cfg.weekly_loss.lambda_drift_prior == 1.0
+    assert cfg.weekly_loss.lambda_dispersion == 0.0
+    assert cfg.weekly_loss.lambda_magnitude == 0.0
+    assert cfg.weekly_loss.lambda_naive == 0.0
+    assert cfg.weekly_loss.lambda_t1_directional == 0.0
+    assert cfg.weekly_loss.lambda_saturation == 0.0
+    assert cfg.weekly_loss.lambda_positive_rate == 0.0
+    assert cfg.weekly_loss.lambda_interval == 0.0
+    assert cfg.weekly_loss.weekly_median_cap_abs_median_multiple == 5.0
+    assert cfg.weekly_loss.weekly_median_cap_mean_abs_multiple == 4.5
+    assert cfg.weekly_loss.weekly_median_cap_std_multiple == 3.5
     assert not hasattr(cfg.weekly_loss, "lambda_crossing")
     assert not hasattr(cfg.weekly_loss, "lambda_width")
     assert not hasattr(cfg.weekly_loss, "lambda_tail_width")
@@ -89,9 +101,9 @@ def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     assert not hasattr(cfg.weekly_loss, "lambda_vol")
 
 
-def test_lookback_days_is_3_years():
+def test_lookback_days_is_5_years():
     cfg = get_tft_config()
-    assert cfg.training.lookback_days == 1095
+    assert cfg.training.lookback_days == 1825
 
 
 def test_mrmr_top_k_positive():

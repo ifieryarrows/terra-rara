@@ -5,9 +5,9 @@ Loads YAML config with validation via Pydantic models.
 """
 
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
-from datetime import date
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -25,31 +25,52 @@ class UniverseFilterConfig(BaseModel):
 
 class AnalysisConfig(BaseModel):
     """Configuration for correlation analysis."""
-    
-    # IS/OOS split dates
+
+    # Window selection mode: "rolling" dynamically shifts with run_date; "fixed" uses explicit dates
+    window_mode: str = Field(default="rolling")
+    is_years: int = Field(default=4, ge=1)
+    oos_years: int = Field(default=1, ge=1)
+
+    # IS/OOS split dates (used when window_mode == "fixed" or as metadata defaults)
     is_start: date = Field(default=date(2018, 1, 1))
     is_end: date = Field(default=date(2023, 12, 31))
     oos_start: date = Field(default=date(2024, 1, 1))
     oos_end: Optional[date] = Field(default=None)  # None = run_date
-    
+
     # Rolling correlation
     rolling_window_weeks: int = Field(default=26, ge=4)
-    
+
     # Lead-lag discovery
     lead_lag_max_periods: int = Field(default=4, ge=0)
-    
+
     # Sign flip detection
     sign_flip_epsilon: float = Field(default=0.05, ge=0, le=1)
-    
+
     # Retention threshold (note: 0.5 is very strict for weekly data; 0.3 is more reasonable)
     min_is_corr_threshold: float = Field(default=0.3, ge=0, le=1)
-    
+
     # Minimum observations for valid correlation
     min_obs: int = Field(default=104, ge=10)
-    
+    min_oos_obs: int = Field(default=40, ge=10)
+
+    # Selection & scoring weights
+    max_candidate_pairwise_corr: float = Field(default=0.85, ge=0.1, le=1.0)
+    partial_corr_weight: float = Field(default=0.20, ge=0.0, le=1.0)
+    lead_lag_bonus: float = Field(default=0.08, ge=0.0, le=0.5)
+
     # Partial correlation controls
     controls: list[str] = Field(default=["^GSPC", "UUP"])
     enable_partial_corr: bool = Field(default=True)
+
+    def resolve_windows(self, run_date: date) -> tuple[date, date, date, date]:
+        """Resolve (is_start, is_end, oos_start, oos_end) for the configured mode."""
+        eff_oos_end = self.oos_end or run_date
+        if str(self.window_mode).lower() == "rolling":
+            eff_oos_start = eff_oos_end - timedelta(days=365 * self.oos_years)
+            eff_is_end = eff_oos_start - timedelta(days=1)
+            eff_is_start = eff_is_end - timedelta(days=365 * self.is_years)
+            return eff_is_start, eff_is_end, eff_oos_start, eff_oos_end
+        return self.is_start, self.is_end, self.oos_start, eff_oos_end
 
 
 class FetcherConfig(BaseModel):

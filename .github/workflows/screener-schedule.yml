@@ -2,8 +2,8 @@ name: Screener Pipeline
 
 on:
   schedule:
-    # Weekly: Monday 03:00 UTC (06:00 Istanbul)
-    - cron: "0 3 * * 1"
+    # Weekly: Sunday 18:00 UTC (before Sunday 21:00 UTC tft-training workflow)
+    - cron: "0 18 * * 0"
   workflow_dispatch:
     inputs:
       run_universe:
@@ -97,6 +97,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Update challenger.json from screener output
+        id: update_challenger
         if: ${{ github.event.inputs.run_screener != 'false' }}
         working-directory: backend
         run: |
@@ -104,42 +105,75 @@ jobs:
           if [ -z "$SELECTED" ]; then
             SELECTED=$(find artifacts/runs -name "selected_symbols.json" | sort | tail -1)
           fi
-          if [ -n "$SELECTED" ] && [ -f "$SELECTED" ]; then
-            echo "Updating challenger.json from: $SELECTED"
-            cp "$SELECTED" config/symbol_sets/challenger.json
-          else
+          if [ -z "$SELECTED" ] || [ ! -f "$SELECTED" ]; then
             echo "No selected_symbols.json found, skipping challenger update"
+            echo "symbols_changed=false" >> "$GITHUB_OUTPUT"
+            echo "differs_from_active=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          python - <<PY
+          import json, os, shutil
+          from pathlib import Path
+
+          def extract_symbols(path: Path) -> list[str]:
+              if not path.exists():
+                  return []
+              data = json.loads(path.read_text(encoding="utf-8"))
+              if "selected" in data:
+                  return sorted(str(s["ticker"]) for s in data["selected"] if s.get("ticker"))
+              return sorted(str(s) for s in data.get("symbols", []))
+
+          selected_path = Path("$SELECTED")
+          challenger_path = Path("config/symbol_sets/challenger.json")
+          active_path = Path("config/symbol_sets/active.json")
+
+          new_syms = extract_symbols(selected_path)
+          old_syms = extract_symbols(challenger_path)
+          active_syms = extract_symbols(active_path)
+
+          changed = bool(new_syms) and (new_syms != old_syms)
+          differs = bool(new_syms) and (new_syms != active_syms)
+          if changed:
+              shutil.copy2(selected_path, challenger_path)
+              print(f"Updated challenger.json ({len(new_syms)} symbols): {new_syms}")
+          else:
+              print(f"Canonical symbol set unchanged ({len(old_syms)} symbols); ignoring metadata churn")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"symbols_changed={'true' if changed else 'false'}\n")
+              fh.write(f"differs_from_active={'true' if differs else 'false'}\n")
+          PY
 
       - name: Commit updated challenger.json
         id: commit_challenger
-        if: ${{ github.event.inputs.run_screener != 'false' }}
+        if: ${{ github.event.inputs.run_screener != 'false' && steps.update_challenger.outputs.symbols_changed == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add backend/config/symbol_sets/challenger.json
           if git diff --cached --quiet; then
             echo "No changes to challenger.json"
-            echo "challenger_updated=false" >> $GITHUB_OUTPUT
+            echo "challenger_updated=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "chore(screener): update challenger.json from screener run $(date +%Y%m%d)"
             git pull --rebase origin main
             git push
-            echo "challenger_updated=true" >> $GITHUB_OUTPUT
+            echo "challenger_updated=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Trigger Champion/Challenger Backtest
-        if: ${{ steps.commit_challenger.outputs.challenger_updated == 'true' }}
+        if: ${{ steps.commit_challenger.outputs.challenger_updated == 'true' && steps.update_challenger.outputs.differs_from_active == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TODAY=$(date +%Y-%m-%d)
-          echo "Challenger set updated — triggering backtest with oos_end=$TODAY"
+          TODAY=$(date -u +%Y-%m-%d)
+          OOS_START=$(date -u -d "$TODAY - 365 days" +%Y-%m-%d)
+          echo "Challenger set updated & differs from active — triggering backtest ($OOS_START -> $TODAY)"
           gh workflow run backtest.yml \
             --ref main \
             --field champion_path="backend/config/symbol_sets/active.json" \
             --field challenger_path="backend/config/symbol_sets/challenger.json" \
-            --field oos_start="2025-04-01" \
+            --field oos_start="$OOS_START" \
             --field oos_end="$TODAY" \
             --field include_tft="true"
           echo "Backtest workflow dispatched successfully"

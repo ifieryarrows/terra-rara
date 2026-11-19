@@ -56,10 +56,14 @@ class FeatureScreener:
         self.universe = universe
         self.context = RunContext(prefix="scr")
         
-        # Determine OOS end date (run_date if not specified)
-        self.oos_end = self.config.analysis.oos_end
-        if self.oos_end is None:
-            self.oos_end = date.fromisoformat(get_run_date())
+        # Resolve active IS/OOS windows (rolling shifts automatically with run_date)
+        run_date_obj = date.fromisoformat(get_run_date())
+        (
+            self.is_start,
+            self.is_end,
+            self.oos_start,
+            self.oos_end,
+        ) = self.config.analysis.resolve_windows(run_date_obj)
         
         # Initialize fetcher
         cache_dir = Path(config.artifact_base_dir) / "raw" / "prices"
@@ -92,7 +96,7 @@ class FeatureScreener:
         symbols = list(dict.fromkeys(symbols))
         
         # Calculate date range
-        start_date = str(self.config.analysis.is_start)
+        start_date = str(self.is_start)
         end_date = str(self.oos_end)
         
         logger.info(f"Fetching {len(symbols)} symbols from {start_date} to {end_date}")
@@ -108,6 +112,12 @@ class FeatureScreener:
             frequency=self.config.filter.frequency,
             progress_callback=progress_callback
         )
+
+        if self.fetcher.cache is not None:
+            try:
+                self.fetcher.cache.clear(older_than_days=14)
+            except Exception as exc:
+                logger.debug("Stale screener price cache prune skipped: %s", exc)
         
         logger.info(f"Fetched {len(self.prices)} symbols successfully")
         
@@ -141,15 +151,16 @@ class FeatureScreener:
         # Initialize evaluator
         evaluator = Evaluator(
             target_returns=target_returns,
-            is_start=self.config.analysis.is_start,
-            is_end=self.config.analysis.is_end,
-            oos_start=self.config.analysis.oos_start,
+            is_start=self.is_start,
+            is_end=self.is_end,
+            oos_start=self.oos_start,
             oos_end=self.oos_end,
             rolling_window=self.config.analysis.rolling_window_weeks,
             lead_lag_max=self.config.analysis.lead_lag_max_periods,
             sign_flip_epsilon=self.config.analysis.sign_flip_epsilon,
             min_is_corr_threshold=self.config.analysis.min_is_corr_threshold,
             min_obs=self.config.analysis.min_obs,
+            min_oos_obs=self.config.analysis.min_oos_obs,
             controls=controls,
             enable_partial_corr=self.config.analysis.enable_partial_corr
         )
@@ -192,7 +203,7 @@ class FeatureScreener:
         """Check if candidate has valid OOS data."""
         if eval_result.oos_metrics is None:
             return False
-        if eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_obs:
+        if eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_oos_obs:
             return False
         if eval_result.oos_metrics.pearson is None:
             return False
@@ -226,38 +237,73 @@ class FeatureScreener:
     
     def _compute_score(self, eval_result: CandidateEvaluation) -> float:
         """
-        Compute composite score for ranking.
-        
-        Scoring formula:
-        - Base: abs(IS pearson) * 0.4
-        - OOS consistency: abs(OOS pearson) * 0.3 (if available)
-        - Stability: (1 - rolling_std/0.3) * 0.2 (penalize high variance)
-        - Sign consistency: (1 - sign_flips/5) * 0.1
+        Compute composite score incorporating partial corr and predictive lead-lag.
+
+        Weights:
+        - IS Pearson correlation: 0.28
+        - OOS Pearson correlation: 0.28
+        - Incremental signal beyond DXY/SP500 (`partial_corr`): `partial_corr_weight` (0.20)
+        - Rolling stability: 0.16
+        - Sign consistency: 0.08
+        - Predictive lead-lag bonus (`frozen_lag > 0` with `|r| >= 0.20`): `lead_lag_bonus` (0.08)
         """
         score = 0.0
-        
-        # IS correlation (40%)
+        w_partial = float(self.config.analysis.partial_corr_weight)
+        lead_bonus = float(self.config.analysis.lead_lag_bonus)
+
         if eval_result.is_metrics.pearson is not None:
-            score += abs(eval_result.is_metrics.pearson) * 0.4
-        
-        # OOS correlation (30%)
+            score += abs(eval_result.is_metrics.pearson) * 0.28
+
         if eval_result.oos_metrics and eval_result.oos_metrics.pearson is not None:
-            score += abs(eval_result.oos_metrics.pearson) * 0.3
+            score += abs(eval_result.oos_metrics.pearson) * 0.28
         elif eval_result.is_metrics.pearson is not None:
-            # No OOS data, use IS with penalty
-            score += abs(eval_result.is_metrics.pearson) * 0.15
-        
-        # Stability (20%)
+            score += abs(eval_result.is_metrics.pearson) * 0.14
+
+        if eval_result.oos_metrics and eval_result.oos_metrics.partial_corr is not None:
+            score += abs(eval_result.oos_metrics.partial_corr) * w_partial
+        elif eval_result.is_metrics.partial_corr is not None:
+            score += abs(eval_result.is_metrics.partial_corr) * (w_partial * 0.5)
+
         if eval_result.is_metrics.rolling_corr_std is not None:
-            stability = max(0, 1 - eval_result.is_metrics.rolling_corr_std / 0.3)
-            score += stability * 0.2
-        
-        # Sign consistency (10%)
+            stability = max(0.0, 1.0 - eval_result.is_metrics.rolling_corr_std / 0.3)
+            score += stability * 0.16
+
         if eval_result.is_metrics.sign_flip_count is not None:
-            consistency = max(0, 1 - eval_result.is_metrics.sign_flip_count / 5)
-            score += consistency * 0.1
-        
+            consistency = max(0.0, 1.0 - eval_result.is_metrics.sign_flip_count / 5.0)
+            score += consistency * 0.08
+
+        if (
+            eval_result.oos_metrics
+            and (eval_result.oos_metrics.frozen_lag or 0) > 0
+            and abs(eval_result.oos_metrics.lag_corr_at_frozen or 0.0) >= 0.20
+        ):
+            score += lead_bonus
+
         return round(score, 4)
+
+    def _is_pairwise_redundant(
+        self,
+        candidate_ticker: str,
+        selected_tickers: list[str],
+        threshold: float,
+    ) -> bool:
+        """Return True if candidate weekly returns correlate above *threshold* with any selected ticker."""
+        if candidate_ticker not in self.prices or "returns" not in self.prices[candidate_ticker]:
+            return False
+        cand_ret = self.prices[candidate_ticker]["returns"].dropna()
+        if len(cand_ret) < 20:
+            return False
+        for existing in selected_tickers:
+            if existing not in self.prices or "returns" not in self.prices[existing]:
+                continue
+            other_ret = self.prices[existing]["returns"].dropna()
+            aligned = pd.concat([cand_ret, other_ret], axis=1, join="inner").dropna()
+            if len(aligned) < 20:
+                continue
+            corr = float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
+            if pd.notna(corr) and abs(corr) >= threshold:
+                return True
+        return False
     
     def build_output(self) -> ScreenerOutput:
         """
@@ -284,7 +330,7 @@ class FeatureScreener:
                 # Passed IS but no valid OOS data
                 if eval_result.oos_metrics is None:
                     reason = "oos_missing_data"
-                elif eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_obs:
+                elif eval_result.oos_metrics.n_obs is None or eval_result.oos_metrics.n_obs < self.config.analysis.min_oos_obs:
                     reason = "oos_insufficient_observations"
                 else:
                     reason = "oos_correlation_null"
@@ -317,9 +363,9 @@ class FeatureScreener:
         
         # Build analysis parameters
         analysis_params = AnalysisParameters(
-            is_start=str(self.config.analysis.is_start),
-            is_end=str(self.config.analysis.is_end),
-            oos_start=str(self.config.analysis.oos_start),
+            is_start=str(self.is_start),
+            is_end=str(self.is_end),
+            oos_start=str(self.oos_start),
             oos_end=str(self.oos_end),
             rolling_window_weeks=self.config.analysis.rolling_window_weeks,
             lead_lag_max_periods=self.config.analysis.lead_lag_max_periods,
@@ -467,17 +513,18 @@ class FeatureScreener:
             return {"selected": [], "limits_applied": {}}
         
         # Selection rules version (increment when limits/logic changes)
-        SELECTION_RULES_VERSION = "3.2.0"  # v3.2: + mandatory core drivers
-        
+        SELECTION_RULES_VERSION = "4.0.0"  # v4.0: unified min_oos_obs + pairwise redundancy pruning
+
         # Global cap - hard limit on total selected
         MAX_SELECTED_TOTAL = 20
-        
-        # OOS Quality Gates (applied BEFORE category limits)
+
+        # OOS Quality Gates (unified with Evaluator / AnalysisConfig)
         oos_quality_gates = {
-            "min_oos_n_obs": 52,          # ~1 year of weekly data
+            "min_oos_n_obs": int(self.config.analysis.min_oos_obs),
             "min_oos_abs_pearson": 0.30,  # abs() to include negative correlations
             "max_oos_rolling_std": 0.25,  # stability requirement
-            "max_target_corr": 0.95       # exclude target copies (only at lag=0)
+            "max_target_corr": 0.95,      # exclude target copies (only at lag=0)
+            "max_candidate_pairwise_corr": float(self.config.analysis.max_candidate_pairwise_corr),
         }
         
         # Category limits - WHITELIST approach (default=0)
@@ -515,6 +562,7 @@ class FeatureScreener:
             "oos_rolling_std_too_high": 0,
             "oos_target_redundant": 0,    # high corr + lag=0 = target copy
             "oos_metrics_missing": 0,
+            "oos_pairwise_redundant": 0,
             "category_not_whitelisted": 0,
             "category_limit_reached": 0,
             "global_cap_reached": 0
@@ -613,6 +661,15 @@ class FeatureScreener:
             current = counts.get(category, 0)
             if current >= limit:
                 excluded_reasons["category_limit_reached"] += 1
+                continue
+
+            selected_tickers = [item["ticker"] for item in selected]
+            if self._is_pairwise_redundant(
+                candidate.ticker,
+                selected_tickers,
+                oos_quality_gates["max_candidate_pairwise_corr"],
+            ):
+                excluded_reasons["oos_pairwise_redundant"] += 1
                 continue
             
             # Build detailed entry with full OOS metrics for audit

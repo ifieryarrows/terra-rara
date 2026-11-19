@@ -15,7 +15,7 @@ def test_log_return_formula():
 def test_validation_train_requires_real_weekly_labels():
     df = pd.DataFrame(
         {
-            "target": [0.01, 0.02],
+            "target": [0.00, 0.01],
             "target_1d_log_return": [0.01, 0.02],
             "target_5d_log_return": [0.05, np.nan],
             "realized_vol_20d": [0.01, 0.01],
@@ -31,7 +31,7 @@ def test_validation_train_requires_real_weekly_labels():
 def test_validation_inference_allows_dummy_decoder_labels():
     df = pd.DataFrame(
         {
-            "target": [0.01, 0.0],
+            "target": [0.00, 0.01],
             "target_1d_log_return": [0.01, 0.0],
             "target_5d_log_return": [0.05, 0.0],
             "realized_vol_20d": [0.01, 0.0],

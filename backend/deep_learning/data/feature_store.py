@@ -28,6 +28,7 @@ from deep_learning.config import TFTASROConfig, get_tft_config
 logger = logging.getLogger(__name__)
 
 _FEATURE_SNAPSHOT_FORMAT_VERSION = 1
+TFT_KNOWN_CALENDAR_FEATURES: tuple[str, ...] = ("day_of_week",)
 
 
 def data_snapshot_sha256(master_df: pd.DataFrame) -> str:
@@ -409,7 +410,7 @@ def _build_price_features(
     price_df: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load price data and compute technical features for *symbol*.
+    Load price data and compute stationary technical features for *symbol*.
 
     Returns (raw_price_df, features_df).
     """
@@ -425,7 +426,7 @@ def _build_price_features(
         price_df = price_df.copy()
         price_df["close"] = sanitized_close
 
-    features = generate_symbol_features(price_df, symbol)
+    features = generate_symbol_features(price_df, symbol, include_raw_ma=False)
     return price_df, features
 
 
@@ -610,7 +611,7 @@ def build_tft_dataframe(
         feature_frames = [price_features]
         for sym, df in aligned.items():
             if not df.empty:
-                feature_frames.append(generate_symbol_features(df, sym))
+                feature_frames.append(generate_symbol_features(df, sym, include_raw_ma=False))
         if len(feature_frames) > 1:
             price_features = pd.concat(feature_frames, axis=1)
         logger.info("Added features from %d correlated symbols", len(aligned))
@@ -635,10 +636,13 @@ def build_tft_dataframe(
         for col, default in (
             ("material_news_count", 0.0),
             ("after_close_news_count", 0.0),
-            ("days_since_last_material_news", 999.0),
+            ("days_since_last_material_news", 30.0),
             ("stale_sentiment_flag", 1.0),
         ):
             sent_aligned[col] = sent_aligned[col].fillna(default)
+        sent_aligned["days_since_last_material_news"] = (
+            sent_aligned["days_since_last_material_news"].astype(float).clip(lower=0.0, upper=30.0)
+        )
 
         event_counts = build_market_date_event_counts_from_db(session, start_date, end_date)
         advanced_sent = build_all_sentiment_features(sent_aligned, event_counts=event_counts, cfg=cfg.sentiment)
@@ -649,7 +653,7 @@ def build_tft_dataframe(
                 "news_count": 0.0,
                 "material_news_count": 0.0,
                 "after_close_news_count": 0.0,
-                "days_since_last_material_news": 999.0,
+                "days_since_last_material_news": 30.0,
                 "stale_sentiment_flag": 1.0,
             },
             index=target_index,
@@ -703,13 +707,15 @@ def build_tft_dataframe(
     target_5d = log_close.shift(-cfg.forecast.primary_horizon_days) - log_close
     target_5d.name = cfg.forecast.primary_target_col
 
-    target_model = target_1d.copy()
+    # ``target`` (TimeSeriesDataSet target) MUST be the realized 1-day log return
+    # at bar t: log(close[t] / close[t-1]).  TimeSeriesDataSet slices decoder
+    # horizons [t+1 .. t+5] relative to encoder end t, so summing decoder steps
+    # equals log(close[t+5] / close[t]) == target_5d_log_return[t] without any
+    # 1-day forward double-shift.
+    target_model = log_close.diff()
     target_model.name = cfg.forecast.model_daily_target_col
 
-    # Unlike ``target_model``, this is known at the row's forecast origin:
-    # close[t] / close[t-1].  It is used only to construct causal regime
-    # features and is intentionally not exposed as a TFT feature itself.
-    observed_return_1d = log_close.diff().fillna(0.0)
+    observed_return_1d = target_model.fillna(0.0)
     observed_return_1d.name = "observed_return_1d"
 
     realized_vol_20d = (
@@ -793,11 +799,16 @@ def build_tft_dataframe(
     master["time_idx"] = np.arange(len(master))
     master["group_id"] = "copper"
 
-    # Categorise columns – use sanitized calendar col names
+    # Categorise columns – use sanitized calendar col names.
+    # Restrict known future calendar covariates to stationary high-frequency
+    # indicators (day_of_week) and forbid excluded annual calendar columns from
+    # leaking into unknown features or MRMR.
     calendar_cols = [
         c.replace(".", "_").replace("-", "_")
         for c in calendar_features.columns
     ]
+    calendar_col_set = set(calendar_cols)
+    excluded_calendar_cols = calendar_col_set - set(TFT_KNOWN_CALENDAR_FEATURES)
     target_cols = [cfg.forecast.model_daily_target_col]
 
     non_feature_cols = {
@@ -810,12 +821,26 @@ def build_tft_dataframe(
         "material_move_5d",
     }
     all_feature_cols = [c for c in master.columns if c not in non_feature_cols]
-    time_varying_known = [c for c in calendar_cols if c in master.columns]
-    time_varying_unknown = [c for c in all_feature_cols if c not in time_varying_known]
+    time_varying_known = [c for c in TFT_KNOWN_CALENDAR_FEATURES if c in master.columns]
+    time_varying_unknown = [c for c in all_feature_cols if c not in calendar_col_set]
 
-    from deep_learning.data.regime_features import FORCED_TFT_UNKNOWN_FEATURES, REGIME_FEATURES
+    from deep_learning.data.regime_features import REGIME_FEATURES
 
-    forced_unknown = [c for c in FORCED_TFT_UNKNOWN_FEATURES if c in master.columns]
+    target_prefix = target_symbol.replace(".", "_").replace("-", "_")
+    core_target_candidates = [
+        f"{target_prefix}_{suffix}"
+        for suffix in (
+            "ret1",
+            "ret5",
+            "ret10",
+            "ret20",
+            "close_sma_5_ratio",
+            "close_sma_20_ratio",
+            "RSI_14",
+            "vol_10",
+        )
+    ]
+    forced_unknown = [c for c in core_target_candidates if c in master.columns]
     time_varying_unknown = sorted(set(time_varying_unknown) | set(forced_unknown))
 
     missing_regime = [c for c in REGIME_FEATURES if c not in master.columns]
@@ -830,11 +855,10 @@ def build_tft_dataframe(
         len([c for c in master.columns if c.startswith("emb_pca_")]),
     )
 
-    # ---- 7. MRMR feature selection (reduce dimensionality) ----
-    # Fit the selector on the chronological training partition only.  Using
-    # validation or test targets here would leak their label relationships into
-    # the feature set before the held-out evaluation begins.
-    if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > cfg.feature_store.mrmr_top_k:
+    # ---- 7. MRMR & training-health feature selection ----
+    # Fit on chronological training partition only to avoid lookahead leakage, and
+    # prune zero-variance / sparse-backfill columns before model capacity is wasted.
+    if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > 0:
         from deep_learning.data.feature_selection import select_features
 
         test_size = int(len(master) * cfg.training.test_ratio)
@@ -849,7 +873,7 @@ def build_tft_dataframe(
             mrmr_top_k=cfg.feature_store.mrmr_top_k,
             known_features=time_varying_known,
             forced_unknown_features=forced_unknown,
-            forbidden_features=list(non_feature_cols),
+            forbidden_features=list(non_feature_cols | excluded_calendar_cols),
             selection_df=master.iloc[:train_size],
         )
 

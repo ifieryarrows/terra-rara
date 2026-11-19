@@ -103,6 +103,9 @@ def theta_backtest(
     series: pd.Series,
     horizon: int = 5,
     n_windows: int = 50,
+    return_mode: str = "1d",
+    use_log_return: bool = False,
+    annualisation: Optional[float] = None,
 ) -> dict:
     """
     Walk-forward backtest of the Theta model.
@@ -110,12 +113,22 @@ def theta_backtest(
     Slides a window across the series and evaluates directional accuracy
     and return metrics at each step.
 
+    Args:
+        series:         Historical closing prices sorted ascending.
+        horizon:        Forecast horizon in trading days.
+        n_windows:      Number of rolling evaluation steps.
+        return_mode:    ``"1d"`` evaluates next-day return; ``"cumulative"`` evaluates
+                        ``horizon``-day cumulative return to match TFT weekly evaluation.
+        use_log_return: If True, evaluate in log-return space rather than simple return.
+        annualisation:  Optional annualisation factor (defaults to 252 for 1d, 52 for cumulative).
+
     Returns:
         Dict with aggregate metrics for comparison against TFT-ASRO.
     """
     if len(series) < 60 + n_windows:
         n_windows = max(10, len(series) - 60)
 
+    is_cumulative = str(return_mode).lower() == "cumulative"
     results = []
     for i in range(n_windows):
         end_idx = len(series) - n_windows + i
@@ -125,15 +138,37 @@ def theta_backtest(
         train = series.iloc[:end_idx]
         actual_future = series.iloc[end_idx:end_idx + horizon]
 
-        if len(actual_future) < 1:
+        h_req = horizon if is_cumulative else 1
+        if len(actual_future) < h_req:
             continue
 
         fc = theta_forecast(train, horizon=min(horizon, len(actual_future)))
         if "error" in fc:
             continue
 
-        pred_ret = fc["predicted_return_1d"]
-        actual_ret = (float(actual_future.iloc[0]) / float(train.iloc[-1])) - 1.0
+        last_price = float(train.iloc[-1])
+        if is_cumulative:
+            target_price = float(actual_future.iloc[h_req - 1])
+            forecasts = fc.get("daily_forecasts") or []
+            pred_price = (
+                float(forecasts[h_req - 1]["price"])
+                if len(forecasts) >= h_req
+                else float(fc["predicted_price_final"])
+            )
+            if use_log_return:
+                actual_ret = float(np.log(max(target_price, 1e-8) / max(last_price, 1e-8)))
+                pred_ret = float(np.log(max(pred_price, 1e-8) / max(last_price, 1e-8)))
+            else:
+                actual_ret = (target_price / max(last_price, 1e-8)) - 1.0
+                pred_ret = (pred_price / max(last_price, 1e-8)) - 1.0
+        else:
+            target_price = float(actual_future.iloc[0])
+            if use_log_return:
+                actual_ret = float(np.log(max(target_price, 1e-8) / max(last_price, 1e-8)))
+                pred_ret = float(np.log1p(max(float(fc["predicted_return_1d"]), -0.99)))
+            else:
+                pred_ret = float(fc["predicted_return_1d"])
+                actual_ret = (target_price / max(last_price, 1e-8)) - 1.0
 
         results.append({
             "pred_return": pred_ret,
@@ -147,14 +182,27 @@ def theta_backtest(
     df = pd.DataFrame(results)
     da = float(df["correct_direction"].mean())
     strategy_returns = np.sign(df["pred_return"].values) * df["actual_return"].values
-    sr_std = strategy_returns.std()
-    sharpe = float(np.sqrt(252) * strategy_returns.mean() / sr_std) if sr_std > 1e-9 else 0.0
+    ann = float(annualisation) if annualisation is not None else (52.0 if is_cumulative else 252.0)
+
+    if is_cumulative:
+        from deep_learning.training.metrics import sharpe_ratio_hac
+
+        sharpe = float(sharpe_ratio_hac(strategy_returns, annualisation=ann))
+    else:
+        sr_std = strategy_returns.std()
+        sharpe = float(np.sqrt(ann) * strategy_returns.mean() / sr_std) if sr_std > 1e-9 else 0.0
+
+    mae = float(np.abs(df["pred_return"] - df["actual_return"]).mean())
+    naive_zero_mae = float(np.abs(df["actual_return"]).mean())
 
     return {
         "model": "Theta",
         "n_windows": len(results),
+        "return_mode": return_mode,
+        "use_log_return": use_log_return,
         "directional_accuracy": da,
         "sharpe_ratio": sharpe,
-        "mae": float(np.abs(df["pred_return"] - df["actual_return"]).mean()),
+        "mae": mae,
+        "mae_vs_naive_zero": float(mae / naive_zero_mae) if naive_zero_mae > 1e-12 else 1.0,
         "mean_return": float(strategy_returns.mean()),
     }

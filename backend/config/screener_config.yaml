@@ -41,11 +41,14 @@ filter:
 # ANALYSIS PARAMETERS
 # =============================================================================
 analysis:
-  # In-Sample period (parameter discovery)
+  # Rolling evaluation avoids anchoring IS/OOS to stale historical dates
+  window_mode: "rolling"
+  is_years: 4
+  oos_years: 1
+
+  # Legacy/fixed-mode bounds (used only if window_mode == "fixed")
   is_start: "2018-01-01"
   is_end: "2023-12-31"
-
-  # Out-of-Sample period (validation)
   oos_start: "2024-01-01"
   oos_end: null # null = run date (dynamically set)
 
@@ -59,11 +62,16 @@ analysis:
   sign_flip_epsilon: 0.05
 
   # Minimum IS correlation to proceed to OOS evaluation
-  # NOTE: 0.5 is very strict; 0.3 is more practical for weekly data
   min_is_corr_threshold: 0.3
 
-  # Minimum observations for valid correlation
-  min_obs: 104 # ~2 years of weekly data
+  # Minimum observations for valid correlation (IS ~2y, OOS ~1y rolling)
+  min_obs: 104
+  min_oos_obs: 40
+
+  # Composite scoring and redundancy pruning
+  max_candidate_pairwise_corr: 0.85
+  partial_corr_weight: 0.20
+  lead_lag_bonus: 0.08
 
   # Control variables for partial correlation
   controls:

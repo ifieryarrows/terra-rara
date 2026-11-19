@@ -689,23 +689,23 @@ async def _execute_pipeline_stages_v2(
 
         tft_cfg = get_tft_config()
         pca_path = Path(tft_cfg.embedding.pca_model_path)
-        if not pca_path.exists():
-            try:
-                from deep_learning.models.hub import download_tft_artifacts
+        tft_dir = Path(tft_cfg.training.best_model_path).parent
+        try:
+            from deep_learning.models.hub import sync_tft_artifacts_if_stale
 
-                tft_dir = Path(tft_cfg.training.best_model_path).parent
+            if not pca_path.exists():
                 logger.info(
                     f"[run_id={run_id}] PCA artifact missing at {pca_path} before Stage 3.5 - "
-                    "attempting HF Hub artifact sync"
+                    "synchronizing HF Hub artifacts"
                 )
-                download_tft_artifacts(
-                    local_dir=tft_dir,
-                    repo_id=tft_cfg.training.hf_model_repo,
-                )
-            except Exception as hub_exc:
-                logger.debug(
-                    f"[run_id={run_id}] Pre-Stage 3.5 HF Hub sync skipped/failed: {hub_exc}"
-                )
+            sync_tft_artifacts_if_stale(
+                local_dir=tft_dir,
+                repo_id=tft_cfg.training.hf_model_repo,
+            )
+        except Exception as hub_exc:
+            logger.debug(
+                f"[run_id={run_id}] Pre-Stage 3.5 HF Hub sync skipped/failed: {hub_exc}"
+            )
 
         emb_stats = backfill_embeddings(
             days=settings.tft_embedding_backfill_days,
@@ -844,29 +844,22 @@ async def _execute_pipeline_stages_v2(
 
         artifact_set_valid = False
         try:
-            from deep_learning.models.hub import validate_tft_artifact_set
+            from deep_learning.models.hub import sync_tft_artifacts_if_stale, validate_tft_artifact_set
 
-            artifact_set_valid = validate_tft_artifact_set(tft_dir)
-        except Exception as artifact_exc:
-            logger.warning(
-                f"[run_id={run_id}] TFT artifact validation failed before inference: {artifact_exc}"
+            artifact_set_valid = sync_tft_artifacts_if_stale(
+                local_dir=tft_dir,
+                repo_id=tft_cfg.training.hf_model_repo,
             )
-
-        # A checkpoint alone is not a healthy artifact set. Refresh missing
-        # companion files before inference.
-        if not artifact_set_valid:
+            if not artifact_set_valid:
+                artifact_set_valid = validate_tft_artifact_set(tft_dir)
+        except Exception as hub_exc:
+            logger.warning(f"[run_id={run_id}] HF Hub artifact sync before inference failed: {hub_exc}")
             try:
-                from deep_learning.models.hub import download_tft_artifacts
-                logger.info(
-                    f"[run_id={run_id}] TFT artifact set incomplete "
-                    f"(checkpoint_exists={ckpt.exists()}) - attempting HF Hub download"
-                )
-                artifact_set_valid = download_tft_artifacts(
-                    local_dir=tft_dir,
-                    repo_id=tft_cfg.training.hf_model_repo,
-                )
-            except Exception as hub_exc:
-                logger.warning(f"[run_id={run_id}] HF Hub download failed: {hub_exc}")
+                from deep_learning.models.hub import validate_tft_artifact_set
+
+                artifact_set_valid = validate_tft_artifact_set(tft_dir)
+            except Exception:
+                artifact_set_valid = False
 
         if ckpt.exists():
             tft_report = generate_tft_analysis(session, "HG=F", include_explain=True)

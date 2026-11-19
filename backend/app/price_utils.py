@@ -67,9 +67,25 @@ def latest_finite_price_dates(session: Session, symbols: list[str]) -> dict[str,
     then applies Python-level finite price validation to match the NaN/NULL safety
     of ``latest_finite_price_bar``.
     """
+    return _boundary_finite_price_dates(session, symbols, descending=True)
+
+
+def earliest_finite_price_dates(session: Session, symbols: list[str]) -> dict[str, datetime]:
+    """Retrieve the oldest usable price bar dates across multiple symbols in a single query."""
+    return _boundary_finite_price_dates(session, symbols, descending=False)
+
+
+def _boundary_finite_price_dates(
+    session: Session,
+    symbols: list[str],
+    *,
+    descending: bool,
+) -> dict[str, datetime]:
+    """Retrieve boundary (newest or oldest) usable price bar dates per symbol."""
     if not symbols:
         return {}
     try:
+        order_col = PriceBar.date.desc() if descending else PriceBar.date.asc()
         subq = (
             session.query(
                 PriceBar.symbol,
@@ -77,7 +93,7 @@ def latest_finite_price_dates(session: Session, symbols: list[str]) -> dict[str,
                 PriceBar.close,
                 func.row_number().over(
                     partition_by=PriceBar.symbol,
-                    order_by=PriceBar.date.desc(),
+                    order_by=order_col,
                 ).label("rn"),
             )
             .filter(PriceBar.symbol.in_(symbols), PriceBar.close.isnot(None))
@@ -89,13 +105,13 @@ def latest_finite_price_dates(session: Session, symbols: list[str]) -> dict[str,
             .order_by(subq.c.symbol, subq.c.rn)
             .all()
         )
-        latest_dates: dict[str, datetime] = {}
+        boundary_dates: dict[str, datetime] = {}
         for sym, dt, close in rows:
-            if sym in latest_dates:
+            if sym in boundary_dates:
                 continue
             if finite_positive_price(close) is not None:
-                latest_dates[sym] = dt
-        return latest_dates
+                boundary_dates[sym] = dt
+        return boundary_dates
     except Exception:
         # Fallback if window function or subquery is unsupported on unusual engine
         return {}

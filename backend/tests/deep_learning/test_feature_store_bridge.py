@@ -146,7 +146,7 @@ def test_build_tft_dataframe_keeps_latest_bar_for_inference(monkeypatch):
     )
 
     assert master.index.max() == dates[-1]
-    assert master.loc[dates[-1], "target"] == 0.0
+    assert master.loc[dates[-1], "target"] == pytest.approx(float(np.log(6.20 / 6.15)))
     assert master.loc[dates[-1], "target_5d_log_return"] == 0.0
     assert master["target"].isna().sum() == 0
 

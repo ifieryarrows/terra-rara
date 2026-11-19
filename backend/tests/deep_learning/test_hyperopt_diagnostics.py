@@ -31,8 +31,8 @@ def test_structural_invalidity_report_blocks_when_no_completed_trial_passes():
     assert report["completed_trials"] == 1
     assert report["trials_passing_all_checks"] == 0
     assert report["structural_check_results"]["weekly_positive_rate_not_exploded"] == 0
-    assert report["structural_check_results"]["weekly_pi80_coverage_ge_0_15"] == 0
-    assert report["structural_check_results"]["weekly_mae_vs_naive_zero_le_3_0"] == 0
+    assert report["structural_check_results"]["weekly_pi80_coverage_ge_0_30"] == 0
+    assert report["structural_check_results"]["weekly_mae_vs_naive_zero_le_1_25"] == 0
     assert report["verdict"] == "STRUCTURAL_FAILURE"
     assert "Fix quantile head architecture" in report["next_action"]
 
@@ -51,14 +51,14 @@ def test_structural_invalidity_report_counts_trial_level_intersection():
     }
     report = compute_structural_invalidity_report(
         [
-            {**base, "avg_directional_accuracy": 0.52},
-            {**base, "avg_directional_accuracy": 0.49},
-            {**base, "avg_directional_accuracy": 0.48},
-            {**base, "avg_directional_accuracy": 0.47},
+            {**base, "avg_weekly_directional_accuracy": 0.52},
+            {**base, "avg_weekly_directional_accuracy": 0.45},
+            {**base, "avg_weekly_directional_accuracy": 0.44},
+            {**base, "avg_weekly_directional_accuracy": 0.43},
         ]
     )
 
-    assert report["structural_check_results"]["directional_accuracy_ge_0_50"] == 1
+    assert report["structural_check_results"]["directional_accuracy_ge_0_48"] == 1
     assert report["trials_passing_all_checks"] == 1
     assert report["verdict"] == "PARTIAL_STRUCTURAL_FAILURE"
 
@@ -109,8 +109,8 @@ def test_best_trial_preflight_check_recommends_architecture_fix_when_failed():
 
     assert result["preflight_passed"] is False
     assert result["checks"]["weekly_positive_rate_not_exploded"] is False
-    assert result["checks"]["weekly_pi80_coverage_ge_0_15"] is False
-    assert result["checks"]["weekly_mae_vs_naive_zero_le_3_0"] is False
+    assert result["checks"]["weekly_pi80_coverage_ge_0_30"] is False
+    assert result["checks"]["weekly_mae_vs_naive_zero_le_1_25"] is False
     assert result["passed"] == 2
     assert "Fix architecture" in result["recommendation"]
 
@@ -132,7 +132,7 @@ def test_preflight_check_accepts_weekly_directional_accuracy_and_flags_negative_
         }
     )
     assert passing_weekly["preflight_passed"] is True
-    assert passing_weekly["checks"]["directional_accuracy_ge_0_50"] is True
+    assert passing_weekly["checks"]["directional_accuracy_ge_0_48"] is True
 
     negative_collapse = best_trial_preflight_check(
         {
@@ -167,10 +167,10 @@ def test_preflight_check_rejects_sub50_weekly_da_or_negative_weekly_sharpe():
         {**base, "avg_weekly_directional_accuracy": 0.455, "avg_weekly_sharpe": 0.10}
     )
     assert weak_weekly_da["preflight_passed"] is False
-    assert weak_weekly_da["checks"]["directional_accuracy_ge_0_50"] is False
+    assert weak_weekly_da["checks"]["directional_accuracy_ge_0_48"] is False
 
     weak_weekly_sharpe = best_trial_preflight_check(
         {**base, "avg_weekly_directional_accuracy": 0.52, "avg_weekly_sharpe": -0.67}
     )
     assert weak_weekly_sharpe["preflight_passed"] is False
-    assert weak_weekly_sharpe["checks"]["directional_accuracy_ge_0_50"] is False
+    assert weak_weekly_sharpe["checks"]["directional_accuracy_ge_0_48"] is False

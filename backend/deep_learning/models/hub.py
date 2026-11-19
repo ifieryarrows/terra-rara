@@ -36,6 +36,8 @@ _REQUIRED_ARTIFACTS = [
     "artifact_manifest.json",
 ]
 
+_REVISION_FILE = ".hf_revision"
+
 
 def _get_token() -> Optional[str]:
     return os.environ.get(_HF_TOKEN_ENV)
@@ -359,26 +361,51 @@ def upload_tft_artifacts(
         return False
 
 
+def _remote_repo_sha(repo_id: str, token: Optional[str]) -> Optional[str]:
+    """Fetch remote HF Hub repo commit SHA cleanly; returns None when unreachable."""
+    try:
+        from huggingface_hub import HfApi
+
+        info = HfApi(token=token).model_info(repo_id, repo_type="model")
+        sha = getattr(info, "sha", None)
+        return str(sha).strip() if sha else None
+    except Exception as exc:
+        logger.debug("Could not inspect remote HF Hub revision for %s: %s", repo_id, exc)
+        return None
+
+
+def _notify_predictor_reload() -> None:
+    """Clear the cached in-process predictor singleton after artifact refresh."""
+    try:
+        from deep_learning.inference.predictor import reset_cached_predictor
+
+        reset_cached_predictor()
+    except Exception:
+        pass
+
+
 def download_tft_artifacts(
     local_dir: str | Path,
     repo_id: str,
+    *,
+    force_all: bool = False,
 ) -> bool:
     """
     Download TFT artifacts from HuggingFace Hub to *local_dir*.
 
     Skips files that already exist locally unless required metadata is
-    incompatible. Returns True only when the minimum weekly contract artifact
-    set is present and valid.
+    incompatible or *force_all* is True. Returns True only when the minimum
+    weekly contract artifact set is present and valid.
     """
     token = _get_token()
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    if validate_tft_artifact_set(local_dir, quiet=True):
+    if not force_all and validate_tft_artifact_set(local_dir, quiet=True):
         logger.debug("TFT artifact set already present locally: %s", local_dir)
         return True
 
-    force_download = set()
+    force_download = set(_ARTIFACTS) if force_all else set()
     metadata_path = local_dir / "tft_metadata.json"
     if metadata_path.exists() and not _metadata_contract_valid(metadata_path):
         force_download.add("tft_metadata.json")
@@ -392,7 +419,7 @@ def download_tft_artifacts(
         to_download = [
             name
             for name in _ARTIFACTS
-            if not (local_dir / name).exists() or name in force_download
+            if force_all or not (local_dir / name).exists() or name in force_download
         ]
 
         def _download_one(name: str) -> None:
@@ -423,7 +450,15 @@ def download_tft_artifacts(
             for name in to_download:
                 _download_one(name)
 
-        return validate_tft_artifact_set(local_dir)
+        valid = validate_tft_artifact_set(local_dir)
+        if valid:
+            remote_sha = _remote_repo_sha(repo_id, token)
+            if remote_sha:
+                try:
+                    (local_dir / _REVISION_FILE).write_text(remote_sha, encoding="utf-8")
+                except Exception:
+                    pass
+        return valid
 
     except ImportError:
         logger.warning("huggingface_hub not installed; cannot download model")
@@ -431,3 +466,88 @@ def download_tft_artifacts(
     except Exception as exc:
         logger.warning("HF Hub download failed: %s", exc)
         return False
+
+
+def download_pca_artifact(
+    local_dir: str | Path,
+    repo_id: str,
+) -> bool:
+    """Download only ``pca_finbert.joblib`` from HF Hub into *local_dir* (fail-open)."""
+    token = _get_token()
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    dest = local_dir / "pca_finbert.joblib"
+    try:
+        from huggingface_hub import hf_hub_download
+
+        hf_hub_download(
+            repo_id=repo_id,
+            filename="pca_finbert.joblib",
+            local_dir=str(local_dir),
+            token=token,
+        )
+        return dest.exists()
+    except Exception as exc:
+        logger.debug("HF Hub PCA download skipped/failed (%s): %s", repo_id, exc)
+        return False
+
+
+def sync_tft_artifacts_if_stale(
+    local_dir: str | Path,
+    repo_id: str,
+) -> bool:
+    """
+    Sync TFT artifacts from HF Hub when missing, invalid, or behind remote commit SHA.
+
+    Downloads updates into a temporary staging folder and validates the staged set
+    before swapping files into *local_dir*, resetting the cached predictor singleton.
+    Fail-open: keeps an existing valid local artifact set if Hub check/download fails.
+    """
+    import shutil
+
+    token = _get_token()
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_valid = validate_tft_artifact_set(local_dir, quiet=True)
+    rev_path = local_dir / _REVISION_FILE
+    local_sha = rev_path.read_text(encoding="utf-8").strip() if rev_path.exists() else ""
+
+    remote_sha = _remote_repo_sha(repo_id, token)
+    if remote_sha is None:
+        if local_valid:
+            return True
+        return download_tft_artifacts(local_dir=local_dir, repo_id=repo_id)
+
+    if local_valid and local_sha == remote_sha:
+        return True
+
+    staging_dir = local_dir / f".staging_{os.getpid()}"
+    try:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staged_ok = download_tft_artifacts(
+            local_dir=staging_dir,
+            repo_id=repo_id,
+            force_all=True,
+        )
+        if not staged_ok:
+            return local_valid
+
+        for name in _ARTIFACTS:
+            src = staging_dir / name
+            if src.exists():
+                dst = local_dir / name
+                tmp_dst = local_dir / f".tmp_{name}"
+                shutil.copy2(src, tmp_dst)
+                os.replace(tmp_dst, dst)
+
+        rev_path.write_text(remote_sha, encoding="utf-8")
+        _notify_predictor_reload()
+        logger.info("Synchronized TFT artifacts to remote HF revision %s", remote_sha[:12])
+        return validate_tft_artifact_set(local_dir)
+    except Exception as exc:
+        logger.warning("Failed staged HF artifact sync (%s); keeping local state=%s", exc, local_valid)
+        return local_valid
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)

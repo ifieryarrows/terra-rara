@@ -88,16 +88,12 @@ def test_apply_optuna_results_uses_controlled_baseline_with_weekly_search_params
 
     resolved = trainer_module._apply_optuna_results(cfg)
 
-    assert resolved.model.max_encoder_length == 50
-    assert resolved.model.hidden_size == 48
-    assert resolved.model.learning_rate == 2e-4
-    assert resolved.training.batch_size == 32
-    assert resolved.weekly_loss.lambda_magnitude == 0.50
-    assert resolved.weekly_loss.lambda_naive == 0.35
-    assert resolved.weekly_loss.lambda_bias == 0.14
-    assert resolved.weekly_loss.lambda_t1_directional == 0.20
-    assert resolved.weekly_loss.lambda_directional == 0.15
-    assert resolved.weekly_loss.lambda_dispersion == 0.20
-    assert resolved.weekly_loss.lambda_saturation == 0.35
-    assert resolved.weekly_loss.lambda_positive_rate == 0.75
-    assert resolved.weekly_loss.lambda_interval == 0.40
+    assert resolved.model.max_encoder_length == 90
+    assert resolved.model.hidden_size == 24
+    assert resolved.model.learning_rate == 3.2e-4
+    assert resolved.training.batch_size == 16
+    assert resolved.weekly_loss.lambda_directional == 0.05
+    assert resolved.weekly_loss.lambda_dispersion == 0.0
+    assert resolved.weekly_loss.lambda_saturation == 0.0
+    assert resolved.weekly_loss.lambda_positive_rate == 0.0
+    assert resolved.weekly_loss.lambda_interval == 0.0
