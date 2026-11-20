@@ -12,6 +12,8 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
+from screener.core.cache import ensure_yf_tz_cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -213,6 +215,7 @@ def probe_batch(
 
     use_batch = (probe_ticker is _DEFAULT_PROBE_TICKER) and hasattr(yf, "download")
     if use_batch and total > 1:
+        ensure_yf_tz_cache()
         for start in range(0, total, max(1, int(chunk_size))):
             chunk_items = items[start : start + max(1, int(chunk_size))]
             if len(chunk_items) <= 1:

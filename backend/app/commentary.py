@@ -1035,7 +1035,7 @@ async def _generate_commentary_and_stance(
 
     influencers_text = "\n".join(
         [
-            f"- {_human_feature_label(inf.get('feature'))}: {inf.get('importance', 0) * 100:.1f}%"
+            f"- {_human_feature_label(inf.get('feature'))} (XGBoost model importance share: {inf.get('importance', 0) * 100:.1f}% — model weight only, NOT an observed price change or volatility level)"
             for inf in top_influencers[:5]
         ]
     )
@@ -1108,6 +1108,7 @@ WRITING RULES:
 - Speak as Cuprum: sensory metal metaphors (wires, coils, forge, patina), grounded, respectful of data.
 - Name drivers as real markets ("the US dollar", "Chinese large-cap equities", "Freeport-McMoRan's volatility"), never as internal identifiers (anything containing underscores, e.g. DX_Y_NYB_ret1, SCCO_EMA_20).
 - Express returns as rounded percentages with at most one decimal (e.g. "about -3.6% over five sessions").
+- Never mistake a feature's model importance share or VSN focus weight (e.g. 9.8% importance share) for an observed price return or market volatility percentage.
 - In cuprum_daily: may cite driver focus weights as natural rounded percentages (~29%), but never quote dollar price targets ($/lb).
 
 **cuprum_daily**:

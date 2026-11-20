@@ -53,7 +53,7 @@ env:
     PYTHONPATH: backend
     MODEL_DIR: /tmp/models
     PYTHONHASHSEED: "42"
-    HF_HUB_ENABLE_HF_TRANSFER: "1"
+    HF_XET_HIGH_PERFORMANCE: "1"
     CUBLAS_WORKSPACE_CONFIG: ":4096:8"
     OMP_NUM_THREADS: "1"
     MKL_NUM_THREADS: "1"
@@ -90,7 +90,6 @@ jobs:
               run: |
                   python -m pip install --upgrade pip
                   pip install -r requirements.txt -c constraints-tft.txt
-                  pip install hf_transfer
 
             - name: Cache and build native Rust acceleration (copper_rust_accel)
               uses: actions/cache@v4
@@ -202,7 +201,6 @@ jobs:
               run: |
                   python -m pip install --upgrade pip
                   pip install -r requirements.txt -c constraints-tft.txt
-                  pip install hf_transfer
 
             - name: Cache and build native Rust acceleration (copper_rust_accel)
               uses: actions/cache@v4
@@ -340,10 +338,52 @@ jobs:
               if: ${{ always() }}
               run: |
                   echo "=== TFT-ASRO Training Complete ==="
-                  if [ -f "/tmp/models/tft/optuna_results.json" ]; then
-                    echo "--- Optuna Results Applied ---"
-                    python -m json.tool /tmp/models/tft/optuna_results.json
-                  fi
+                  python - <<'PY'
+                  import json
+                  from pathlib import Path
+
+                  optuna_path = Path("/tmp/models/tft/optuna_results.json")
+                  if optuna_path.exists():
+                      data = json.loads(optuna_path.read_text(encoding="utf-8"))
+                      summary = {
+                          "study_name": data.get("study_name"),
+                          "best_trial": data.get("best_trial"),
+                          "best_value": data.get("best_value"),
+                          "best_params": data.get("best_params"),
+                          "preflight": {
+                              "passed": (data.get("best_trial_preflight") or {}).get("passed"),
+                              "total": (data.get("best_trial_preflight") or {}).get("total"),
+                              "preflight_passed": (data.get("best_trial_preflight") or {}).get("preflight_passed"),
+                          },
+                          "data_snapshot_id": data.get("data_snapshot_id"),
+                      }
+                      print("--- Optuna Results Summary ---")
+                      print(json.dumps(summary, indent=2))
+
+                  meta_path = Path("/tmp/models/tft/tft_metadata.json")
+                  if meta_path.exists():
+                      meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                      tm = meta.get("test_metrics") or {}
+                      metric_keys = (
+                          "weekly_sample_count",
+                          "weekly_directional_accuracy",
+                          "weekly_sharpe_ratio",
+                          "weekly_sharpe_ratio_hac",
+                          "weekly_sharpe_ratio_non_overlapping",
+                          "weekly_sortino_ratio",
+                          "weekly_mae_vs_naive_zero",
+                          "weekly_rmse_vs_naive_zero",
+                          "weekly_magnitude_ratio",
+                          "weekly_pi80_coverage",
+                          "weekly_pi96_coverage",
+                          "directional_accuracy",
+                          "sharpe_ratio",
+                          "mae_vs_naive_zero",
+                          "variance_ratio",
+                      )
+                      print("--- OOS Test Metrics ---")
+                      print(json.dumps({k: tm.get(k) for k in metric_keys if k in tm}, indent=2))
+                  PY
                   ls -la /tmp/models/tft/ 2>/dev/null || echo "No model directory"
                   ls -la /tmp/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
                   echo ""

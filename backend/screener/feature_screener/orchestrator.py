@@ -607,12 +607,18 @@ class FeatureScreener:
         mandatory_added = []
         selected = []
         
-        # Find mandatory symbols in candidates (any candidate, not just quality_passed)
+        # Find mandatory symbols in candidates OR raw evaluations (e.g. CL=F may
+        # fail the linear IS correlation floor yet still be a mandatory core driver).
         all_candidates_by_ticker = {c.ticker: c for c in self.output.candidates}
-        
+        all_evals_by_ticker = {e.ticker: e for e in self.evaluations}
+
         for ticker in MANDATORY_SYMBOLS:
-            if ticker in all_candidates_by_ticker:
-                candidate = all_candidates_by_ticker[ticker]
+            candidate = all_candidates_by_ticker.get(ticker)
+            if candidate is None and ticker in all_evals_by_ticker:
+                candidate = self._eval_to_candidate(
+                    all_evals_by_ticker[ticker], include_in_model=True
+                )
+            if candidate is not None:
                 oos = candidate.oos_metrics
                 category = candidate.category or "other"
                 entry = {

@@ -22,7 +22,7 @@ env:
   PYTHONPATH: backend
   MODEL_DIR: /tmp/models
   PYTHONHASHSEED: "42"
-  HF_HUB_ENABLE_HF_TRANSFER: "1"
+  HF_XET_HIGH_PERFORMANCE: "1"
   CUBLAS_WORKSPACE_CONFIG: ":4096:8"
   OMP_NUM_THREADS: "1"
   MKL_NUM_THREADS: "1"
@@ -50,7 +50,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -c constraints-tft.txt
-          pip install hf_transfer
 
       - name: Cache and build native Rust acceleration (copper_rust_accel)
         uses: actions/cache@v4

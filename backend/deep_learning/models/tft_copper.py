@@ -1379,13 +1379,17 @@ def format_prediction(
     conformal_adjustment: float = 0.0,
     weekly_cqr_params: Optional[Dict[str, Any]] = None,
     realized_vol: Optional[float] = None,
+    is_monotonic_logits: bool = False,
 ) -> Dict[str, Any]:
     """
     Convert daily log-return TFT quantiles into public simple-return fields.
 
     Internal model space is a 5-step daily log-return path. Public return
     fields are simple returns, and prices are derived with
-    ``baseline_price * exp(cumulative_log_return)``.
+    ``baseline_price * exp(cumulative_log_return)``. When
+    ``is_monotonic_logits`` is True, ``raw_prediction`` holds unconstrained
+    delta-step logits parameterized for ``enforce_monotonic_quantiles`` rather
+    than directly ordered quantiles.
     """
     import math as _math
 
@@ -1403,10 +1407,6 @@ def format_prediction(
     q98_idx = q_list.index(0.98) if 0.98 in q_list else len(q_list) - 1
     raw_pred = pred.copy()
 
-    quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
-    crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
-    quantile_crossing_detected = bool(crossing_mask.any())
-    raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
     ordered_tensor = enforce_monotonic_quantiles(
         torch.as_tensor(raw_pred, dtype=torch.float64),
         median_idx=median_idx,
@@ -1427,10 +1427,21 @@ def format_prediction(
             "Monotonic quantile transform produced public crossings: "
             f"{ordered_quantile_crossing_rate:.6f}"
         )
-    sorted_raw = np.sort(raw_pred, axis=-1)
-    raw_median_sort_gap = float(
-        np.max(np.abs(raw_pred[..., median_idx] - sorted_raw[..., median_idx]))
-    )
+
+    if is_monotonic_logits:
+        quantile_crossing_detected = bool(ordered_crossing_mask.any())
+        raw_quantile_crossing_rate = 0.0
+        raw_median_sort_gap = 0.0
+    else:
+        quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
+        crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
+        quantile_crossing_detected = bool(crossing_mask.any())
+        raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+        sorted_raw = np.sort(raw_pred, axis=-1)
+        raw_median_sort_gap = float(
+            np.max(np.abs(raw_pred[..., median_idx] - sorted_raw[..., median_idx]))
+        )
+
     ordered_median_sort_gap = float(
         np.max(np.abs(pred[..., median_idx] - np.sort(pred, axis=-1)[..., median_idx]))
     )

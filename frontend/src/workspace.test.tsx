@@ -30,7 +30,29 @@ describe('workspace evidence and disclosure', () => {
     await userEvent.click(screen.getByText('Daily diagnostics'));
     expect(screen.getByText('Daily Directional Accuracy')).toBeVisible();
     expect(screen.getByText('49.00%')).toBeVisible();
-    expect(screen.getByText(/gate ≥ 53%/)).toBeVisible();
+    expect(screen.getByText(/gate ≥ 45%/)).toBeVisible();
+  });
+  it('renders passing 5-year weekly metrics with quality-gate-aligned thresholds and positive tones', () => {
+    hooks.model.mockReturnValue(
+      result({
+        metrics: {
+          weekly_sample_count: 186,
+          weekly_directional_accuracy: 0.5108,
+          weekly_magnitude_ratio: 0.087,
+          weekly_sharpe_ratio_hac: 0.284,
+          weekly_pi80_coverage: 0.7634,
+        },
+      }),
+    );
+    render(<ModelsPage />);
+    expect(screen.getByText(/gate ≥ 47%/)).toBeVisible();
+    expect(screen.getByText(/gate \[0\.02, 2\.50\]/)).toBeVisible();
+    const daValue = screen.getByText('Weekly Directional Accuracy').closest('.cm-metric')!.querySelector('.cm-metric-value')!;
+    const mrValue = screen.getByText('Weekly Magnitude Ratio').closest('.cm-metric')!.querySelector('.cm-metric-value')!;
+    const sharpeValue = screen.getByText('Weekly Sharpe Ratio').closest('.cm-metric')!.querySelector('.cm-metric-value')!;
+    expect(daValue).toHaveClass('cm-tone-good');
+    expect(mrValue).toHaveClass('cm-tone-good');
+    expect(sharpeValue).toHaveClass('cm-tone-good');
   });
   it('renders existing rolling-window report fields and preserves real zero values', () => {
     hooks.validation.mockReturnValue(result({ summary_metrics: { mean_da: 0, mean_sharpe: 0, mean_mae: .018, mean_vr: 1.1 }, window_metrics: [{ da: 0, sharpe: 0, mae: .02 }], theta_comparison: { tft_da: 0, theta_da: .5, tft_mae: .018 } }));

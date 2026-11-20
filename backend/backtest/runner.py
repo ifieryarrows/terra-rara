@@ -440,11 +440,12 @@ class BacktestRunner:
         target_ret_1d = target_close.pct_change()
         next_close = target_close.shift(-1)
 
-        features = pd.DataFrame(index=pivot.index)
-        features["y_current"] = target_close
-        features["y_price_target"] = next_close
-        features["y_target"] = (next_close / target_close) - 1.0
-        features["target_date"] = pd.Series(pivot.index, index=pivot.index).shift(-1)
+        cols: dict[str, pd.Series] = {
+            "y_current": target_close,
+            "y_price_target": next_close,
+            "y_target": (next_close / target_close) - 1.0,
+            "target_date": pd.Series(pivot.index, index=pivot.index).shift(-1),
+        }
 
         for symbol in pivot.columns:
             if symbol == target_symbol:
@@ -457,25 +458,26 @@ class BacktestRunner:
             ret_1d = series.pct_change()
             sma20 = series.rolling(20, min_periods=10).mean()
             sma60 = series.rolling(60, min_periods=20).mean()
-            features[f"{symbol}_ret_1d"] = ret_1d
-            features[f"{symbol}_ret_5d"] = series.pct_change(5)
-            features[f"{symbol}_ret_20d"] = series.pct_change(20)
-            features[f"{symbol}_vol_20d"] = ret_1d.rolling(20, min_periods=10).std()
-            features[f"{symbol}_sma20_ratio"] = (series / sma20) - 1.0
-            features[f"{symbol}_sma60_ratio"] = (series / sma60) - 1.0
-            features[f"{symbol}_corr_target_20d"] = ret_1d.rolling(20, min_periods=10).corr(target_ret_1d)
+            cols[f"{symbol}_ret_1d"] = ret_1d
+            cols[f"{symbol}_ret_5d"] = series.pct_change(5)
+            cols[f"{symbol}_ret_20d"] = series.pct_change(20)
+            cols[f"{symbol}_vol_20d"] = ret_1d.rolling(20, min_periods=10).std()
+            cols[f"{symbol}_sma20_ratio"] = (series / sma20) - 1.0
+            cols[f"{symbol}_sma60_ratio"] = (series / sma60) - 1.0
+            cols[f"{symbol}_corr_target_20d"] = ret_1d.rolling(20, min_periods=10).corr(target_ret_1d)
 
         t_sma20 = target_close.rolling(20, min_periods=10).mean()
         t_sma60 = target_close.rolling(60, min_periods=20).mean()
-        features["target_ret_1d"] = target_ret_1d
-        features["target_ret_5d"] = target_close.pct_change(5)
-        features["target_ret_20d"] = target_close.pct_change(20)
-        features["target_mom_10d"] = target_close.pct_change(10)
-        features["target_vol_20d"] = target_ret_1d.rolling(20, min_periods=10).std()
-        features["target_sma20_ratio"] = (target_close / t_sma20) - 1.0
-        features["target_sma60_ratio"] = (target_close / t_sma60) - 1.0
-        features["target_rsi_14"] = _compute_rsi(target_close, 14)
+        cols["target_ret_1d"] = target_ret_1d
+        cols["target_ret_5d"] = target_close.pct_change(5)
+        cols["target_ret_20d"] = target_close.pct_change(20)
+        cols["target_mom_10d"] = target_close.pct_change(10)
+        cols["target_vol_20d"] = target_ret_1d.rolling(20, min_periods=10).std()
+        cols["target_sma20_ratio"] = (target_close / t_sma20) - 1.0
+        cols["target_sma60_ratio"] = (target_close / t_sma60) - 1.0
+        cols["target_rsi_14"] = _compute_rsi(target_close, 14)
 
+        features = pd.DataFrame(cols, index=pivot.index)
         features = features.dropna(subset=["y_target", "y_current", "target_date"]).copy()
         feature_cols = [
             c for c in features.columns if c not in {"y_target", "y_price_target", "y_current", "target_date"}
@@ -695,6 +697,7 @@ class TFTBacktestRunner:
         self.run_id = f"tft-backtest-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self.last_walkforward_report: dict[str, Any] = {}
         self.last_theta_comparison: dict[str, Any] = {}
+        self._last_known_price: float = float("nan")
 
     def _ensure_tft_artifacts(self, cfg) -> Path:
         """Ensure valid promoted TFT checkpoint & companions exist locally."""
@@ -753,16 +756,19 @@ class TFTBacktestRunner:
         )
 
         df = None
+        last_known_price = float("nan")
         try:
             from app.db import SessionLocal
 
             with SessionLocal() as session:
-                df, _, _, _, _ = build_tft_dataframe(session, eval_cfg, drop_missing_target=True)
+                df, _, _, _, last_known_price = build_tft_dataframe(session, eval_cfg, drop_missing_target=True)
         except Exception as db_exc:
             logger.warning("DB-backed TFT feature build unavailable (%s); trying sessionless build", db_exc)
 
         if df is None or df.empty:
-            df, _, _, _, _ = build_tft_dataframe(None, eval_cfg, drop_missing_target=True)
+            df, _, _, _, last_known_price = build_tft_dataframe(None, eval_cfg, drop_missing_target=True)
+
+        self._last_known_price = float(last_known_price) if last_known_price is not None else float("nan")
 
         # Backfill optional sparse/DB-only columns (e.g. emb_pca_*) with neutral zeros
         # only when missing; core target features must already be present.
@@ -784,6 +790,66 @@ class TFTBacktestRunner:
         df.index = idx_dt
         df = df[df.index <= oos_end_ts].sort_index()
         return df
+
+    def _resolve_target_close_series(
+        self,
+        cfg,
+        df: pd.DataFrame,
+        last_known_price: float = float("nan"),
+    ) -> pd.Series:
+        """Resolve historical target close prices aligned to ``df`` without altering TFT inputs."""
+        idx_norm = pd.to_datetime(df.index).tz_localize(None).normalize()
+        target_symbol = cfg.feature_store.target_symbol
+        end_ts = pd.Timestamp(self.config.oos_end)
+
+        # 1. Prefer Postgres DB prices
+        try:
+            from app.db import SessionLocal
+            from app.features import load_price_data
+
+            start_dt = (pd.Timestamp(idx_norm.min()) - pd.Timedelta(days=10)).to_pydatetime()
+            end_dt = (end_ts + pd.Timedelta(days=1)).to_pydatetime()
+            with SessionLocal() as session:
+                px_df = load_price_data(session, target_symbol, start_dt, end_dt)
+            if px_df is not None and not px_df.empty and "close" in px_df.columns:
+                series = pd.to_numeric(px_df["close"], errors="coerce").dropna()
+                if not series.empty:
+                    series.index = pd.to_datetime(series.index).tz_localize(None).normalize()
+                    series = series[~series.index.duplicated(keep="last")].sort_index()
+                    return series[series.index <= end_ts]
+        except Exception as db_exc:
+            logger.debug("DB target close resolution skipped (%s)", db_exc)
+
+        # 2. Fallback: yfinance via BacktestRunner cache/loader
+        try:
+            start_str = str(pd.Timestamp(idx_norm.min()).date())
+            px_table = BacktestRunner(self.config).fetch_prices([target_symbol], start_str, self.config.oos_end)
+            if px_table is not None and not px_table.empty:
+                sub = px_table[px_table["symbol"] == target_symbol]
+                if not sub.empty and "close" in sub.columns:
+                    sub_idx = pd.to_datetime(sub["date"]).dt.tz_localize(None).dt.normalize()
+                    series = pd.Series(
+                        pd.to_numeric(sub["close"], errors="coerce").to_numpy(),
+                        index=sub_idx,
+                        name="close",
+                    ).dropna()
+                    if not series.empty:
+                        series = series[~series.index.duplicated(keep="last")].sort_index()
+                        return series[series.index <= end_ts]
+        except Exception as yf_exc:
+            logger.debug("yfinance target close resolution skipped (%s)", yf_exc)
+
+        # 3. Deterministic offline fallback from causal log returns anchored to last_known_price
+        targets = pd.to_numeric(df["target"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
+        anchor = (
+            float(last_known_price)
+            if (last_known_price is not None and np.isfinite(last_known_price) and last_known_price > 0.0)
+            else 5.0
+        )
+        cum_logs = np.cumsum(targets)
+        log_prices = np.log(anchor) + (cum_logs - cum_logs[-1]) if cum_logs.size else np.array([], dtype=np.float64)
+        series = pd.Series(np.exp(log_prices), index=idx_norm, name="close")
+        return series[~series.index.duplicated(keep="last")].sort_index()
 
     def run_backtest(self, symbols: list[str]) -> tuple[BacktestMetrics, pd.DataFrame]:
         """Run authentic promoted TFT-ASRO walk-forward 5-day cumulative backtest."""
@@ -907,10 +973,21 @@ class TFTBacktestRunner:
         pred_weekly_q10 = weekly_q[:, idx_q10]
         pred_weekly_q90 = weekly_q[:, idx_q90]
 
-        close_series = eval_df.get("close")
+        close_series = self._resolve_target_close_series(
+            cfg,
+            df,
+            last_known_price=float(getattr(self, "_last_known_price", float("nan"))),
+        )
+        anchor_norm = pd.to_datetime(anchor_dates).tz_localize(None).normalize()
+        aligned_px = (
+            close_series.reindex(anchor_norm, method="ffill").bfill()
+            if close_series is not None and not close_series.empty
+            else pd.Series(dtype=float)
+        )
         predictions = []
         for idx, dt in enumerate(anchor_dates):
-            px_now = float(close_series.loc[dt]) if close_series is not None and dt in close_series.index else 0.0
+            px_val = aligned_px.iloc[idx] if idx < len(aligned_px) else 0.0
+            px_now = float(px_val) if pd.notna(px_val) and np.isfinite(px_val) else 0.0
             p_ret = float(pred_weekly_med[idx])
             a_ret = float(actual_weekly[idx])
             predictions.append(
@@ -947,11 +1024,12 @@ class TFTBacktestRunner:
         )
         self.last_walkforward_report = wf if isinstance(wf, dict) else {}
 
-        if close_series is not None and len(close_series) >= 80:
+        theta_input = close_series.dropna() if close_series is not None else pd.Series(dtype=float)
+        if len(theta_input) >= 80:
             theta_res = theta_backtest(
-                close_series.dropna(),
+                theta_input,
                 horizon=horizon,
-                n_windows=min(len(pred_df), 50),
+                n_windows=len(pred_df),
                 return_mode="cumulative",
                 use_log_return=True,
                 annualisation=52.0,
@@ -967,7 +1045,11 @@ class TFTBacktestRunner:
 
         return metrics, pred_df
 
-    def compare_with_xgboost(self, symbol_set: SymbolSet) -> dict:
+    def compare_with_xgboost(
+        self,
+        symbol_set: SymbolSet,
+        xgb_metrics: Optional[BacktestMetrics] = None,
+    ) -> dict:
         """
         Evaluate XGBoost (1D diagnostic) and promoted TFT-ASRO (5D primary) separately.
 
@@ -975,9 +1057,10 @@ class TFTBacktestRunner:
         cumulative log returns; cross-horizon MAE differences reflect horizon scaling
         rather than direct head-to-head ranking.
         """
-        xgb_runner = BacktestRunner(self.config)
-        logger.info("=== XGBoost 1D Diagnostic Backtest ===")
-        xgb_metrics, _xgb_preds = xgb_runner.run_backtest(symbol_set.symbols)
+        if xgb_metrics is None:
+            xgb_runner = BacktestRunner(self.config)
+            logger.info("=== XGBoost 1D Diagnostic Backtest ===")
+            xgb_metrics, _xgb_preds = xgb_runner.run_backtest(symbol_set.symbols)
 
         logger.info("=== TFT-ASRO 5D Primary Walk-Forward Backtest ===")
         tft_metrics, _tft_preds = self.run_backtest(symbol_set.symbols)
@@ -1060,11 +1143,28 @@ def _persist_tft_report_to_db(tft_comparison: dict) -> None:
     from app.db import SessionLocal
     from app.models import BacktestReport
 
+    tft_asro = tft_comparison.get("tft_asro") or {}
+    wf_summary = tft_comparison.get("tft_walkforward_summary") or {}
+    windows = _to_json_safe(tft_comparison.get("windows") or [])
+
     summary = _to_json_safe(
         {
+            "directional_accuracy": tft_asro.get("directional_accuracy"),
+            "sharpe_ratio": tft_asro.get("sharpe_ratio"),
+            "mae": tft_asro.get("mae"),
+            "rmse": tft_asro.get("rmse"),
+            "variance_ratio": wf_summary.get("mean_vr"),
+            "mae_vs_naive_zero": tft_asro.get("mae_vs_naive_zero"),
+            "mean_da": wf_summary.get("mean_da", tft_asro.get("directional_accuracy")),
+            "mean_sharpe": wf_summary.get("mean_sharpe", tft_asro.get("sharpe_ratio")),
+            "mean_mae": wf_summary.get("mean_mae", tft_asro.get("mae")),
+            "mean_vr": wf_summary.get("mean_vr"),
+            "mean_pi80_coverage": wf_summary.get("mean_pi80_coverage"),
+            "n_windows": wf_summary.get("n_windows", len(windows)),
+            "total_samples": wf_summary.get("total_samples", tft_asro.get("n_predictions")),
             "xgboost": tft_comparison.get("xgboost", {}),
-            "tft_asro": tft_comparison.get("tft_asro", {}),
-            "tft_walkforward": tft_comparison.get("tft_walkforward_summary", {}),
+            "tft_asro": tft_asro,
+            "tft_walkforward": wf_summary,
             "horizon_note": tft_comparison.get("horizon_note"),
             "delta_mae_pct": tft_comparison.get("delta_mae_pct"),
             "delta_dir_acc_pct": tft_comparison.get("delta_dir_acc_pct"),
@@ -1072,7 +1172,6 @@ def _persist_tft_report_to_db(tft_comparison: dict) -> None:
             "tft_better_dir": tft_comparison.get("tft_better_dir"),
         }
     )
-    windows = _to_json_safe(tft_comparison.get("windows") or [])
     theta_comp = _to_json_safe(tft_comparison.get("theta_comparison") or {})
     raw_payload = _to_json_safe(tft_comparison)
     verdict = str(tft_comparison.get("verdict") or "MIXED")
@@ -1143,7 +1242,12 @@ def main():
         print("=" * 60)
         try:
             tft_runner = TFTBacktestRunner(config)
-            tft_comparison = tft_runner.compare_with_xgboost(champion)
+            champ_metrics = (
+                BacktestMetrics(**result.champion["metrics"])
+                if isinstance(result.champion, dict) and isinstance(result.champion.get("metrics"), dict)
+                else None
+            )
+            tft_comparison = tft_runner.compare_with_xgboost(champion, xgb_metrics=champ_metrics)
 
             tft_report_path = output_dir / f"{tft_comparison['run_id']}_tft_report.json"
             tft_report_path.write_text(json.dumps(_to_json_safe(tft_comparison), indent=2))
@@ -1151,7 +1255,7 @@ def main():
             try:
                 _persist_tft_report_to_db(tft_comparison)
             except Exception as db_err:
-                print(f"Could not persist TFT backtest report to DB: {db_err}")
+                print(f"::warning::Could not persist TFT backtest report to DB: {db_err}")
 
             print(f"TFT 5D MAE:      {tft_comparison['tft_asro']['mae']:.6f} (vs naive0={tft_comparison['tft_asro'].get('mae_vs_naive_zero', 1.0):.4f})")
             print(f"TFT 5D DA:       {tft_comparison['tft_asro']['directional_accuracy']:.4f}")
@@ -1159,7 +1263,7 @@ def main():
             print(f"Theta Verdict:   {tft_comparison.get('verdict')} ({len(tft_comparison.get('windows', []))} windows)")
             print("=" * 60)
         except Exception as exc:
-            print(f"TFT backtest skipped/unavailable: {exc}")
+            print(f"::warning::TFT backtest skipped/unavailable: {exc}")
             print("=" * 60)
 
 

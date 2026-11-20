@@ -10,6 +10,8 @@ Provides:
 import hashlib
 import json
 import logging
+import tempfile
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -19,6 +21,30 @@ import pandas as pd
 from screener.core.fingerprint import compute_file_fingerprint
 
 logger = logging.getLogger(__name__)
+
+_YF_TZ_CACHE_LOCK = threading.Lock()
+_YF_TZ_CACHE_INITIALIZED = False
+
+
+def ensure_yf_tz_cache() -> None:
+    """Create and point yfinance's tz cache to a dedicated temp dir once to avoid thread races."""
+    global _YF_TZ_CACHE_INITIALIZED
+    if _YF_TZ_CACHE_INITIALIZED:
+        return
+    with _YF_TZ_CACHE_LOCK:
+        if _YF_TZ_CACHE_INITIALIZED:
+            return
+        try:
+            import yfinance as yf
+
+            cache_dir = Path(tempfile.gettempdir()) / "py-yfinance-tzcache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            if hasattr(yf, "set_tz_cache_location"):
+                yf.set_tz_cache_location(str(cache_dir))
+        except Exception as exc:
+            logger.debug("Could not configure yfinance tz cache directory: %s", exc)
+        finally:
+            _YF_TZ_CACHE_INITIALIZED = True
 
 
 class FetchParams:

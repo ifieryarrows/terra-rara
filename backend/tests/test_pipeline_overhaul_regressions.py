@@ -775,4 +775,258 @@ def test_dataset_origin_conditioning_values_maps_global_time_idx_for_val_and_tes
         np.testing.assert_allclose(got_vals, expected_vals, atol=1e-12)
 
 
+def test_screener_retains_mandatory_clf_even_when_is_corr_below_threshold():
+    from datetime import date
+    from screener.contracts.universe import (
+        FilterParameters,
+        LibVersions,
+        UniverseMeta,
+        UniverseOutput,
+        UniverseSummary,
+        UniverseSymbol,
+    )
+    from screener.core.config import AnalysisConfig, ScreenerConfig
+    from screener.feature_screener.evaluator import CandidateEvaluation, PeriodMetrics
+    from screener.feature_screener.orchestrator import FeatureScreener
+
+    universe = UniverseOutput(
+        meta=UniverseMeta(
+            run_id="univ-20261120-test1",
+            generated_at="2026-11-20T00:00:00Z",
+            config_hash="sha256:0123456789abcdef",
+            lib_versions=LibVersions(python="3.12"),
+        ),
+        sources=[],
+        filter_parameters=FilterParameters(min_history_days=365, min_coverage_pct=80.0, frequency="W-FRI"),
+        summary=UniverseSummary(total_candidates=2, included=2, excluded=0),
+        universe=[
+            UniverseSymbol(ticker="HG=F", canonical_ticker="HG=F", category="target", status="included"),
+            UniverseSymbol(ticker="CL=F", canonical_ticker="CL=F", category="commodity_energy", status="included"),
+        ],
+        content_fingerprint="sha256:0123456789abcdef",
+        output_fingerprint="sha256:0123456789abcdef",
+    )
+    scr = FeatureScreener(ScreenerConfig(analysis=AnalysisConfig(window_mode="rolling")), universe)
+    idx = pd.date_range("2022-01-07", periods=60, freq="W-FRI")
+    scr.prices = {
+        "HG=F": pd.DataFrame({"returns": pd.Series(np.zeros(len(idx)), index=idx)}),
+        "CL=F": pd.DataFrame({"returns": pd.Series(np.linspace(-0.02, 0.02, len(idx)), index=idx)}),
+    }
+
+    cl_eval = CandidateEvaluation("CL=F")
+    cl_eval.category = "commodity_energy"
+    cl_eval.pairwise_obs = 260
+    cl_eval.is_metrics = PeriodMetrics()
+    cl_eval.is_metrics.pearson = 0.08
+    cl_eval.is_metrics.n_obs = 208
+    cl_eval.is_metrics.passed_retention = False
+    cl_eval.oos_metrics = PeriodMetrics()
+    cl_eval.oos_metrics.pearson = 0.22
+    cl_eval.oos_metrics.n_obs = 52
+    scr.evaluations = [cl_eval]
+
+    scr.build_output()
+    selected = scr._generate_selected_symbols()
+    selected_tickers = [item["ticker"] for item in selected["selected"]]
+    assert "CL=F" in selected_tickers
+    assert "CL=F" in selected["mandatory_added"]
+
+
+def test_latest_backtest_prefers_tft_report_and_flattens_top_level_metrics(monkeypatch):
+    import asyncio
+    from dataclasses import asdict
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app import main
+    from app.models import Base
+    from backtest.runner import (
+        BacktestConfig,
+        BacktestMetrics,
+        BacktestResult,
+        _persist_report_to_db,
+        _persist_tft_report_to_db,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    import app.db as app_db
+
+    monkeypatch.setattr(app_db, "SessionLocal", Session)
+    monkeypatch.setattr(main, "SessionLocal", Session)
+
+    metrics_tft = BacktestMetrics(
+        mae=0.021,
+        rmse=0.029,
+        n_predictions=180,
+        mean_actual=0.002,
+        mean_predicted=0.001,
+        directional_accuracy=0.535,
+        sharpe_ratio=0.45,
+        mae_vs_naive_zero=0.98,
+    )
+    metrics_xgb = BacktestMetrics(
+        mae=0.013,
+        rmse=0.017,
+        n_predictions=250,
+        mean_actual=0.001,
+        mean_predicted=0.001,
+        directional_accuracy=0.49,
+        sharpe_ratio=0.80,
+        mae_vs_naive_zero=1.04,
+    )
+
+    _persist_tft_report_to_db(
+        {
+            "run_id": "tft-bt-pref",
+            "xgboost": asdict(metrics_xgb),
+            "tft_asro": asdict(metrics_tft),
+            "tft_walkforward_summary": {"mean_da": 0.54, "mean_vr": 0.32, "n_windows": 12, "total_samples": 180},
+            "windows": [{"window_id": 1, "da": 0.54, "sharpe": 0.45, "mae": 0.021, "rmse": 0.029, "variance_ratio": 0.32}],
+            "theta_comparison": {"tft_da": 0.54, "theta_da": 0.48, "tft_sharpe": 0.45, "theta_sharpe": -0.1, "tft_mae": 0.021, "theta_mae": 0.026},
+            "verdict": "TFT_SUPERIOR",
+        }
+    )
+
+    # Persist an xgb_challenger report *after* the TFT report to prove report_kind filtering
+    xgb_res = BacktestResult(
+        run_id="xgb-newer",
+        generated_at=(datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat(),
+        config=BacktestConfig(oos_start="2025-01-01", oos_end="2025-12-31"),
+        champion={"symbol_set": {"symbols": ["DX-Y.NYB"]}, "metrics": asdict(metrics_xgb)},
+        challenger={"symbol_set": {"symbols": ["DX-Y.NYB"]}, "metrics": asdict(metrics_xgb)},
+        delta_mae_pct=0.0,
+        delta_rmse_pct=0.0,
+        delta_dir_acc_pct=0.0,
+        improvement_mae_pct=0.0,
+        decision="MANUAL_REVIEW",
+        decision_reason="test",
+    )
+    _persist_report_to_db(xgb_res, kind="xgb_challenger")
+
+    payload = asyncio.run(main.get_latest_backtest("HG=F"))
+    assert payload["available"] is True
+    assert payload["verdict"] == "TFT_SUPERIOR"
+    assert payload["summary_metrics"]["directional_accuracy"] == pytest.approx(0.535)
+    assert payload["summary_metrics"]["sharpe_ratio"] == pytest.approx(0.45)
+    assert payload["summary_metrics"]["mae"] == pytest.approx(0.021)
+    assert payload["summary_metrics"]["rmse"] == pytest.approx(0.029)
+    assert payload["summary_metrics"]["variance_ratio"] == pytest.approx(0.32)
+    assert len(payload["window_metrics"]) == 1
+    assert payload["theta_comparison"]["theta_da"] == pytest.approx(0.48)
+    engine.dispose()
+
+
+def test_tft_backtest_resolves_close_series_from_target_fallback_for_theta(monkeypatch):
+    from backtest.runner import BacktestConfig, BacktestRunner, TFTBacktestRunner
+    from deep_learning.baselines.theta_model import theta_backtest
+    from deep_learning.config import get_tft_config
+
+    dates = pd.bdate_range("2025-01-01", periods=140)
+    rng = np.random.default_rng(12)
+    log_rets = rng.normal(0.0005, 0.015, size=len(dates))
+    df = pd.DataFrame({"target": log_rets}, index=dates)
+
+    cfg = get_tft_config()
+    runner = TFTBacktestRunner(BacktestConfig(oos_start="2025-05-01", oos_end="2025-07-31"))
+
+    import app.db as app_db
+
+    monkeypatch.setattr(app_db, "SessionLocal", lambda: (_ for _ in ()).throw(RuntimeError("no db")))
+    monkeypatch.setattr(BacktestRunner, "fetch_prices", lambda *_args, **_kwargs: pd.DataFrame())
+
+    close_series = runner._resolve_target_close_series(cfg, df, last_known_price=5.625)
+    assert len(close_series) == len(df)
+    assert close_series.iloc[-1] == pytest.approx(5.625)
+    assert (close_series > 0).all()
+
+    theta_res = theta_backtest(
+        close_series,
+        horizon=5,
+        n_windows=30,
+        return_mode="cumulative",
+        use_log_return=True,
+        annualisation=52.0,
+    )
+    assert "error" not in theta_res
+    assert theta_res["n_windows"] == 26
+
+
+def test_tft_summary_schema_preserves_variable_importance_labels():
+    from app.schemas import TFTModelSummaryResponse
+
+    model = TFTModelSummaryResponse(
+        symbol="HG=F",
+        checkpoint_path="/tmp/models/tft/best_tft_asro.ckpt",
+        variable_importance=[
+            {
+                "feature": "CL=F_ema_fast_slow_spread",
+                "importance": 0.2916,
+                "label": "WTI Crude Oil · 5-day vs. 20-day EMA spread",
+                "description": "WTI Crude Oil — 5-day vs. 20-day EMA spread",
+                "category": "Trend",
+                "time_horizon": "",
+            }
+        ],
+        variable_importance_method="vsn_encoder",
+    )
+    dumped = model.model_dump()
+    assert dumped["variable_importance"][0]["label"] == "WTI Crude Oil · 5-day vs. 20-day EMA spread"
+    assert dumped["variable_importance"][0]["category"] == "Trend"
+
+
+def test_format_prediction_monotonic_logits_not_flagged_as_crossing_or_anomaly():
+    from deep_learning.models.tft_copper import format_prediction
+
+    # Raw output from monotonic-transform model: delta logits [u0..u2, q50, u4..u6]
+    raw_logits = np.tile(
+        np.array([[2.3, 1.8, 1.9, 0.0005, 1.9, 1.8, 2.3]], dtype=np.float64),
+        (5, 1),
+    )
+    result = format_prediction(raw_logits, baseline_price=5.625, is_monotonic_logits=True)
+    assert result["quantile_crossing_detected"] is False
+    assert result["raw_quantile_crossing_rate"] == 0.0
+    assert result["anomaly_detected"] is False
+
+
+def test_commentary_prompt_marks_xgboost_importance_as_model_weight_not_return(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app import commentary as commentary_module
+
+    captured: dict[str, str] = {}
+    settings = SimpleNamespace(
+        ifm_api_key="",
+        openrouter_api_key="test-key",
+        resolved_commentary_model="test/model",
+        openrouter_max_retries=1,
+        openrouter_rpm=18,
+        openrouter_fallback_models_list=[],
+    )
+    monkeypatch.setattr(commentary_module, "get_settings", lambda: settings)
+
+    async def fake_openrouter(**kwargs):
+        captured["prompt"] = kwargs["messages"][1]["content"]
+        return {"choices": [{"message": {"content": '{"stance":"NEUTRAL","commentary":"Summary: balanced."}'}}]}
+
+    monkeypatch.setattr(commentary_module, "create_chat_completion", fake_openrouter)
+    asyncio.run(
+        commentary_module._generate_commentary_and_stance(
+            current_price=5.60,
+            predicted_price=5.61,
+            predicted_return=0.001,
+            sentiment_index=0.0,
+            sentiment_label="Neutral",
+            top_influencers=[{"feature": "FCX_ret1", "importance": 0.0984}],
+            news_count=10,
+        )
+    )
+    prompt = captured["prompt"]
+    assert "XGBoost model importance share: 9.8%" in prompt
+    assert "NOT an observed price change or volatility level" in prompt
+
+
+
 

@@ -13,7 +13,7 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
-from screener.core.cache import PriceCache
+from screener.core.cache import PriceCache, ensure_yf_tz_cache
 from screener.core.config import FetcherConfig
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,7 @@ class PriceFetcher:
 
         # 2. Chunked batch download for uncached symbols when yf.download is available
         if uncached and hasattr(yf, "download"):
+            ensure_yf_tz_cache()
             remaining_uncached: list[str] = []
             for start_idx in range(0, len(uncached), chunk_size):
                 chunk = uncached[start_idx:start_idx + chunk_size]

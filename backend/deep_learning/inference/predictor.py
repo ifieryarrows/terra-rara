@@ -149,6 +149,7 @@ class TFTPredictor:
         self._weekly_direction_model: dict = {}
         self._weekly_interval_scale = 1.0
         self._weekly_interval_conditioning: dict = {}
+        self._monotonic_quantile_transform: bool = False
 
     @property
     def _hub_checked(self) -> bool:
@@ -380,6 +381,10 @@ class TFTPredictor:
             }
         else:
             self._weekly_interval_conditioning = {}
+        self._monotonic_quantile_transform = bool(
+            config.get("monotonic_quantile_transform")
+            or metadata.get("monotonic_quantile_transform")
+        )
         self._metadata_checked = True
 
     @property
@@ -710,6 +715,11 @@ class TFTPredictor:
             conformal_adjustment=conformal_adjustment,
             weekly_cqr_params=conformal_artifact if conformal_artifact.get("cqr_enabled") else None,
             realized_vol=latest_realized_vol,
+            is_monotonic_logits=bool(
+                self._monotonic_quantile_transform
+                or getattr(getattr(model, "loss", None), "__class__", type(None)).__name__
+                == "WeeklyASROPFLoss"
+            ),
         )
 
         # The decoder frame is the authority for horizon/date alignment. Do

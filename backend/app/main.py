@@ -2110,6 +2110,34 @@ async def get_tft_summary(
         }
 
 
+def _normalize_backtest_summary(summary: Optional[dict]) -> dict:
+    """Populate top-level validation metrics for ValidationPage from nested report blocks."""
+    normalized = dict(summary) if isinstance(summary, dict) else {}
+    tft_asro = normalized.get("tft_asro") if isinstance(normalized.get("tft_asro"), dict) else {}
+    wf = normalized.get("tft_walkforward") if isinstance(normalized.get("tft_walkforward"), dict) else {}
+    champ = normalized.get("champion") if isinstance(normalized.get("champion"), dict) else {}
+    primary = tft_asro or champ
+
+    defaults = {
+        "directional_accuracy": primary.get("directional_accuracy", wf.get("mean_da")),
+        "sharpe_ratio": primary.get("sharpe_ratio", wf.get("mean_sharpe")),
+        "mae": primary.get("mae", wf.get("mean_mae")),
+        "rmse": primary.get("rmse"),
+        "variance_ratio": wf.get("mean_vr"),
+        "mae_vs_naive_zero": primary.get("mae_vs_naive_zero", wf.get("mean_mae_vs_naive_zero")),
+        "mean_da": wf.get("mean_da", primary.get("directional_accuracy")),
+        "mean_sharpe": wf.get("mean_sharpe", primary.get("sharpe_ratio")),
+        "mean_mae": wf.get("mean_mae", primary.get("mae")),
+        "mean_vr": wf.get("mean_vr"),
+        "n_windows": wf.get("n_windows"),
+        "total_samples": wf.get("total_samples", primary.get("n_predictions")),
+    }
+    for key, val in defaults.items():
+        if normalized.get(key) is None and val is not None:
+            normalized[key] = val
+    return normalized
+
+
 @app.get(
     "/api/models/tft/backtest/latest",
     summary="Get latest backtest report",
@@ -2138,20 +2166,31 @@ async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, descrip
         "verdict": None,
     }
 
-    # 1. Prefer DB-persisted row (production-friendly across container restarts)
+    # 1. Prefer DB-persisted authentic TFT walk-forward row (`tft_vs_xgb`);
+    #    fall back to the latest report of any kind if no TFT report exists yet.
     try:
         with SessionLocal() as session:
             row = (
                 session.query(BacktestReport)
-                .filter(BacktestReport.symbol == symbol)
+                .filter(
+                    BacktestReport.symbol == symbol,
+                    BacktestReport.report_kind == "tft_vs_xgb",
+                )
                 .order_by(BacktestReport.generated_at.desc())
                 .first()
             )
+            if row is None:
+                row = (
+                    session.query(BacktestReport)
+                    .filter(BacktestReport.symbol == symbol)
+                    .order_by(BacktestReport.generated_at.desc())
+                    .first()
+                )
             if row is not None:
                 return {
                     "available": True,
                     "report_date": row.generated_at.isoformat() if row.generated_at else None,
-                    "summary_metrics": row.summary_json or {},
+                    "summary_metrics": _normalize_backtest_summary(row.summary_json),
                     "window_metrics": row.windows_json or [],
                     "theta_comparison": row.theta_comparison_json or {},
                     "verdict": row.verdict,

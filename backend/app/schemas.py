@@ -263,6 +263,10 @@ class VariableImportance(BaseModel):
     """TFT variable importance."""
     feature: str = Field(..., description="Feature name")
     importance: float = Field(..., description="Normalized importance score")
+    label: Optional[str] = Field(None, description="Short, user-facing label")
+    description: Optional[str] = Field(None, description="Longer human-readable description")
+    category: Optional[str] = Field(None, description="High-level bucket (Momentum, Trend, Macro, ...)")
+    time_horizon: Optional[str] = Field(None, description="Lookback horizon, e.g. '14d'")
 
 
 class TFTModelSummaryResponse(BaseModel):
