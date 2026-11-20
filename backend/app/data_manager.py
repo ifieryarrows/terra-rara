@@ -719,6 +719,10 @@ def ingest_prices(session: Session) -> dict:
                         bar_date.day,
                         tzinfo=timezone.utc,
                     )
+                    if bar_date.weekday() >= 5:
+                        rejected += 1
+                        logger.debug("%s: skipping weekend ghost bar at %s", symbol, bar_date.date())
+                        continue
 
                     deduped_rows[(symbol, bar_date)] = {
                         "symbol": symbol,

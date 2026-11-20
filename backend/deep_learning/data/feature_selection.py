@@ -56,7 +56,7 @@ def _hybrid_relevance(
     spearman_weight: float = 0.85,
     n_neighbors: int = 5,
 ) -> pd.Series:
-    """Combine |Spearman| rank correlation with MI so directional signals outrank pure volatility."""
+    """Combine sub-period sign-consistent |Spearman| correlation with MI relevance."""
     from scipy.stats import spearmanr
 
     mi = _mutual_info_relevance(X, y, n_neighbors=n_neighbors)
@@ -64,18 +64,46 @@ def _hybrid_relevance(
 
     y_vals = y.to_numpy(dtype=np.float64)
     y_constant = np.nanstd(y_vals) < 1e-12
-    sp_vals: list[float] = []
-    for col in X.columns:
+    n_obs = len(y_vals)
+    check_subperiod = n_obs >= 80
+    mid = n_obs // 2
+    y_h1, y_h2 = y_vals[:mid], y_vals[mid:]
+    h1_const = not check_subperiod or np.nanstd(y_h1) < 1e-12
+    h2_const = not check_subperiod or np.nanstd(y_h2) < 1e-12
+
+    def _safe_spearman(a: np.ndarray, b: np.ndarray) -> float:
+        if len(a) < 10 or np.nanstd(a) < 1e-12 or np.nanstd(b) < 1e-12:
+            return 0.0
         try:
-            col_vals = X[col].to_numpy(dtype=np.float64)
-            if y_constant or np.nanstd(col_vals) < 1e-12:
-                sp_vals.append(0.0)
-                continue
-            stat = spearmanr(col_vals, y_vals).statistic
-            sp_vals.append(abs(float(stat)) if stat is not None and np.isfinite(stat) else 0.0)
+            stat = spearmanr(a, b).statistic
+            return float(stat) if stat is not None and np.isfinite(stat) else 0.0
         except Exception:
+            return 0.0
+
+    sp_vals: list[float] = []
+    stab_vals: list[float] = []
+    for col in X.columns:
+        col_vals = X[col].to_numpy(dtype=np.float64)
+        if y_constant or np.nanstd(col_vals) < 1e-12:
             sp_vals.append(0.0)
+            stab_vals.append(0.0)
+            continue
+        sp_full = abs(_safe_spearman(col_vals, y_vals))
+        sp_vals.append(sp_full)
+        if not check_subperiod or h1_const or h2_const:
+            stab_vals.append(1.0)
+            continue
+        r_h1 = _safe_spearman(col_vals[:mid], y_h1)
+        r_h2 = _safe_spearman(col_vals[mid:], y_h2)
+        if abs(r_h1) >= 0.02 and abs(r_h2) >= 0.02:
+            stab_vals.append(0.25 if (r_h1 * r_h2 < 0.0) else 1.0)
+        else:
+            stab_vals.append(0.65)
+
     sp_arr = np.asarray(sp_vals, dtype=np.float64)
+    stab_arr = np.asarray(stab_vals, dtype=np.float64)
+    sp_arr = sp_arr * stab_arr
+    mi_arr = mi_arr * (0.5 + 0.5 * stab_arr)
 
     mi_norm = mi_arr / max(float(mi_arr.max()) if mi_arr.size else 0.0, 1e-12)
     sp_norm = sp_arr / max(float(sp_arr.max()) if sp_arr.size else 0.0, 1e-12)

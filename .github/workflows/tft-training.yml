@@ -132,20 +132,6 @@ jobs:
               working-directory: backend
               run: python -m pip freeze | sort > /tmp/models/tft/hyperopt_environment.txt
 
-            - name: Backfill FinBERT embeddings
-              # A supplied immutable feature snapshot already contains the
-              # exact embedding frame for replay. Backfilling the live DB in
-              # that mode is unnecessary and can mutate the source between
-              # hyperopt and training.
-              if: ${{ github.event.inputs.feature_snapshot_run_id == '' }}
-              working-directory: backend
-              run: |
-                  python -m deep_learning.data.embeddings --backfill --days 1825 --pca-dim 8
-              env:
-                  DATABASE_URL: ${{ secrets.DATABASE_URL }}
-                  HF_TOKEN: ${{ secrets.HF_TOKEN }}
-              continue-on-error: true
-
             - name: Run Optuna hyperparameter search
               working-directory: backend
               run: |
@@ -167,7 +153,6 @@ jobs:
                       /tmp/models/tft/hyperopt_environment.txt
                       /tmp/models/tft/feature_snapshot.pkl
                       /tmp/models/tft/feature_snapshot.pkl.json
-                      /tmp/models/tft/pca_finbert.joblib
                   if-no-files-found: warn
                   retention-days: 7
 

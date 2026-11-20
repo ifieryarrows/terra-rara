@@ -162,6 +162,16 @@ def _rows_to_price_df(rows: list, symbol: str) -> pd.DataFrame:
             "Deduplicated %s same-calendar-day price bars for %s", dup_count, symbol
         )
         df = df[~df.index.duplicated(keep="last")]
+    weekend_mask = df.index.dayofweek >= 5
+    if weekend_mask.any():
+        logger.warning(
+            "Excluded %s weekend (Sat/Sun) ghost price bars for %s",
+            int(weekend_mask.sum()),
+            symbol,
+        )
+        df = df.loc[~weekend_mask]
+        if df.empty:
+            return pd.DataFrame()
     return df
 
 

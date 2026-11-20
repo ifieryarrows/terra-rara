@@ -323,7 +323,7 @@ def _build_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
     """Deterministic features known at any future date."""
     cal = pd.DataFrame(index=index)
 
-    cal["day_of_week"] = index.dayofweek.astype(np.float32) / 6.0
+    cal["day_of_week"] = np.clip(index.dayofweek, 0, 4).astype(np.float32) / 4.0
     cal["day_of_month"] = index.day.astype(np.float32) / 31.0
     cal["month"] = index.month.astype(np.float32) / 12.0
 
@@ -606,6 +606,14 @@ def build_tft_dataframe(
         )
     if price_df.empty:
         raise ValueError(f"No price data for {target_symbol}")
+    weekday_mask = price_df.index.dayofweek < 5
+    if not weekday_mask.all():
+        dropped_wknd = int((~weekday_mask).sum())
+        logger.warning("Dropped %d weekend rows from %s price_df", dropped_wknd, target_symbol)
+        price_df = price_df.loc[weekday_mask]
+        price_features = price_features.loc[price_df.index]
+        if price_df.empty:
+            raise ValueError(f"No weekday price data for {target_symbol}")
 
     if correl_symbols and not isinstance(session, SASession):
         price_map.update(
@@ -628,6 +636,8 @@ def build_tft_dataframe(
             price_features = pd.concat(feature_frames, axis=1)
         logger.info("Added features from %d correlated symbols", len(aligned))
 
+    price_features = price_features.copy()
+
     from deep_learning.calibration.hybrid import (
         compute_causal_macro_fair_value_zscore,
         compute_causal_theta_5d_series,
@@ -641,33 +651,52 @@ def build_tft_dataframe(
     target_index = price_df.index
     logger.info("Price data: %d bars for %s", len(target_index), target_symbol)
 
-    # ---- 2. Sentiment features ----
-    from deep_learning.data.sentiment_features import (
-        build_all_sentiment_features,
-    )
-    from deep_learning.data.sentiment_market_date import (
-        build_market_date_event_counts_from_db,
-        build_market_date_sentiment_frame,
-    )
-
-    sent_df = build_market_date_sentiment_frame(session, start_date, end_date)
-    if not sent_df.empty:
-        sent_aligned = sent_df.reindex(target_index).ffill(limit=cfg.feature_store.max_ffill)
-        sent_aligned["sentiment_index"] = sent_aligned["sentiment_index"].fillna(0.0)
-        sent_aligned["news_count"] = sent_aligned["news_count"].fillna(0)
-        for col, default in (
-            ("material_news_count", 0.0),
-            ("after_close_news_count", 0.0),
-            ("days_since_last_material_news", 30.0),
-            ("stale_sentiment_flag", 1.0),
-        ):
-            sent_aligned[col] = sent_aligned[col].fillna(default)
-        sent_aligned["days_since_last_material_news"] = (
-            sent_aligned["days_since_last_material_news"].astype(float).clip(lower=0.0, upper=30.0)
+    # ---- 2. Sentiment & 3. Embedding features (decoupled from TFT when False) ----
+    if getattr(cfg.feature_store, "include_news_features", False):
+        from deep_learning.data.sentiment_features import (
+            build_all_sentiment_features,
+        )
+        from deep_learning.data.sentiment_market_date import (
+            build_market_date_event_counts_from_db,
+            build_market_date_sentiment_frame,
         )
 
-        event_counts = build_market_date_event_counts_from_db(session, start_date, end_date)
-        advanced_sent = build_all_sentiment_features(sent_aligned, event_counts=event_counts, cfg=cfg.sentiment)
+        sent_df = build_market_date_sentiment_frame(session, start_date, end_date)
+        if not sent_df.empty:
+            sent_aligned = sent_df.reindex(target_index).ffill(limit=cfg.feature_store.max_ffill)
+            sent_aligned["sentiment_index"] = sent_aligned["sentiment_index"].fillna(0.0)
+            sent_aligned["news_count"] = sent_aligned["news_count"].fillna(0)
+            for col, default in (
+                ("material_news_count", 0.0),
+                ("after_close_news_count", 0.0),
+                ("days_since_last_material_news", 30.0),
+                ("stale_sentiment_flag", 1.0),
+            ):
+                sent_aligned[col] = sent_aligned[col].fillna(default)
+            sent_aligned["days_since_last_material_news"] = (
+                sent_aligned["days_since_last_material_news"].astype(float).clip(lower=0.0, upper=30.0)
+            )
+
+            event_counts = build_market_date_event_counts_from_db(session, start_date, end_date)
+            advanced_sent = build_all_sentiment_features(sent_aligned, event_counts=event_counts, cfg=cfg.sentiment)
+        else:
+            sent_aligned = pd.DataFrame(
+                {
+                    "sentiment_index": 0.0,
+                    "news_count": 0.0,
+                    "material_news_count": 0.0,
+                    "after_close_news_count": 0.0,
+                    "days_since_last_material_news": 30.0,
+                    "stale_sentiment_flag": 1.0,
+                },
+                index=target_index,
+            )
+            advanced_sent = pd.DataFrame(index=target_index)
+
+        if not sent_aligned.empty and "sentiment_index" in sent_aligned.columns:
+            _sentiment_qc(sent_aligned["sentiment_index"], price_df["close"])
+
+        emb_features = _build_daily_embedding_features(session, target_index, pca_dim=cfg.embedding.pca_dim)
     else:
         sent_aligned = pd.DataFrame(
             {
@@ -681,13 +710,7 @@ def build_tft_dataframe(
             index=target_index,
         )
         advanced_sent = pd.DataFrame(index=target_index)
-
-    # ---- Sentiment QC: check lagged correlation with target ----
-    if not sent_aligned.empty and "sentiment_index" in sent_aligned.columns:
-        _sentiment_qc(sent_aligned["sentiment_index"], price_df["close"])
-
-    # ---- 3. Embedding features ----
-    emb_features = _build_daily_embedding_features(session, target_index, pca_dim=cfg.embedding.pca_dim)
+        emb_features = pd.DataFrame(index=target_index)
 
     # ---- 4. LME / physical market features ----
     from deep_learning.data.lme_warehouse import fetch_lme_data, compute_lme_features, compute_proxy_lme_features
@@ -728,7 +751,7 @@ def build_tft_dataframe(
         max_eval_tail=(
             None
             if drop_missing_target
-            else max(120, cfg.model.max_encoder_length + 30)
+            else max(320, cfg.model.max_encoder_length + 300)
         ),
     )
     theta_prior_series_pre.name = theta_prior_raw_col
@@ -867,14 +890,16 @@ def build_tft_dataframe(
     target_prefix = target_symbol.replace(".", "_").replace("-", "_")
     theta_prior_col = f"{target_prefix}_theta_5d_prior"
     core_target_candidates = [
-        f"{target_prefix}_{suffix}"
-        for suffix in (
-            "ret1",
-            "ret5",
-            "ret10",
-            "close_sma_20_ratio",
-            "risk_adj_ret10",
-        )
+        *(
+            f"{target_prefix}_{suffix}"
+            for suffix in (
+                "ret5",
+                "close_sma_20_ratio",
+                "signed_vol_ratio",
+                "theta_5d_prior",
+            )
+        ),
+        "macro_fair_value_zscore",
     ]
     forced_unknown = [c for c in core_target_candidates if c in master.columns]
     time_varying_unknown = sorted(set(time_varying_unknown) | set(forced_unknown))

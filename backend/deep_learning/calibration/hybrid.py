@@ -207,12 +207,16 @@ def fit_theta_hybrid_blend(
     max_theta_weight: float = 0.65,
     min_improvement: float = 0.005,
     max_mae_degradation: float = 0.01,
+    min_theta_weight: float = 0.25,
+    theta_insurance_min_da: float = 0.52,
+    theta_insurance_max_mae_ratio: float = 1.01,
 ) -> dict:
     """Fit a convex ``w_tft * TFT + w_theta * Theta`` blend on validation only.
 
     Enforces ``w_tft >= min_tft_weight`` so the multi-factor TFT prior remains a
-    substantive contributor, and activates only when validation composite skill
-    improves cleanly without material MAE degradation.
+    substantive contributor. Activates when validation composite skill improves
+    cleanly OR when Theta shows standalone validation edge and applying the
+    structural ``min_theta_weight`` regime-insurance floor keeps MAE well-behaved.
     """
     y = np.asarray(val_actual_weekly, dtype=np.float64)
     p_tft = np.asarray(val_tft_weekly_median, dtype=np.float64)
@@ -234,6 +238,11 @@ def fit_theta_hybrid_blend(
         }
 
     base = _blend_validation_score(y, p_tft, horizon=horizon)
+    theta_base = _blend_validation_score(y, p_theta, horizon=horizon)
+    theta_has_edge = bool(
+        (theta_base["da"] >= float(theta_insurance_min_da) or theta_base["sharpe_hac"] > 0.0)
+        and theta_base["mae_vs_naive"] <= float(theta_insurance_max_mae_ratio)
+    )
     upper_theta = float(np.clip(max_theta_weight, 0.0, 1.0 - max(0.0, min_tft_weight)))
     grid = [round(w, 2) for w in np.arange(0.0, upper_theta + 1e-9, 0.05)]
 
@@ -252,21 +261,48 @@ def fit_theta_hybrid_blend(
             best_w_theta = w_th
             best_stats = stats
 
-    enabled = bool(
+    floor_mae_slack = max(float(max_mae_degradation), 0.025)
+    w_floor = round(min(max(0.0, float(min_theta_weight)), upper_theta), 4)
+
+    improved = bool(
         best_w_theta > 0.0
         and best_stats["score"] <= base["score"] - float(min_improvement)
         and best_stats["mae_vs_naive"] <= base["mae_vs_naive"] + float(max_mae_degradation)
     )
-    selected_theta = float(best_w_theta if enabled else 0.0)
+
+    enabled = False
+    selected_theta = 0.0
+    selected_stats = base
+    reason = "tft_standalone_preferred"
+
+    if improved:
+        selected_theta = float(best_w_theta)
+        selected_stats = best_stats
+        if theta_has_edge and w_floor > selected_theta:
+            blended_floor = (1.0 - w_floor) * p_tft + w_floor * p_theta
+            floor_stats = _blend_validation_score(y, blended_floor, horizon=horizon)
+            if floor_stats["mae_vs_naive"] <= base["mae_vs_naive"] + floor_mae_slack:
+                selected_theta = float(w_floor)
+                selected_stats = floor_stats
+        enabled = True
+        reason = "validation_skill_improved"
+    elif theta_has_edge and w_floor > 0.0:
+        blended_floor = (1.0 - w_floor) * p_tft + w_floor * p_theta
+        floor_stats = _blend_validation_score(y, blended_floor, horizon=horizon)
+        if floor_stats["mae_vs_naive"] <= base["mae_vs_naive"] + floor_mae_slack:
+            enabled = True
+            selected_theta = float(w_floor)
+            selected_stats = floor_stats
+            reason = "theta_regime_insurance_floor"
+
     selected_tft = float(round(1.0 - selected_theta, 4))
-    selected_stats = best_stats if enabled else base
 
     return {
         "enabled": enabled,
         "fit_split": "validation",
         "prior_feature": "HG=F_theta_5d_prior",
         "w_tft": selected_tft,
-        "w_theta": selected_theta,
+        "w_theta": float(selected_theta),
         "sample_count": int(len(y)),
         "val_tft_score": round(base["score"], 6),
         "val_hybrid_score": round(selected_stats["score"], 6),
@@ -276,7 +312,10 @@ def fit_theta_hybrid_blend(
         "val_hybrid_sharpe_hac": round(selected_stats["sharpe_hac"], 4),
         "val_tft_mae_vs_naive": round(base["mae_vs_naive"], 4),
         "val_hybrid_mae_vs_naive": round(selected_stats["mae_vs_naive"], 4),
-        "reason": "validation_skill_improved" if enabled else "tft_standalone_preferred",
+        "val_theta_da": round(theta_base["da"], 4),
+        "val_theta_sharpe_hac": round(theta_base["sharpe_hac"], 4),
+        "val_theta_mae_vs_naive": round(theta_base["mae_vs_naive"], 4),
+        "reason": reason,
     }
 
 

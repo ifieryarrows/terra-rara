@@ -141,8 +141,8 @@ class WeeklyLossConfig:
     lambda_magnitude: float = 0.0
     lambda_naive: float = 0.0
     lambda_bias: float = 0.0
-    lambda_drift_prior: float = 2.0
-    lambda_directional: float = 0.15
+    lambda_drift_prior: float = 4.0
+    lambda_directional: float = 0.10
     lambda_saturation: float = 0.0
     lambda_positive_rate: float = 0.0
     lambda_interval: float = 0.0
@@ -177,6 +177,7 @@ class FeatureStoreConfig:
     max_ffill: int = 3
     calendar_features: bool = True
     macro_event_features: bool = True
+    include_news_features: bool = False
     mrmr_top_k: int = 12
 
 

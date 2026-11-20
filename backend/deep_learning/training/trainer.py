@@ -142,8 +142,8 @@ KNOWN_GOOD_CONFIG = {
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 2.0,
-    "lambda_directional": 0.15,
+    "lambda_drift_prior": 4.0,
+    "lambda_directional": 0.10,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
     "lambda_interval": 0.0,
@@ -701,14 +701,169 @@ def _train_single_tft_seed(
                 source_paths = [source_paths[0]]
                 ranked_checkpoints = [ranked_checkpoints[0]]
                 checkpoint_selection["method"] = "best_validation_checkpoint_soup_reverted"
+        effective_val_loss = (
+            float(checkpoint_selection["soup_val_score"])
+            if checkpoint_selection.get("method") == "uniform_top2_weight_soup"
+            and "soup_val_score" in checkpoint_selection
+            else (float(ranked_checkpoints[0][1]) if ranked_checkpoints else float("inf"))
+        )
         checkpoint_selection.update(
             {
                 "source_count": len(source_paths),
                 "source_checkpoints": [path.name for path in source_paths],
                 "source_scores": [score for _path, score in ranked_checkpoints],
+                "effective_val_loss": effective_val_loss,
             }
         )
     return model, trainer, best_path, checkpoint_selection
+
+
+def _evaluate_seed_member_stats(
+    pred_val_np: np.ndarray,
+    val_actual_path: np.ndarray,
+    pred_train_np: np.ndarray,
+    cfg: TFTASROConfig,
+    *,
+    val_loss: float,
+) -> dict:
+    """Compute validation skill and train/val drift statistics for one ensemble seed."""
+    from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
+    from deep_learning.training.metrics import (
+        apply_weekly_median_cap_np,
+        cumulative_horizon,
+        monotonic_quantiles_np,
+    )
+
+    horizon = int(cfg.forecast.primary_horizon_days)
+    quantiles = tuple(cfg.model.quantiles)
+    median_idx = quantiles.index(0.50) if 0.50 in quantiles else len(quantiles) // 2
+
+    n_val = min(len(pred_val_np), len(val_actual_path))
+    if n_val <= 0:
+        return {
+            "val_loss": float(val_loss),
+            "val_mae_vs_naive": float("inf"),
+            "val_pred_mean": 0.0,
+            "train_pred_mean": 0.0,
+        }
+
+    eval_val, _ = apply_weekly_median_cap_np(
+        pred_val_np[:n_val],
+        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+        quantiles=quantiles,
+        horizon=horizon,
+    )
+    ord_val = monotonic_quantiles_np(eval_val, median_idx=median_idx)
+    wq_val = aggregate_weekly_quantiles_np(ord_val[:, :horizon, :], median_idx=median_idx)
+    val_med = wq_val[:, median_idx]
+    actual_w = cumulative_horizon(val_actual_path[:n_val], horizon=horizon)
+    naive_mae = float(np.mean(np.abs(actual_w))) if len(actual_w) else 0.0
+    val_mae = float(np.mean(np.abs(actual_w - val_med))) if len(actual_w) else float("inf")
+    val_mae_ratio = val_mae / (naive_mae + 1e-8) if naive_mae > 1e-12 else float("inf")
+
+    train_med_mean = 0.0
+    if len(pred_train_np) > 0:
+        eval_tr, _ = apply_weekly_median_cap_np(
+            pred_train_np,
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=quantiles,
+            horizon=horizon,
+        )
+        ord_tr = monotonic_quantiles_np(eval_tr, median_idx=median_idx)
+        wq_tr = aggregate_weekly_quantiles_np(ord_tr[:, :horizon, :], median_idx=median_idx)
+        train_med_mean = float(np.mean(wq_tr[:, median_idx]))
+
+    return {
+        "val_loss": float(val_loss),
+        "val_mae_vs_naive": float(val_mae_ratio),
+        "val_pred_mean": float(np.mean(val_med)) if len(val_med) else 0.0,
+        "train_pred_mean": float(train_med_mean),
+    }
+
+
+def _filter_ensemble_members(
+    candidates: list[dict],
+    *,
+    max_val_mae_vs_naive: float = 0.99,
+    max_val_loss_ratio: float = 1.05,
+    max_abs_val_pred_mean: float = 0.0025,
+    max_abs_train_pred_mean: float = 0.005,
+) -> tuple[list[dict], list[dict]]:
+    """Keep only seeds passing validation skill, loss ratio, and train/val drift gates.
+
+    Predictions are never validation-mean subtracted; drifting or weak seeds are
+    dropped outright, falling back to the single best seed if none pass all gates.
+    """
+    if not candidates:
+        return [], []
+
+    finite_losses = [
+        float(c.get("val_loss", float("inf")))
+        for c in candidates
+        if np.isfinite(float(c.get("val_loss", float("inf"))))
+    ]
+    best_loss = min(finite_losses) if finite_losses else float("inf")
+    loss_limit = (
+        best_loss * float(max_val_loss_ratio)
+        if np.isfinite(best_loss) and best_loss > 0.0
+        else (
+            best_loss + (float(max_val_loss_ratio) - 1.0) * max(1.0, abs(best_loss))
+            if np.isfinite(best_loss)
+            else float("inf")
+        )
+    )
+
+    accepted: list[dict] = []
+    diagnostics: list[dict] = []
+    for item in candidates:
+        v_loss = float(item.get("val_loss", float("inf")))
+        v_mae = float(item.get("val_mae_vs_naive", float("inf")))
+        v_mean = float(item.get("val_pred_mean", 0.0))
+        t_mean = float(item.get("train_pred_mean", 0.0))
+
+        reasons: list[str] = []
+        if not np.isfinite(v_mae) or v_mae > float(max_val_mae_vs_naive):
+            reasons.append(f"val_mae_vs_naive={v_mae:.4f}>{max_val_mae_vs_naive:.2f}")
+        if np.isfinite(loss_limit) and (not np.isfinite(v_loss) or v_loss > loss_limit):
+            reasons.append(f"val_loss={v_loss:.4f}>{loss_limit:.4f}")
+        if not np.isfinite(v_mean) or abs(v_mean) > float(max_abs_val_pred_mean):
+            reasons.append(f"|val_pred_mean|={abs(v_mean):.5f}>{max_abs_val_pred_mean:.4f}")
+        if not np.isfinite(t_mean) or abs(t_mean) > float(max_abs_train_pred_mean):
+            reasons.append(f"|train_pred_mean|={abs(t_mean):.5f}>{max_abs_train_pred_mean:.4f}")
+
+        ok = len(reasons) == 0
+        ckpt_obj = item.get("path")
+        diag = {
+            "seed": item.get("seed"),
+            "checkpoint": Path(ckpt_obj).name if ckpt_obj else None,
+            "val_loss": v_loss,
+            "val_mae_vs_naive": v_mae,
+            "val_pred_mean": v_mean,
+            "train_pred_mean": t_mean,
+            "accepted": ok,
+            "reject_reasons": reasons,
+        }
+        diagnostics.append(diag)
+        if ok:
+            accepted.append(item)
+
+    if not accepted:
+        best_idx = min(
+            range(len(candidates)),
+            key=lambda i: (
+                float(candidates[i].get("val_mae_vs_naive", float("inf")))
+                if np.isfinite(float(candidates[i].get("val_mae_vs_naive", float("inf"))))
+                else float("inf"),
+                float(candidates[i].get("val_loss", float("inf")))
+                if np.isfinite(float(candidates[i].get("val_loss", float("inf"))))
+                else float("inf"),
+            ),
+        )
+        accepted = [candidates[best_idx]]
+        diagnostics[best_idx]["accepted"] = True
+        diagnostics[best_idx]["fallback_best"] = True
+
+    return accepted, diagnostics
 
 
 def train_tft_model(
@@ -889,7 +1044,7 @@ def train_tft_model(
     else:
         ensemble_seeds = (int(cfg.training.seed),)
 
-    ensemble_ckpt_paths: list[Path] = []
+    candidate_records: list[dict] = []
     primary_model = None
     primary_trainer = None
     primary_best_path = ""
@@ -908,7 +1063,7 @@ def train_tft_model(
             destination_path=member_dest,
             use_asro=use_asro,
             weekly_target_scale=weekly_target_scale,
-            allow_soup=(seed_idx == 0),
+            allow_soup=True,
         )
         if seed_idx == 0:
             primary_model = mdl
@@ -922,30 +1077,31 @@ def train_tft_model(
                 "Model params   | total=%s trainable=%s (batches/epoch=%d, seeds=%s)",
                 f"{total_params:,}", f"{trainable_params:,}", n_batches, list(ensemble_seeds),
             )
-            logger.info(
-                "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s",
-                checkpoint_selection["method"],
-                checkpoint_selection["source_checkpoints"],
-                checkpoint_selection["source_scores"],
-                final_path,
-            )
+        loaded_member = mdl
         if bpath and member_dest.exists():
-            ensemble_ckpt_paths.append(member_dest)
+            try:
+                loaded_member = load_tft_model(str(member_dest))
+            except Exception as exc:
+                logger.warning("Could not load ensemble checkpoint %s: %s", member_dest, exc)
+        candidate_records.append(
+            {
+                "seed": int(seed_val),
+                "path": member_dest if (bpath and member_dest.exists()) else None,
+                "model": loaded_member,
+                "trainer": trn,
+                "selection": sel,
+                "val_loss": float(sel.get("effective_val_loss", float("inf"))),
+            }
+        )
 
     model = primary_model
     trainer = primary_trainer
     best_path = str(final_path) if primary_best_path else ""
-    ensemble_models = []
-    for path in ensemble_ckpt_paths:
-        try:
-            ensemble_models.append(load_tft_model(str(path)))
-        except Exception as exc:
-            logger.warning("Could not load ensemble checkpoint %s: %s", path, exc)
-    evaluation_model = ensemble_models[0] if ensemble_models else model
-    if not ensemble_models:
-        ensemble_models = [model]
+    ensemble_models = [rec["model"] for rec in candidate_records if rec.get("model") is not None] or [model]
+    ensemble_ckpt_paths = [rec["path"] for rec in candidate_records if rec.get("path") is not None]
+    evaluation_model = ensemble_models[0]
 
-    # ---- 7. Ensemble val prediction -> Validation-only Hybrid Blend + Split CQR -> Test ----
+    # ---- 7. Ensemble quality filter -> Validation-only Hybrid Blend + Split CQR -> Test ----
     direction_calibration = {
         "fit_split": "validation",
         "sample_count": 0,
@@ -979,6 +1135,7 @@ def train_tft_model(
     weekly_cqr_params: Optional[dict] = None
     val_actual_path = None
     val_pred_np = None
+    ensemble_member_diagnostics: list[dict] = []
     theta_prior_col = hybrid_blend["prior_feature"]
 
     try:
@@ -990,17 +1147,103 @@ def train_tft_model(
             monotonic_quantiles_np,
         )
 
-        val_pred_members = []
-        val_pred_0, val_actual_path = _predict_quantiles_to_np(
-            ensemble_models[0], val_dl, cfg, return_y=True
+        train_eval_dl = training_ds.to_dataloader(
+            train=False,
+            batch_size=cfg.training.batch_size,
+            num_workers=0,
         )
-        val_pred_members.append(val_pred_0)
-        for extra_mdl in ensemble_models[1:]:
-            val_pred_members.append(_predict_quantiles_to_np(extra_mdl, val_dl, cfg, return_y=False))
+        for rec_idx, rec in enumerate(candidate_records):
+            m_val_pred, m_val_y = _predict_quantiles_to_np(
+                rec["model"], val_dl, cfg, return_y=(rec_idx == 0)
+            )
+            if rec_idx == 0:
+                val_actual_path = m_val_y
+            m_train_pred = _predict_quantiles_to_np(
+                rec["model"], train_eval_dl, cfg, return_y=False
+            )
+            stats = _evaluate_seed_member_stats(
+                m_val_pred,
+                val_actual_path if val_actual_path is not None else np.empty((0, cfg.forecast.primary_horizon_days)),
+                m_train_pred,
+                cfg,
+                val_loss=float(rec.get("val_loss", float("inf"))),
+            )
+            rec["val_pred_np"] = m_val_pred
+            rec.update(stats)
+
+        if len(candidate_records) > 1:
+            accepted_records, ensemble_member_diagnostics = _filter_ensemble_members(candidate_records)
+            for diag in ensemble_member_diagnostics:
+                logger.info(
+                    "Ensemble seed=%s accepted=%s val_loss=%.4f val_mae/0=%.4f val_mean=%+.5f train_mean=%+.5f reasons=%s",
+                    diag["seed"],
+                    diag["accepted"],
+                    diag["val_loss"],
+                    diag["val_mae_vs_naive"],
+                    diag["val_pred_mean"],
+                    diag["train_pred_mean"],
+                    diag["reject_reasons"],
+                )
+        else:
+            accepted_records = candidate_records
+            if candidate_records:
+                rec0 = candidate_records[0]
+                ensemble_member_diagnostics = [
+                    {
+                        "seed": rec0.get("seed"),
+                        "checkpoint": Path(rec0["path"]).name if rec0.get("path") else None,
+                        "val_loss": float(rec0.get("val_loss", float("inf"))),
+                        "val_mae_vs_naive": float(rec0.get("val_mae_vs_naive", float("inf"))),
+                        "val_pred_mean": float(rec0.get("val_pred_mean", 0.0)),
+                        "train_pred_mean": float(rec0.get("train_pred_mean", 0.0)),
+                        "accepted": True,
+                        "reject_reasons": [],
+                    }
+                ]
+
+        # Reconcile surviving checkpoints cleanly onto contiguous HF Hub slots
+        staged_payloads = [
+            Path(rec["path"]).read_bytes()
+            for rec in accepted_records
+            if rec.get("path") is not None and Path(rec["path"]).exists()
+        ]
+        if len(staged_payloads) == len(accepted_records) and accepted_records:
+            for sec_i in range(1, len(ensemble_seeds)):
+                sec_path = final_path.parent / f"best_tft_asro_seed{sec_i}.ckpt"
+                if sec_path.exists():
+                    sec_path.unlink()
+            reconciled_paths: list[Path] = []
+            for slot_i, payload_bytes in enumerate(staged_payloads):
+                slot_path = (
+                    final_path
+                    if slot_i == 0
+                    else final_path.parent / f"best_tft_asro_seed{slot_i}.ckpt"
+                )
+                slot_path.write_bytes(payload_bytes)
+                reconciled_paths.append(slot_path)
+            ensemble_ckpt_paths = reconciled_paths
+
+        ensemble_models = [rec["model"] for rec in accepted_records if rec.get("model") is not None] or [model]
+        evaluation_model = ensemble_models[0]
+        if accepted_records and accepted_records[0].get("selection"):
+            checkpoint_selection = accepted_records[0]["selection"]
+        if accepted_records and accepted_records[0].get("trainer"):
+            trainer = accepted_records[0]["trainer"]
+        logger.info(
+            "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s ensemble=%d/%d",
+            checkpoint_selection.get("method"),
+            checkpoint_selection.get("source_checkpoints"),
+            checkpoint_selection.get("source_scores"),
+            final_path,
+            len(ensemble_models),
+            len(candidate_records),
+        )
+
+        val_pred_members = [rec["val_pred_np"] for rec in accepted_records if rec.get("val_pred_np") is not None]
         val_pred_np = (
             np.mean(np.stack(val_pred_members, axis=0), axis=0)
             if len(val_pred_members) > 1
-            else val_pred_0
+            else val_pred_members[0]
         )
 
         if val_actual_path is not None and len(val_actual_path) > 0:
@@ -1206,7 +1449,8 @@ def train_tft_model(
     result = {
         "checkpoint_path": str(final_path),
         "ensemble_checkpoints": [p.name for p in ensemble_ckpt_paths] if ensemble_ckpt_paths else [final_path.name],
-        "ensemble_size": len(ensemble_ckpt_paths) if ensemble_ckpt_paths else 1,
+        "ensemble_size": len(ensemble_models) if ensemble_models else 1,
+        "ensemble_member_diagnostics": ensemble_member_diagnostics,
         "hybrid_blend": hybrid_blend,
         "split_dates": split_dates,
         "test_metrics": test_metrics,
@@ -1228,6 +1472,7 @@ def train_tft_model(
             "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
             "lambda_naive": cfg.weekly_loss.lambda_naive,
             "lambda_bias": cfg.weekly_loss.lambda_bias,
+            "lambda_drift_prior": cfg.weekly_loss.lambda_drift_prior,
             "lambda_directional": cfg.weekly_loss.lambda_directional,
             "lambda_saturation": cfg.weekly_loss.lambda_saturation,
             "lambda_positive_rate": cfg.weekly_loss.lambda_positive_rate,

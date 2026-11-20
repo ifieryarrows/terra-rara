@@ -487,9 +487,18 @@ class TFTPredictor:
             logger.warning("TFT checkpoint incompatible: %s", exc)
             return self._degraded_retrain_required(str(exc))
 
+        needs_news = any(
+            name.startswith(("emb_pca_", "sent_", "sentiment_", "event_", "evt_"))
+            or name in {"news_count", "material_news_count", "after_close_news_count", "days_since_last_material_news", "stale_sentiment_flag"}
+            for name in checkpoint_unknown
+        )
         inference_cfg = replace(
             self.cfg,
-            feature_store=replace(self.cfg.feature_store, mrmr_top_k=0),
+            feature_store=replace(
+                self.cfg.feature_store,
+                mrmr_top_k=0,
+                include_news_features=bool(needs_news or self.cfg.feature_store.include_news_features),
+            ),
         )
 
         (

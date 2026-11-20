@@ -750,9 +750,10 @@ try:
             else:
                 bias_loss = zero
 
-            # Zero-drift prior penalizes unconditional mean shift on financial returns
+            # Zero-drift prior (L1 + L2) penalizes both linear pinball skew pull and large offsets
             if self.lambda_drift_prior != 0.0:
-                drift_prior_loss = (effective_weekly_median.mean() / scale_w).pow(2)
+                norm_mean = effective_weekly_median.mean() / scale_w
+                drift_prior_loss = norm_mean.abs() + norm_mean.pow(2)
             else:
                 drift_prior_loss = zero
 

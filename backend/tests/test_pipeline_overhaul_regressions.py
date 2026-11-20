@@ -642,7 +642,8 @@ def test_tft_causal_target_eliminates_one_day_double_shift(monkeypatch):
     assert "cal_sin_day" not in tv_known
     assert "cal_sin_day" not in tv_unknown
     assert "HG=F_ret5" in tv_unknown
-    assert "HG=F_ret10" in tv_unknown
+    assert "HG=F_signed_vol_ratio" in tv_unknown
+    assert "HG=F_theta_5d_prior" in tv_unknown
 
     tr_ds, _, _ = build_datasets(master, tv_unknown, tv_known, target_cols, cfg)
     dl = tr_ds.to_dataloader(train=False, batch_size=len(tr_ds), num_workers=0)
@@ -1750,6 +1751,216 @@ def test_dedup_price_bars_dry_run_and_apply_on_sqlite():
             assert remaining[0].date == datetime(2025, 11, 18, 0, 0)
     finally:
         engine.dispose()
+
+
+def test_weekend_ghost_bars_excluded_across_ingest_loader_dedup_and_dow_scaled_by_4(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app import data_manager
+    from app.db import Base
+    from app.features import _rows_to_price_df
+    from app.models import PriceBar
+    from deep_learning.data.feature_store import _build_calendar_features
+    from scripts.dedup_price_bars import dedup_price_bars
+
+    # 1. _rows_to_price_df drops Sat/Sun bars while retaining Mon-Fri bars
+    raw_rows = [
+        ("2026-11-13T05:00:00Z", 5.5, 5.6, 5.4, 5.55, 100.0, 5.55),  # Friday
+        ("2026-11-15T23:00:00Z", 5.6, 5.65, 5.58, 5.62, 10.0, 5.62),  # Sunday (America/New_York -> Sun UTC/local!)
+        ("2026-11-16T05:00:00Z", 5.6, 5.7, 5.55, 5.65, 120.0, 5.65),  # Monday
+    ]
+    parsed = _rows_to_price_df(raw_rows, "HG=F")
+    assert all(int(d.dayofweek) < 5 for d in parsed.index)
+    assert len(parsed) == 2
+
+    # 2. _build_calendar_features maps Mon-Fri strictly to {0.0, 0.25, 0.50, 0.75, 1.0}
+    wk = pd.bdate_range("2026-11-16", periods=5)
+    cal = _build_calendar_features(wk)
+    assert np.allclose(cal["day_of_week"].to_numpy(), [0.0, 0.25, 0.50, 0.75, 1.0])
+
+    # 3. ingest_prices rejects Sat/Sun ghost bars & dedup_price_bars deletes weekend bars
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    try:
+        idx_with_wknd = pd.date_range("2026-11-13", periods=4, freq="D")  # Fri, Sat, Sun, Mon
+        raw_df = pd.DataFrame(
+            {"Open": 5.5, "High": 5.6, "Low": 5.4, "Close": [5.5, 5.52, 5.54, 5.58], "Volume": 100.0},
+            index=idx_with_wknd,
+        )
+        fake_settings = SimpleNamespace(symbols_list=["HG=F"], training_symbols=["HG=F"], lookback_days=30)
+        monkeypatch.setattr(data_manager, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(data_manager, "get_db_type", lambda: "sqlite")
+        monkeypatch.setattr(data_manager, "_ensure_yf_tz_cache", lambda: None)
+        monkeypatch.setattr(data_manager, "fetch_symbol_with_retry", lambda *_a, **_kw: raw_df)
+
+        with Session() as session:
+            stats = data_manager.ingest_prices(session)
+            assert stats["HG=F"]["rejected"] >= 2
+            bars = session.query(PriceBar).order_by(PriceBar.date.asc()).all()
+            assert [b.date.weekday() for b in bars] == [4, 0]
+
+            # Seed a legacy Sunday bar and confirm dedup_price_bars drops it cleanly
+            session.add(PriceBar(symbol="HG=F", date=datetime(2026, 11, 15, 0, 0), close=5.59))
+            session.commit()
+            dry = dedup_price_bars(session, dry_run=True, drop_weekends=True)
+            assert dry["weekend_rows_to_delete"] == 1
+            applied = dedup_price_bars(session, dry_run=False, drop_weekends=True)
+            assert applied["weekend_rows_deleted"] == 1
+            assert all(b.date.weekday() < 5 for b in session.query(PriceBar).all())
+    finally:
+        engine.dispose()
+
+
+def test_mrmr_subperiod_sign_consistency_penalizes_regime_flipping_feature():
+    from deep_learning.data.feature_selection import mrmr_select
+
+    rng = np.random.default_rng(123)
+    n = 200
+    y = rng.normal(0.0, 0.02, n)
+    flip = np.concatenate([0.8 * y[:100], -0.8 * y[100:]]) + rng.normal(0.0, 0.005, n)
+    consistent = 0.45 * y + rng.normal(0.0, 0.008, n)
+    noise = rng.normal(0.0, 1.0, n)
+
+    df = pd.DataFrame(
+        {
+            "time_idx": np.arange(n),
+            "group_id": "copper",
+            "target_5d_log_return": y,
+            "CL_F_flip": flip,
+            "BHP_consistent": consistent,
+            "noise_feat": noise,
+        }
+    )
+    selected = mrmr_select(df, target_col="target_5d_log_return", top_k=1)
+    assert selected == ["BHP_consistent"]
+
+
+def test_feature_store_core_five_signals_and_news_decoupling_default(monkeypatch):
+    from deep_learning.config import get_tft_config
+    from deep_learning.data import feature_store
+
+    monkeypatch.delenv("TFT_FEATURE_SNAPSHOT_PATH", raising=False)
+    cfg = replace(
+        get_tft_config(),
+        training=replace(get_tft_config().training, lookback_days=240),
+    )
+    assert cfg.feature_store.include_news_features is False
+
+    dates = pd.bdate_range("2025-01-01", periods=160)
+    rng = np.random.default_rng(77)
+
+    def _px_frame(base: float, scale: float) -> pd.DataFrame:
+        close = pd.Series(base * np.exp(np.cumsum(rng.normal(0.0, scale, len(dates)))), index=dates)
+        return pd.DataFrame(
+            {"open": close, "high": close * 1.01, "low": close * 0.99, "close": close, "volume": np.full(len(dates), 10000.0)},
+            index=dates,
+        )
+
+    hg_px = _px_frame(4.5, 0.012)
+    dxy_px = _px_frame(100.0, 0.007)
+    clf_px = _px_frame(70.0, 0.015)
+    hg_feats = generate_symbol_features(hg_px, "HG=F", include_raw_ma=False)
+
+    monkeypatch.setattr(feature_store, "load_training_symbols", lambda: ["HG=F", "DX-Y.NYB", "CL=F"])
+    monkeypatch.setattr(feature_store, "_build_price_features", lambda *_a, **_kw: (hg_px, hg_feats))
+    monkeypatch.setattr("app.features.load_multi_price_data", lambda *_a, **_kw: {"DX-Y.NYB": dxy_px, "CL=F": clf_px})
+    monkeypatch.setattr(
+        "deep_learning.data.sentiment_market_date.build_market_date_sentiment_frame",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("sentiment DB query should be skipped when include_news_features=False")),
+    )
+    monkeypatch.setattr(
+        feature_store,
+        "_build_daily_embedding_features",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("embedding DB query should be skipped when include_news_features=False")),
+    )
+    monkeypatch.setattr("deep_learning.data.lme_warehouse.fetch_lme_data", lambda *_a, **_kw: pd.DataFrame())
+    monkeypatch.setattr("deep_learning.data.futures_curve.build_futures_features_from_yfinance", lambda *_a, **_kw: pd.DataFrame())
+
+    master, tv_unknown, tv_known, _, _ = feature_store.build_tft_dataframe(object(), cfg)
+    assert tv_known == ["day_of_week"]
+    for core_col in (
+        "HG=F_ret5",
+        "HG=F_close_sma_20_ratio",
+        "HG=F_signed_vol_ratio",
+        "HG=F_theta_5d_prior",
+        "macro_fair_value_zscore",
+    ):
+        assert core_col in tv_unknown
+        assert core_col in master.columns
+
+
+def test_weekly_asro_drift_prior_uses_l1_plus_l2_penalty():
+    actual = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]])
+    loss_fn = WeeklyASROPFLoss(
+        quantiles=list(QUANTILES),
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_drift_prior=1.0,
+        lambda_directional=0.0,
+        weekly_target_scale=0.04,
+    )
+    # Construct median step sum = 0.004 (so norm_mean = 0.004 / 0.04 = 0.1)
+    # Pure L2 would give 0.01; L1 + L2 gives 0.1 + 0.01 = 0.11!
+    pred = torch.zeros(2, 5, 7, dtype=torch.float32)
+    pred[..., :] = torch.tensor([-2.5, -1.8, -1.5, 0.0008, -1.5, -1.8, -2.5])
+    loss_val = float(loss_fn.loss(pred, actual).detach())
+    assert loss_val == pytest.approx(0.11, rel=1e-3)
+
+
+def test_filter_ensemble_members_rejects_drifted_or_weak_seeds_without_val_mean_subtraction():
+    from deep_learning.training.trainer import _filter_ensemble_members
+
+    candidates = [
+        {"seed": 42, "path": Path("best_tft_asro.ckpt"), "val_loss": 0.3824, "val_mae_vs_naive": 0.945, "val_pred_mean": 0.00014, "train_pred_mean": 0.0035},
+        {"seed": 137, "path": Path("best_tft_asro_seed1.ckpt"), "val_loss": 0.3890, "val_mae_vs_naive": 0.910, "val_pred_mean": 0.00291, "train_pred_mean": 0.01069},
+        {"seed": 256, "path": Path("best_tft_asro_seed2.ckpt"), "val_loss": 0.4109, "val_mae_vs_naive": 1.0034, "val_pred_mean": -0.00162, "train_pred_mean": 0.00689},
+    ]
+    accepted, diags = _filter_ensemble_members(candidates)
+    assert [c["seed"] for c in accepted] == [42]
+    assert diags[0]["accepted"] is True
+    assert diags[1]["accepted"] is False
+    assert diags[2]["accepted"] is False
+
+    # Fallback keeps single strongest member untouched if none clear all 4 bounds
+    all_bad = [
+        {"seed": 42, "path": Path("a.ckpt"), "val_loss": 0.40, "val_mae_vs_naive": 0.995, "val_pred_mean": 0.003, "train_pred_mean": 0.006},
+        {"seed": 137, "path": Path("b.ckpt"), "val_loss": 0.39, "val_mae_vs_naive": 0.991, "val_pred_mean": 0.003, "train_pred_mean": 0.006},
+    ]
+    fb_acc, fb_diags = _filter_ensemble_members(all_bad)
+    assert [c["seed"] for c in fb_acc] == [137]
+    assert fb_diags[1].get("fallback_best") is True
+
+
+def test_theta_hybrid_blend_applies_min_theta_insurance_floor_under_selection_optimism():
+    from deep_learning.calibration.hybrid import fit_theta_hybrid_blend
+
+    rng = np.random.default_rng(2026)
+    n = 95
+    actual = rng.normal(0.0, 0.025, n)
+    # Simulate selection optimism where TFT leads on VAL while Theta also holds valid edge
+    tft_opt = 0.65 * actual + rng.normal(0.0, 0.012, n)
+    theta_good = 0.35 * actual + rng.normal(0.0, 0.018, n)
+
+    blend = fit_theta_hybrid_blend(
+        actual,
+        tft_opt,
+        theta_good,
+        min_tft_weight=0.35,
+        max_theta_weight=0.65,
+        min_theta_weight=0.25,
+    )
+    assert blend["enabled"] is True
+    assert blend["w_theta"] >= 0.25
+    assert blend["w_tft"] <= 0.75
+    assert blend["reason"] in {"theta_regime_insurance_floor", "validation_skill_improved"}
+
 
 
 

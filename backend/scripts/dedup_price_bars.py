@@ -36,8 +36,8 @@ def _is_valid_close(value) -> bool:
     return math.isfinite(numeric) and numeric > 0.0
 
 
-def dedup_price_bars(session, *, dry_run: bool = True) -> dict:
-    """Audit or remove duplicate ``PriceBar`` rows sharing (symbol, UTC date)."""
+def dedup_price_bars(session, *, dry_run: bool = True, drop_weekends: bool = True) -> dict:
+    """Audit or remove duplicate ``PriceBar`` rows sharing (symbol, UTC date) and weekend ghost bars."""
     rows = session.query(PriceBar).order_by(PriceBar.symbol.asc(), PriceBar.date.asc(), PriceBar.id.asc()).all()
     grouped: dict[tuple[str, datetime], list[PriceBar]] = defaultdict(list)
     symbols: set[str] = set()
@@ -49,8 +49,20 @@ def dedup_price_bars(session, *, dry_run: bool = True) -> dict:
     rows_to_delete = 0
     rows_deleted = 0
     rows_normalized = 0
+    weekend_rows_to_delete = 0
+    weekend_rows_deleted = 0
 
     for (symbol, target_dt), bucket in grouped.items():
+        if drop_weekends and target_dt.weekday() >= 5:
+            weekend_rows_to_delete += len(bucket)
+            rows_to_delete += len(bucket)
+            if not dry_run:
+                for row in bucket:
+                    session.delete(row)
+                    rows_deleted += 1
+                    weekend_rows_deleted += 1
+            continue
+
         if len(bucket) > 1:
             duplicate_groups += 1
             rows_to_delete += len(bucket) - 1
@@ -82,9 +94,12 @@ def dedup_price_bars(session, *, dry_run: bool = True) -> dict:
 
     return {
         "mode": "dry_run" if dry_run else "apply",
+        "drop_weekends": bool(drop_weekends),
         "total_rows_scanned": len(rows),
         "symbols_scanned": len(symbols),
         "duplicate_groups": duplicate_groups,
+        "weekend_rows_to_delete": weekend_rows_to_delete,
+        "weekend_rows_deleted": weekend_rows_deleted if not dry_run else 0,
         "rows_to_delete": rows_to_delete,
         "rows_deleted": rows_deleted if not dry_run else 0,
         "rows_normalized": rows_normalized,
@@ -93,12 +108,13 @@ def dedup_price_bars(session, *, dry_run: bool = True) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit or deduplicate PriceBar rows by (symbol, UTC day)")
-    parser.add_argument("--apply", action="store_true", help="Delete duplicate rows and normalize dates")
+    parser.add_argument("--apply", action="store_true", help="Delete duplicate/weekend rows and normalize dates")
+    parser.add_argument("--keep-weekends", action="store_true", help="Keep Sat/Sun weekend bars instead of deleting them")
     args = parser.parse_args()
 
     init_db()
     with SessionLocal() as session:
-        summary = dedup_price_bars(session, dry_run=not args.apply)
+        summary = dedup_price_bars(session, dry_run=not args.apply, drop_weekends=not args.keep_weekends)
     print(json.dumps(summary, indent=2))
     return 0
 
