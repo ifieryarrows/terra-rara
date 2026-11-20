@@ -17,6 +17,8 @@ Usage:
 import argparse
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import tempfile
 from typing import Optional
 
 import requests
@@ -46,6 +48,24 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _ensure_yf_tz_cache() -> None:
+    """Point yfinance's tz cache at a writable temp dir before any download call."""
+    try:
+        from screener.core.cache import ensure_yf_tz_cache
+
+        ensure_yf_tz_cache()
+        return
+    except Exception:
+        pass
+    try:
+        cache_dir = Path(tempfile.gettempdir()) / "py-yfinance-tzcache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location(str(cache_dir))
+    except Exception as exc:
+        logger.debug("Could not configure yfinance tz cache location: %s", exc)
 
 
 def get_upsert_stmt(table, values: dict, index_elements: list, update_set: dict = None):
@@ -461,7 +481,9 @@ def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int 
         DataFrame or None if all retries failed
     """
     import time
-    
+
+    _ensure_yf_tz_cache()
+
     for attempt in range(max_retries):
         try:
             ticker = yf.Ticker(symbol)
@@ -601,6 +623,8 @@ def ingest_prices(session: Session) -> dict:
     # Check if fetch_symbol_with_retry was monkeypatched by a test runner
     is_custom_fetcher = fetch_symbol_with_retry is not _DEFAULT_FETCH_SYMBOL_WITH_RETRY
 
+    _ensure_yf_tz_cache()
+
     fetched_results = []
     if is_custom_fetcher:
         # Honor mocked/monkeypatched single fetcher directly
@@ -631,7 +655,7 @@ def ingest_prices(session: Session) -> dict:
                         end=e_str,
                         interval="1d",
                         group_by="ticker",
-                        threads=True,
+                        threads=False,
                         progress=False,
                         auto_adjust=False,
                     )
@@ -667,7 +691,7 @@ def ingest_prices(session: Session) -> dict:
             imported = 0
             updated = 0
             rejected = 0
-            batch_rows: list[dict] = []
+            deduped_rows: dict[tuple[str, datetime], dict] = {}
             now_utc = datetime.now(timezone.utc)
 
             for date_idx, row in df.iterrows():
@@ -683,32 +707,35 @@ def ingest_prices(session: Session) -> dict:
                     low_price = finite_positive_price(row.get("Low"))
                     adj_close = finite_positive_price(row.get("Adj Close")) or close
                     volume = finite_number(row.get("Volume"))
-                    # Convert index to datetime
-                    if hasattr(date_idx, 'to_pydatetime'):
+                    # Normalize exchange-local calendar day to canonical UTC midnight
+                    # so timezone-aware vs naive feeds never create same-day duplicates.
+                    if hasattr(date_idx, "to_pydatetime"):
                         bar_date = date_idx.to_pydatetime()
                     else:
-                        bar_date = date_idx
-
-                    # Ensure timezone
-                    if bar_date.tzinfo is None:
-                        bar_date = bar_date.replace(tzinfo=timezone.utc)
-
-                    batch_rows.append(
-                        {
-                            "symbol": symbol,
-                            "date": bar_date,
-                            "open": open_price,
-                            "high": high_price,
-                            "low": low_price,
-                            "close": close,
-                            "volume": volume,
-                            "adj_close": adj_close,
-                            "fetched_at": now_utc,
-                        }
+                        bar_date = pd.Timestamp(date_idx).to_pydatetime()
+                    bar_date = datetime(
+                        bar_date.year,
+                        bar_date.month,
+                        bar_date.day,
+                        tzinfo=timezone.utc,
                     )
+
+                    deduped_rows[(symbol, bar_date)] = {
+                        "symbol": symbol,
+                        "date": bar_date,
+                        "open": open_price,
+                        "high": high_price,
+                        "low": low_price,
+                        "close": close,
+                        "volume": volume,
+                        "adj_close": adj_close,
+                        "fetched_at": now_utc,
+                    }
                 except Exception as e:
                     logger.debug(f"Error processing price bar: {e}")
                     continue
+
+            batch_rows = list(deduped_rows.values())
 
             if batch_rows:
                 try:

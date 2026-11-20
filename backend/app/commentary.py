@@ -437,7 +437,10 @@ def _build_tft_xai_prompt_block(
                 else "weight unavailable"
             )
             recent = signal.get("recent_summary")
+            last_val = signal.get("recent_last_value")
             recent_text = f"; recent: {recent}" if recent else ""
+            if recent and isinstance(last_val, (int, float)) and math.isfinite(float(last_val)):
+                recent_text += f" (5-session change; latest level: {float(last_val):+.3f})"
             lines.append(
                 f"  {index}. {descriptor} ({category}) — "
                 f"{weight_text}{recent_text}"

@@ -1028,5 +1028,270 @@ def test_commentary_prompt_marks_xgboost_importance_as_model_weight_not_return(m
     assert "NOT an observed price change or volatility level" in prompt
 
 
+def test_backtest_runner_normalizes_mixed_timezones_and_excludes_non_target_holidays():
+    cfg = BacktestConfig(oos_start="2025-01-06", oos_end="2025-05-30", train_window_years=1)
+    runner = BacktestRunner(cfg)
+
+    dates = pd.bdate_range("2025-01-02", "2025-05-30")
+    rng = np.random.default_rng(101)
+    hg_close = 4.5 * np.exp(np.cumsum(rng.normal(0.0004, 0.014, len(dates))))
+    bhp_close = 45.0 * np.exp(np.cumsum(rng.normal(0.0002, 0.016, len(dates))))
+    anto_close = 1800.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.018, len(dates))))
+
+    # Simulate mixed yfinance timezones:
+    # - HG=F tz-naive midnight
+    # - BHP America/New_York tz-aware (-05:00/-04:00)
+    # - ANTO.L Europe/London tz-aware (+00:00/+01:00) + an extra non-US Saturday/holiday date
+    ny_dates = pd.DatetimeIndex(dates).tz_localize("America/New_York")
+    london_dates = pd.DatetimeIndex(dates).tz_localize("Europe/London")
+    holiday_dt = pd.Timestamp("2025-04-19", tz="Europe/London")  # not in HG=F dates
+
+    prices = pd.concat(
+        [
+            pd.DataFrame({"date": dates, "symbol": "HG=F", "close": hg_close}),
+            pd.DataFrame({"date": ny_dates, "symbol": "BHP", "close": bhp_close}),
+            pd.DataFrame(
+                {
+                    "date": list(london_dates) + [holiday_dt],
+                    "symbol": "ANTO.L",
+                    "close": list(anto_close) + [1815.0],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    feats = runner.prepare_features(prices, "HG=F")
+    assert feats.index.is_unique
+    assert pd.Timestamp("2025-04-19") not in feats.index
+    assert len(feats) == len(dates) - 1
+    assert feats["ANTO.L_ret_1d"].abs().gt(1e-9).mean() > 0.90
+    zero_ret_fraction = float((feats["y_target"].abs() < 1e-12).mean())
+    pos_ret_fraction = float((feats["y_target"] > 0).mean())
+    assert zero_ret_fraction < 0.05
+    assert 0.25 < pos_ret_fraction < 0.75
+
+
+def test_theta_backtest_eval_dates_matches_exact_tft_origins():
+    from deep_learning.baselines.theta_model import theta_backtest
+
+    dates = pd.bdate_range("2025-01-01", periods=140)
+    rng = np.random.default_rng(202)
+    close_series = pd.Series(
+        5.0 * np.exp(np.cumsum(rng.normal(0.0005, 0.015, size=len(dates)))),
+        index=dates,
+        name="close",
+    )
+    eval_dates = dates[65:95]
+    assert len(eval_dates) == 30
+
+    res = theta_backtest(
+        close_series,
+        horizon=5,
+        return_mode="cumulative",
+        use_log_return=True,
+        annualisation=52.0,
+        eval_dates=eval_dates,
+    )
+    assert "error" not in res
+    assert res["n_windows"] == 30
+
+
+def test_tft_compare_with_xgboost_uses_horizon_normalized_delta_mae(monkeypatch):
+    from backtest.runner import BacktestMetrics
+
+    cfg = BacktestConfig(oos_start="2025-01-06", oos_end="2025-05-30")
+    runner = TFTBacktestRunner(cfg)
+
+    tft_metrics = BacktestMetrics(
+        mae=0.025,
+        rmse=0.031,
+        n_predictions=200,
+        mean_actual=0.003,
+        mean_predicted=0.001,
+        directional_accuracy=0.55,
+        mae_vs_naive_zero=0.98,
+        sharpe_ratio=0.82,
+        metric_space="cumulative_log_return_5d",
+    )
+    xgb_metrics = BacktestMetrics(
+        mae=0.011,
+        rmse=0.015,
+        n_predictions=250,
+        mean_actual=0.0005,
+        mean_predicted=0.0002,
+        directional_accuracy=0.50,
+        mae_vs_naive_zero=1.02,
+        sharpe_ratio=0.40,
+        metric_space="simple_return_1d",
+    )
+
+    monkeypatch.setattr(runner, "run_backtest", lambda _syms: (tft_metrics, pd.DataFrame()))
+    res = runner.compare_with_xgboost(
+        SymbolSet("active", ["DX-Y.NYB"], "2.0", "active.json", "sha256:abc"),
+        xgb_metrics=xgb_metrics,
+    )
+    assert res["tft_better_mae"] is True
+    assert res["delta_mae_basis"] == "mae_vs_naive_zero"
+    assert res["delta_mae_pct"] == pytest.approx(-3.92, abs=0.05)
+
+
+def test_ingest_prices_normalizes_tz_aware_dates_to_utc_midnight_without_duplicates(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app import data_manager
+    from app.models import Base, PriceBar
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    dates = pd.bdate_range("2026-11-02", periods=6)
+    ny_df = pd.DataFrame(
+        {"Open": 5.5, "High": 5.6, "Low": 5.4, "Close": np.linspace(5.5, 5.6, len(dates)), "Volume": 100.0},
+        index=dates.tz_localize("America/New_York"),
+    )
+    london_df = pd.DataFrame(
+        {"Open": 20.0, "High": 20.5, "Low": 19.5, "Close": np.linspace(20.0, 20.5, len(dates)), "Volume": 200.0},
+        index=dates.tz_localize("Europe/London"),
+    )
+    naive_hg_df = ny_df.copy()
+    naive_hg_df.index = dates
+    naive_anto_df = london_df.copy()
+    naive_anto_df.index = dates
+
+    fake_settings = SimpleNamespace(
+        symbols_list=["HG=F", "ANTO.L"],
+        training_symbols=["HG=F", "ANTO.L"],
+        lookback_days=30,
+    )
+    monkeypatch.setattr(data_manager, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(data_manager, "get_db_type", lambda: "sqlite")
+    monkeypatch.setattr(data_manager, "_ensure_yf_tz_cache", lambda: None)
+
+    phase = {"step": 1}
+
+    def fake_fetch(symbol, *_args, **_kwargs):
+        if phase["step"] == 1:
+            return ny_df if symbol == "HG=F" else london_df
+        return naive_hg_df if symbol == "HG=F" else naive_anto_df
+
+    monkeypatch.setattr(data_manager, "fetch_symbol_with_retry", fake_fetch)
+
+    try:
+        with Session() as session:
+            data_manager.ingest_prices(session)
+            phase["step"] = 2
+            data_manager.ingest_prices(session)
+
+            bars = session.query(PriceBar).order_by(PriceBar.symbol, PriceBar.date).all()
+            assert len(bars) == 12
+            hg_dates = [b.date.date() for b in bars if b.symbol == "HG=F"]
+            anto_dates = [b.date.date() for b in bars if b.symbol == "ANTO.L"]
+            expected_dates = [d.date() for d in dates]
+            assert hg_dates == expected_dates
+            assert anto_dates == expected_dates
+            assert all(b.date.hour == 0 and b.date.minute == 0 and b.date.second == 0 for b in bars)
+    finally:
+        engine.dispose()
+
+
+def test_get_history_and_inference_deduplicate_same_calendar_day_price_bars(monkeypatch):
+    import asyncio
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db as app_db, inference, main
+    from app.models import Base, PriceBar
+
+    engine_dup = create_engine("sqlite:///:memory:")
+    engine_clean = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine_dup)
+    Base.metadata.create_all(engine_clean)
+    SessionDup = sessionmaker(bind=engine_dup)
+    SessionClean = sessionmaker(bind=engine_clean)
+
+    now_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    bar_days = [now_day - timedelta(days=offset) for offset in range(25, 0, -1) if (now_day - timedelta(days=offset)).weekday() < 5][:20]
+    rng = np.random.default_rng(303)
+    closes = 5.4 * np.exp(np.cumsum(rng.normal(0.0, 0.015, size=len(bar_days))))
+
+    try:
+        with SessionDup() as s_dup, SessionClean() as s_clean:
+            for day_dt, c_val in zip(bar_days, closes):
+                # Older bar at 00:00Z, newer bar on same day at 04:00Z with slightly updated close
+                updated_close = float(c_val * 1.001)
+                s_dup.add(PriceBar(symbol="HG=F", date=day_dt, open=float(c_val), high=float(c_val), low=float(c_val), close=float(c_val), volume=100.0))
+                s_dup.add(PriceBar(symbol="HG=F", date=day_dt + timedelta(hours=4), open=updated_close, high=updated_close, low=updated_close, close=updated_close, volume=100.0))
+                s_clean.add(PriceBar(symbol="HG=F", date=day_dt + timedelta(hours=4), open=updated_close, high=updated_close, low=updated_close, close=updated_close, volume=100.0))
+            s_dup.commit()
+            s_clean.commit()
+
+            fake_settings = SimpleNamespace(scoring_source="news_articles", sentiment_horizon_days=5)
+            monkeypatch.setattr(main, "SessionLocal", SessionDup)
+            monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+            monkeypatch.setattr(app_db, "SessionLocal", SessionDup)
+            monkeypatch.setattr(inference, "get_settings", lambda: fake_settings)
+
+            hist = asyncio.run(main.get_history(symbol="HG=F", days=60))
+            assert len(hist.data) == len(bar_days)
+            assert [pt.date for pt in hist.data] == [d.strftime("%Y-%m-%d") for d in bar_days]
+            assert hist.data[-1].price == pytest.approx(round(float(closes[-1] * 1.001), 4))
+
+            dq_dup = inference.get_data_quality_stats(s_dup, symbol="HG=F", days=30)
+            dq_clean = inference.get_data_quality_stats(s_clean, symbol="HG=F", days=30)
+            assert dq_dup["missing_days"] == dq_clean["missing_days"]
+            assert dq_dup["coverage_pct"] == dq_clean["coverage_pct"]
+
+            band_dup = inference.calculate_confidence_band(s_dup, symbol="HG=F", predicted_price=5.6, lookback_days=60)
+            band_clean = inference.calculate_confidence_band(s_clean, symbol="HG=F", predicted_price=5.6, lookback_days=60)
+            assert band_dup[0] == pytest.approx(band_clean[0], rel=1e-9)
+            assert band_dup[1] == pytest.approx(band_clean[1], rel=1e-9)
+    finally:
+        engine_dup.dispose()
+        engine_clean.dispose()
+
+
+def test_commentary_prompt_includes_latest_level_alongside_recent_delta():
+    from app.commentary import _build_tft_xai_prompt_block
+    from app.tft_explain import summarize_explain_for_commentary
+
+    payload = {
+        "horizon": {"label": "5-day cumulative log return (primary)", "days": 5},
+        "reference_price_date": "2026-11-19",
+        "variable_selection": {
+            "encoder": [
+                {
+                    "feature": "CL=F_ret10",
+                    "label": "WTI Crude Oil · 10-day price change",
+                    "category": "Momentum",
+                    "weight": 0.18,
+                    "recent": {
+                        "basis": "5 sessions",
+                        "kind": "abs",
+                        "last_value": -0.0842,
+                        "change": 0.0777,
+                        "change_pct": None,
+                        "as_of": "2026-11-19",
+                    },
+                }
+            ]
+        },
+        "attention": {"top_days": [], "window": {}},
+    }
+
+    digest = summarize_explain_for_commentary(payload)
+    assert digest is not None
+    sig = digest["top_encoder_signals"][0]
+    assert sig["recent_summary"] == "+0.078 over 5 sessions"
+    assert sig["recent_last_value"] == pytest.approx(-0.0842)
+
+    prompt_block = _build_tft_xai_prompt_block(None, digest)
+    assert "recent: +0.078 over 5 sessions" in prompt_block
+    assert "latest level: -0.084" in prompt_block
+
+
+
 
 

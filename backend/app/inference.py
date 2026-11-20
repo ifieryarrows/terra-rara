@@ -333,13 +333,18 @@ def get_data_quality_stats(
     
     # Price bar coverage
     expected_days = days
-    price_rows = session.query(PriceBar.close).filter(
+    price_rows = session.query(PriceBar.date, PriceBar.close).filter(
         PriceBar.symbol == symbol,
         PriceBar.date >= cutoff
-    ).all()
+    ).order_by(PriceBar.date.asc()).all()
     from app.price_utils import finite_positive_price
 
-    actual_bars = sum(1 for row in price_rows if finite_positive_price(row.close) is not None)
+    valid_days = {
+        (row.date.strftime("%Y-%m-%d") if hasattr(row.date, "strftime") else str(row.date)[:10])
+        for row in price_rows
+        if finite_positive_price(row.close) is not None
+    }
+    actual_bars = len(valid_days)
     
     # Account for weekends (roughly 5/7 of days should have bars)
     expected_trading_days = int(expected_days * 5 / 7)
@@ -372,22 +377,32 @@ def calculate_confidence_band(
     # Load recent prices
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     
-    prices = session.query(PriceBar.close).filter(
+    prices = session.query(PriceBar.date, PriceBar.close).filter(
         PriceBar.symbol == symbol,
         PriceBar.date >= cutoff
     ).order_by(PriceBar.date.asc()).all()
     
-    if len(prices) < 10:
-        # Not enough data, use 5% band
-        return predicted_price * 0.95, predicted_price * 1.05
-    
-    closes = [valid for p in prices if (valid := finite_positive_price(p[0])) is not None]
+    deduped_closes: dict[str, float] = {}
+    for row in prices:
+        bar_dt, raw_close = row[0], row[1]
+        valid = finite_positive_price(raw_close)
+        if valid is None:
+            continue
+        date_str = (
+            bar_dt.strftime("%Y-%m-%d")
+            if hasattr(bar_dt, "strftime")
+            else str(bar_dt)[:10]
+        )
+        deduped_closes[date_str] = valid
+    closes = list(deduped_closes.values())
     if len(closes) < 10:
         return predicted_price * 0.95, predicted_price * 1.05
     returns = pd.Series(closes).pct_change().dropna()
     
     # 1 standard deviation of daily returns
-    std_ret = returns.std()
+    std_ret = float(returns.std()) if not returns.empty else 0.0
+    if not np.isfinite(std_ret) or std_ret <= 0.0:
+        return predicted_price * 0.95, predicted_price * 1.05
     
     # Confidence band: ±1 std
     lower = predicted_price * (1 - std_ret)

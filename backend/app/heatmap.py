@@ -496,6 +496,16 @@ class _YFinanceLogCapture(logging.Handler):
 
 def _download_history_batch(yfinance_module: object, symbols: list[str]) -> tuple[object, list[str]]:
     """Download history and retain errors yfinance 1.7 only exposes via logging."""
+    if _yfinance_cache_location is None:
+        try:
+            _configure_yfinance_cache(yfinance_module)
+        except Exception:
+            try:
+                from screener.core.cache import ensure_yf_tz_cache
+
+                ensure_yf_tz_cache()
+            except Exception as exc:
+                logger.debug("Optional yfinance cache setup skipped before heatmap batch: %s", exc)
     capture = _YFinanceLogCapture()
     yfinance_logger = logging.getLogger("yfinance")
     yfinance_logger.addHandler(capture)

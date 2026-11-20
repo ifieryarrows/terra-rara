@@ -23,6 +23,7 @@ import math
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import tempfile
 from typing import Any, Optional
 
 import numpy as np
@@ -30,6 +31,56 @@ import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _ensure_yf_tz_cache() -> None:
+    """Point yfinance's tz cache at a writable temp dir before any download call."""
+    try:
+        from screener.core.cache import ensure_yf_tz_cache
+
+        ensure_yf_tz_cache()
+        return
+    except Exception:
+        pass
+    try:
+        import yfinance as yf
+
+        cache_dir = Path(tempfile.gettempdir()) / "py-yfinance-tzcache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location(str(cache_dir))
+    except Exception as exc:
+        logger.debug("Could not configure yfinance tz cache location: %s", exc)
+
+
+def _normalize_exchange_dates(values: Any) -> pd.DatetimeIndex | pd.Series:
+    """Normalize timestamps to tz-naive exchange-local calendar midnights."""
+    if isinstance(values, pd.DatetimeIndex):
+        stripped = values.tz_localize(None) if values.tz is not None else values
+        return stripped.normalize()
+
+    if isinstance(values, pd.Series):
+        if isinstance(values.dtype, pd.DatetimeTZDtype):
+            return values.dt.tz_localize(None).dt.normalize()
+        if pd.api.types.is_datetime64_any_dtype(values.dtype):
+            return values.dt.normalize()
+
+        normalized_dates = []
+        for raw_val in values.tolist():
+            if pd.isna(raw_val):
+                normalized_dates.append(pd.NaT)
+            elif isinstance(raw_val, (datetime, pd.Timestamp)):
+                normalized_dates.append(raw_val.date())
+            else:
+                try:
+                    parsed = pd.Timestamp(raw_val)
+                    normalized_dates.append(parsed.date() if pd.notna(parsed) else pd.NaT)
+                except Exception:
+                    normalized_dates.append(pd.NaT)
+        return pd.Series(pd.to_datetime(normalized_dates), index=values.index)
+
+    idx = pd.DatetimeIndex(values)
+    return idx.tz_localize(None).normalize() if idx.tz is not None else idx.normalize()
 
 
 def _default_oos_dates() -> tuple[str, str]:
@@ -354,6 +405,8 @@ class BacktestRunner:
         except ImportError:
             raise ImportError("yfinance required: pip install yfinance")
 
+        _ensure_yf_tz_cache()
+
         train_start = (
             pd.Timestamp(start) - pd.DateOffset(years=self.config.train_window_years + 1)
         ).strftime("%Y-%m-%d")
@@ -377,7 +430,7 @@ class BacktestRunner:
                     interval="1d",
                     group_by="ticker",
                     auto_adjust=True,
-                    threads=True,
+                    threads=False,
                     progress=False,
                 )
                 if batch is not None and not batch.empty:
@@ -392,6 +445,10 @@ class BacktestRunner:
                             close_df = sub[["Close"]].dropna().reset_index()
                             if not close_df.empty:
                                 close_df.columns = ["date", "close"]
+                                close_df["date"] = _normalize_exchange_dates(close_df["date"])
+                                close_df = close_df.dropna(subset=["date"]).drop_duplicates(
+                                    subset=["date"], keep="last"
+                                )
                                 close_df["symbol"] = sym
                                 self._price_cache[(sym, train_start, end)] = close_df
                                 cached_frames.append(close_df)
@@ -408,6 +465,8 @@ class BacktestRunner:
                 if not hist.empty and "Close" in hist.columns:
                     df = hist[["Close"]].dropna().reset_index()
                     df.columns = ["date", "close"]
+                    df["date"] = _normalize_exchange_dates(df["date"])
+                    df = df.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="last")
                     df["symbol"] = symbol
                     self._price_cache[(symbol, train_start, end)] = df
                     cached_frames.append(df)
@@ -418,7 +477,7 @@ class BacktestRunner:
             raise ValueError("No price data fetched")
 
         result = pd.concat(cached_frames, ignore_index=True)
-        result["date"] = pd.to_datetime(result["date"], utc=True).dt.tz_localize(None)
+        result["date"] = _normalize_exchange_dates(result["date"])
         return result
 
     def prepare_features(self, prices: pd.DataFrame, target_symbol: str = "HG=F") -> pd.DataFrame:
@@ -428,13 +487,22 @@ class BacktestRunner:
         Avoids raw price ratios (``symbol / target``) and raw price targets.
         Records ``target_date`` so training can enforce zero lookahead leak.
         """
-        pivot = prices.pivot_table(index="date", columns="symbol", values="close", aggfunc="last")
-        pivot = pivot.sort_index()
-        pivot.index = pd.to_datetime(pivot.index).normalize()
-        pivot = pivot.ffill(limit=5)
+        norm_prices = prices.copy()
+        norm_prices["date"] = _normalize_exchange_dates(norm_prices["date"])
+        norm_prices = norm_prices.dropna(subset=["date"])
+
+        pivot = norm_prices.pivot_table(index="date", columns="symbol", values="close", aggfunc="last")
+        pivot = pivot.groupby(level=0).last().sort_index()
+        pivot.index = _normalize_exchange_dates(pivot.index)
 
         if target_symbol not in pivot.columns:
             raise ValueError(f"Target symbol {target_symbol} not in price data")
+
+        target_valid_dates = pivot[target_symbol].dropna().index
+        aux_cols = [c for c in pivot.columns if c != target_symbol]
+        if aux_cols:
+            pivot[aux_cols] = pivot[aux_cols].ffill(limit=5)
+        pivot = pivot.loc[target_valid_dates]
 
         target_close = pivot[target_symbol]
         target_ret_1d = target_close.pct_change()
@@ -1026,6 +1094,7 @@ class TFTBacktestRunner:
 
         theta_input = close_series.dropna() if close_series is not None else pd.Series(dtype=float)
         if len(theta_input) >= 80:
+            eval_dates = pd.DatetimeIndex(pred_df["date"]) if not pred_df.empty else None
             theta_res = theta_backtest(
                 theta_input,
                 horizon=horizon,
@@ -1033,13 +1102,21 @@ class TFTBacktestRunner:
                 return_mode="cumulative",
                 use_log_return=True,
                 annualisation=52.0,
+                eval_dates=eval_dates,
             )
-            if "error" not in theta_res and "summary" in self.last_walkforward_report:
-                comp = compare_with_baseline(self.last_walkforward_report, theta_res)
+            if "error" not in theta_res:
+                full_oos_for_baseline = {
+                    "summary": {
+                        "mean_da": metrics.directional_accuracy,
+                        "mean_sharpe": metrics.sharpe_ratio,
+                        "mean_mae": metrics.mae,
+                    }
+                }
+                comp = compare_with_baseline(full_oos_for_baseline, theta_res)
                 comp["theta"] = theta_res
                 self.last_theta_comparison = comp
             else:
-                self.last_theta_comparison = theta_res if "error" not in theta_res else {}
+                self.last_theta_comparison = {}
         else:
             self.last_theta_comparison = {}
 
@@ -1054,8 +1131,8 @@ class TFTBacktestRunner:
         Evaluate XGBoost (1D diagnostic) and promoted TFT-ASRO (5D primary) separately.
 
         Note: XGBoost operates on T+1 simple returns while TFT-ASRO operates on 5-day
-        cumulative log returns; cross-horizon MAE differences reflect horizon scaling
-        rather than direct head-to-head ranking.
+        cumulative log returns; ``delta_mae_pct`` therefore compares the scale-invariant
+        ``mae_vs_naive_zero`` skill ratio across horizons.
         """
         if xgb_metrics is None:
             xgb_runner = BacktestRunner(self.config)
@@ -1065,7 +1142,10 @@ class TFTBacktestRunner:
         logger.info("=== TFT-ASRO 5D Primary Walk-Forward Backtest ===")
         tft_metrics, _tft_preds = self.run_backtest(symbol_set.symbols)
 
-        delta_mae = ((tft_metrics.mae - xgb_metrics.mae) / max(xgb_metrics.mae, 1e-12)) * 100.0
+        delta_mae = (
+            (tft_metrics.mae_vs_naive_zero - xgb_metrics.mae_vs_naive_zero)
+            / max(xgb_metrics.mae_vs_naive_zero, 1e-12)
+        ) * 100.0
         delta_dir = (
             (tft_metrics.directional_accuracy - xgb_metrics.directional_accuracy)
             / max(xgb_metrics.directional_accuracy, 1e-9)
@@ -1091,6 +1171,7 @@ class TFTBacktestRunner:
             "theta_comparison": theta_comp,
             "verdict": verdict,
             "delta_mae_pct": round(delta_mae, 2),
+            "delta_mae_basis": "mae_vs_naive_zero",
             "delta_dir_acc_pct": round(delta_dir, 2),
             "tft_better_mae": bool(tft_metrics.mae_vs_naive_zero < xgb_metrics.mae_vs_naive_zero),
             "tft_better_dir": bool(delta_dir > 0),
@@ -1167,6 +1248,7 @@ def _persist_tft_report_to_db(tft_comparison: dict) -> None:
             "tft_walkforward": wf_summary,
             "horizon_note": tft_comparison.get("horizon_note"),
             "delta_mae_pct": tft_comparison.get("delta_mae_pct"),
+            "delta_mae_basis": tft_comparison.get("delta_mae_basis"),
             "delta_dir_acc_pct": tft_comparison.get("delta_dir_acc_pct"),
             "tft_better_mae": tft_comparison.get("tft_better_mae"),
             "tft_better_dir": tft_comparison.get("tft_better_dir"),

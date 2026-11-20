@@ -328,13 +328,20 @@ async def get_history(
         
         from app.price_utils import finite_positive_price
 
-        prices = [
-            (row.date, finite_positive_price(row.close))
-            for row in raw_prices
-            if finite_positive_price(row.close) is not None
-        ]
+        # Deduplicate same-calendar-day bars keeping the latest timestamp per day.
+        deduped_prices: dict[str, float] = {}
+        for row in raw_prices:
+            close_val = finite_positive_price(row.close)
+            if close_val is None:
+                continue
+            date_str = (
+                row.date.strftime("%Y-%m-%d")
+                if hasattr(row.date, "strftime")
+                else str(row.date)[:10]
+            )
+            deduped_prices[date_str] = close_val
 
-        if not prices:
+        if not deduped_prices:
             raise HTTPException(
                 status_code=404,
                 detail=f"No price data found for {symbol}"
@@ -374,9 +381,7 @@ async def get_history(
         
         # Build response data
         data_points = []
-        for price_date, close in prices:
-            date_str = price_date.strftime("%Y-%m-%d") if hasattr(price_date, 'strftime') else str(price_date)[:10]
-            
+        for date_str, close in deduped_prices.items():
             sent = sentiment_lookup.get(date_str)
             
             # IMPORTANT: Use explicit values, don't convert 0.0 to None

@@ -371,15 +371,23 @@ def _commentary_encoder_signals(encoder: Any) -> list[dict]:
             continue
         label = item.get("label")
         category = item.get("category")
-        signals.append(
-            {
-                "feature": feature,
-                "label": str(label) if label else feature,
-                "category": str(category) if category else "Other",
-                "weight_pct": weight_pct,
-                "recent_summary": _commentary_recent_summary(item.get("recent")),
-            }
+        recent_block = item.get("recent")
+        recent_summary = _commentary_recent_summary(recent_block)
+        recent_last_value = (
+            finite_number(recent_block.get("last_value"))
+            if isinstance(recent_block, dict)
+            else None
         )
+        entry: dict[str, Any] = {
+            "feature": feature,
+            "label": str(label) if label else feature,
+            "category": str(category) if category else "Other",
+            "weight_pct": weight_pct,
+            "recent_summary": recent_summary,
+        }
+        if recent_last_value is not None:
+            entry["recent_last_value"] = recent_last_value
+        signals.append(entry)
         if len(signals) >= TOP_COMMENTARY_SIGNALS:
             break
     return signals

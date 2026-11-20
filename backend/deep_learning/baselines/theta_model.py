@@ -106,11 +106,13 @@ def theta_backtest(
     return_mode: str = "1d",
     use_log_return: bool = False,
     annualisation: Optional[float] = None,
+    eval_dates: Optional[pd.DatetimeIndex] = None,
 ) -> dict:
     """
     Walk-forward backtest of the Theta model.
 
-    Slides a window across the series and evaluates directional accuracy
+    Slides a window across the series (or evaluates at exact ``eval_dates``
+    forecast origins when supplied) and evaluates directional accuracy
     and return metrics at each step.
 
     Args:
@@ -121,27 +123,54 @@ def theta_backtest(
                         ``horizon``-day cumulative return to match TFT weekly evaluation.
         use_log_return: If True, evaluate in log-return space rather than simple return.
         annualisation:  Optional annualisation factor (defaults to 252 for 1d, 52 for cumulative).
+        eval_dates:     Optional forecast-origin dates to align evaluation 1-to-1 with TFT.
 
     Returns:
         Dict with aggregate metrics for comparison against TFT-ASRO.
     """
-    if len(series) < 60 + n_windows:
-        n_windows = max(10, len(series) - 60)
-
     is_cumulative = str(return_mode).lower() == "cumulative"
+    h_req = horizon if is_cumulative else 1
+
+    window_slices: list[tuple[pd.Series, pd.Series]] = []
+    if eval_dates is not None and len(eval_dates) > 0:
+        series_norm = series.copy()
+        idx_norm = pd.DatetimeIndex(pd.to_datetime(series_norm.index))
+        if idx_norm.tz is not None:
+            idx_norm = idx_norm.tz_localize(None)
+        series_norm.index = idx_norm.normalize()
+        series_norm = series_norm[~series_norm.index.duplicated(keep="last")].sort_index()
+
+        dates_norm = pd.DatetimeIndex(pd.to_datetime(eval_dates))
+        if dates_norm.tz is not None:
+            dates_norm = dates_norm.tz_localize(None)
+        dates_norm = dates_norm.normalize()
+
+        for origin_dt in dates_norm:
+            if pd.isna(origin_dt):
+                continue
+            pos = int(series_norm.index.searchsorted(origin_dt, side="right")) - 1
+            if pos < 59 or pos + 1 + h_req > len(series_norm):
+                continue
+            train = series_norm.iloc[: pos + 1]
+            actual_future = series_norm.iloc[pos + 1 : pos + 1 + horizon]
+            window_slices.append((train, actual_future))
+    else:
+        if len(series) < 60 + n_windows:
+            n_windows = max(10, len(series) - 60)
+
+        for i in range(n_windows):
+            end_idx = len(series) - n_windows + i
+            if end_idx < 60:
+                continue
+
+            train = series.iloc[:end_idx]
+            actual_future = series.iloc[end_idx:end_idx + horizon]
+            if len(actual_future) < h_req:
+                continue
+            window_slices.append((train, actual_future))
+
     results = []
-    for i in range(n_windows):
-        end_idx = len(series) - n_windows + i
-        if end_idx < 60:
-            continue
-
-        train = series.iloc[:end_idx]
-        actual_future = series.iloc[end_idx:end_idx + horizon]
-
-        h_req = horizon if is_cumulative else 1
-        if len(actual_future) < h_req:
-            continue
-
+    for train, actual_future in window_slices:
         fc = theta_forecast(train, horizon=min(horizon, len(actual_future)))
         if "error" in fc:
             continue
