@@ -124,26 +124,26 @@ def _configure_tft_reproducibility() -> None:
     configure_tft_reproducibility()
 
 KNOWN_GOOD_CONFIG = {
-    "max_encoder_length": 10,
-    "hidden_size": 12,
+    "max_encoder_length": 15,
+    "hidden_size": 16,
     "attention_head_size": 2,
-    "dropout": 0.35,
-    "hidden_continuous_size": 6,
-    "learning_rate": 5e-4,
-    "output_head_lr_mult": 0.05,
-    "weight_decay": 1e-2,
+    "dropout": 0.25,
+    "hidden_continuous_size": 8,
+    "learning_rate": 6e-4,
+    "output_head_lr_mult": 0.25,
+    "weight_decay": 5e-3,
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 1.00,
-    "lambda_t1_quantile": 0.25,
+    "lambda_t1_quantile": 0.15,
     "lambda_t1_directional": 0.0,
     "lambda_dispersion": 0.0,
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 1.0,
-    "lambda_directional": 0.0,
+    "lambda_drift_prior": 0.5,
+    "lambda_directional": 0.15,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
     "lambda_interval": 0.0,
@@ -1548,6 +1548,8 @@ def _apply_optuna_results(cfg: TFTASROConfig) -> TFTASROConfig:
             params["dropout"] = min(max(float(params["dropout"]), 0.05), 0.60)
         if "learning_rate" in params:
             params["learning_rate"] = min(max(float(params["learning_rate"]), 1e-5), 1e-2)
+        if "output_head_lr_mult" in params:
+            params["output_head_lr_mult"] = min(max(float(params["output_head_lr_mult"]), 0.05), 1.0)
         if "weight_decay" in params:
             params["weight_decay"] = min(max(float(params["weight_decay"]), 0.0), 5e-2)
         if "batch_size" in params:

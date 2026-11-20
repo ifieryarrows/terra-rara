@@ -16,11 +16,11 @@ def test_default_config_creates_valid_instance():
     assert isinstance(cfg, TFTASROConfig)
     assert cfg.embedding.full_dim == 768
     assert cfg.embedding.pca_dim == 8
-    assert cfg.model.hidden_size == 12
-    assert cfg.model.hidden_continuous_size == 6
-    assert cfg.model.max_encoder_length == 10
+    assert cfg.model.hidden_size == 16
+    assert cfg.model.hidden_continuous_size == 8
+    assert cfg.model.max_encoder_length == 15
     assert cfg.model.attention_head_size == 2
-    assert cfg.feature_store.mrmr_top_k == 12
+    assert cfg.feature_store.mrmr_top_k == 18
     assert len(cfg.model.quantiles) == 7
 
 
@@ -44,29 +44,29 @@ def test_asro_lambda_defaults():
 
 def test_model_defaults_match_known_good_config():
     cfg = get_tft_config()
-    assert cfg.model.dropout == 0.35
-    assert cfg.model.learning_rate == 5e-4
-    assert cfg.model.output_head_lr_mult == 0.05
-    assert cfg.model.weight_decay == 1e-2
+    assert cfg.model.dropout == 0.25
+    assert cfg.model.learning_rate == 6e-4
+    assert cfg.model.output_head_lr_mult == 0.25
+    assert cfg.model.weight_decay == 5e-3
 
 
 def test_known_good_overlay_includes_batch_size_fallback():
     cfg = get_tft_config()
     updated = _overlay_training_config(cfg, KNOWN_GOOD_CONFIG)
 
-    assert updated.model.hidden_size == 12
-    assert updated.model.hidden_continuous_size == 6
-    assert updated.model.max_encoder_length == 10
-    assert updated.model.learning_rate == 5e-4
-    assert updated.model.output_head_lr_mult == 0.05
-    assert updated.model.weight_decay == 1e-2
+    assert updated.model.hidden_size == 16
+    assert updated.model.hidden_continuous_size == 8
+    assert updated.model.max_encoder_length == 15
+    assert updated.model.learning_rate == 6e-4
+    assert updated.model.output_head_lr_mult == 0.25
+    assert updated.model.weight_decay == 5e-3
     assert updated.asro.lambda_quantile == 0.25
     assert updated.asro.lambda_madl == 0.40
     assert updated.weekly_loss.lambda_weekly_quantile == 1.00
-    assert updated.weekly_loss.lambda_t1_quantile == 0.25
-    assert updated.weekly_loss.lambda_directional == 0.0
+    assert updated.weekly_loss.lambda_t1_quantile == 0.15
+    assert updated.weekly_loss.lambda_directional == 0.15
     assert updated.weekly_loss.lambda_bias == 0.0
-    assert updated.weekly_loss.lambda_drift_prior == 1.0
+    assert updated.weekly_loss.lambda_drift_prior == 0.5
     assert updated.weekly_loss.lambda_dispersion == 0.0
     assert updated.weekly_loss.lambda_magnitude == 0.0
     assert updated.weekly_loss.lambda_naive == 0.0
@@ -80,10 +80,10 @@ def test_known_good_overlay_includes_batch_size_fallback():
 def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     cfg = get_tft_config()
     assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
-    assert cfg.weekly_loss.lambda_t1_quantile == 0.25
-    assert cfg.weekly_loss.lambda_directional == 0.0
+    assert cfg.weekly_loss.lambda_t1_quantile == 0.15
+    assert cfg.weekly_loss.lambda_directional == 0.15
     assert cfg.weekly_loss.lambda_bias == 0.0
-    assert cfg.weekly_loss.lambda_drift_prior == 1.0
+    assert cfg.weekly_loss.lambda_drift_prior == 0.5
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0
     assert cfg.weekly_loss.lambda_naive == 0.0

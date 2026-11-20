@@ -60,17 +60,61 @@ SHARPE_PRUNE_THRESHOLD = -0.75
 FOLD_SHARPE_PRUNE_THRESHOLD = -1.50
 
 KNOWN_GOOD_TRIAL_PARAMS = {
-    "max_encoder_length": 10,
-    "hidden_size": 12,
-    "hidden_continuous_size": 6,
+    "max_encoder_length": 15,
+    "hidden_size": 16,
+    "hidden_continuous_size": 8,
     "attention_head_size": 2,
-    "dropout": 0.35,
-    "learning_rate": 5e-4,
-    "weight_decay": 1e-2,
-    "lambda_t1_quantile": 0.25,
-    "lambda_drift_prior": 1.0,
-    "lambda_directional": 0.0,
+    "dropout": 0.25,
+    "learning_rate": 6e-4,
+    "output_head_lr_mult": 0.25,
+    "weight_decay": 5e-3,
+    "lambda_t1_quantile": 0.15,
+    "lambda_drift_prior": 0.5,
+    "lambda_directional": 0.15,
 }
+
+
+def _compute_weekly_fold_objective(
+    *,
+    weekly_pinball: float,
+    weekly_actual_std: float,
+    weekly_interval_score_80: float,
+    weekly_mae_vs_naive_zero: float,
+    weekly_mr: float,
+    weekly_pred_positive_rate: float,
+    weekly_actual_positive_rate: float,
+    weekly_sharpe: float,
+    weekly_da: float,
+    weekly_sign_corr: float,
+    weekly_sorted_crossing: float = 0.0,
+    crossing_rate: float = 0.0,
+) -> tuple[float, float]:
+    """Compute balanced weekly Optuna objective and fold selection score."""
+    pinball_norm = weekly_pinball / (weekly_actual_std + 1e-8)
+    interval_norm = weekly_interval_score_80 / (weekly_actual_std + 1e-8)
+    mae_excess_penalty = 0.50 * max(0.0, weekly_mae_vs_naive_zero - 1.01)
+    pos_rate_gap = abs(weekly_pred_positive_rate - weekly_actual_positive_rate)
+    collapse_penalty = (
+        1.50 * max(0.0, 0.12 - weekly_mr)
+        + 1.50 * max(0.0, pos_rate_gap - 0.15)
+        + 1.0 * max(0.0, weekly_pred_positive_rate - 0.90)
+        + 1.0 * max(0.0, 0.10 - weekly_pred_positive_rate)
+    )
+    sharpe_bonus = 0.10 * float(np.clip(weekly_sharpe, -2.0, 2.0))
+    sign_corr_bonus = 0.15 * float(np.clip(weekly_sign_corr, -0.5, 0.5))
+    weekly_objective = (
+        pinball_norm
+        + 0.03 * interval_norm
+        + mae_excess_penalty
+        + collapse_penalty
+        + 0.25 * weekly_sorted_crossing
+        - sharpe_bonus
+        - sign_corr_bonus
+    )
+    da_adjustment = (weekly_da - 0.50) * 0.50
+    crossing_penalty = 5.0 * max(0.0, crossing_rate - 0.001)
+    fold_score = weekly_objective + crossing_penalty - da_adjustment
+    return float(weekly_objective), float(fold_score)
 
 
 def _data_snapshot_id(master_df: pd.DataFrame) -> str:
@@ -370,6 +414,7 @@ def _build_prune_diagnostics(study) -> tuple[dict[str, int], list[dict]]:
         "avg_weekly_sorted_crossing_rate",
         "avg_weekly_interval_score_80",
         "avg_weekly_interval_score_96",
+        "avg_weekly_sign_correlation",
         "fold_score_std",
     )
 
@@ -479,16 +524,18 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     model_cfg = TFTModelConfig(
         max_encoder_length=int(trial.suggest_categorical("max_encoder_length", [10, 15, 20])),
         max_prediction_length=base_cfg.model.max_prediction_length,
-        hidden_size=int(trial.suggest_categorical("hidden_size", [12, 16])),
+        hidden_size=int(trial.suggest_categorical("hidden_size", [12, 16, 24])),
         attention_head_size=int(trial.suggest_categorical("attention_head_size", [1, 2])),
-        dropout=float(trial.suggest_categorical("dropout", [0.25, 0.35, 0.45])),
-        hidden_continuous_size=int(trial.suggest_categorical("hidden_continuous_size", [6, 8])),
+        dropout=float(trial.suggest_categorical("dropout", [0.15, 0.25, 0.35])),
+        hidden_continuous_size=int(trial.suggest_categorical("hidden_continuous_size", [6, 8, 12])),
         quantiles=base_cfg.model.quantiles,
-        learning_rate=float(trial.suggest_float("learning_rate", 2e-4, 1e-3, log=True)),
-        output_head_lr_mult=base_cfg.model.output_head_lr_mult,
+        learning_rate=float(trial.suggest_float("learning_rate", 3e-4, 2e-3, log=True)),
+        output_head_lr_mult=float(
+            trial.suggest_categorical("output_head_lr_mult", [0.15, 0.25, 0.40])
+        ),
         reduce_on_plateau_patience=4,
         gradient_clip_val=base_cfg.model.gradient_clip_val,
-        weight_decay=float(trial.suggest_categorical("weight_decay", [5e-3, 1e-2, 2e-2])),
+        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-3, 5e-3, 1e-2])),
     )
 
     asro_cfg = ASROConfig(
@@ -500,14 +547,14 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
 
     weekly_loss_cfg = WeeklyLossConfig(
         lambda_weekly_quantile=1.00,
-        lambda_t1_quantile=float(trial.suggest_categorical("lambda_t1_quantile", [0.15, 0.25, 0.35])),
+        lambda_t1_quantile=float(trial.suggest_categorical("lambda_t1_quantile", [0.05, 0.15, 0.25])),
         lambda_t1_directional=0.0,
         lambda_dispersion=0.0,
         lambda_magnitude=0.0,
         lambda_naive=0.0,
         lambda_bias=0.0,
-        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.5, 1.0, 2.0])),
-        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.0, 0.03])),
+        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.25, 0.5, 1.0])),
+        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.05, 0.15, 0.30])),
         lambda_saturation=0.0,
         lambda_positive_rate=0.0,
         lambda_interval=0.0,
@@ -625,6 +672,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     fold_weekly_sorted_crossing_list: list[float] = []
     fold_weekly_interval_score_80_list: list[float] = []
     fold_weekly_interval_score_96_list: list[float] = []
+    fold_weekly_sign_corr_list: list[float] = []
     fold_scale_diagnostics: list[dict] = []
 
     for fold_idx, (fold_train_ds, fold_val_ds) in enumerate(cv_folds):
@@ -885,6 +933,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             )
             fold_weekly_interval_score_80 = float(metrics.get("weekly_interval_score_80", 0.0))
             fold_weekly_interval_score_96 = float(metrics.get("weekly_interval_score_96", 0.0))
+            fold_weekly_sign_corr = float(metrics.get("weekly_sign_correlation", 0.0))
             weekly_actual_std = float(metrics.get("weekly_actual_std", 0.0))
             weekly_actual = cumulative_horizon(
                 y_actual_path[:n_path],
@@ -938,22 +987,19 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 scale_diagnostic["weekly_actual_min"],
                 scale_diagnostic["weekly_actual_max"],
             )
-            pinball_norm = weekly_pinball / (weekly_actual_std + 1e-8)
-            interval_norm = fold_weekly_interval_score_80 / (weekly_actual_std + 1e-8)
-            mae_excess_penalty = 0.25 * max(0.0, fold_weekly_mae_vs_naive_zero - 1.02)
-            collapse_penalty = (
-                1.0 * max(0.0, 0.02 - fold_weekly_mr)
-                + 1.0 * max(0.0, fold_weekly_pred_positive_rate - 0.90)
-                + 1.0 * max(0.0, 0.10 - fold_weekly_pred_positive_rate)
-            )
-            sharpe_bonus = 0.05 * float(np.clip(fold_weekly_sharpe, -2.0, 2.0))
-            fold_weekly_objective = (
-                pinball_norm
-                + 0.20 * interval_norm
-                + mae_excess_penalty
-                + collapse_penalty
-                + 0.25 * fold_weekly_sorted_crossing
-                - sharpe_bonus
+            fold_weekly_objective, fold_score = _compute_weekly_fold_objective(
+                weekly_pinball=weekly_pinball,
+                weekly_actual_std=weekly_actual_std,
+                weekly_interval_score_80=fold_weekly_interval_score_80,
+                weekly_mae_vs_naive_zero=fold_weekly_mae_vs_naive_zero,
+                weekly_mr=fold_weekly_mr,
+                weekly_pred_positive_rate=fold_weekly_pred_positive_rate,
+                weekly_actual_positive_rate=fold_weekly_actual_positive_rate,
+                weekly_sharpe=fold_weekly_sharpe,
+                weekly_da=fold_weekly_da,
+                weekly_sign_corr=fold_weekly_sign_corr,
+                weekly_sorted_crossing=fold_weekly_sorted_crossing,
+                crossing_rate=fold_crossing_rate,
             )
         except Exception as exc:
             logger.warning(
@@ -984,10 +1030,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         fold_weekly_sorted_crossing_list.append(fold_weekly_sorted_crossing)
         fold_weekly_interval_score_80_list.append(fold_weekly_interval_score_80)
         fold_weekly_interval_score_96_list.append(fold_weekly_interval_score_96)
+        fold_weekly_sign_corr_list.append(fold_weekly_sign_corr)
 
-        da_adjustment = (fold_weekly_da - 0.50) * 0.25
-        crossing_penalty = 5.0 * max(0.0, fold_crossing_rate - 0.001)
-        fold_score = fold_weekly_objective + crossing_penalty - da_adjustment
         fold_scores.append(fold_score)
 
         logger.debug(
@@ -1184,6 +1228,11 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         if fold_weekly_interval_score_96_list
         else 0.0
     )
+    avg_weekly_sign_corr = (
+        float(np.mean(fold_weekly_sign_corr_list))
+        if fold_weekly_sign_corr_list
+        else 0.0
+    )
 
     # High fold-score variance = trial is unreliable (works in one regime, fails in another)
     consistency_penalty = (
@@ -1213,6 +1262,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     trial.set_user_attr("avg_weekly_sorted_crossing_rate", round(avg_weekly_sorted_crossing, 4))
     trial.set_user_attr("avg_weekly_interval_score_80", round(avg_weekly_interval_score_80, 4))
     trial.set_user_attr("avg_weekly_interval_score_96", round(avg_weekly_interval_score_96, 4))
+    trial.set_user_attr("avg_weekly_sign_correlation", round(avg_weekly_sign_corr, 4))
     trial.set_user_attr(
         "fold_score_std",
         round(float(np.std(fold_scores)) if len(fold_scores) > 1 else 0.0, 4),

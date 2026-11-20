@@ -392,13 +392,14 @@ def test_enqueue_known_good_trial_only_for_empty_study():
 
 
 def test_known_good_trial_includes_weekly_loss_search_params():
-    assert KNOWN_GOOD_TRIAL_PARAMS["max_encoder_length"] == 10
-    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_size"] == 12
-    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_continuous_size"] == 6
+    assert KNOWN_GOOD_TRIAL_PARAMS["max_encoder_length"] == 15
+    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_size"] == 16
+    assert KNOWN_GOOD_TRIAL_PARAMS["hidden_continuous_size"] == 8
     assert KNOWN_GOOD_TRIAL_PARAMS["attention_head_size"] == 2
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.25
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 1.0
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.0
+    assert KNOWN_GOOD_TRIAL_PARAMS["output_head_lr_mult"] == 0.25
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.15
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 0.5
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.15
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_tail_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -433,14 +434,15 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     cfg = create_trial_config(trial, get_tft_config())
 
     assert cfg.model.max_encoder_length in {10, 15, 20}
-    assert cfg.model.hidden_size in {12, 16}
+    assert cfg.model.hidden_size in {12, 16, 24}
     assert cfg.model.attention_head_size in {1, 2}
-    assert cfg.model.hidden_continuous_size in {6, 8}
+    assert cfg.model.hidden_continuous_size in {6, 8, 12}
+    assert cfg.model.output_head_lr_mult in {0.15, 0.25, 0.40}
     assert cfg.training.batch_size == 32
     assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
-    assert cfg.weekly_loss.lambda_t1_quantile in {0.15, 0.25, 0.35}
-    assert cfg.weekly_loss.lambda_drift_prior in {0.5, 1.0, 2.0}
-    assert cfg.weekly_loss.lambda_directional in {0.0, 0.03}
+    assert cfg.weekly_loss.lambda_t1_quantile in {0.05, 0.15, 0.25}
+    assert cfg.weekly_loss.lambda_drift_prior in {0.25, 0.5, 1.0}
+    assert cfg.weekly_loss.lambda_directional in {0.05, 0.15, 0.30}
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0
     assert cfg.weekly_loss.lambda_naive == 0.0
@@ -448,6 +450,7 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_interval == 0.0
 
     assert "learning_rate" in trial.float_ranges
+    assert "output_head_lr_mult" in trial.categorical_choices
     assert "dropout" in trial.categorical_choices
     assert "max_encoder_length" in trial.categorical_choices
     assert "hidden_size" in trial.categorical_choices

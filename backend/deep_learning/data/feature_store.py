@@ -834,9 +834,7 @@ def build_tft_dataframe(
             "ret5",
             "ret10",
             "ret20",
-            "close_sma_5_ratio",
             "close_sma_20_ratio",
-            "RSI_14",
             "vol_10",
         )
     ]
@@ -867,6 +865,7 @@ def build_tft_dataframe(
         if train_size <= 0:
             raise ValueError("Feature selection requires a non-empty chronological training partition")
 
+        group_prefixes = [sym.replace(".", "_").replace("-", "_") for sym in training_symbols]
         master, time_varying_unknown, time_varying_known = select_features(
             master,
             target_col=cfg.forecast.primary_target_col,
@@ -875,6 +874,8 @@ def build_tft_dataframe(
             forced_unknown_features=forced_unknown,
             forbidden_features=list(non_feature_cols | excluded_calendar_cols),
             selection_df=master.iloc[:train_size],
+            max_per_group=2,
+            group_prefixes=group_prefixes,
         )
 
     from deep_learning.data.validation import validate_weekly_target_contract

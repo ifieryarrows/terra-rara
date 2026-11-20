@@ -706,7 +706,7 @@ try:
                 weekly_q_loss = weekly_q_loss_bounded
 
             t1_q_loss = (
-                super().loss(ordered_pred[:, 0:1, :], y_actual[:, 0:1]).mean() / scale_1d
+                self._pinball(ordered_pred[:, 0, :], y_actual[:, 0]) / scale_1d
                 if self.lambda_t1_quantile != 0.0
                 else zero
             )
@@ -977,27 +977,38 @@ def create_tft_model(
     )
     _initialize_tft_output_layer(model, quantiles)
 
-    # Configure AdamW with differential learning rates so the unnormalized linear
-    # quantile output head updates conservatively (preventing epoch-to-epoch
-    # prediction sign ping-pong) while applying configured weight decay to body params.
+    # Configure AdamW with decoupled output-head learning rates so feature weights
+    # can learn conditional return sensitivity while output biases stay conservative
+    # (preventing unconditional positive/negative drift collapse).
     _base_lr = float(cfg.model.learning_rate)
-    _head_lr = _base_lr * float(cfg.model.output_head_lr_mult)
+    _head_weight_lr = _base_lr * float(cfg.model.output_head_lr_mult)
+    _head_bias_lr = _base_lr * min(0.05, 0.25 * float(cfg.model.output_head_lr_mult))
     _weight_decay = float(cfg.model.weight_decay)
     _lr_patience = int(cfg.model.reduce_on_plateau_patience)
 
     def _differential_configure_optimizers(m=model):
-        head_params = []
+        head_weight_params = []
+        head_bias_params = []
         body_params = []
         for name, param in m.named_parameters():
             if not param.requires_grad:
                 continue
             if "output_layer" in name:
-                head_params.append(param)
+                if name.endswith("bias"):
+                    head_bias_params.append(param)
+                else:
+                    head_weight_params.append(param)
             else:
                 body_params.append(param)
         param_groups = [{"params": body_params, "lr": _base_lr, "weight_decay": _weight_decay}]
-        if head_params:
-            param_groups.append({"params": head_params, "lr": _head_lr, "weight_decay": 0.0})
+        if head_weight_params:
+            param_groups.append(
+                {"params": head_weight_params, "lr": _head_weight_lr, "weight_decay": 0.0}
+            )
+        if head_bias_params:
+            param_groups.append(
+                {"params": head_bias_params, "lr": _head_bias_lr, "weight_decay": 0.0}
+            )
         optimizer = torch.optim.AdamW(param_groups)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -1012,9 +1023,10 @@ def create_tft_model(
 
     model.configure_optimizers = _differential_configure_optimizers
     logger.info(
-        "Configured AdamW | body_lr=%.1e head_lr=%.1e weight_decay=%.1e",
+        "Configured AdamW | body_lr=%.1e head_weight_lr=%.1e head_bias_lr=%.1e weight_decay=%.1e",
         _base_lr,
-        _head_lr,
+        _head_weight_lr,
+        _head_bias_lr,
         _weight_decay,
     )
 

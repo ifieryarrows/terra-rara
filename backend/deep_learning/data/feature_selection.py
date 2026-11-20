@@ -20,7 +20,7 @@ References:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -141,6 +141,33 @@ def _filter_healthy_training_features(
     return kept, dropped
 
 
+def _infer_feature_group(col: str, known_prefixes: Sequence[str] = ()) -> str:
+    """Infer feature group/family so one correlated symbol cannot crowd out all slots."""
+    for prefix in sorted(set(known_prefixes), key=len, reverse=True):
+        if prefix and col.startswith(f"{prefix}_"):
+            return prefix
+    if col.startswith("emb_pca_"):
+        return "emb_pca"
+    if (
+        col.startswith("sentiment_")
+        or col.startswith("event_")
+        or col
+        in {
+            "news_count",
+            "material_news_count",
+            "after_close_news_count",
+            "days_since_last_material_news",
+            "stale_sentiment_flag",
+        }
+    ):
+        return "sentiment"
+    if col.startswith("regime_"):
+        return "regime"
+    if col.startswith("lme_") or col.startswith("proxy_") or col.startswith("futures_"):
+        return "physical"
+    return col
+
+
 def mrmr_select(
     df: pd.DataFrame,
     target_col: str = "target",
@@ -148,6 +175,8 @@ def mrmr_select(
     exclude_cols: Optional[list[str]] = None,
     max_pairwise_corr: float = 0.85,
     forced_cols: Optional[list[str]] = None,
+    max_per_group: Optional[int] = None,
+    group_prefixes: Optional[Sequence[str]] = None,
 ) -> list[str]:
     """
     Scale-consistent Minimum Redundancy Maximum Relevance (mRMR-Q) selection.
@@ -155,7 +184,7 @@ def mrmr_select(
     Combines normalized |Spearman| directional relevance with mutual information
     to prevent volatility-only features from crowding out directional signals,
     respects pre-seeded ``forced_cols`` within the ``top_k`` budget, and caps
-    pairwise collinearity.
+    pairwise collinearity and per-group concentration.
     """
     if exclude_cols is None:
         exclude_cols = []
@@ -189,6 +218,10 @@ def mrmr_select(
     corr_matrix = _pairwise_correlation(X)
 
     n_feats = len(feature_cols)
+    prefixes = tuple(group_prefixes or ())
+    col_groups = [_infer_feature_group(c, prefixes) for c in feature_cols]
+    group_counts: dict[str, int] = {}
+
     rel_arr = np.nan_to_num(
         relevance.reindex(feature_cols).to_numpy(dtype=np.float64),
         nan=0.0,
@@ -219,12 +252,14 @@ def mrmr_select(
         for idx in forced_indices:
             selected_indices.append(idx)
             selected_mask[idx] = True
+            group_counts[col_groups[idx]] = group_counts.get(col_groups[idx], 0) + 1
             running_corr_sum += corr_arr[:, idx]
             max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, idx])
     else:
         first_idx = int(np.argmax(rel_norm))
         selected_indices.append(first_idx)
         selected_mask[first_idx] = True
+        group_counts[col_groups[first_idx]] = group_counts.get(col_groups[first_idx], 0) + 1
         running_corr_sum += corr_arr[:, first_idx]
         max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, first_idx])
 
@@ -233,17 +268,28 @@ def mrmr_select(
         scores = rel_norm / (redundancy + 0.50)
         scores[selected_mask] = -np.inf
 
-        eligible_scores = scores.copy()
-        eligible_scores[max_corr_to_selected > max_pairwise_corr] = -np.inf
-        best_idx = int(np.argmax(eligible_scores))
-        if eligible_scores[best_idx] == -np.inf:
-            # Fallback if hard collinearity cap exhausted all candidates before top_k
-            best_idx = int(np.argmax(scores))
-            if scores[best_idx] == -np.inf:
-                break
+        corr_eligible = scores.copy()
+        corr_eligible[max_corr_to_selected > max_pairwise_corr] = -np.inf
+
+        group_eligible = corr_eligible.copy()
+        if max_per_group is not None and max_per_group > 0:
+            for idx, group_name in enumerate(col_groups):
+                if group_counts.get(group_name, 0) >= max_per_group:
+                    group_eligible[idx] = -np.inf
+
+        best_idx = int(np.argmax(group_eligible))
+        if group_eligible[best_idx] == -np.inf:
+            # First relax per-group concentration cap while keeping collinearity guard
+            best_idx = int(np.argmax(corr_eligible))
+            if corr_eligible[best_idx] == -np.inf:
+                # Final fallback if hard collinearity cap exhausted all candidates before top_k
+                best_idx = int(np.argmax(scores))
+                if scores[best_idx] == -np.inf:
+                    break
 
         selected_indices.append(best_idx)
         selected_mask[best_idx] = True
+        group_counts[col_groups[best_idx]] = group_counts.get(col_groups[best_idx], 0) + 1
         running_corr_sum += corr_arr[:, best_idx]
         max_corr_to_selected = np.maximum(max_corr_to_selected, corr_arr[:, best_idx])
 
@@ -326,6 +372,8 @@ def select_features(
     forced_unknown_features: Optional[list[str]] = None,
     forbidden_features: Optional[list[str]] = None,
     selection_df: Optional[pd.DataFrame] = None,
+    max_per_group: Optional[int] = None,
+    group_prefixes: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Run MRMR selection on unknown features while preserving known features.
@@ -398,6 +446,10 @@ def select_features(
     }
     if forced_unknown:
         mrmr_kwargs["forced_cols"] = forced_unknown
+    if max_per_group is not None:
+        mrmr_kwargs["max_per_group"] = max_per_group
+    if group_prefixes is not None:
+        mrmr_kwargs["group_prefixes"] = group_prefixes
 
     selected_unknown = mrmr_select(selection_df, **mrmr_kwargs)
     selected_unknown = sorted(set(selected_unknown) | set(forced_unknown))

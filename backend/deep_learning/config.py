@@ -70,21 +70,21 @@ class LMEConfig:
 
 @dataclass(frozen=True)
 class TFTModelConfig:
-    max_encoder_length: int = 10
+    max_encoder_length: int = 15
     max_prediction_length: int = 5
-    # Compact capacity with differential head LR prevents gradient ping-pong on
-    # raw daily log-return targets (~17k params vs 510k previously).
-    hidden_size: int = 12
+    # Compact capacity with decoupled output-head weight/bias LRs allows the
+    # median weights to learn conditional signals while keeping quantile biases anchored.
+    hidden_size: int = 16
     attention_head_size: int = 2
-    dropout: float = 0.35
-    hidden_continuous_size: int = 6
+    dropout: float = 0.25
+    hidden_continuous_size: int = 8
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
-    learning_rate: float = 5e-4
-    output_head_lr_mult: float = 0.05
+    learning_rate: float = 6e-4
+    output_head_lr_mult: float = 0.25
     reduce_on_plateau_patience: int = 4
     gradient_clip_val: float = 0.5
     # L2 regularisation via AdamW; prevents weight growth on small financial series.
-    weight_decay: float = 1e-2
+    weight_decay: float = 5e-3
 
 
 @dataclass(frozen=True)
@@ -132,18 +132,17 @@ class ASROConfig:
 @dataclass(frozen=True)
 class WeeklyLossConfig:
     # Proper-scoring core: scale-normalized weekly quantile pinball + auxiliary
-    # T+1 quantile pinball + gentle bias guard (directional surrogate default 0.0
-    # avoids cross-regime threshold flip instability on compact samples).
+    # T+1 quantile pinball + gentle drift prior + bounded ASRO directional utility.
     # Legacy heuristic batch penalties default to 0.0 (fields kept for backward compat).
     lambda_weekly_quantile: float = 1.00
-    lambda_t1_quantile: float = 0.25
+    lambda_t1_quantile: float = 0.15
     lambda_t1_directional: float = 0.0
     lambda_dispersion: float = 0.0
     lambda_magnitude: float = 0.0
     lambda_naive: float = 0.0
     lambda_bias: float = 0.0
-    lambda_drift_prior: float = 1.0
-    lambda_directional: float = 0.0
+    lambda_drift_prior: float = 0.5
+    lambda_directional: float = 0.15
     lambda_saturation: float = 0.0
     lambda_positive_rate: float = 0.0
     lambda_interval: float = 0.0
@@ -177,7 +176,7 @@ class FeatureStoreConfig:
     max_ffill: int = 3
     calendar_features: bool = True
     macro_event_features: bool = True
-    mrmr_top_k: int = 12
+    mrmr_top_k: int = 18
 
 
 @dataclass

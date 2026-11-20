@@ -724,8 +724,11 @@ def test_weekly_loss_drift_prior_and_adamw_differential_head_lr():
     opt = opt_cfg["optimizer"]
     assert isinstance(opt, torch.optim.AdamW)
     lrs = sorted(pg["lr"] for pg in opt.param_groups)
-    assert lrs[0] == pytest.approx(cfg.model.learning_rate * cfg.model.output_head_lr_mult)
-    assert lrs[1] == pytest.approx(cfg.model.learning_rate)
+    assert lrs[0] == pytest.approx(
+        cfg.model.learning_rate * min(0.05, 0.25 * cfg.model.output_head_lr_mult)
+    )
+    assert lrs[1] == pytest.approx(cfg.model.learning_rate * cfg.model.output_head_lr_mult)
+    assert lrs[2] == pytest.approx(cfg.model.learning_rate)
 
 
 def test_split_cqr_uses_linear_volatility_power():
@@ -1290,6 +1293,191 @@ def test_commentary_prompt_includes_latest_level_alongside_recent_delta():
     prompt_block = _build_tft_xai_prompt_block(None, digest)
     assert "recent: +0.078 over 5 sessions" in prompt_block
     assert "latest level: -0.084" in prompt_block
+
+
+def test_differential_optimizer_decouples_output_head_weights_from_biases():
+    from pytorch_forecasting import TimeSeriesDataSet
+    from deep_learning.data.dataset import _identity_target_normalizer
+    from deep_learning.models.tft_copper import create_tft_model
+
+    n = 45
+    df = pd.DataFrame(
+        {
+            "time_idx": np.arange(n, dtype=int),
+            "group_id": "copper",
+            "target": np.linspace(-0.01, 0.01, n),
+            "HG_F_ret1": np.sin(np.linspace(0, 4, n)) * 0.01,
+            "day_of_week": (np.arange(n) % 5).astype(float),
+        }
+    )
+    cfg = get_tft_config()
+    cfg = replace(
+        cfg,
+        model=replace(
+            cfg.model,
+            max_encoder_length=10,
+            hidden_size=8,
+            hidden_continuous_size=4,
+            learning_rate=8e-4,
+            output_head_lr_mult=0.25,
+        ),
+    )
+    ds = TimeSeriesDataSet(
+        df,
+        time_idx="time_idx",
+        target="target",
+        group_ids=["group_id"],
+        max_encoder_length=cfg.model.max_encoder_length,
+        max_prediction_length=cfg.model.max_prediction_length,
+        time_varying_unknown_reals=["HG_F_ret1"],
+        time_varying_known_reals=["day_of_week"],
+        static_categoricals=["group_id"],
+        target_normalizer=_identity_target_normalizer(),
+        add_relative_time_idx=True,
+        add_target_scales=True,
+        add_encoder_length=True,
+    )
+    model = create_tft_model(ds, cfg, use_asro=True, weekly_target_scale=0.025)
+    opt_cfg = model.configure_optimizers()
+    groups = opt_cfg["optimizer"].param_groups
+    lrs = sorted(group["lr"] for group in groups)
+
+    expected_bias_lr = 8e-4 * 0.05
+    expected_weight_lr = 8e-4 * 0.25
+    expected_body_lr = 8e-4
+    assert len(groups) == 3
+    assert lrs[0] == pytest.approx(expected_bias_lr, rel=1e-6)
+    assert lrs[1] == pytest.approx(expected_weight_lr, rel=1e-6)
+    assert lrs[2] == pytest.approx(expected_body_lr, rel=1e-6)
+    assert expected_weight_lr > expected_bias_lr
+
+
+def test_weekly_asro_loss_t1_and_weekly_pinball_share_same_scale_convention():
+    from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
+
+    torch.manual_seed(17)
+    y_pred = torch.randn(16, 5, 7) * 0.015
+    y_actual = torch.randn(16, 5) * 0.012
+    ordered = enforce_monotonic_quantiles(y_pred, median_idx=3)
+
+    actual_weekly = y_actual.sum(dim=1)
+    scale_w = float((actual_weekly ** 2).mean().sqrt().clamp_min(0.005))
+    scale_1d = scale_w / np.sqrt(5.0)
+
+    loss_fn = WeeklyASROPFLoss(
+        quantiles=list(QUANTILES),
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=1.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_drift_prior=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
+    )
+    actual_t1_loss = float(loss_fn.loss(y_pred, y_actual))
+    expected_t1_loss = float(loss_fn._pinball(ordered[:, 0, :], y_actual[:, 0]) / scale_1d)
+    assert actual_t1_loss == pytest.approx(expected_t1_loss, rel=1e-5, abs=1e-6)
+
+
+def test_mrmr_select_enforces_per_group_diversity_cap():
+    from deep_learning.data.feature_selection import select_features
+
+    rng = np.random.default_rng(42)
+    n = 160
+    target = rng.normal(0.0, 0.025, size=n)
+    data = {
+        "time_idx": np.arange(n),
+        "group_id": "copper",
+        "target_5d_log_return": target,
+        "HG_F_ret1": rng.normal(0.0, 0.01, size=n),
+        "HG_F_ret5": rng.normal(0.0, 0.02, size=n),
+        "HG_F_ret10": rng.normal(0.0, 0.025, size=n),
+        "HG_F_ret20": rng.normal(0.0, 0.03, size=n),
+        "HG_F_close_sma_20_ratio": rng.normal(0.0, 0.02, size=n),
+        "HG_F_vol_10": np.abs(rng.normal(0.01, 0.005, size=n)),
+    }
+    # 5 independent strong CL_F features that would otherwise consume all 6 free slots
+    for idx in range(5):
+        data[f"CL_F_feat_{idx}"] = target * (0.45 - 0.03 * idx) + rng.normal(0.0, 0.015, size=n)
+    data["FCX_ret10"] = target * 0.35 + rng.normal(0.0, 0.02, size=n)
+    data["DX_Y_NYB_ret10"] = -target * 0.30 + rng.normal(0.0, 0.02, size=n)
+    data["emb_pca_0"] = target * 0.28 + rng.normal(0.0, 0.02, size=n)
+    data["sentiment_index"] = target * 0.25 + rng.normal(0.0, 0.02, size=n)
+    data["regime_usd_pressure"] = -target * 0.22 + rng.normal(0.0, 0.02, size=n)
+
+    df = pd.DataFrame(data)
+    forced = [
+        "HG_F_ret1",
+        "HG_F_ret5",
+        "HG_F_ret10",
+        "HG_F_ret20",
+        "HG_F_close_sma_20_ratio",
+        "HG_F_vol_10",
+    ]
+    _filtered, selected_unknown, _ = select_features(
+        df,
+        target_col="target_5d_log_return",
+        mrmr_top_k=12,
+        known_features=[],
+        forced_unknown_features=forced,
+        max_per_group=2,
+        group_prefixes=["HG_F", "CL_F", "FCX", "DX_Y_NYB"],
+    )
+    cl_selected = [c for c in selected_unknown if c.startswith("CL_F_")]
+    assert len(cl_selected) <= 2
+    assert any(c.startswith("FCX_") for c in selected_unknown)
+    assert any(c.startswith("DX_Y_NYB_") for c in selected_unknown)
+    assert any(c.startswith("emb_pca_") or c == "sentiment_index" or c.startswith("regime_") for c in selected_unknown)
+
+
+def test_optuna_weekly_objective_prefers_signal_model_over_flat_hedger_and_overdispersed():
+    from deep_learning.training.hyperopt import _compute_weekly_fold_objective
+
+    _, signal_score = _compute_weekly_fold_objective(
+        weekly_pinball=0.0066,
+        weekly_actual_std=0.032,
+        weekly_interval_score_80=0.115,
+        weekly_mae_vs_naive_zero=0.975,
+        weekly_mr=0.22,
+        weekly_pred_positive_rate=0.58,
+        weekly_actual_positive_rate=0.53,
+        weekly_sharpe=0.95,
+        weekly_da=0.58,
+        weekly_sign_corr=0.18,
+    )
+    _, flat_hedger_score = _compute_weekly_fold_objective(
+        weekly_pinball=0.0070,
+        weekly_actual_std=0.032,
+        weekly_interval_score_80=0.117,
+        weekly_mae_vs_naive_zero=0.993,
+        weekly_mr=0.06,
+        weekly_pred_positive_rate=0.85,
+        weekly_actual_positive_rate=0.53,
+        weekly_sharpe=0.28,
+        weekly_da=0.51,
+        weekly_sign_corr=0.04,
+    )
+    _, overdispersed_score = _compute_weekly_fold_objective(
+        weekly_pinball=0.0075,
+        weekly_actual_std=0.032,
+        weekly_interval_score_80=0.125,
+        weekly_mae_vs_naive_zero=1.20,
+        weekly_mr=1.10,
+        weekly_pred_positive_rate=0.52,
+        weekly_actual_positive_rate=0.53,
+        weekly_sharpe=0.30,
+        weekly_da=0.52,
+        weekly_sign_corr=0.05,
+    )
+
+    assert signal_score < flat_hedger_score
+    assert signal_score < overdispersed_score
+
 
 
 
