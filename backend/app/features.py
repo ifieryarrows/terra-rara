@@ -417,7 +417,16 @@ def generate_symbol_features(
             features[f"{prefix}ret{h}"] = np.log(safe_close / prev.where(prev > 0.0, np.nan))
         vol_short = compute_volatility(ret1, 5)
         vol_long = compute_volatility(ret1, 20)
+        vol_20_safe = vol_long.replace(0, np.nan).clip(lower=1e-4)
         features[f"{prefix}vol_5_20_ratio"] = vol_short / vol_long.replace(0, np.nan)
+        for h in (5, 10, 20):
+            features[f"{prefix}risk_adj_ret{h}"] = (
+                features[f"{prefix}ret{h}"] / (vol_20_safe * np.sqrt(float(h)))
+            ).clip(-5.0, 5.0)
+        features[f"{prefix}signed_vol_ratio"] = (
+            np.sign(features[f"{prefix}ret10"].fillna(0.0))
+            * ((vol_short / vol_20_safe) - 1.0).clip(-3.0, 3.0)
+        )
 
     # RSI
     features[f"{prefix}RSI_{rsi_window}"] = compute_rsi(close, rsi_window)
@@ -699,6 +708,12 @@ _INDICATOR_LABEL_MAP: dict[str, str] = {
     "vol_10":               "10-day price volatility",
     "vol_20":               "20-day price volatility",
     "vol_5_20_ratio":       "5-day vs. 20-day volatility ratio",
+    "risk_adj_ret5":        "5-day risk-adjusted return",
+    "risk_adj_ret10":       "10-day risk-adjusted return",
+    "risk_adj_ret20":       "20-day risk-adjusted return",
+    "signed_vol_ratio":     "Directional volatility regime shift",
+    "theta_5d_prior":       "5-day Theta trend prior",
+    "macro_fair_value_zscore": "Macro basket fair-value deviation",
     "price_sma_ratio":      "Price vs. 20-day average",
     "target":               "Model target (next-day change)",
 }
@@ -799,9 +814,13 @@ def describe_feature(feature: str) -> dict[str, str]:
         category = "Sentiment"
     elif t.startswith("emb_") or t.startswith("news_emb_"):
         category = "Embedding"
-    elif t.startswith("rsi") or t.startswith("ret") or t.startswith("lag_ret"):
+    elif t.startswith("rsi") or t.startswith("ret") or t.startswith("lag_ret") or t.startswith("risk_adj_ret"):
         category = "Momentum"
-    elif t.startswith("vol"):
+    elif t == "macro_fair_value_zscore":
+        category = "Macro"
+    elif t == "theta_5d_prior":
+        category = "Trend"
+    elif t.startswith("vol") or t == "signed_vol_ratio":
         category = "Volatility"
     elif t.startswith("sma") or t.startswith("ema") or "price_sma" in t or "close_sma" in t or "to_sma" in t:
         category = "Trend"

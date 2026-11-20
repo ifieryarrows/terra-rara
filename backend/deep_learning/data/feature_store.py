@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,6 +41,17 @@ def data_snapshot_sha256(master_df: pd.DataFrame) -> str:
     digest.update("\x1f".join(str(dtype) for dtype in master_df.dtypes).encode())
     digest.update(pd.util.hash_pandas_object(master_df, index=True).to_numpy().tobytes())
     return digest.hexdigest()
+
+
+_UNSIGNED_VOL_RE = re.compile(r"_vol_\d+$")
+
+
+def _is_unsigned_vol_feature(col: str) -> bool:
+    """Exclude strictly-positive unsigned volatility series from TFT encoder inputs."""
+    return (
+        not col.endswith("_signed_vol_ratio")
+        and (col.endswith("_vol_5_20_ratio") or bool(_UNSIGNED_VOL_RE.search(col)))
+    )
 
 
 def _feature_snapshot_metadata_path(path: Path) -> Path:
@@ -616,6 +628,16 @@ def build_tft_dataframe(
             price_features = pd.concat(feature_frames, axis=1)
         logger.info("Added features from %d correlated symbols", len(aligned))
 
+    from deep_learning.calibration.hybrid import (
+        compute_causal_macro_fair_value_zscore,
+        compute_causal_theta_5d_series,
+    )
+
+    price_features["macro_fair_value_zscore"] = compute_causal_macro_fair_value_zscore(
+        price_features,
+        target_prefix=target_symbol,
+    )
+
     target_index = price_df.index
     logger.info("Price data: %d bars for %s", len(target_index), target_symbol)
 
@@ -699,6 +721,17 @@ def build_tft_dataframe(
 
     # ---- 6. Target: daily log-return path plus explicit weekly helpers ----
     close = _sanitize_close_spikes(price_df["close"], symbol=target_symbol)
+    theta_prior_raw_col = f"{target_symbol}_theta_5d_prior"
+    theta_prior_series_pre = compute_causal_theta_5d_series(
+        close,
+        horizon=cfg.forecast.primary_horizon_days,
+        max_eval_tail=(
+            None
+            if drop_missing_target
+            else max(120, cfg.model.max_encoder_length + 30)
+        ),
+    )
+    theta_prior_series_pre.name = theta_prior_raw_col
     log_close = np.log(close)
 
     target_1d = log_close.shift(-cfg.forecast.auxiliary_horizon_days) - log_close
@@ -762,6 +795,7 @@ def build_tft_dataframe(
     # ---- Assemble master DataFrame ----
     parts = [
         price_features,
+        theta_prior_series_pre.to_frame(),
         sent_aligned[sentiment_cols],
         advanced_sent,
         emb_features,
@@ -820,22 +854,26 @@ def build_tft_dataframe(
         "realized_vol_20d",
         "material_move_5d",
     }
-    all_feature_cols = [c for c in master.columns if c not in non_feature_cols]
+    unsigned_vol_cols = {c for c in master.columns if _is_unsigned_vol_feature(c)}
+    all_feature_cols = [
+        c for c in master.columns
+        if c not in non_feature_cols and c not in unsigned_vol_cols
+    ]
     time_varying_known = [c for c in TFT_KNOWN_CALENDAR_FEATURES if c in master.columns]
     time_varying_unknown = [c for c in all_feature_cols if c not in calendar_col_set]
 
     from deep_learning.data.regime_features import REGIME_FEATURES
 
     target_prefix = target_symbol.replace(".", "_").replace("-", "_")
+    theta_prior_col = f"{target_prefix}_theta_5d_prior"
     core_target_candidates = [
         f"{target_prefix}_{suffix}"
         for suffix in (
             "ret1",
             "ret5",
             "ret10",
-            "ret20",
             "close_sma_20_ratio",
-            "vol_10",
+            "risk_adj_ret10",
         )
     ]
     forced_unknown = [c for c in core_target_candidates if c in master.columns]
@@ -856,6 +894,9 @@ def build_tft_dataframe(
     # ---- 7. MRMR & training-health feature selection ----
     # Fit on chronological training partition only to avoid lookahead leakage, and
     # prune zero-variance / sparse-backfill columns before model capacity is wasted.
+    theta_prior_backup = (
+        master[theta_prior_col].copy() if theta_prior_col in master.columns else None
+    )
     if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > 0:
         from deep_learning.data.feature_selection import select_features
 
@@ -872,11 +913,13 @@ def build_tft_dataframe(
             mrmr_top_k=cfg.feature_store.mrmr_top_k,
             known_features=time_varying_known,
             forced_unknown_features=forced_unknown,
-            forbidden_features=list(non_feature_cols | excluded_calendar_cols),
+            forbidden_features=list(non_feature_cols | excluded_calendar_cols | unsigned_vol_cols),
             selection_df=master.iloc[:train_size],
             max_per_group=2,
             group_prefixes=group_prefixes,
         )
+    if theta_prior_backup is not None and theta_prior_col not in master.columns:
+        master[theta_prior_col] = theta_prior_backup.reindex(master.index).fillna(0.0)
 
     from deep_learning.data.validation import validate_weekly_target_contract
 

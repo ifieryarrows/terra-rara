@@ -83,9 +83,9 @@ def build_datasets(
         time_varying_known_reals=time_varying_known_reals,
         static_categoricals=["group_id"],
         target_normalizer=_identity_target_normalizer(),
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
+        add_relative_time_idx=False,
+        add_target_scales=False,
+        add_encoder_length=False,
         allow_missing_timesteps=True,
     )
 
@@ -207,9 +207,9 @@ def build_cv_folds(
             time_varying_known_reals=time_varying_known_reals,
             static_categoricals=["group_id"],
             target_normalizer=_identity_target_normalizer(),
-            add_relative_time_idx=True,
-            add_target_scales=True,
-            add_encoder_length=True,
+            add_relative_time_idx=False,
+            add_target_scales=False,
+            add_encoder_length=False,
             allow_missing_timesteps=True,
         )
 

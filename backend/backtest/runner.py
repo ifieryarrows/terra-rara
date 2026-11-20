@@ -765,6 +765,9 @@ class TFTBacktestRunner:
         self.run_id = f"tft-backtest-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self.last_walkforward_report: dict[str, Any] = {}
         self.last_theta_comparison: dict[str, Any] = {}
+        self.last_split_dates: dict[str, Any] = {}
+        self.last_strict_oos_report: dict[str, Any] = {}
+        self.last_strict_oos_theta_comparison: dict[str, Any] = {}
         self._last_known_price: float = float("nan")
 
     def _ensure_tft_artifacts(self, cfg) -> Path:
@@ -805,6 +808,17 @@ class TFTBacktestRunner:
         except Exception as exc:
             logger.debug("Could not load conformal_calibration.json: %s", exc)
         return None
+
+    def _load_metadata_artifact(self, tft_dir: Path) -> dict:
+        meta_path = tft_dir / "tft_metadata.json"
+        if not meta_path.exists():
+            return {}
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception as exc:
+            logger.debug("Could not load tft_metadata.json: %s", exc)
+            return {}
 
     def _build_eval_dataframe(self, cfg, checkpoint_features: list[str]) -> pd.DataFrame:
         """Build TFT evaluation DataFrame using DB session when available, else yfinance."""
@@ -939,15 +953,47 @@ class TFTBacktestRunner:
         cfg = get_tft_config()
         ckpt_path = self._ensure_tft_artifacts(cfg)
         cqr_artifact = self._load_cqr_artifact(ckpt_path.parent)
+        metadata = self._load_metadata_artifact(ckpt_path.parent)
+        split_dates = metadata.get("split_dates") if isinstance(metadata.get("split_dates"), dict) else {}
+        hybrid_blend = metadata.get("hybrid_blend") if isinstance(metadata.get("hybrid_blend"), dict) else {}
+        self.last_split_dates = dict(split_dates)
+        self.last_strict_oos_report = {}
+        self.last_strict_oos_theta_comparison = {}
 
         model = load_tft_model(ckpt_path)
+        ensemble_models = [model]
+        raw_ensemble_names = metadata.get("ensemble_checkpoints") or []
+        if isinstance(raw_ensemble_names, list):
+            for name in raw_ensemble_names:
+                if not name or str(name) == ckpt_path.name:
+                    continue
+                extra_ckpt = ckpt_path.parent / str(name)
+                if extra_ckpt.exists():
+                    try:
+                        ensemble_models.append(load_tft_model(extra_ckpt))
+                    except Exception as exc:
+                        logger.debug("Skipping optional backtest ensemble member %s: %s", extra_ckpt, exc)
+
         dataset_params = _checkpoint_dataset_parameters(model)
         checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(dataset_params)
         encoder_length = int(dataset_params["max_encoder_length"])
         horizon = int(dataset_params["max_prediction_length"])
         quantiles = list(getattr(getattr(model, "loss", None), "quantiles", cfg.model.quantiles))
 
-        df = self._build_eval_dataframe(cfg, checkpoint_unknown + checkpoint_known)
+        eval_features = list(checkpoint_unknown + checkpoint_known)
+        prior_candidates: tuple[str, ...] = ()
+        if hybrid_blend.get("enabled"):
+            prior_feat = str(hybrid_blend.get("prior_feature", "HG=F_theta_5d_prior"))
+            prior_candidates = (
+                prior_feat,
+                prior_feat.replace(".", "_").replace("-", "_"),
+                prior_feat.replace(".", "_").replace("-", "_").replace("=", "_"),
+            )
+            for cand in prior_candidates:
+                if cand not in eval_features:
+                    eval_features.append(cand)
+
+        df = self._build_eval_dataframe(cfg, eval_features)
 
         oos_start_ts = pd.Timestamp(self.config.oos_start)
         oos_mask = df.index >= oos_start_ts
@@ -984,6 +1030,16 @@ class TFTBacktestRunner:
             y_val = None
 
         pred_np = pred_t.detach().cpu().numpy() if hasattr(pred_t, "detach") else np.asarray(pred_t)
+        if len(ensemble_models) > 1:
+            member_preds = [pred_np]
+            for extra_mdl in ensemble_models[1:]:
+                extra_out = extra_mdl.predict(dl, mode="quantiles")
+                extra_t = extra_out.output if hasattr(extra_out, "output") else extra_out
+                extra_np = extra_t.detach().cpu().numpy() if hasattr(extra_t, "detach") else np.asarray(extra_t)
+                member_preds.append(extra_np)
+            pred_np = np.mean(np.stack(member_preds, axis=0), axis=0)
+            logger.info("TFT backtest averaged %d ensemble checkpoints", len(member_preds))
+
         if y_val is not None:
             y_np = y_val.detach().cpu().numpy() if hasattr(y_val, "detach") else np.asarray(y_val)
         else:
@@ -1000,6 +1056,20 @@ class TFTBacktestRunner:
             len(eval_df) - 1,
         )
         anchor_dates = eval_df.index[origin_pos]
+
+        if hybrid_blend.get("enabled"):
+            from deep_learning.calibration.hybrid import apply_theta_hybrid_shift_to_path
+
+            prior_col = next((c for c in prior_candidates if c in eval_df.columns), None)
+            if prior_col is not None:
+                theta_vals = eval_df[prior_col].to_numpy(dtype=float)[origin_pos]
+                pred_np = apply_theta_hybrid_shift_to_path(
+                    pred_np,
+                    theta_vals,
+                    hybrid_blend=hybrid_blend,
+                    quantiles=tuple(quantiles),
+                    horizon=horizon,
+                )
 
         # Enforce structural monotonicity and aggregate to 5-day cumulative log return quantiles
         median_idx = quantiles.index(0.50) if 0.50 in quantiles else len(quantiles) // 2
@@ -1120,6 +1190,52 @@ class TFTBacktestRunner:
         else:
             self.last_theta_comparison = {}
 
+        val_end_date = split_dates.get("val_end_date") if isinstance(split_dates, dict) else None
+        if val_end_date and not pred_df.empty:
+            try:
+                val_end_ts = pd.Timestamp(val_end_date).tz_localize(None).normalize()
+                pred_dates_norm = pd.to_datetime(pred_df["date"]).dt.tz_localize(None).dt.normalize()
+                strict_df = pred_df.loc[pred_dates_norm > val_end_ts].copy()
+                if len(strict_df) >= 15:
+                    strict_metrics = _compute_backtest_metrics(
+                        strict_df,
+                        annualisation=52.0,
+                        use_hac=True,
+                        metric_space="cumulative_log_return_5d",
+                    )
+                    strict_dates = pd.DatetimeIndex(strict_df["date"])
+                    self.last_strict_oos_report = {
+                        "n_predictions": int(len(strict_df)),
+                        "overlap_excluded_windows": int(len(pred_df) - len(strict_df)),
+                        "val_end_date": str(val_end_date),
+                        "start_date": strict_dates.min().date().isoformat(),
+                        "end_date": strict_dates.max().date().isoformat(),
+                        "metrics": asdict(strict_metrics),
+                    }
+                    if len(theta_input) >= 80:
+                        strict_theta = theta_backtest(
+                            theta_input,
+                            horizon=horizon,
+                            n_windows=len(strict_df),
+                            return_mode="cumulative",
+                            use_log_return=True,
+                            annualisation=52.0,
+                            eval_dates=strict_dates,
+                        )
+                        if "error" not in strict_theta:
+                            strict_base = {
+                                "summary": {
+                                    "mean_da": strict_metrics.directional_accuracy,
+                                    "mean_sharpe": strict_metrics.sharpe_ratio,
+                                    "mean_mae": strict_metrics.mae,
+                                }
+                            }
+                            strict_comp = compare_with_baseline(strict_base, strict_theta)
+                            strict_comp["theta"] = strict_theta
+                            self.last_strict_oos_theta_comparison = strict_comp
+            except Exception as strict_exc:
+                logger.debug("Strict OOS segmentation skipped: %s", strict_exc)
+
         return metrics, pred_df
 
     def compare_with_xgboost(
@@ -1169,6 +1285,9 @@ class TFTBacktestRunner:
             "tft_walkforward_summary": self.last_walkforward_report.get("summary", {}),
             "windows": self.last_walkforward_report.get("windows", []),
             "theta_comparison": theta_comp,
+            "split_dates": self.last_split_dates,
+            "strict_oos": self.last_strict_oos_report,
+            "strict_oos_theta_comparison": self.last_strict_oos_theta_comparison,
             "verdict": verdict,
             "delta_mae_pct": round(delta_mae, 2),
             "delta_mae_basis": "mae_vs_naive_zero",
@@ -1252,6 +1371,9 @@ def _persist_tft_report_to_db(tft_comparison: dict) -> None:
             "delta_dir_acc_pct": tft_comparison.get("delta_dir_acc_pct"),
             "tft_better_mae": tft_comparison.get("tft_better_mae"),
             "tft_better_dir": tft_comparison.get("tft_better_dir"),
+            "split_dates": tft_comparison.get("split_dates") or {},
+            "strict_oos": tft_comparison.get("strict_oos") or {},
+            "strict_oos_theta_comparison": tft_comparison.get("strict_oos_theta_comparison") or {},
         }
     )
     theta_comp = _to_json_safe(tft_comparison.get("theta_comparison") or {})

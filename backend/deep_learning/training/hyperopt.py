@@ -61,15 +61,15 @@ FOLD_SHARPE_PRUNE_THRESHOLD = -1.50
 
 KNOWN_GOOD_TRIAL_PARAMS = {
     "max_encoder_length": 15,
-    "hidden_size": 16,
-    "hidden_continuous_size": 8,
-    "attention_head_size": 2,
-    "dropout": 0.25,
-    "learning_rate": 6e-4,
-    "output_head_lr_mult": 0.25,
-    "weight_decay": 5e-3,
-    "lambda_t1_quantile": 0.15,
-    "lambda_drift_prior": 0.5,
+    "hidden_size": 12,
+    "hidden_continuous_size": 6,
+    "attention_head_size": 1,
+    "dropout": 0.30,
+    "learning_rate": 5e-4,
+    "output_head_lr_mult": 0.20,
+    "weight_decay": 1.5e-2,
+    "lambda_t1_quantile": 0.20,
+    "lambda_drift_prior": 2.0,
     "lambda_directional": 0.15,
 }
 
@@ -524,18 +524,18 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     model_cfg = TFTModelConfig(
         max_encoder_length=int(trial.suggest_categorical("max_encoder_length", [10, 15, 20])),
         max_prediction_length=base_cfg.model.max_prediction_length,
-        hidden_size=int(trial.suggest_categorical("hidden_size", [12, 16, 24])),
+        hidden_size=int(trial.suggest_categorical("hidden_size", [8, 12])),
         attention_head_size=int(trial.suggest_categorical("attention_head_size", [1, 2])),
-        dropout=float(trial.suggest_categorical("dropout", [0.15, 0.25, 0.35])),
-        hidden_continuous_size=int(trial.suggest_categorical("hidden_continuous_size", [6, 8, 12])),
+        dropout=float(trial.suggest_categorical("dropout", [0.25, 0.30, 0.40])),
+        hidden_continuous_size=int(trial.suggest_categorical("hidden_continuous_size", [4, 6])),
         quantiles=base_cfg.model.quantiles,
-        learning_rate=float(trial.suggest_float("learning_rate", 3e-4, 2e-3, log=True)),
+        learning_rate=float(trial.suggest_float("learning_rate", 2e-4, 8e-4, log=True)),
         output_head_lr_mult=float(
-            trial.suggest_categorical("output_head_lr_mult", [0.15, 0.25, 0.40])
+            trial.suggest_categorical("output_head_lr_mult", [0.15, 0.20, 0.25])
         ),
         reduce_on_plateau_patience=4,
         gradient_clip_val=base_cfg.model.gradient_clip_val,
-        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-3, 5e-3, 1e-2])),
+        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-2, 1.5e-2, 3e-2])),
     )
 
     asro_cfg = ASROConfig(
@@ -547,14 +547,14 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
 
     weekly_loss_cfg = WeeklyLossConfig(
         lambda_weekly_quantile=1.00,
-        lambda_t1_quantile=float(trial.suggest_categorical("lambda_t1_quantile", [0.05, 0.15, 0.25])),
+        lambda_t1_quantile=float(trial.suggest_categorical("lambda_t1_quantile", [0.15, 0.20, 0.25])),
         lambda_t1_directional=0.0,
         lambda_dispersion=0.0,
         lambda_magnitude=0.0,
         lambda_naive=0.0,
         lambda_bias=0.0,
-        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.25, 0.5, 1.0])),
-        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.05, 0.15, 0.30])),
+        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [1.5, 2.0, 3.5])),
+        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.05, 0.15, 0.25])),
         lambda_saturation=0.0,
         lambda_positive_rate=0.0,
         lambda_interval=0.0,

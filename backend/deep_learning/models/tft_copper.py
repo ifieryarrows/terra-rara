@@ -726,10 +726,17 @@ try:
             effective_weekly_median = 0.80 * pred_weekly_median + 0.20 * raw_pred_weekly_median
             eps = self.sharpe_eps
 
-            # Smooth, scale-matched ASRO directional utility (slope 1/scale_w prevents outward median bloat)
+            # Demeaned, scale-matched ASRO directional utility: adding any constant
+            # bullish/bearish offset gives strictly zero reward on mixed batches.
             if self.lambda_directional != 0.0:
-                pos = torch.tanh(effective_weekly_median / scale_w)
-                norm_actual = actual_weekly.detach() / scale_w
+                actual_det = actual_weekly.detach()
+                if actual_det.numel() > 1 and float(actual_det.std(unbiased=False)) > 1e-6:
+                    pred_for_dir = effective_weekly_median - effective_weekly_median.mean()
+                    norm_actual = (actual_det - actual_det.mean()) / scale_w
+                else:
+                    pred_for_dir = effective_weekly_median
+                    norm_actual = actual_det / scale_w
+                pos = torch.tanh(pred_for_dir / scale_w)
                 directional_loss = (norm_actual.abs() - pos * norm_actual).mean()
             else:
                 directional_loss = zero

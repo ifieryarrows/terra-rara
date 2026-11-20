@@ -707,7 +707,7 @@ def test_weekly_loss_drift_prior_and_adamw_differential_head_lr():
     loss_fn = WeeklyASROPFLoss(quantiles=list(QUANTILES), lambda_weekly_quantile=0.0, lambda_t1_quantile=0.0, lambda_bias=0.0, lambda_drift_prior=1.0, lambda_directional=0.0)
     assert loss_fn.loss(pred_zero, actual) < loss_fn.loss(pred_drifted, actual)
 
-    n = 40
+    n = 80
     df = pd.DataFrame(
         {
             "time_idx": np.arange(n),
@@ -1333,9 +1333,9 @@ def test_differential_optimizer_decouples_output_head_weights_from_biases():
         time_varying_known_reals=["day_of_week"],
         static_categoricals=["group_id"],
         target_normalizer=_identity_target_normalizer(),
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
+        add_relative_time_idx=False,
+        add_target_scales=False,
+        add_encoder_length=False,
     )
     model = create_tft_model(ds, cfg, use_asro=True, weekly_target_scale=0.025)
     opt_cfg = model.configure_optimizers()
@@ -1477,6 +1477,280 @@ def test_optuna_weekly_objective_prefers_signal_model_over_flat_hedger_and_overd
 
     assert signal_score < flat_hedger_score
     assert signal_score < overdispersed_score
+
+
+def test_tft_datasets_disable_constant_static_bias_channels():
+    from deep_learning.data.dataset import build_cv_folds, build_datasets
+    from deep_learning.models.tft_copper import create_tft_model
+
+    n = 160
+    df = pd.DataFrame(
+        {
+            "time_idx": np.arange(n, dtype=int),
+            "group_id": "copper",
+            "target": np.sin(np.linspace(0, 12, n)).astype(np.float32) * 0.015,
+            "HG_F_ret1": np.cos(np.linspace(0, 12, n)).astype(np.float32) * 0.012,
+            "day_of_week": (np.arange(n) % 5).astype(np.float32),
+        }
+    )
+    cfg = get_tft_config()
+    cfg = replace(cfg, model=replace(cfg.model, max_encoder_length=10))
+    tr_ds, val_ds, _test_ds = build_datasets(df, ["HG_F_ret1"], ["day_of_week"], ["target"], cfg)
+    folds = build_cv_folds(df, ["HG_F_ret1"], ["day_of_week"], ["target"], cfg, n_folds=2)
+
+    for ds_item in (tr_ds, val_ds, folds[0][0], folds[0][1]):
+        assert "relative_time_idx" not in ds_item.reals
+        assert "target_center" not in ds_item.reals
+        assert "target_scale" not in ds_item.reals
+        assert "encoder_length" not in ds_item.reals
+
+    model = create_tft_model(tr_ds, cfg, use_asro=True, weekly_target_scale=0.03)
+    assert list(model.static_variables) == ["group_id"]
+    assert "relative_time_idx" not in model.encoder_variables
+    assert "relative_time_idx" not in model.decoder_variables
+
+
+def test_signed_risk_adjusted_features_macro_zscore_and_unsigned_vol_exclusion():
+    from deep_learning.calibration.hybrid import (
+        compute_causal_macro_fair_value_zscore,
+        compute_causal_theta_5d_series,
+    )
+    from deep_learning.data.feature_store import _is_unsigned_vol_feature
+
+    n = 90
+    idx = pd.bdate_range("2025-01-01", periods=n)
+    rng = np.random.default_rng(7)
+    hg_ret = rng.normal(0.0, 0.012, n)
+    hg_px = pd.DataFrame({"close": 4.5 * np.exp(np.cumsum(hg_ret))}, index=idx)
+    macro_px = pd.DataFrame({"close": 100.0 * np.exp(np.cumsum(rng.normal(0.0, 0.008, n)))}, index=idx)
+
+    hg_feat = generate_symbol_features(hg_px, "HG=F", include_raw_ma=False)
+    macro_feat = generate_symbol_features(macro_px, "DX-Y.NYB", include_raw_ma=False)
+    combined = pd.concat([hg_feat, macro_feat], axis=1)
+
+    assert "HG=F_risk_adj_ret5" in hg_feat.columns
+    assert "HG=F_risk_adj_ret10" in hg_feat.columns
+    assert "HG=F_risk_adj_ret20" in hg_feat.columns
+    assert "HG=F_signed_vol_ratio" in hg_feat.columns
+    assert hg_feat["HG=F_risk_adj_ret10"].dropna().between(-5.0, 5.0).all()
+
+    fv = compute_causal_macro_fair_value_zscore(combined, target_prefix="HG=F", window=50, min_periods=30)
+    assert len(fv) == n
+    assert float(fv.iloc[-30:].std()) > 0.1
+    assert fv.between(-4.0, 4.0).all()
+
+    th = compute_causal_theta_5d_series(hg_px["close"], horizon=5, min_window=40, max_eval_tail=20)
+    assert len(th) == n
+    assert (th.iloc[:-20] == 0.0).all()
+    assert th.iloc[-20:].abs().max() > 0.0
+
+    assert _is_unsigned_vol_feature("CEW_vol_10") is True
+    assert _is_unsigned_vol_feature("HG_F_vol_5_20_ratio") is True
+    assert _is_unsigned_vol_feature("HG_F_signed_vol_ratio") is False
+    assert _is_unsigned_vol_feature("HG_F_risk_adj_ret10") is False
+
+
+def test_demeaned_asro_directional_loss_is_invariant_to_constant_bullish_drift():
+    loss_fn = WeeklyASROPFLoss(
+        quantiles=list(QUANTILES),
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_drift_prior=0.0,
+        lambda_directional=1.0,
+    )
+    # Positive drift in actuals (+0.008 mean) with zero conditional spread across two constant forecasts
+    actual = torch.tensor(
+        [
+            [0.004, 0.004, 0.004, 0.004, 0.004],
+            [-0.002, -0.002, -0.002, -0.002, -0.002],
+            [0.005, 0.005, 0.005, 0.005, 0.005],
+            [-0.001, -0.001, -0.001, -0.001, -0.001],
+        ],
+        dtype=torch.float32,
+    )
+    const_zero = torch.zeros(4, 5, 7, dtype=torch.float32)
+    const_bull = torch.zeros(4, 5, 7, dtype=torch.float32)
+    const_bull[..., 3] = 0.005  # Constant always-positive prediction
+
+    # Constant predictions yield identical demeaned loss (no free reward for constant bullish bias)
+    assert torch.isclose(loss_fn.loss(const_bull, actual), loss_fn.loss(const_zero, actual), atol=1e-6)
+
+    # Conditional covariance with demeaned returns reduces loss strictly
+    actual_weekly = actual.sum(dim=1)
+    centered_sig = (actual_weekly - actual_weekly.mean()) / 5.0
+    good_cond = torch.zeros(4, 5, 7, dtype=torch.float32)
+    good_cond[..., 3] = centered_sig.unsqueeze(1)
+    assert loss_fn.loss(good_cond, actual) < loss_fn.loss(const_bull, actual)
+
+
+def test_theta_hybrid_blend_preserves_monotonicity_and_enforces_tft_floor():
+    from deep_learning.calibration.hybrid import (
+        apply_theta_hybrid_shift_to_path,
+        fit_theta_hybrid_blend,
+    )
+    from deep_learning.models.monotonic_quantiles import enforce_monotonic_quantiles
+
+    rng = np.random.default_rng(19)
+    n = 90
+    theta_sig = rng.normal(0.0, 0.025, n)
+    actual = 0.7 * theta_sig + rng.normal(0.0, 0.015, n)
+    tft_noisy = rng.normal(0.0, 0.005, n)
+
+    blend = fit_theta_hybrid_blend(actual, tft_noisy, theta_sig, min_tft_weight=0.35, max_theta_weight=0.65)
+    assert blend["enabled"] is True
+    assert blend["w_tft"] >= 0.35
+    assert blend["w_theta"] <= 0.65
+    assert blend["val_hybrid_da"] > blend["val_tft_da"]
+
+    raw_path = np.zeros((10, 5, 7), dtype=np.float64)
+    raw_path[..., :] = np.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0])
+    raw_path[..., 3] = tft_noisy[:10, None] / 5.0
+
+    shifted = apply_theta_hybrid_shift_to_path(
+        raw_path,
+        theta_sig[:10],
+        hybrid_blend=blend,
+        quantiles=QUANTILES,
+        horizon=5,
+    )
+    ordered = enforce_monotonic_quantiles(torch.tensor(shifted, dtype=torch.float32), median_idx=3)
+    weekly = aggregate_weekly_quantiles_np(ordered.numpy(), median_idx=3)
+    assert np.all(np.diff(weekly, axis=1) > 0.0)
+    expected_med = blend["w_tft"] * tft_noisy[:10] + blend["w_theta"] * theta_sig[:10]
+    assert np.allclose(weekly[:, 3], expected_med, atol=1e-5)
+
+
+def test_tft_backtest_runner_separates_strict_oos_from_validation_overlap(tmp_path, monkeypatch):
+    dates = pd.bdate_range("2025-11-03", periods=70)
+    rng = np.random.default_rng(99)
+    closes = 5.0 * np.exp(np.cumsum(rng.normal(0.0005, 0.01, len(dates))))
+    eval_df = pd.DataFrame(
+        {
+            "target": np.concatenate([[0.0], np.diff(np.log(closes))]),
+            "HG_F_ret1": rng.normal(0.0, 0.01, len(dates)),
+            "HG_F_theta_5d_prior": np.full(len(dates), 0.015),
+            "day_of_week": dates.dayofweek.astype(float),
+            "realized_vol_20d": np.full(len(dates), 0.02),
+            "time_idx": np.arange(len(dates), dtype=int),
+            "group_id": "copper",
+        },
+        index=dates,
+    )
+
+    val_end_date = dates[29].date().isoformat()
+    (tmp_path / "best_tft_asro.ckpt").write_text("stub")
+    (tmp_path / "tft_metadata.json").write_text(
+        json.dumps(
+            {
+                "split_dates": {"val_end_date": val_end_date},
+                "hybrid_blend": {
+                    "enabled": True,
+                    "prior_feature": "HG=F_theta_5d_prior",
+                    "w_tft": 0.5,
+                    "w_theta": 0.5,
+                },
+                "ensemble_checkpoints": ["best_tft_asro.ckpt"],
+            }
+        )
+    )
+
+    class FakeModel:
+        class loss:
+            quantiles = list(QUANTILES)
+
+        def predict(self, dl, mode="quantiles", return_y=False):
+            n_items = len(dl.dataset)
+            preds = torch.zeros((n_items, 5, 7), dtype=torch.float32)
+            preds[..., :] = torch.tensor([-2.5, -1.8, -1.5, 0.001, -1.5, -1.8, -2.5])
+            if return_y:
+                ys = torch.cat([b[1][0] for b in dl])
+                return SimpleNamespace(output=preds, y=(ys,))
+            return preds
+
+    runner = TFTBacktestRunner(
+        BacktestConfig(
+            oos_start=dates[15].date().isoformat(),
+            oos_end=dates[-1].date().isoformat(),
+        )
+    )
+    monkeypatch.setattr(runner, "_ensure_tft_artifacts", lambda _cfg: tmp_path / "best_tft_asro.ckpt")
+    monkeypatch.setattr(runner, "_build_eval_dataframe", lambda _cfg, _feats: eval_df.copy())
+    monkeypatch.setattr(
+        runner,
+        "_resolve_target_close_series",
+        lambda _cfg, _df, last_known_price=float("nan"): pd.Series(closes, index=dates),
+    )
+    monkeypatch.setattr("deep_learning.models.tft_copper.load_tft_model", lambda _p: FakeModel())
+    monkeypatch.setattr(
+        "deep_learning.inference.predictor._checkpoint_dataset_parameters",
+        lambda _m: {
+            "time_idx": "time_idx",
+            "target": "target",
+            "group_ids": ["group_id"],
+            "max_encoder_length": 10,
+            "max_prediction_length": 5,
+            "time_varying_unknown_reals": ["HG_F_ret1"],
+            "time_varying_known_reals": ["day_of_week"],
+            "static_categoricals": ["group_id"],
+            "allow_missing_timesteps": True,
+        },
+    )
+    monkeypatch.setattr(
+        "deep_learning.inference.predictor._checkpoint_feature_contract",
+        lambda _p: (["HG_F_ret1"], ["day_of_week"]),
+    )
+
+    metrics, pred_df = runner.run_backtest(["DX-Y.NYB"])
+    assert len(pred_df) > runner.last_strict_oos_report["n_predictions"] >= 15
+    assert runner.last_strict_oos_report["val_end_date"] == val_end_date
+    assert runner.last_strict_oos_report["overlap_excluded_windows"] > 0
+    # Blended median = 0.5*(5*0.001) + 0.5*0.015 = 0.010
+    assert pred_df["pred_return"].iloc[0] == pytest.approx(0.010, abs=1e-4)
+    assert metrics.mae >= 0.0
+
+
+def test_dedup_price_bars_dry_run_and_apply_on_sqlite():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    from app.models import PriceBar
+    from scripts.dedup_price_bars import dedup_price_bars
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    try:
+        with Session() as session:
+            session.add_all(
+                [
+                    PriceBar(symbol="HG=F", date=datetime(2025, 11, 18, 5, 0), close=4.50),
+                    PriceBar(symbol="HG=F", date=datetime(2025, 11, 18, 17, 0), close=4.55),
+                    PriceBar(symbol="HG=F", date=datetime(2025, 11, 19, 0, 0), close=4.60),
+                ]
+            )
+            session.commit()
+
+            dry = dedup_price_bars(session, dry_run=True)
+            assert dry["mode"] == "dry_run"
+            assert dry["duplicate_groups"] == 1
+            assert dry["rows_to_delete"] == 1
+            assert session.query(PriceBar).count() == 3
+
+            applied = dedup_price_bars(session, dry_run=False)
+            assert applied["mode"] == "apply"
+            assert applied["rows_deleted"] == 1
+            remaining = session.query(PriceBar).order_by(PriceBar.date.asc()).all()
+            assert len(remaining) == 2
+            assert remaining[0].close == pytest.approx(4.55)
+            assert remaining[0].date == datetime(2025, 11, 18, 0, 0)
+    finally:
+        engine.dispose()
+
 
 
 

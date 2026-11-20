@@ -23,6 +23,8 @@ _HF_TOKEN_ENV = "HF_TOKEN"
 
 _ARTIFACTS = [
     "best_tft_asro.ckpt",
+    "best_tft_asro_seed1.ckpt",
+    "best_tft_asro_seed2.ckpt",
     "tft_metadata.json",
     "conformal_calibration.json",
     "pca_finbert.joblib",

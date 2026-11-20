@@ -125,24 +125,24 @@ def _configure_tft_reproducibility() -> None:
 
 KNOWN_GOOD_CONFIG = {
     "max_encoder_length": 15,
-    "hidden_size": 16,
-    "attention_head_size": 2,
-    "dropout": 0.25,
-    "hidden_continuous_size": 8,
-    "learning_rate": 6e-4,
-    "output_head_lr_mult": 0.25,
-    "weight_decay": 5e-3,
+    "hidden_size": 12,
+    "attention_head_size": 1,
+    "dropout": 0.30,
+    "hidden_continuous_size": 6,
+    "learning_rate": 5e-4,
+    "output_head_lr_mult": 0.20,
+    "weight_decay": 1.5e-2,
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 1.00,
-    "lambda_t1_quantile": 0.15,
+    "lambda_t1_quantile": 0.20,
     "lambda_t1_directional": 0.0,
     "lambda_dispersion": 0.0,
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 0.5,
+    "lambda_drift_prior": 2.0,
     "lambda_directional": 0.15,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
@@ -544,6 +544,173 @@ def _log_weekly_alignment_sample(
         )
 
 
+def _iso_index_date(value) -> Optional[str]:
+    """Convert a DataFrame index label to YYYY-MM-DD when date-like."""
+    if value is None or isinstance(value, (int, np.integer)):
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        if pd.notna(ts):
+            return ts.date().isoformat()
+    except Exception:
+        return None
+    return None
+
+
+def _compute_split_dates(master_df: pd.DataFrame, *, train_size: int, val_size: int) -> dict[str, Optional[str]]:
+    """Record ISO date boundaries for chronological train / val / test partitions."""
+    if master_df.empty:
+        return {}
+    n = len(master_df)
+    tr_end = max(0, min(train_size - 1, n - 1))
+    val_start = max(0, min(train_size, n - 1))
+    val_end = max(val_start, min(train_size + val_size - 1, n - 1))
+    test_start = min(train_size + val_size, n - 1)
+    return {
+        "train_start_date": _iso_index_date(master_df.index[0]),
+        "train_end_date": _iso_index_date(master_df.index[tr_end]),
+        "val_start_date": _iso_index_date(master_df.index[val_start]),
+        "val_end_date": _iso_index_date(master_df.index[val_end]),
+        "test_start_date": _iso_index_date(master_df.index[test_start]),
+        "test_end_date": _iso_index_date(master_df.index[-1]),
+    }
+
+
+def _train_single_tft_seed(
+    *,
+    training_ds,
+    train_dl,
+    val_dl,
+    cfg: TFTASROConfig,
+    seed: int,
+    ckpt_dir: Path,
+    destination_path: Path,
+    use_asro: bool,
+    weekly_target_scale: Optional[float],
+    allow_soup: bool,
+):
+    """Train one deterministic TFT seed and promote its best validation checkpoint."""
+    import shutil
+    try:
+        import lightning.pytorch as pl
+        from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+    except ImportError:
+        import pytorch_lightning as pl  # type: ignore[no-redef]
+        from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # type: ignore[no-redef]
+
+    from deep_learning.models.tft_copper import create_tft_model, load_tft_model
+    from deep_learning.training.callbacks import (
+        CurriculumLossScheduler,
+        SWACallback,
+        WeeklyLossComponentLogger,
+    )
+
+    pl.seed_everything(int(seed), workers=True)
+    model = create_tft_model(
+        training_ds,
+        cfg,
+        use_asro=use_asro,
+        weekly_target_scale=weekly_target_scale,
+    )
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    monitor_metric = "val_loss"
+    callbacks = [
+        WeeklyLossComponentLogger(),
+        EarlyStopping(
+            monitor=monitor_metric,
+            patience=cfg.training.early_stopping_patience,
+            mode="min",
+            verbose=allow_soup,
+        ),
+        LearningRateMonitor(logging_interval="epoch"),
+        ModelCheckpoint(
+            dirpath=str(ckpt_dir),
+            filename="tft-asro-{epoch:02d}-{val_loss:.4f}",
+            monitor=monitor_metric,
+            mode="min",
+            save_top_k=3 if allow_soup else 1,
+            save_last=allow_soup,
+        ),
+    ]
+    if use_asro and cfg.forecast.primary_horizon_days != 5:
+        callbacks.append(CurriculumLossScheduler(
+            warmup_epochs=10,
+            initial_lambda_quantile=0.65,
+            target_lambda_quantile=cfg.asro.lambda_quantile,
+            initial_lambda_madl=0.05,
+            target_lambda_madl=cfg.asro.lambda_madl,
+        ))
+    callbacks.append(SWACallback(swa_start_pct=0.75))
+
+    n_batches = len(train_dl)
+    log_steps = max(1, min(5, n_batches))
+    trainer = pl.Trainer(
+        max_epochs=cfg.training.max_epochs,
+        accelerator="auto",
+        gradient_clip_val=cfg.model.gradient_clip_val,
+        callbacks=callbacks,
+        enable_progress_bar=allow_soup,
+        log_every_n_steps=log_steps,
+        deterministic=True,
+    )
+    logger.info("Starting TFT-ASRO training (seed=%d) ...", int(seed))
+    trainer.fit(model, train_dataloaders=train_dl, val_dataloaders=val_dl)
+
+    best_path = trainer.checkpoint_callback.best_model_path
+    checkpoint_selection = {
+        "fit_split": "validation",
+        "monitor": monitor_metric,
+        "method": "best_validation_checkpoint",
+        "source_count": 0,
+        "source_checkpoints": [],
+        "source_scores": [],
+        "test_labels_used": False,
+        "seed": int(seed),
+    }
+    if best_path:
+        source_count = 2 if (allow_soup and use_asro and cfg.forecast.primary_horizon_days == 5) else 1
+        ranked_checkpoints = _validation_ranked_checkpoint_paths(
+            trainer.checkpoint_callback,
+            max_count=source_count,
+        )
+        source_paths = [path for path, _score in ranked_checkpoints]
+        _build_uniform_checkpoint_soup(source_paths, destination_path)
+        if len(source_paths) > 1:
+            best_score = float(ranked_checkpoints[0][1])
+            soup_accepted = False
+            try:
+                souped_model = load_tft_model(str(destination_path))
+                val_results = trainer.validate(souped_model, dataloaders=val_dl, verbose=False)
+                soup_score = float((val_results[0] if val_results else {}).get(monitor_metric, float("inf")))
+                if math.isfinite(soup_score) and soup_score <= best_score:
+                    checkpoint_selection["method"] = "uniform_top2_weight_soup"
+                    checkpoint_selection["soup_val_score"] = soup_score
+                    soup_accepted = True
+                else:
+                    logger.info(
+                        "Reverting top-2 checkpoint soup (val=%.6f > best=%.6f) -> single best %s",
+                        soup_score,
+                        best_score,
+                        source_paths[0].name,
+                    )
+            except Exception as exc:
+                logger.warning("Checkpoint soup validation failed (%s); keeping single best", exc)
+
+            if not soup_accepted:
+                shutil.copy2(source_paths[0], destination_path)
+                source_paths = [source_paths[0]]
+                ranked_checkpoints = [ranked_checkpoints[0]]
+                checkpoint_selection["method"] = "best_validation_checkpoint_soup_reverted"
+        checkpoint_selection.update(
+            {
+                "source_count": len(source_paths),
+                "source_checkpoints": [path.name for path in source_paths],
+                "source_scores": [score for _path, score in ranked_checkpoints],
+            }
+        )
+    return model, trainer, best_path, checkpoint_selection
+
+
 def train_tft_model(
     cfg: Optional[TFTASROConfig] = None,
     use_asro: bool = True,
@@ -651,6 +818,7 @@ def train_tft_model(
     train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
     val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
     max_time_idx = int(master_df["time_idx"].iloc[-1])
+    split_dates = _compute_split_dates(master_df, train_size=train_size, val_size=val_size)
     weekly_direction_model: dict = {
         "version": 1,
         "enabled": False,
@@ -703,223 +871,81 @@ def train_tft_model(
         val_scale_audit["target_scale_present"],
     )
 
-    # ---- 3. Model ----
-    weekly_target_scale = float(train_scale_audit.get("actual_weekly_std") or 0.0) or None
-    model = create_tft_model(
-        training_ds,
-        cfg,
-        use_asro=use_asro,
-        weekly_target_scale=weekly_target_scale,
+    # ---- 3-6. Multi-seed TFT-ASRO training & validation checkpoint promotion ----
+    from deep_learning.calibration.hybrid import (
+        apply_theta_hybrid_shift_to_path,
+        fit_theta_hybrid_blend,
     )
+    from deep_learning.models.tft_copper import load_tft_model
 
-    # Log active config so every run is fully reproducible from logs
-    n_batches = len(train_dl)
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(
-        "Training config | hidden=%d hidden_cont=%d dropout=%.2f "
-        "heads=%d lr=%.0e clip=%.1f",
-        cfg.model.hidden_size, cfg.model.hidden_continuous_size,
-        cfg.model.dropout, cfg.model.attention_head_size,
-        cfg.model.learning_rate, cfg.model.gradient_clip_val,
-    )
-    if cfg.forecast.primary_horizon_days == 5:
-        logger.info(
-            "Training data  | samples=%d batch_size=%d batches/epoch=%d patience=%d",
-            len(training_ds), cfg.training.batch_size, n_batches,
-            cfg.training.early_stopping_patience,
-        )
-        logger.info(
-            "Weekly loss   | weekly_q=%.2f t1_q=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f bias=%.2f directional=%.2f saturation=%.2f "
-            "positive_rate=%.2f interval=%.2f "
-            "median_cap=%.6f "
-            "monotonic_transform=true",
-            cfg.weekly_loss.lambda_weekly_quantile,
-            cfg.weekly_loss.lambda_t1_quantile,
-            cfg.weekly_loss.lambda_dispersion,
-            cfg.weekly_loss.lambda_magnitude,
-            cfg.weekly_loss.lambda_naive,
-            cfg.weekly_loss.lambda_bias,
-            cfg.weekly_loss.lambda_directional,
-            cfg.weekly_loss.lambda_saturation,
-            cfg.weekly_loss.lambda_positive_rate,
-            cfg.weekly_loss.lambda_interval,
-            cfg.weekly_loss.weekly_median_cap or 0.0,
+    weekly_target_scale = float(train_scale_audit.get("actual_weekly_std") or 0.0) or None
+    ckpt_dir = Path(cfg.training.checkpoint_dir)
+    final_path = Path(cfg.training.best_model_path)
+    configured_seeds = tuple(getattr(cfg.training, "ensemble_seeds", (cfg.training.seed,)) or (cfg.training.seed,))
+    if use_asro and cfg.forecast.primary_horizon_days == 5 and len(configured_seeds) > 1:
+        ensemble_seeds = (int(cfg.training.seed),) + tuple(
+            int(s) for s in configured_seeds[1:] if int(s) != int(cfg.training.seed)
         )
     else:
-        logger.info(
-            "Training data  | samples=%d batch_size=%d batches/epoch=%d "
-            "patience=%d w_quantile=%.2f w_sharpe=%.2f lambda_vol=%.2f",
-            len(training_ds), cfg.training.batch_size, n_batches,
-            cfg.training.early_stopping_patience,
-            cfg.asro.lambda_quantile, 1.0 - cfg.asro.lambda_quantile,
-            cfg.asro.lambda_vol,
+        ensemble_seeds = (int(cfg.training.seed),)
+
+    ensemble_ckpt_paths: list[Path] = []
+    primary_model = None
+    primary_trainer = None
+    primary_best_path = ""
+    checkpoint_selection: dict = {}
+
+    for seed_idx, seed_val in enumerate(ensemble_seeds):
+        member_ckpt_dir = ckpt_dir if seed_idx == 0 else ckpt_dir / f"seed_{seed_val}"
+        member_dest = final_path if seed_idx == 0 else final_path.parent / f"best_tft_asro_seed{seed_idx}.ckpt"
+        mdl, trn, bpath, sel = _train_single_tft_seed(
+            training_ds=training_ds,
+            train_dl=train_dl,
+            val_dl=val_dl,
+            cfg=cfg,
+            seed=seed_val,
+            ckpt_dir=member_ckpt_dir,
+            destination_path=member_dest,
+            use_asro=use_asro,
+            weekly_target_scale=weekly_target_scale,
+            allow_soup=(seed_idx == 0),
         )
-    logger.info(
-        "Model params   | total=%s trainable=%s",
-        f"{total_params:,}", f"{trainable_params:,}",
-    )
-
-    # ---- 4. Callbacks ----
-    ckpt_dir = Path(cfg.training.checkpoint_dir)
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    # WeeklyASROPFLoss overrides Metric.update() so val_loss equals the exact
-    # undivided sample-weighted validation objective; WeeklyLossComponentLogger
-    # logs component breakdowns alongside val_loss.
-    monitor_metric = "val_loss"
-    checkpoint_filename = "tft-asro-{epoch:02d}-{val_loss:.4f}"
-
-    callbacks = [
-        # Must run before EarlyStopping/ModelCheckpoint so the monitored
-        # validation metric is present in callback_metrics for this epoch.
-        WeeklyLossComponentLogger(),
-        EarlyStopping(
-            monitor=monitor_metric,
-            patience=cfg.training.early_stopping_patience,
-            mode="min",
-            verbose=True,
-        ),
-        LearningRateMonitor(logging_interval="epoch"),
-        ModelCheckpoint(
-            dirpath=str(ckpt_dir),
-            filename=checkpoint_filename,
-            monitor=monitor_metric,
-            mode="min",
-            save_top_k=3,
-            save_last=True,
-        ),
-    ]
-
-    if use_asro and cfg.forecast.primary_horizon_days != 5:
-        callbacks.append(CurriculumLossScheduler(
-            warmup_epochs=10,
-            initial_lambda_quantile=0.65,
-            target_lambda_quantile=cfg.asro.lambda_quantile,
-            initial_lambda_madl=0.05,
-            target_lambda_madl=cfg.asro.lambda_madl,
-        ))
-
-    callbacks.append(SWACallback(swa_start_pct=0.75))
-
-    # log_every_n_steps must not exceed the number of training batches
-    log_steps = max(1, min(5, n_batches))
-
-    # ---- 5. Train ----
-    trainer = pl.Trainer(
-        max_epochs=cfg.training.max_epochs,
-        accelerator="auto",
-        gradient_clip_val=cfg.model.gradient_clip_val,
-        callbacks=callbacks,
-        enable_progress_bar=True,
-        log_every_n_steps=log_steps,
-        deterministic=True,
-    )
-
-    logger.info("Starting TFT-ASRO training ...")
-    trainer.fit(model, train_dataloaders=train_dl, val_dataloaders=val_dl)
-
-    # ---- 6. Validation-ranked checkpoint promotion ----
-    # A single best epoch remained sensitive to small training-trajectory
-    # changes on an immutable snapshot. For weekly ASRO, average the two best
-    # validation checkpoints into one deployable checkpoint. This keeps live
-    # inference/calibration/gate evaluation aligned while reducing dependence
-    # on one noisy epoch; test labels are not available during this selection.
-    final_path = Path(cfg.training.best_model_path)
-    best_path = trainer.checkpoint_callback.best_model_path
-    checkpoint_selection = {
-        "fit_split": "validation",
-        "monitor": monitor_metric,
-        "method": "best_validation_checkpoint",
-        "source_count": 0,
-        "source_checkpoints": [],
-        "source_scores": [],
-        "test_labels_used": False,
-    }
-    if best_path:
-        import shutil
-        from deep_learning.models.tft_copper import load_tft_model
-
-        source_count = (
-            2 if use_asro and cfg.forecast.primary_horizon_days == 5 else 1
-        )
-        ranked_checkpoints = _validation_ranked_checkpoint_paths(
-            trainer.checkpoint_callback,
-            max_count=source_count,
-        )
-        source_paths = [path for path, _score in ranked_checkpoints]
-        _build_uniform_checkpoint_soup(source_paths, final_path)
-        if len(source_paths) > 1:
-            best_score = float(ranked_checkpoints[0][1])
-            soup_accepted = False
-            try:
-                souped_model = load_tft_model(str(final_path))
-                val_results = trainer.validate(souped_model, dataloaders=val_dl, verbose=False)
-                soup_score = float((val_results[0] if val_results else {}).get(monitor_metric, float("inf")))
-                if math.isfinite(soup_score) and soup_score <= best_score:
-                    checkpoint_selection["method"] = "uniform_top2_weight_soup"
-                    checkpoint_selection["soup_val_score"] = soup_score
-                    soup_accepted = True
-                else:
-                    logger.info(
-                        "Reverting top-2 checkpoint soup (val=%.6f > best=%.6f) -> single best %s",
-                        soup_score,
-                        best_score,
-                        source_paths[0].name,
-                    )
-            except Exception as exc:
-                logger.warning("Checkpoint soup validation failed (%s); keeping single best", exc)
-
-            if not soup_accepted:
-                shutil.copy2(source_paths[0], final_path)
-                source_paths = [source_paths[0]]
-                ranked_checkpoints = [ranked_checkpoints[0]]
-                checkpoint_selection["method"] = "best_validation_checkpoint_soup_reverted"
-        checkpoint_selection.update(
-            {
-                "source_count": len(source_paths),
-                "source_checkpoints": [path.name for path in source_paths],
-                "source_scores": [score for _path, score in ranked_checkpoints],
-            }
-        )
-        best_path = str(final_path)
-        logger.info(
-            "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s",
-            checkpoint_selection["method"],
-            checkpoint_selection["source_checkpoints"],
-            checkpoint_selection["source_scores"],
-            final_path,
-        )
-
-    # Calibration, gate evaluation, and live inference must all use the same
-    # promoted checkpoint.  ``trainer.fit`` leaves ``model`` at the last
-    # training state, while production loads ``best_tft_asro.ckpt``; using the
-    # former for validation calibration would make the persisted correction
-    # depend on a checkpoint that is never deployed.
-    evaluation_model = model
-    if best_path:
-        try:
-            from deep_learning.models.tft_copper import load_tft_model
-
-            evaluation_model = load_tft_model(str(best_path))
+        if seed_idx == 0:
+            primary_model = mdl
+            primary_trainer = trn
+            primary_best_path = bpath
+            checkpoint_selection = sel
+            n_batches = len(train_dl)
+            total_params = sum(p.numel() for p in primary_model.parameters())
+            trainable_params = sum(p.numel() for p in primary_model.parameters() if p.requires_grad)
             logger.info(
-                "Using promoted checkpoint for calibration and gate evaluation: %s",
-                best_path,
+                "Model params   | total=%s trainable=%s (batches/epoch=%d, seeds=%s)",
+                f"{total_params:,}", f"{trainable_params:,}", n_batches, list(ensemble_seeds),
             )
-        except Exception as exc:
-            logger.warning(
-                "Could not reload promoted checkpoint for evaluation; "
-                "using in-memory model: %s",
-                exc,
+            logger.info(
+                "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s",
+                checkpoint_selection["method"],
+                checkpoint_selection["source_checkpoints"],
+                checkpoint_selection["source_scores"],
+                final_path,
             )
+        if bpath and member_dest.exists():
+            ensemble_ckpt_paths.append(member_dest)
 
-    # ---- 7. Fit validation-only ordered Split CQR, then evaluate test ----
-    # Median point forecasts come directly from the trained proper-scoring model
-    # (without raw-logit sign/magnitude hacks). Uncertainty intervals [q10, q90]
-    # and [q02, q98] are calibrated in ordered weekly space on the chronological
-    # validation split using Volatility-Normalized Split CQR and evaluated identically
-    # on held-out test and live inference.
+    model = primary_model
+    trainer = primary_trainer
+    best_path = str(final_path) if primary_best_path else ""
+    ensemble_models = []
+    for path in ensemble_ckpt_paths:
+        try:
+            ensemble_models.append(load_tft_model(str(path)))
+        except Exception as exc:
+            logger.warning("Could not load ensemble checkpoint %s: %s", path, exc)
+    evaluation_model = ensemble_models[0] if ensemble_models else model
+    if not ensemble_models:
+        ensemble_models = [model]
+
+    # ---- 7. Ensemble val prediction -> Validation-only Hybrid Blend + Split CQR -> Test ----
     direction_calibration = {
         "fit_split": "validation",
         "sample_count": 0,
@@ -941,9 +967,20 @@ def train_tft_model(
         "validation_pi80_coverage": 0.0,
         "target_pi80_coverage": 0.80,
     }
+    hybrid_blend: dict = {
+        "enabled": False,
+        "fit_split": "validation",
+        "prior_feature": f"{cfg.feature_store.target_symbol.replace('.', '_').replace('-', '_')}_theta_5d_prior",
+        "w_tft": 1.0,
+        "w_theta": 0.0,
+        "sample_count": 0,
+        "reason": "not_evaluated",
+    }
     weekly_cqr_params: Optional[dict] = None
     val_actual_path = None
     val_pred_np = None
+    theta_prior_col = hybrid_blend["prior_feature"]
+
     try:
         from deep_learning.calibration.conformal import fit_weekly_cqr
         from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
@@ -953,9 +990,19 @@ def train_tft_model(
             monotonic_quantiles_np,
         )
 
-        val_pred_np, val_actual_path = _predict_quantiles_to_np(
-            evaluation_model, val_dl, cfg, return_y=True
+        val_pred_members = []
+        val_pred_0, val_actual_path = _predict_quantiles_to_np(
+            ensemble_models[0], val_dl, cfg, return_y=True
         )
+        val_pred_members.append(val_pred_0)
+        for extra_mdl in ensemble_models[1:]:
+            val_pred_members.append(_predict_quantiles_to_np(extra_mdl, val_dl, cfg, return_y=False))
+        val_pred_np = (
+            np.mean(np.stack(val_pred_members, axis=0), axis=0)
+            if len(val_pred_members) > 1
+            else val_pred_0
+        )
+
         if val_actual_path is not None and len(val_actual_path) > 0:
             n_val = min(len(val_actual_path), len(val_pred_np))
             direction_calibration["sample_count"] = int(n_val)
@@ -977,13 +1024,28 @@ def train_tft_model(
                 except Exception as vol_exc:
                     logger.debug("Validation realized_vol lookup skipped: %s", vol_exc)
 
+            val_theta_prior = None
+            if theta_prior_col in master_df.columns:
+                try:
+                    val_theta_prior = _dataset_origin_conditioning_values(
+                        master_df,
+                        validation_ds,
+                        feature_name=theta_prior_col,
+                        horizon=cfg.forecast.primary_horizon_days,
+                        start_exclusive=train_cutoff - 1,
+                        end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                        expected_count=n_val,
+                    )
+                except Exception as th_exc:
+                    logger.debug("Validation Theta prior lookup skipped: %s", th_exc)
+
+            median_idx = len(cfg.model.quantiles) // 2
             val_eval_pred, _ = apply_weekly_median_cap_np(
                 val_pred_np[:n_val],
                 weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
                 quantiles=tuple(cfg.model.quantiles),
                 horizon=cfg.forecast.primary_horizon_days,
             )
-            median_idx = len(cfg.model.quantiles) // 2
             val_ordered = monotonic_quantiles_np(val_eval_pred, median_idx=median_idx)
             val_weekly_q = aggregate_weekly_quantiles_np(
                 val_ordered[:, : cfg.forecast.primary_horizon_days, :],
@@ -993,6 +1055,34 @@ def train_tft_model(
                 val_actual_path[:n_val],
                 horizon=cfg.forecast.primary_horizon_days,
             )
+
+            if val_theta_prior is not None:
+                hybrid_blend = fit_theta_hybrid_blend(
+                    val_weekly_actual,
+                    val_weekly_q[:, median_idx],
+                    val_theta_prior[:n_val],
+                    horizon=cfg.forecast.primary_horizon_days,
+                )
+                if hybrid_blend.get("enabled"):
+                    val_pred_np[:n_val] = apply_theta_hybrid_shift_to_path(
+                        val_pred_np[:n_val],
+                        val_theta_prior[:n_val],
+                        hybrid_blend=hybrid_blend,
+                        quantiles=tuple(cfg.model.quantiles),
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    val_eval_pred, _ = apply_weekly_median_cap_np(
+                        val_pred_np[:n_val],
+                        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                        quantiles=tuple(cfg.model.quantiles),
+                        horizon=cfg.forecast.primary_horizon_days,
+                    )
+                    val_ordered = monotonic_quantiles_np(val_eval_pred, median_idx=median_idx)
+                    val_weekly_q = aggregate_weekly_quantiles_np(
+                        val_ordered[:, : cfg.forecast.primary_horizon_days, :],
+                        median_idx=median_idx,
+                    )
+
             weekly_cqr_params = fit_weekly_cqr(
                 val_weekly_actual,
                 val_weekly_q,
@@ -1021,17 +1111,47 @@ def train_tft_model(
     weekly_sign_threshold = 0.0
     weekly_magnitude_scale = 1.0
     weekly_interval_scale = 1.0
+    logger.info("Validation-only Hybrid Theta blend: %s", hybrid_blend)
     logger.info("Validation-only Split CQR calibration: %s", weekly_cqr_params or interval_calibration)
 
-    # ---- 8. Evaluate on the promoted best checkpoint ----
+    # ---- 8. Evaluate on the promoted ensemble ----
     test_metrics = {}
     if test_dl is not None:
-        # Single-pass prediction and target extraction (eliminates dataloader double-iteration)
-        pred_np, y_actual_path = _predict_quantiles_to_np(
-            evaluation_model, test_dl, cfg, return_y=True
+        test_pred_members = []
+        pred_0, y_actual_path = _predict_quantiles_to_np(
+            ensemble_models[0], test_dl, cfg, return_y=True
         )
-        ensemble_size = 1
-        logger.info("Promoted checkpoint evaluation: 1 model")
+        test_pred_members.append(pred_0)
+        for extra_mdl in ensemble_models[1:]:
+            test_pred_members.append(_predict_quantiles_to_np(extra_mdl, test_dl, cfg, return_y=False))
+        pred_np = (
+            np.mean(np.stack(test_pred_members, axis=0), axis=0)
+            if len(test_pred_members) > 1
+            else pred_0
+        )
+        ensemble_size = len(ensemble_models)
+        logger.info("Promoted ensemble evaluation: %d model(s)", ensemble_size)
+
+        if hybrid_blend.get("enabled") and theta_prior_col in master_df.columns:
+            try:
+                test_theta_prior = _dataset_origin_conditioning_values(
+                    master_df,
+                    test_ds,
+                    feature_name=theta_prior_col,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=val_cutoff - 1,
+                    end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                    expected_count=len(pred_np),
+                )
+                pred_np = apply_theta_hybrid_shift_to_path(
+                    pred_np,
+                    test_theta_prior,
+                    hybrid_blend=hybrid_blend,
+                    quantiles=tuple(cfg.model.quantiles),
+                    horizon=cfg.forecast.primary_horizon_days,
+                )
+            except Exception as th_test_exc:
+                logger.warning("Test Theta hybrid shift skipped: %s", th_test_exc)
 
         test_realized_vol = None
         if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
@@ -1075,6 +1195,8 @@ def train_tft_model(
         weekly_interval_scale=weekly_interval_scale,
         weekly_interval_calibration=interval_calibration,
         weekly_cqr_params=weekly_cqr_params,
+        precomputed_val_pred_np=val_pred_np,
+        precomputed_val_actual_path=val_actual_path,
     )
 
     # ---- 8. Variable importance ----
@@ -1083,6 +1205,10 @@ def train_tft_model(
     # ---- 9. Persist metadata ----
     result = {
         "checkpoint_path": str(final_path),
+        "ensemble_checkpoints": [p.name for p in ensemble_ckpt_paths] if ensemble_ckpt_paths else [final_path.name],
+        "ensemble_size": len(ensemble_ckpt_paths) if ensemble_ckpt_paths else 1,
+        "hybrid_blend": hybrid_blend,
+        "split_dates": split_dates,
         "test_metrics": test_metrics,
         "variable_importance": var_importance,
         "config": {
@@ -1211,6 +1337,8 @@ def _write_conformal_calibration_artifact(
     weekly_interval_scale: float = 1.0,
     weekly_interval_calibration: Optional[dict] = None,
     weekly_cqr_params: Optional[dict] = None,
+    precomputed_val_pred_np: Optional[np.ndarray] = None,
+    precomputed_val_actual_path: Optional[np.ndarray] = None,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -1236,10 +1364,14 @@ def _write_conformal_calibration_artifact(
             monotonic_quantiles_np,
         )
 
-        # Single-pass prediction and target extraction to avoid DataLoader double iteration
-        pred_np, y_actual_path = _predict_quantiles_to_np(
-            model, val_dl, cfg, return_y=True
-        )
+        # Reuse precomputed ensemble + hybrid-shifted validation tensors when supplied
+        if precomputed_val_pred_np is not None and precomputed_val_actual_path is not None:
+            pred_np = np.asarray(precomputed_val_pred_np, dtype=np.float64)
+            y_actual_path = np.asarray(precomputed_val_actual_path, dtype=np.float64)
+        else:
+            pred_np, y_actual_path = _predict_quantiles_to_np(
+                model, val_dl, cfg, return_y=True
+            )
         if y_actual_path is None or len(y_actual_path) == 0:
             return None
         pred_np = apply_direction_sign_multiplier_np(pred_np, int(direction_sign_multiplier))

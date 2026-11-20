@@ -150,6 +150,9 @@ class TFTPredictor:
         self._weekly_interval_scale = 1.0
         self._weekly_interval_conditioning: dict = {}
         self._monotonic_quantile_transform: bool = False
+        self._ensemble_checkpoint_names: list[str] = []
+        self._ensemble_models: list = []
+        self._hybrid_blend: dict = {}
 
     @property
     def _hub_checked(self) -> bool:
@@ -385,7 +388,41 @@ class TFTPredictor:
             config.get("monotonic_quantile_transform")
             or metadata.get("monotonic_quantile_transform")
         )
+        raw_ensemble = metadata.get("ensemble_checkpoints") or []
+        self._ensemble_checkpoint_names = (
+            [str(name) for name in raw_ensemble if name]
+            if isinstance(raw_ensemble, list)
+            else []
+        )
+        raw_hybrid = metadata.get("hybrid_blend") or {}
+        self._hybrid_blend = dict(raw_hybrid) if isinstance(raw_hybrid, dict) else {}
         self._metadata_checked = True
+
+    def _load_ensemble_models(self) -> list:
+        primary = self.model
+        if not self._ensemble_checkpoint_names or not self._checkpoint_path:
+            return [primary]
+        if len(self._ensemble_models) > 1:
+            return self._ensemble_models
+        ckpt_dir = Path(self._checkpoint_path).parent
+        primary_name = Path(self._checkpoint_path).name
+        try:
+            from deep_learning.models.tft_copper import load_tft_model
+        except Exception:
+            return [primary]
+        models = [primary]
+        for name in self._ensemble_checkpoint_names:
+            if not name or name == primary_name:
+                continue
+            candidate = ckpt_dir / name
+            if not candidate.exists():
+                continue
+            try:
+                models.append(load_tft_model(str(candidate)))
+            except Exception as exc:
+                logger.debug("Skipping optional ensemble checkpoint %s: %s", candidate, exc)
+        self._ensemble_models = models
+        return models
 
     @property
     def pca(self):
@@ -483,6 +520,7 @@ class TFTPredictor:
                 )
                 if refreshed:
                     self._model = None
+                    self._ensemble_models = []
                     self._pca = None
                     self._metadata_checked = False
                     model = self.model
@@ -571,6 +609,12 @@ class TFTPredictor:
 
         dl = ds.to_dataloader(train=False, batch_size=1, num_workers=0)
 
+        ensemble_models = [model]
+        try:
+            ensemble_models = self._load_ensemble_models()
+        except Exception as ens_exc:
+            logger.debug("Using primary TFT model only: %s", ens_exc)
+
         try:
             import torch
 
@@ -584,20 +628,48 @@ class TFTPredictor:
                 predict_parameters = {}
             if "trainer_kwargs" in predict_parameters:
                 predict_kwargs["trainer_kwargs"] = {"logger": False}
-            pred_tensor = model.predict(dl, **predict_kwargs)
 
-            if isinstance(pred_tensor, torch.Tensor):
-                pred_np = pred_tensor.cpu().numpy()
-            else:
-                pred_np = np.array(pred_tensor)
+            member_preds = []
+            for member_model in ensemble_models:
+                pred_tensor = member_model.predict(dl, **predict_kwargs)
+                if isinstance(pred_tensor, torch.Tensor):
+                    member_arr = pred_tensor.cpu().numpy()
+                else:
+                    member_arr = np.array(pred_tensor)
+                if member_arr.ndim == 3:
+                    member_sample = member_arr[0]
+                elif member_arr.ndim == 2:
+                    member_sample = member_arr
+                else:
+                    member_sample = member_arr.reshape(1, -1)
+                member_preds.append(member_sample)
 
-            # Take first sample: (pred_len, n_quantiles)
-            if pred_np.ndim == 3:
-                pred_for_format = pred_np[0]
-            elif pred_np.ndim == 2:
-                pred_for_format = pred_np
-            else:
-                pred_for_format = pred_np.reshape(1, -1)
+            pred_for_format = (
+                np.mean(np.stack(member_preds, axis=0), axis=0)
+                if len(member_preds) > 1
+                else member_preds[0]
+            )
+
+            if self._hybrid_blend.get("enabled"):
+                from deep_learning.calibration.hybrid import apply_theta_hybrid_shift_to_path
+
+                prior_feat = str(self._hybrid_blend.get("prior_feature", "HG=F_theta_5d_prior"))
+                prior_candidates = (
+                    prior_feat,
+                    prior_feat.replace(".", "_").replace("-", "_"),
+                    prior_feat.replace(".", "_").replace("-", "_").replace("=", "_"),
+                )
+                prior_col = next((c for c in prior_candidates if c in master_df.columns), None)
+                if prior_col is not None and not master_df.empty:
+                    theta_val = pd.to_numeric(master_df.iloc[-1].get(prior_col), errors="coerce")
+                    if pd.notna(theta_val) and np.isfinite(float(theta_val)):
+                        pred_for_format = apply_theta_hybrid_shift_to_path(
+                            pred_for_format,
+                            float(theta_val),
+                            hybrid_blend=self._hybrid_blend,
+                            quantiles=tuple(self.cfg.model.quantiles),
+                            horizon=int(self.cfg.forecast.primary_horizon_days),
+                        )
 
             if int(self._direction_sign_multiplier) != 1:
                 from deep_learning.training.metrics import apply_direction_sign_multiplier_np
@@ -758,6 +830,9 @@ class TFTPredictor:
             "weekly_interval_conditioning_feature": self._weekly_interval_conditioning.get(
                 "feature"
             ),
+            "ensemble_size": len(ensemble_models),
+            "hybrid_blend_enabled": bool(self._hybrid_blend.get("enabled", False)),
+            "hybrid_w_theta": float(self._hybrid_blend.get("w_theta", 0.0) or 0.0),
         }
 
         # Surface freshness + instrument identity so the UI can label the
