@@ -366,7 +366,11 @@ def _remote_repo_sha(repo_id: str, token: Optional[str]) -> Optional[str]:
     try:
         from huggingface_hub import HfApi
 
-        info = HfApi(token=token).model_info(repo_id, repo_type="model")
+        api = HfApi(token=token)
+        try:
+            info = api.model_info(repo_id)
+        except TypeError:
+            info = api.model_info(repo_id, repo_type="model")
         sha = getattr(info, "sha", None)
         return str(sha).strip() if sha else None
     except Exception as exc:
@@ -513,12 +517,13 @@ def sync_tft_artifacts_if_stale(
     local_sha = rev_path.read_text(encoding="utf-8").strip() if rev_path.exists() else ""
 
     remote_sha = _remote_repo_sha(repo_id, token)
-    if remote_sha is None:
-        if local_valid:
-            return True
+    if remote_sha is None and not local_valid:
         return download_tft_artifacts(local_dir=local_dir, repo_id=repo_id)
 
-    if local_valid and local_sha == remote_sha:
+    if local_valid and local_sha and remote_sha and local_sha == remote_sha:
+        return True
+
+    if local_valid and remote_sha is None and local_sha:
         return True
 
     staging_dir = local_dir / f".staging_{os.getpid()}"
@@ -542,9 +547,13 @@ def sync_tft_artifacts_if_stale(
                 shutil.copy2(src, tmp_dst)
                 os.replace(tmp_dst, dst)
 
-        rev_path.write_text(remote_sha, encoding="utf-8")
+        if remote_sha:
+            rev_path.write_text(remote_sha, encoding="utf-8")
         _notify_predictor_reload()
-        logger.info("Synchronized TFT artifacts to remote HF revision %s", remote_sha[:12])
+        logger.info(
+            "Synchronized TFT artifacts to remote HF revision %s",
+            (remote_sha or "latest")[:12],
+        )
         return validate_tft_artifact_set(local_dir)
     except Exception as exc:
         logger.warning("Failed staged HF artifact sync (%s); keeping local state=%s", exc, local_valid)

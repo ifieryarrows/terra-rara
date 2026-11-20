@@ -463,6 +463,40 @@ class TFTPredictor:
             if name not in master_df.columns
         ]
         if missing_checkpoint_features:
+            # One-shot self-heal: if a stale pre-promotion checkpoint remained
+            # cached on disk, force a fresh HF Hub artifact download and reload
+            # before declaring the live forecast degraded.
+            refreshed = False
+            try:
+                from deep_learning.models.hub import download_tft_artifacts
+
+                tft_dir = Path(self._checkpoint_path).parent
+                refreshed = download_tft_artifacts(
+                    local_dir=tft_dir,
+                    repo_id=self.cfg.training.hf_model_repo,
+                    force_all=True,
+                )
+                if refreshed:
+                    self._model = None
+                    self._pca = None
+                    self._metadata_checked = False
+                    model = self.model
+                    dataset_parameters = _checkpoint_dataset_parameters(model)
+                    checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(
+                        dataset_parameters
+                    )
+                    missing_checkpoint_features = [
+                        name
+                        for name in checkpoint_known + checkpoint_unknown
+                        if name not in master_df.columns
+                    ]
+            except Exception as refresh_exc:
+                logger.warning(
+                    "Forced HF Hub checkpoint refresh after feature mismatch failed: %s",
+                    refresh_exc,
+                )
+
+        if missing_checkpoint_features:
             message = (
                 "Incompatible live TFT features: checkpoint features are missing "
                 f"({', '.join(missing_checkpoint_features[:10])}). "

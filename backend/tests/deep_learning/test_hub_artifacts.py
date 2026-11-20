@@ -173,3 +173,20 @@ def test_upload_refuses_manifest_marked_unsafe_by_quality_gate(tmp_path, monkeyp
     manifest = json.loads((local_dir / "artifact_manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifact_health"]["quality_gate_passed"] is False
     assert manifest["artifact_health"]["safe_to_upload_to_hub"] is False
+
+
+def test_remote_repo_sha_calls_model_info_without_repo_type(monkeypatch):
+    class StrictHfApi:
+        def __init__(self, token=None):
+            self.token = token
+
+        def model_info(self, repo_id):
+            assert repo_id == "org/model"
+            return types.SimpleNamespace(sha="abc123def456")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(HfApi=StrictHfApi),
+    )
+    assert hub._remote_repo_sha("org/model", "token") == "abc123def456"

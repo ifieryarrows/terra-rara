@@ -112,6 +112,8 @@ jobs:
                   # TFTBacktestRunner syncs the promoted HF Hub checkpoint.
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
                   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+                  MODEL_DIR: /tmp/models
+                  HF_HUB_ENABLE_HF_TRANSFER: "1"
                   PYTHONPATH: backend
               run: |
                   CHAMPION_PATH="${{ inputs.champion_path || github.event.inputs.champion_path }}"
