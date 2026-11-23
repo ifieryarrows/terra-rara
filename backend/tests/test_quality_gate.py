@@ -24,6 +24,7 @@ GOOD_WEEKLY = {
     "weekly_pred_positive_rate": 0.55,
     "weekly_actual_positive_rate": 0.55,
     "weekly_sharpe_ratio": 0.40,
+    "weekly_mae_vs_naive_zero": 0.98,
     "weekly_raw_magnitude_ratio": 1.0,
     "weekly_median_bound_applied_rate": 0.10,
 }
@@ -55,26 +56,28 @@ def test_quality_gate_rejects_negative_sharpe_but_not_low_da():
     assert any("WeeklySharpe=-0.4500" in reason for reason in weekly_reasons)
 
 
-def test_quality_gate_asserts_public_quantile_incoherence():
-    with pytest.raises(AssertionError, match="PublicQuantileCrossing"):
-        evaluate_quality_gate(
-            da=0.52,
-            sharpe=0.4,
-            vr=0.9,
-            quantile_crossing_rate=0.30,
-            median_sort_gap_max=0.0,
-            **GOOD_WEEKLY,
-        )
+def test_quality_gate_rejects_public_quantile_incoherence_without_crashing():
+    passed_cross, reasons_cross = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.4,
+        vr=0.9,
+        quantile_crossing_rate=0.30,
+        median_sort_gap_max=0.0,
+        **GOOD_WEEKLY,
+    )
+    assert passed_cross is False
+    assert any("PublicQuantileCrossing=0.3000 > 0.001" in r for r in reasons_cross)
 
-    with pytest.raises(AssertionError, match="OrderedMedianSortGapMax"):
-        evaluate_quality_gate(
-            da=0.52,
-            sharpe=0.4,
-            vr=0.9,
-            quantile_crossing_rate=0.0,
-            median_sort_gap_max=0.02,
-            **GOOD_WEEKLY,
-        )
+    passed_gap, reasons_gap = evaluate_quality_gate(
+        da=0.52,
+        sharpe=0.4,
+        vr=0.9,
+        quantile_crossing_rate=0.0,
+        median_sort_gap_max=0.02,
+        **GOOD_WEEKLY,
+    )
+    assert passed_gap is False
+    assert any("OrderedMedianSortGapMax=0.0200 > 0.001" in r for r in reasons_gap)
 
 
 def test_quality_gate_fails_when_weekly_metrics_missing():
@@ -197,15 +200,52 @@ def test_quality_gate_rejects_weekly_majority_sign_collapse():
     assert any("WeeklySignCollapse=" in reason for reason in reasons)
 
 
-def test_quality_gate_asserts_weekly_public_crossing_above_bug_threshold():
-    with pytest.raises(AssertionError, match="WeeklyPublicQuantileCrossing"):
-        evaluate_quality_gate(
-            da=0.60,
-            sharpe=0.1,
-            vr=1.0,
+def test_quality_gate_rejects_weekly_public_crossing_without_crashing():
+    passed, reasons = evaluate_quality_gate(
+        da=0.60,
+        sharpe=0.1,
+        vr=1.0,
+        **GOOD_QUANTILE,
+        **{**GOOD_WEEKLY, "weekly_quantile_crossing_rate": 0.06},
+    )
+    assert passed is False
+    assert any("WeeklyPublicQuantileCrossing=0.0600 > 0.001" in r for r in reasons)
+
+
+def test_quality_gate_rejects_missing_or_nan_weekly_mae_vs_naive_zero():
+    weekly_no_mae = {k: v for k, v in GOOD_WEEKLY.items() if k != "weekly_mae_vs_naive_zero"}
+    passed_missing, reasons_missing = evaluate_quality_gate(
+        da=0.60, sharpe=0.1, vr=1.0, **GOOD_QUANTILE, **weekly_no_mae
+    )
+    assert passed_missing is False
+    assert "Missing/invalid weekly_mae_vs_naive_zero" in reasons_missing
+
+    passed_nan, reasons_nan = evaluate_quality_gate_metrics(
+        {
+            "directional_accuracy": 0.60,
+            "sharpe_ratio": 0.1,
+            "variance_ratio": 1.0,
             **GOOD_QUANTILE,
-            **{**GOOD_WEEKLY, "weekly_quantile_crossing_rate": 0.06},
-        )
+            **{**GOOD_WEEKLY, "weekly_mae_vs_naive_zero": float("nan")},
+        }
+    )
+    assert passed_nan is False
+    assert "Missing/invalid weekly_mae_vs_naive_zero" in reasons_nan
+
+
+def test_quality_gate_rejects_post_cqr_weekly_ordered_crossing():
+    passed, reasons = evaluate_quality_gate_metrics(
+        {
+            "directional_accuracy": 0.60,
+            "sharpe_ratio": 0.1,
+            "variance_ratio": 1.0,
+            **GOOD_QUANTILE,
+            **GOOD_WEEKLY,
+            "weekly_ordered_quantile_crossing_rate": 0.05,
+        }
+    )
+    assert passed is False
+    assert any("WeeklyPostCQRQuantileCrossing=0.0500 > 0.001" in r for r in reasons)
 
 
 def test_quality_gate_rejects_negative_public_widths():

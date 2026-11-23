@@ -58,22 +58,35 @@ def main() -> int:
     weekly_pred_positive_rate = metrics.get("weekly_pred_positive_rate")
     weekly_actual_positive_rate = metrics.get("weekly_actual_positive_rate")
     weekly_mae_naive = metrics.get("weekly_mae_vs_naive_zero")
-    weekly_sharpe_hac = metrics.get("weekly_sharpe_ratio_hac") or metrics.get("weekly_sharpe_ratio")
+    weekly_sharpe_hac = metrics.get("weekly_sharpe_ratio_hac")
+    if weekly_sharpe_hac is None:
+        weekly_sharpe_hac = metrics.get("weekly_sharpe_ratio")
     weekly_pinball = metrics.get("weekly_pinball_loss")
+    weekly_ordered_qcross = metrics.get("weekly_ordered_quantile_crossing_rate")
+    weekly_no_sharpe = metrics.get("weekly_non_overlapping_sharpe")
+    weekly_no_da = metrics.get("weekly_non_overlapping_da")
+
+    def _fmt(val) -> str:
+        try:
+            return f"{float(val):.4f}" if val is not None else "n/a"
+        except (TypeError, ValueError):
+            return str(val)
 
     print(
         "Quality gate metrics: "
-        f"DA={da:.4f} Sharpe={sharpe:.4f} VR={vr:.4f} "
+        f"DA={_fmt(da)} Sharpe={_fmt(sharpe)} VR={_fmt(vr)} "
         f"Tail={tail_capture if tail_capture is not None else 'n/a'} "
         f"QCross={quantile_crossing if quantile_crossing is not None else 'n/a'}"
     )
     print(
         "Weekly gate metrics: "
-        f"WeeklyDA={weekly_da} WeeklySharpeHAC={weekly_sharpe_hac} WeeklyMR={weekly_mr} "
-        f"WeeklyMAEvsNaive={weekly_mae_naive} WeeklyPinball={weekly_pinball} "
+        f"WeeklyDA={weekly_da} WeeklySharpeHAC={weekly_sharpe_hac} "
+        f"WeeklyNonOverlapSharpe={weekly_no_sharpe} WeeklyNonOverlapDA={weekly_no_da} "
+        f"WeeklyMR={weekly_mr} WeeklyMAEvsNaive={weekly_mae_naive} WeeklyPinball={weekly_pinball} "
         f"WeeklyPI80={weekly_pi80} WeeklyPI80WidthRatio={weekly_pi80_width_ratio} "
         f"WeeklyPI96={weekly_pi96} WeeklyPI96WidthRatio={weekly_pi96_width_ratio} "
         f"WeeklyQCross={weekly_qcross} WeeklySortedQCross={weekly_sorted_qcross} "
+        f"WeeklyOrderedQCross={weekly_ordered_qcross} "
         f"WeeklyPredPositive={weekly_pred_positive_rate} "
         f"WeeklyActualPositive={weekly_actual_positive_rate} "
         f"WeeklyN={weekly_samples}"

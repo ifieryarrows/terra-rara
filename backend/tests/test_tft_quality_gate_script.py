@@ -33,6 +33,7 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
             "weekly_pred_positive_rate": 0.55,
             "weekly_actual_positive_rate": 0.55,
             "weekly_sharpe_ratio": 0.40,
+            "weekly_mae_vs_naive_zero": 0.98,
             "weekly_raw_magnitude_ratio": 1.0,
             "weekly_median_bound_applied_rate": 0.10,
         }
@@ -54,4 +55,56 @@ def test_tft_quality_gate_script_imports_app_from_scripts_dir(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
+    assert "QUALITY GATE: PASSED" in result.stdout
+
+
+def test_tft_quality_gate_script_preserves_zero_hac_sharpe_over_negative_unadjusted(tmp_path: Path):
+    metadata_path = tmp_path / "tft_metadata.json"
+    payload = {
+        "test_metrics": {
+            "directional_accuracy": 0.52,
+            "sharpe_ratio": 0.4,
+            "variance_ratio": 0.9,
+            "tail_capture_rate": 0.45,
+            "quantile_crossing_rate": 0.0,
+            "median_sort_gap_max": 0.0,
+            "weekly_directional_accuracy": 0.55,
+            "weekly_magnitude_ratio": 1.0,
+            "weekly_tail_capture_rate": 0.50,
+            "weekly_pi80_coverage": 0.80,
+            "weekly_pi80_width_ratio": 1.0,
+            "weekly_pi96_coverage": 0.96,
+            "weekly_pi96_width_ratio": 1.0,
+            "weekly_quantile_crossing_rate": 0.0,
+            "weekly_sorted_quantile_crossing_rate": 0.0,
+            "weekly_ordered_quantile_crossing_rate": 0.0,
+            "weekly_median_sort_gap_max": 0.0,
+            "weekly_sample_count": 120,
+            "weekly_pred_positive_rate": 0.55,
+            "weekly_actual_positive_rate": 0.55,
+            "weekly_sharpe_ratio_hac": 0.0,
+            "weekly_sharpe_ratio": -0.90,
+            "weekly_mae_vs_naive_zero": 0.98,
+            "weekly_raw_magnitude_ratio": 1.0,
+            "weekly_median_bound_applied_rate": 0.10,
+        }
+    }
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    backend_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["TFT_METADATA_PATH"] = str(metadata_path)
+
+    result = subprocess.run(
+        [sys.executable, "scripts/tft_quality_gate.py"],
+        cwd=backend_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WeeklySharpeHAC=0.0" in result.stdout
     assert "QUALITY GATE: PASSED" in result.stdout

@@ -66,3 +66,19 @@ def test_compare_theta_wins():
 
     comp = compare_with_baseline(tft_result, theta_result)
     assert comp["verdict"] == "THETA_SUPERIOR"
+
+
+def test_run_backtest_weekly_uses_horizon_scaled_tail_threshold():
+    # Weekly returns around +-0.025..0.075: p75 (~0.06) isolates genuine tail moves
+    # rather than treating nearly every weekly observation (>0.015 daily cutoff) as a tail.
+    ya = np.array([0.02, -0.02, 0.025, -0.025, 0.03, -0.03, 0.07, -0.08] * 4, dtype=float)
+    # Right sign only on true tail moves (|ya| >= 0.07), wrong sign on ordinary weekly moves
+    yp = np.where(np.abs(ya) >= 0.06, ya, -ya)
+
+    res_weekly = run_backtest(
+        ya, yp, window_size=len(ya), step_size=len(ya), annualisation=52.0, use_hac=True
+    )
+    win = res_weekly["windows"][0]
+    assert win["tail_capture"] == 1.0
+    assert np.isfinite(win["sortino"])
+    assert np.isfinite(res_weekly["summary"]["mean_sortino"])

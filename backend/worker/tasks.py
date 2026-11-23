@@ -861,7 +861,7 @@ async def _execute_pipeline_stages_v2(
             except Exception:
                 artifact_set_valid = False
 
-        if ckpt.exists():
+        if ckpt.exists() and artifact_set_valid:
             tft_report = generate_tft_analysis(session, "HG=F", include_explain=True)
 
             if "error" not in tft_report:
@@ -954,7 +954,14 @@ async def _execute_pipeline_stages_v2(
                     snapshot_report = tft_report
             else:
                 result["tft_snapshot_generated"] = False
+                result["tft_snapshot_degraded"] = True
+                result["tft_persistence_error"] = str(tft_report.get("error") or "tft_prediction_error")
                 logger.warning(f"[run_id={run_id}] TFT prediction error: {tft_report.get('error')}")
+        elif ckpt.exists():
+            result["tft_snapshot_generated"] = False
+            result["tft_snapshot_degraded"] = True
+            result["tft_persistence_error"] = "invalid_tft_artifact_set"
+            logger.warning(f"[run_id={run_id}] Stage 5.5 aborted inference: TFT artifact set validation failed")
         else:
             result["tft_snapshot_generated"] = False
             logger.info(f"[run_id={run_id}] Stage 5.5 skipped: no TFT checkpoint found (train-tft workflow has not run yet)")
@@ -964,6 +971,27 @@ async def _execute_pipeline_stages_v2(
     except Exception as e:
         logger.warning(f"[run_id={run_id}] Stage 5.5 failed (non-critical): {e}")
         result["tft_snapshot_generated"] = False
+        result["tft_snapshot_degraded"] = True
+        result["tft_persistence_error"] = str(e)
+        session.rollback()
+
+    # -------------------------------------------------------------------------
+    # Stage 5.7: Long-Term Outlook snapshot (20D / 60D) — fail-open
+    # -------------------------------------------------------------------------
+    logger.info(f"[run_id={run_id}] Stage 5.7: Long-Term Outlook snapshot")
+    try:
+        from long_term.service import run_long_term_outlook_stage
+
+        lt_res = run_long_term_outlook_stage(session, symbol="HG=F", run_id=run_id)
+        result["long_term_outlook"] = lt_res
+        result["long_term_snapshot_generated"] = bool(
+            isinstance(lt_res, dict) and lt_res.get("ok") and lt_res.get("generated")
+        )
+    except ImportError:
+        result["long_term_snapshot_generated"] = False
+    except Exception as lt_exc:
+        logger.warning(f"[run_id={run_id}] Stage 5.7 failed (non-critical): {lt_exc}")
+        result["long_term_snapshot_generated"] = False
         session.rollback()
 
     # -------------------------------------------------------------------------
@@ -998,15 +1026,25 @@ async def _execute_pipeline_stages_v2(
             top_influencers = report.get("top_influencers", [])
             news_count = report.get("data_quality", {}).get("news_count_7d", 0)
 
-            # --- NEW: TFT Fallback Scheme ---
+            # --- TFT Fallback Scheme (primary 5D weekly horizon) ---
             is_tft = report.get("model_type") == "TFT-ASRO"
             if is_tft:
-                prediction = report.get("prediction", {})
+                prediction = report.get("prediction") if isinstance(report.get("prediction"), dict) else {}
                 baseline_price = prediction.get("reference_price")
                 baseline_price_date = prediction.get("reference_price_date")
-                price_basis = prediction.get("return_basis")
-                predicted_price = prediction.get("predicted_price_median")
-                predicted_return = prediction.get("predicted_return_median", 0.0)
+                price_basis = (
+                    "5-day cumulative return"
+                    if report.get("primary_horizon") == "5D"
+                    else prediction.get("return_basis")
+                )
+                predicted_price = prediction.get("weekly_price")
+                if predicted_price is None:
+                    predicted_price = prediction.get("predicted_price_median")
+                predicted_return = report.get("primary_forecast_return")
+                if predicted_return is None:
+                    predicted_return = prediction.get("weekly_return")
+                if predicted_return is None:
+                    predicted_return = prediction.get("predicted_return_median", 0.0)
                 
                 try:
                     from app.inference import get_current_price

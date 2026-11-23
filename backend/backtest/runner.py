@@ -831,10 +831,25 @@ class TFTBacktestRunner:
             int(cfg.training.lookback_days),
             int((datetime.now(timezone.utc).date() - oos_start_ts.date()).days) + 180,
         )
+        needs_news = any(
+            name.startswith(("emb_pca_", "sent_", "sentiment_", "event_", "evt_"))
+            or name in {
+                "news_count",
+                "material_news_count",
+                "after_close_news_count",
+                "days_since_last_material_news",
+                "stale_sentiment_flag",
+            }
+            for name in checkpoint_features
+        )
         eval_cfg = replace(
             cfg,
             training=replace(cfg.training, lookback_days=days_needed),
-            feature_store=replace(cfg.feature_store, mrmr_top_k=0),
+            feature_store=replace(
+                cfg.feature_store,
+                mrmr_top_k=0,
+                include_news_features=bool(needs_news or cfg.feature_store.include_news_features),
+            ),
         )
 
         df = None
@@ -852,20 +867,15 @@ class TFTBacktestRunner:
 
         self._last_known_price = float(last_known_price) if last_known_price is not None else float("nan")
 
-        # Backfill optional sparse/DB-only columns (e.g. emb_pca_*) with neutral zeros
-        # only when missing; core target features must already be present.
         if "target" not in df.columns or "time_idx" not in df.columns:
             raise RuntimeError("Evaluation DataFrame missing required 'target' or 'time_idx'")
 
         missing_cols = [col for col in checkpoint_features if col not in df.columns]
         if missing_cols:
-            logger.warning(
-                "Zero-filling %d missing non-DB feature columns for backtest: %s",
-                len(missing_cols),
-                missing_cols[:8],
+            raise RuntimeError(
+                "Backtest evaluation DataFrame missing required checkpoint features: "
+                f"{missing_cols[:10]}"
             )
-            for col in missing_cols:
-                df[col] = 0.0
 
         idx_dt = pd.to_datetime(df.index).tz_localize(None)
         df = df.copy()
@@ -968,11 +978,24 @@ class TFTBacktestRunner:
                 if not name or str(name) == ckpt_path.name:
                     continue
                 extra_ckpt = ckpt_path.parent / str(name)
-                if extra_ckpt.exists():
-                    try:
-                        ensemble_models.append(load_tft_model(extra_ckpt))
-                    except Exception as exc:
-                        logger.debug("Skipping optional backtest ensemble member %s: %s", extra_ckpt, exc)
+                if not extra_ckpt.exists():
+                    raise RuntimeError(
+                        f"Missing required TFT ensemble checkpoint for backtest: {extra_ckpt}"
+                    )
+                try:
+                    ensemble_models.append(load_tft_model(extra_ckpt))
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to load TFT ensemble checkpoint {extra_ckpt}: {exc}"
+                    ) from exc
+
+        meta_test_metrics = metadata.get("test_metrics") if isinstance(metadata.get("test_metrics"), dict) else {}
+        expected_ensemble_size = meta_test_metrics.get("ensemble_size")
+        if expected_ensemble_size is not None and int(expected_ensemble_size) > len(ensemble_models):
+            raise RuntimeError(
+                f"Incomplete TFT ensemble for backtest: expected {int(expected_ensemble_size)} "
+                f"checkpoints, loaded {len(ensemble_models)}"
+            )
 
         dataset_params = _checkpoint_dataset_parameters(model)
         checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(dataset_params)
@@ -980,7 +1003,7 @@ class TFTBacktestRunner:
         horizon = int(dataset_params["max_prediction_length"])
         quantiles = list(getattr(getattr(model, "loss", None), "quantiles", cfg.model.quantiles))
 
-        eval_features = list(checkpoint_unknown + checkpoint_known)
+        required_features = list(checkpoint_unknown + checkpoint_known)
         prior_candidates: tuple[str, ...] = ()
         if hybrid_blend.get("enabled"):
             prior_feat = str(hybrid_blend.get("prior_feature", "HG=F_theta_5d_prior"))
@@ -989,11 +1012,8 @@ class TFTBacktestRunner:
                 prior_feat.replace(".", "_").replace("-", "_"),
                 prior_feat.replace(".", "_").replace("-", "_").replace("=", "_"),
             )
-            for cand in prior_candidates:
-                if cand not in eval_features:
-                    eval_features.append(cand)
 
-        df = self._build_eval_dataframe(cfg, eval_features)
+        df = self._build_eval_dataframe(cfg, required_features)
 
         oos_start_ts = pd.Timestamp(self.config.oos_start)
         oos_mask = df.index >= oos_start_ts
@@ -1029,16 +1049,50 @@ class TFTBacktestRunner:
             pred_t = pred_out
             y_val = None
 
+        import inspect
+        from deep_learning.training.metrics import (
+            apply_direction_sign_multiplier_np,
+            apply_weekly_interval_scale_np,
+            apply_weekly_magnitude_scale_np,
+            apply_weekly_median_cap_np,
+            apply_weekly_sign_correction_np,
+        )
+
+        quantiles_tuple = tuple(quantiles)
+        median_idx = quantiles.index(0.50) if 0.50 in quantiles else len(quantiles) // 2
+        meta_config = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+        monotonic_transform = bool(
+            meta_config.get("monotonic_quantile_transform")
+            or metadata.get("monotonic_quantile_transform")
+            or getattr(getattr(model, "loss", None), "__class__", type(None)).__name__
+            == "WeeklyASROPFLoss"
+        )
+
+        def _member_to_ordered_quantiles(mdl, raw_arr: np.ndarray) -> np.ndarray:
+            arr = np.asarray(raw_arr, dtype=np.float64)
+            if getattr(getattr(mdl, "loss", None), "emits_ordered_quantiles", False):
+                return arr
+            if monotonic_transform or (
+                arr.ndim >= 2 and arr.shape[-1] > 1 and np.any(np.diff(arr, axis=-1) < -1e-12)
+            ):
+                return monotonic_quantiles_np(arr, median_idx=median_idx)
+            return arr
+
         pred_np = pred_t.detach().cpu().numpy() if hasattr(pred_t, "detach") else np.asarray(pred_t)
+        ordered_members = [_member_to_ordered_quantiles(model, pred_np)]
         if len(ensemble_models) > 1:
-            member_preds = [pred_np]
             for extra_mdl in ensemble_models[1:]:
                 extra_out = extra_mdl.predict(dl, mode="quantiles")
                 extra_t = extra_out.output if hasattr(extra_out, "output") else extra_out
                 extra_np = extra_t.detach().cpu().numpy() if hasattr(extra_t, "detach") else np.asarray(extra_t)
-                member_preds.append(extra_np)
-            pred_np = np.mean(np.stack(member_preds, axis=0), axis=0)
-            logger.info("TFT backtest averaged %d ensemble checkpoints", len(member_preds))
+                ordered_members.append(_member_to_ordered_quantiles(extra_mdl, extra_np))
+            pred_np = np.mean(np.stack(ordered_members, axis=0), axis=0)
+            logger.info(
+                "TFT backtest averaged %d ensemble checkpoints in ordered quantile space",
+                len(ordered_members),
+            )
+        else:
+            pred_np = ordered_members[0]
 
         if y_val is not None:
             y_np = y_val.detach().cpu().numpy() if hasattr(y_val, "detach") else np.asarray(y_val)
@@ -1063,32 +1117,148 @@ class TFTBacktestRunner:
             prior_col = next((c for c in prior_candidates if c in eval_df.columns), None)
             if prior_col is not None:
                 theta_vals = eval_df[prior_col].to_numpy(dtype=float)[origin_pos]
-                pred_np = apply_theta_hybrid_shift_to_path(
-                    pred_np,
-                    theta_vals,
-                    hybrid_blend=hybrid_blend,
-                    quantiles=tuple(quantiles),
-                    horizon=horizon,
-                )
+                if "already_ordered" in inspect.signature(apply_theta_hybrid_shift_to_path).parameters:
+                    pred_np = apply_theta_hybrid_shift_to_path(
+                        pred_np,
+                        theta_vals,
+                        hybrid_blend=hybrid_blend,
+                        quantiles=quantiles_tuple,
+                        horizon=horizon,
+                        already_ordered=True,
+                    )
+                else:
+                    w_theta = float(np.clip(float(hybrid_blend.get("w_theta", 0.0) or 0.0), 0.0, 1.0))
+                    w_tft = 1.0 - w_theta
+                    h = min(int(horizon), pred_np.shape[1])
+                    valid = np.isfinite(theta_vals)
+                    if w_theta > 0.0 and valid.any() and h > 0:
+                        tft_med = pred_np[:, :h, median_idx].sum(axis=1)
+                        blended = np.where(valid, w_tft * tft_med + w_theta * theta_vals, tft_med)
+                        delta_per_day = (blended - tft_med) / float(max(h, 1))
+                        pred_np[:, :h, :] = pred_np[:, :h, :] + delta_per_day[:, None, None]
 
-        # Enforce structural monotonicity and aggregate to 5-day cumulative log return quantiles
-        median_idx = quantiles.index(0.50) if 0.50 in quantiles else len(quantiles) // 2
-        ordered_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
-        weekly_q = aggregate_weekly_quantiles_np(
-            ordered_np[:, :horizon, :],
-            median_idx=median_idx,
+        # Apply persisted validation-fitted calibration stages in exact trainer/predictor order.
+        direction_cal = metadata.get("direction_calibration") or {}
+        dir_mult = int(direction_cal.get("direction_sign_multiplier", 1))
+        if dir_mult != 1:
+            pred_np = apply_direction_sign_multiplier_np(pred_np, dir_mult)
+        weekly_sign_threshold = float(direction_cal.get("weekly_sign_threshold", 0.0) or 0.0)
+        if abs(weekly_sign_threshold) > 1e-12:
+            pred_np = apply_weekly_sign_correction_np(
+                pred_np,
+                weekly_sign_threshold,
+                horizon=horizon,
+            )
+
+        weekly_direction_model = metadata.get("weekly_direction_model") or {}
+        if weekly_direction_model.get("enabled"):
+            from deep_learning.training.direction_model import (
+                apply_weekly_direction_model,
+                predict_weekly_direction,
+            )
+
+            origin_times = eval_df["time_idx"].to_numpy(dtype=int)[origin_pos]
+            probs = np.concatenate(
+                [
+                    predict_weekly_direction(
+                        weekly_direction_model,
+                        eval_df,
+                        start_exclusive=int(t) - 1,
+                        end_inclusive=int(t),
+                    )
+                    for t in origin_times
+                ]
+            )
+            pred_np = apply_weekly_direction_model(
+                pred_np,
+                probs,
+                threshold=float(weekly_direction_model.get("decision_threshold", 0.50)),
+                horizon=horizon,
+            )
+
+        magnitude_cal = metadata.get("magnitude_calibration") or {}
+        mag_scale = float(
+            direction_cal.get("weekly_magnitude_scale", magnitude_cal.get("scale", 1.0)) or 1.0
         )
-        actual_weekly = y_np[:, :horizon].sum(axis=1)
+        if abs(mag_scale - 1.0) > 1e-6:
+            pred_np = apply_weekly_magnitude_scale_np(
+                pred_np,
+                mag_scale,
+                quantiles=quantiles_tuple,
+            )
 
-        if len(weekly_q) > 0 and "realized_vol_20d" in eval_df.columns:
+        if len(pred_np) > 0 and "realized_vol_20d" in eval_df.columns:
             vols = eval_df["realized_vol_20d"].to_numpy(dtype=float)[origin_pos]
         else:
             vols = None
 
+        interval_cal = metadata.get("interval_calibration") or {}
+        interval_scale = float(interval_cal.get("weekly_interval_scale", 1.0) or 1.0)
+        if interval_cal.get("weekly_interval_conditioning_enabled"):
+            cond_feat = str(interval_cal.get("weekly_interval_conditioning_feature", "")).strip()
+            if cond_feat not in eval_df.columns:
+                raise RuntimeError(
+                    f"Backtest missing required interval conditioning feature: {cond_feat}"
+                )
+            cond_vals = eval_df[cond_feat].to_numpy(dtype=float)[origin_pos]
+            pred_np = apply_weekly_interval_scale_np(
+                pred_np,
+                interval_scale,
+                quantiles=quantiles_tuple,
+                conditioning_values=cond_vals,
+                conditioning_reference=float(
+                    interval_cal.get("weekly_interval_conditioning_reference", 0.0)
+                ),
+                conditioning_power=float(
+                    interval_cal.get("weekly_interval_conditioning_power", 0.35)
+                ),
+                conditioning_min_factor=float(
+                    interval_cal.get("weekly_interval_conditioning_min_factor", 0.5)
+                ),
+                conditioning_max_factor=float(
+                    interval_cal.get("weekly_interval_conditioning_max_factor", 2.0)
+                ),
+                conditioning_min_scale=float(
+                    interval_cal.get("weekly_interval_conditioning_min_scale", 0.20)
+                ),
+                conditioning_max_scale=float(
+                    interval_cal.get("weekly_interval_conditioning_max_scale", 2.50)
+                ),
+            )
+        elif abs(interval_scale - 1.0) > 1e-6:
+            pred_np = apply_weekly_interval_scale_np(
+                pred_np,
+                interval_scale,
+                quantiles=quantiles_tuple,
+            )
+
+        raw_cap = meta_config.get(
+            "weekly_median_cap",
+            (metadata.get("target_scale_audit") or {}).get(
+                "weekly_median_cap",
+                metadata.get("weekly_median_cap"),
+            ),
+        )
+        if raw_cap is not None and float(raw_cap) > 0.0:
+            pred_np, _ = apply_weekly_median_cap_np(
+                pred_np,
+                weekly_median_cap=float(raw_cap),
+                quantiles=quantiles_tuple,
+                horizon=horizon,
+                already_ordered=True,
+            )
+
+        # Already in ordered quantile space -> aggregate RSS 5-day cumulative quantiles directly.
+        weekly_q = aggregate_weekly_quantiles_np(
+            pred_np[:, :horizon, :],
+            median_idx=median_idx,
+        )
+        actual_weekly = y_np[:, :horizon].sum(axis=1)
+
         if cqr_artifact is not None:
             weekly_q = apply_weekly_cqr(
                 weekly_q,
-                quantiles=quantiles,
+                quantiles=quantiles_tuple,
                 cqr_params=cqr_artifact,
                 realized_vol=vols,
             )

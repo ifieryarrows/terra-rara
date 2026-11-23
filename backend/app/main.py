@@ -135,6 +135,10 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
+from app.long_term_routes import long_term_router
+
+app.include_router(long_term_router)
+
 
 # =============================================================================
 # API Endpoints
@@ -1296,20 +1300,30 @@ _TFT_CACHE_TTL_S = 300  # 5 minutes
 
 
 def _latest_price_bar_date(session, symbol: str) -> Optional[date]:
-    """Return the latest persisted market bar date for a forecast symbol."""
-    latest = (
+    """Return the latest valid weekday market bar date for a forecast symbol."""
+    import math
+
+    query = (
         session.query(PriceBar)
         .filter(PriceBar.symbol == symbol)
         .order_by(PriceBar.date.desc())
-        .first()
     )
-    if latest is None or latest.date is None:
-        return None
-    value = latest.date
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
+    if hasattr(query, "limit"):
+        query = query.limit(30)
+    rows = query.all() if hasattr(query, "all") else [query.first()]
+    for bar in rows:
+        if bar is None or bar.date is None or bar.close is None:
+            continue
+        try:
+            close_val = float(bar.close)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(close_val) or close_val <= 0.0:
+            continue
+        value = bar.date
+        bar_date = value.date() if isinstance(value, datetime) else value
+        if isinstance(bar_date, date) and bar_date.weekday() < 5:
+            return bar_date
     return None
 
 
@@ -1451,13 +1465,28 @@ async def get_tft_analysis(
             if isinstance(payload.get("prediction"), dict)
             else {}
         )
-        payload.setdefault("primary_horizon", "5D")
-        payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
-        payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
-        payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
-        payload.setdefault("t1_return", prediction.get("predicted_return_median"))
+        is_healthy = bool(
+            payload.get("is_forecast_healthy", True) is not False
+            and payload.get("model_state") != "retrain_required"
+            and payload.get("quality_state") != "degraded"
+        )
+        invalid_reasons = _tft_snapshot_invalid_reasons(session, symbol, latest)
+        if is_healthy:
+            payload.setdefault("primary_horizon", "5D")
+            payload.setdefault("primary_forecast_return", prediction.get("weekly_return"))
+            payload.setdefault("primary_forecast_q10", prediction.get("weekly_return_q10_calibrated"))
+            payload.setdefault("primary_forecast_q90", prediction.get("weekly_return_q90_calibrated"))
+            payload.setdefault("t1_return", prediction.get("predicted_return_median"))
+        else:
+            payload["is_forecast_healthy"] = False
+            payload.setdefault("primary_horizon", None)
         payload.setdefault("t1_impulse", payload.get("t1_impulse"))
         payload.setdefault("return_space", prediction.get("return_space"))
+        if invalid_reasons:
+            payload["is_stale"] = True
+            payload["snapshot_invalid_reasons"] = invalid_reasons
+        else:
+            payload.setdefault("is_stale", False)
         payload["source"] = "snapshot"
         payload["snapshot_generated_at"] = (
             gen_at.isoformat() if gen_at else None
@@ -1863,44 +1892,98 @@ async def get_pipeline_run_status(
     response_model=ConsensusSignal,
     summary="Get consensus signal",
     description=(
-        "Combines the latest XGBoost snapshot and snapshot-first TFT-ASRO "
-        "signal into a directional consensus."
+        "Combines the latest XGBoost 1D diagnostic snapshot and fresh, healthy "
+        "TFT-ASRO primary 5D weekly snapshot into a directional consensus."
     ),
 )
 async def get_consensus(
     symbol: str = Query(default=TARGET_SYMBOL, description="Trading symbol")
 ):
+    import math
+    from app.models import TFTPredictionSnapshot
     from deep_learning.inference.predictor import ensemble_directional_vote
-    
-    # 1. Reuse the TFT endpoint's snapshot-first contract. This keeps the
-    # consensus response semantically identical while avoiding a fresh model
-    # inference when the pipeline already persisted a valid prediction.
+
+    tft_return = 0.0
+    tft_degraded = False
+    degraded_reasons: list[str] = []
+
     try:
-        tft_result = await get_tft_analysis(symbol=symbol, source="snapshot")
-            
-        if "error" in tft_result:
-            raise HTTPException(status_code=500, detail=tft_result["error"])
-            
-        tft_return = tft_result.get("prediction", {}).get("predicted_return_median", 0.0)
+        with SessionLocal() as session:
+            latest = (
+                session.query(TFTPredictionSnapshot)
+                .filter(TFTPredictionSnapshot.symbol == symbol)
+                .order_by(TFTPredictionSnapshot.generated_at.desc())
+                .first()
+            )
+            if latest is None or not isinstance(latest.payload_json, dict):
+                tft_degraded = True
+                degraded_reasons = ["missing_tft_snapshot"]
+            else:
+                invalid_reasons = _tft_snapshot_invalid_reasons(session, symbol, latest)
+                tft_payload = latest.payload_json
+                prediction = (
+                    tft_payload.get("prediction")
+                    if isinstance(tft_payload.get("prediction"), dict)
+                    else None
+                )
+                is_healthy = bool(
+                    tft_payload.get("is_forecast_healthy", True) is not False
+                    and tft_payload.get("model_state") != "retrain_required"
+                    and tft_payload.get("quality_state") != "degraded"
+                    and "error" not in tft_payload
+                    and prediction is not None
+                )
+                if invalid_reasons or not is_healthy:
+                    tft_degraded = True
+                    degraded_reasons = list(invalid_reasons) or ["tft_snapshot_degraded"]
+                else:
+                    wf = (
+                        tft_payload.get("weekly_forecast")
+                        if isinstance(tft_payload.get("weekly_forecast"), dict)
+                        else {}
+                    )
+                    raw_tft = tft_payload.get("primary_forecast_return")
+                    if raw_tft is None:
+                        raw_tft = wf.get("expected_return")
+                    if raw_tft is None and prediction is not None:
+                        raw_tft = prediction.get("weekly_return")
+                    try:
+                        parsed_tft = float(raw_tft) if raw_tft is not None else float("nan")
+                    except (TypeError, ValueError):
+                        parsed_tft = float("nan")
+                    if not math.isfinite(parsed_tft):
+                        tft_degraded = True
+                        degraded_reasons = ["missing_primary_5d_return"]
+                    else:
+                        tft_return = parsed_tft
     except Exception as e:
-        logger.error(f"Failed to get TFT analysis for consensus: {e}")
+        logger.error(f"Failed to load TFT snapshot for consensus: {e}")
+        tft_degraded = True
+        degraded_reasons = ["tft_snapshot_lookup_error"]
         tft_return = 0.0
 
-    # 2. Get XGBoost analysis (latest snapshot)
+    # 2. Get XGBoost analysis (latest 1D diagnostic snapshot)
     xgb_return = 0.0
     try:
         with SessionLocal() as session:
             snapshot = session.query(AnalysisSnapshot).filter(
                 AnalysisSnapshot.symbol == symbol
             ).order_by(AnalysisSnapshot.generated_at.desc()).first()
-            if snapshot and snapshot.report_json:
-                xgb_return = snapshot.report_json.get("predicted_return", 0.0)
+            if snapshot and isinstance(snapshot.report_json, dict):
+                raw_xgb = snapshot.report_json.get("predicted_return", 0.0)
+                if raw_xgb is not None:
+                    parsed_xgb = float(raw_xgb)
+                    if math.isfinite(parsed_xgb):
+                        xgb_return = parsed_xgb
     except Exception as e:
         logger.error(f"Failed to get XGBoost analysis for consensus: {e}")
 
-    # 3. Calculate consensus
-    xgb_bias_correction = 0.001 # Hardcoded small bias correction for now
-    result = ensemble_directional_vote(xgb_return, tft_return, xgb_bias_correction)
+    # 3. Calculate consensus using 1D XGBoost diagnostic vs primary 5D TFT (no magic bias offset)
+    result = ensemble_directional_vote(xgb_return, tft_return, xgb_bias_correction=0.0)
+    result["tft_horizon"] = "none" if tft_degraded else "5D"
+    result["xgb_horizon"] = "1D"
+    result["tft_degraded"] = tft_degraded
+    result["degraded_reasons"] = degraded_reasons
     return result
 
 
@@ -2038,9 +2121,18 @@ async def get_tft_summary(
 
         variable_importance, variable_importance_method = _build_variable_importance(meta)
 
-        da = float(metrics.get("directional_accuracy", 0.5))
-        sharpe = float(metrics.get("sharpe_ratio", 0.0))
-        vr = float(metrics.get("variance_ratio", 1.0))
+        def _opt_float(val: Any, default: Optional[float] = None) -> Optional[float]:
+            if val is None:
+                return default
+            try:
+                num = float(val)
+                return num if math.isfinite(num) else default
+            except (TypeError, ValueError):
+                return default
+
+        da = _opt_float(metrics.get("directional_accuracy"), 0.5)
+        sharpe = _opt_float(metrics.get("sharpe_ratio"), 0.0)
+        vr = _opt_float(metrics.get("variance_ratio"), 1.0)
         tail_capture = metrics.get("tail_capture_rate")
         quantile_crossing = metrics.get("quantile_crossing_rate")
         median_gap_max = metrics.get("median_sort_gap_max")
@@ -2053,6 +2145,7 @@ async def get_tft_summary(
         weekly_pi96_width_ratio = metrics.get("weekly_pi96_width_ratio")
         weekly_qcross = metrics.get("weekly_quantile_crossing_rate")
         weekly_sorted_qcross = metrics.get("weekly_sorted_quantile_crossing_rate")
+        weekly_ordered_qcross = metrics.get("weekly_ordered_quantile_crossing_rate")
         weekly_gap = metrics.get("weekly_median_sort_gap_max")
         weekly_samples = metrics.get("weekly_sample_count")
         weekly_pred_pos = metrics.get("weekly_pred_positive_rate")
@@ -2061,22 +2154,28 @@ async def get_tft_summary(
         weekly_bound_rate = metrics.get("weekly_median_bound_applied_rate")
         weekly_cap = metrics.get("weekly_median_cap")
         weekly_sharpe = metrics.get("weekly_sharpe_ratio")
+        weekly_sharpe_hac = metrics.get("weekly_sharpe_ratio_hac")
         weekly_sortino = metrics.get("weekly_sortino_ratio")
-        
+        weekly_mae_vs_naive_zero = metrics.get("weekly_mae_vs_naive_zero")
+        weekly_pinball_loss = metrics.get("weekly_pinball_loss")
+        weekly_no_sharpe = metrics.get("weekly_non_overlapping_sharpe")
+        weekly_no_da = metrics.get("weekly_non_overlapping_da")
+        weekly_no_n = metrics.get("weekly_non_overlapping_n")
+
         passed, reasons = evaluate_quality_gate_metrics(metrics)
         warnings = evaluate_quality_gate_metric_warnings(metrics)
-        
+
         gate_metrics = {
-            "da": da,
-            "sharpe": sharpe,
-            "vr": vr,
+            "da": da if da is not None else 0.5,
+            "sharpe": sharpe if sharpe is not None else 0.0,
+            "vr": vr if vr is not None else 1.0,
         }
-        if tail_capture is not None:
-            gate_metrics["tail_capture"] = float(tail_capture)
-        if quantile_crossing is not None:
-            gate_metrics["quantile_crossing_rate"] = float(quantile_crossing)
-        if median_gap_max is not None:
-            gate_metrics["median_sort_gap_max"] = float(median_gap_max)
+        if (tail_val := _opt_float(tail_capture)) is not None:
+            gate_metrics["tail_capture"] = tail_val
+        if (qc_val := _opt_float(quantile_crossing)) is not None:
+            gate_metrics["quantile_crossing_rate"] = qc_val
+        if (gap_val := _opt_float(median_gap_max)) is not None:
+            gate_metrics["median_sort_gap_max"] = gap_val
         for name, value in {
             "weekly_directional_accuracy": weekly_da,
             "weekly_magnitude_ratio": weekly_mr,
@@ -2087,16 +2186,26 @@ async def get_tft_summary(
             "weekly_pi96_width_ratio": weekly_pi96_width_ratio,
             "weekly_quantile_crossing_rate": weekly_qcross,
             "weekly_sorted_quantile_crossing_rate": weekly_sorted_qcross,
+            "weekly_ordered_quantile_crossing_rate": weekly_ordered_qcross,
             "weekly_median_sort_gap_max": weekly_gap,
             "weekly_sample_count": weekly_samples,
+            "weekly_pred_positive_rate": weekly_pred_pos,
+            "weekly_actual_positive_rate": weekly_actual_pos,
             "weekly_raw_magnitude_ratio": weekly_raw_mr,
             "weekly_median_bound_applied_rate": weekly_bound_rate,
             "weekly_median_cap": weekly_cap,
             "weekly_sharpe_ratio": weekly_sharpe,
+            "weekly_sharpe_ratio_hac": weekly_sharpe_hac,
             "weekly_sortino_ratio": weekly_sortino,
+            "weekly_mae_vs_naive_zero": weekly_mae_vs_naive_zero,
+            "weekly_pinball_loss": weekly_pinball_loss,
+            "weekly_non_overlapping_sharpe": weekly_no_sharpe,
+            "weekly_non_overlapping_da": weekly_no_da,
+            "weekly_non_overlapping_n": weekly_no_n,
         }.items():
-            if value is not None:
-                gate_metrics[name] = float(value)
+            parsed = _opt_float(value)
+            if parsed is not None:
+                gate_metrics[name] = parsed
 
         return {
             "symbol": symbol,
@@ -2145,14 +2254,15 @@ def _normalize_backtest_summary(summary: Optional[dict]) -> dict:
 
 @app.get(
     "/api/models/tft/backtest/latest",
+    response_model=BacktestReportResponse,
     summary="Get latest backtest report",
     description=(
-        "Returns the latest walk-forward backtest results and Theta "
-        "comparison. Prefers DB-persisted reports; falls back to "
+        "Returns the latest TFT walk-forward backtest results and Theta "
+        "comparison. Prefers DB-persisted TFT reports; falls back to "
         "filesystem artifacts. Returns a structured empty state (HTTP 200 "
-        "with available=false) when no report has been produced yet, so "
+        "with available=false) when no TFT report has been produced yet, so "
         "the frontend can render a clean zero-state instead of surfacing "
-        "a 404 error."
+        "a 404 error or mixing 1D XGBoost challenger reports."
     ),
 )
 async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, description="Target symbol")):
@@ -2163,7 +2273,7 @@ async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, descrip
 
     empty_payload = {
         "available": False,
-        "message": "No backtest runs yet. Run `python -m backend.backtest.runner` to generate one.",
+        "message": "No TFT backtest runs yet. Run `python -m backend.backtest.runner --include-tft` to generate one.",
         "report_date": None,
         "summary_metrics": {},
         "window_metrics": [],
@@ -2171,29 +2281,23 @@ async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, descrip
         "verdict": None,
     }
 
-    # 1. Prefer DB-persisted authentic TFT walk-forward row (`tft_vs_xgb`);
-    #    fall back to the latest report of any kind if no TFT report exists yet.
+    # 1. Serve strictly horizon-matched TFT walk-forward DB reports (`tft_vs_xgb` /
+    #    `tft_walk_forward`); never fall back to 1D `xgb_challenger` rows.
     try:
         with SessionLocal() as session:
             row = (
                 session.query(BacktestReport)
                 .filter(
                     BacktestReport.symbol == symbol,
-                    BacktestReport.report_kind == "tft_vs_xgb",
+                    BacktestReport.report_kind.in_(("tft_vs_xgb", "tft_walk_forward")),
                 )
                 .order_by(BacktestReport.generated_at.desc())
                 .first()
             )
-            if row is None:
-                row = (
-                    session.query(BacktestReport)
-                    .filter(BacktestReport.symbol == symbol)
-                    .order_by(BacktestReport.generated_at.desc())
-                    .first()
-                )
             if row is not None:
                 return {
                     "available": True,
+                    "message": None,
                     "report_date": row.generated_at.isoformat() if row.generated_at else None,
                     "summary_metrics": _normalize_backtest_summary(row.summary_json),
                     "window_metrics": row.windows_json or [],
@@ -2215,6 +2319,7 @@ async def get_latest_backtest(symbol: str = Query(default=TARGET_SYMBOL, descrip
                 comp = data.get("baseline_comparison", {})
                 return {
                     "available": True,
+                    "message": None,
                     "report_date": data.get("timestamp") or data.get("generated_at"),
                     "summary_metrics": tft_bt.get("summary", {}),
                     "window_metrics": tft_bt.get("windows", []),

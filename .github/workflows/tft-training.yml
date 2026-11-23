@@ -67,7 +67,7 @@ concurrency:
 
 jobs:
     # ─────────────────────────────────────────────────────────────────────────
-    # JOB 1 — Hyperparameter search (~108 min, own 3 h budget)
+    # JOB 1 — Hyperparameter search (~108 min, up to 355 min timeout budget)
     # Skipped when run_hyperopt is explicitly set to "false".
     # ─────────────────────────────────────────────────────────────────────────
     hyperopt:
@@ -153,7 +153,7 @@ jobs:
                       /tmp/models/tft/hyperopt_environment.txt
                       /tmp/models/tft/feature_snapshot.pkl
                       /tmp/models/tft/feature_snapshot.pkl.json
-                  if-no-files-found: warn
+                  if-no-files-found: error
                   retention-days: 7
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -261,6 +261,7 @@ jobs:
               env:
                   DATABASE_URL: ${{ secrets.DATABASE_URL }}
                   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+                  TOKENIZERS_PARALLELISM: "false"
 
             - name: Upload model artifacts (GitHub)
               uses: actions/upload-artifact@v4
@@ -283,7 +284,7 @@ jobs:
                   echo "Manual intervention required: check training logs and metrics."
                   echo ""
                   echo "To recover, re-run with previous hyperopt results or use:"
-                  echo "  gh workflow run tft-training.yml -f run_hyperopt=false"
+                  echo "  gh workflow run tft-training.yml -f run_hyperopt=false -f optuna_results_run_id=<hyperopt_run_id>"
                   exit 1
 
             - name: Upload model artifacts to HF Hub
@@ -372,11 +373,13 @@ jobs:
                   ls -la /tmp/models/tft/ 2>/dev/null || echo "No model directory"
                   ls -la /tmp/models/tft/checkpoints/ 2>/dev/null || echo "No checkpoints"
                   echo ""
-                  if [ "${{ steps.quality_gate.outcome }}" == "failure" ]; then
-                    echo "⚠️  QUALITY GATE FAILED — see above for details"
-                  else
+                  if [ "${{ steps.quality_gate.outcome }}" == "success" ]; then
                     echo "✅ Model checkpoint has been automatically uploaded to HF Hub."
                     echo "The HF Space will download it on next inference request."
+                  elif [ "${{ steps.quality_gate.outcome }}" == "failure" ]; then
+                    echo "⚠️  QUALITY GATE FAILED — see above for details"
+                  else
+                    echo "⚠️  Training did not reach quality gate (outcome=${{ steps.quality_gate.outcome }}); HF Hub unchanged."
                   fi
 
     # ─────────────────────────────────────────────────────────────────────────

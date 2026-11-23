@@ -123,16 +123,39 @@ def test_quantile_crossing_metrics_detect_inversions():
 def test_compute_all_metrics_includes_quantile_coherence_fields():
     actual = np.array([0.01, -0.02])
     pred = np.array([0.02, -0.01])
-    quantiles = np.array([
+    crossed = np.array([
         [0.01, 0.04, 0.03, 0.05],
         [-0.03, -0.02, -0.01, 0.00],
     ])
 
-    m = compute_all_metrics(actual, pred, y_pred_quantiles=quantiles)
+    m_crossed = compute_all_metrics(actual, pred, y_pred_quantiles=crossed)
+    assert m_crossed["raw_quantile_crossing_rate"] > 0
+    assert m_crossed["raw_median_sort_gap_max"] > 0
+    assert m_crossed["quantile_crossing_rate"] == m_crossed["raw_quantile_crossing_rate"]
+    assert m_crossed["sorted_quantile_crossing_rate"] == m_crossed["raw_quantile_crossing_rate"]
+    assert m_crossed["ordered_quantile_crossing_rate"] == m_crossed["raw_quantile_crossing_rate"]
+    assert m_crossed["public_quantile_crossing_rate"] == m_crossed["raw_quantile_crossing_rate"]
+    assert m_crossed["median_sort_gap_max"] == m_crossed["raw_median_sort_gap_max"]
 
-    assert m["raw_quantile_crossing_rate"] > 0
-    assert m["raw_median_sort_gap_max"] > 0
-    assert m["quantile_crossing_rate"] == 0.0
-    assert m["ordered_quantile_crossing_rate"] == 0.0
-    assert m["public_quantile_crossing_rate"] == 0.0
-    assert m["median_sort_gap_max"] == 0.0
+    ordered = np.array([
+        [-0.01, 0.01, 0.03, 0.05],
+        [-0.03, -0.02, -0.01, 0.00],
+    ])
+    m_ordered = compute_all_metrics(actual, pred, y_pred_quantiles=ordered)
+    assert m_ordered["quantile_crossing_rate"] == 0.0
+    assert m_ordered["ordered_quantile_crossing_rate"] == 0.0
+    assert m_ordered["median_sort_gap_max"] == 0.0
+
+
+def test_sortino_ratio_handles_single_and_constant_negative_returns():
+    single_loss = np.array([0.01, 0.02, -0.005, 0.015, 0.01])
+    sr_single = sortino_ratio(single_loss, annualisation=252.0)
+    assert np.isfinite(sr_single)
+    # Must reflect actual downside RMS (~0.002236), NOT 1e8 explosion from std=1e-9.
+    assert 0.0 < sr_single < 150.0
+
+    constant_losses = np.array([-0.01, -0.01, -0.01, -0.01])
+    sr_const = sortino_ratio(constant_losses, annualisation=252.0)
+    assert np.isfinite(sr_const)
+    assert sr_const < 0.0
+    assert np.isclose(sr_const, -np.sqrt(252.0))

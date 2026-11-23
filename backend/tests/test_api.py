@@ -804,3 +804,149 @@ class TestSentimentSummary:
         assert result["data_freshness"]["window_days"] == 7
         assert result["data_freshness"]["article_count_window"] == 2
 
+
+class TestPhase2APIEndpointContracts:
+    """Tests for TFT summary/backtest horizon isolation and Long-Term Outlook router."""
+
+    def test_tft_backtest_latest_ignores_1d_xgb_challenger_rows(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        import app.main as main_module
+        from app.models import BacktestReport
+
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        BacktestReport.__table__.create(bind=engine)
+        Session = sessionmaker(bind=engine)
+        try:
+            with Session() as session:
+                session.add(
+                    BacktestReport(
+                        symbol="HG=F",
+                        run_id="xgb-only",
+                        report_kind="xgb_challenger",
+                        summary_json={"directional_accuracy": 0.61},
+                        windows_json=[],
+                        theta_comparison_json={},
+                        verdict="CHALLENGER",
+                    )
+                )
+                session.commit()
+
+            monkeypatch.setattr(main_module, "SessionLocal", Session)
+            monkeypatch.chdir(tmp_path)
+            resp = TestClient(main_module.app).get("/api/models/tft/backtest/latest?symbol=HG=F")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["available"] is False
+            assert body["verdict"] is None
+        finally:
+            engine.dispose()
+
+    def test_tft_summary_exposes_active_gate_metrics(self, monkeypatch):
+        import json
+        import app.main as main_module
+
+        metrics = {
+            "directional_accuracy": 0.52,
+            "sharpe_ratio": 0.10,
+            "variance_ratio": 0.90,
+            "quantile_crossing_rate": 0.0,
+            "median_sort_gap_max": 0.0,
+            "weekly_directional_accuracy": 0.56,
+            "weekly_magnitude_ratio": 1.0,
+            "weekly_raw_magnitude_ratio": 1.0,
+            "weekly_median_bound_applied_rate": 0.1,
+            "weekly_mae_vs_naive_zero": 0.96,
+            "weekly_pred_positive_rate": 0.54,
+            "weekly_actual_positive_rate": 0.55,
+            "weekly_pi80_coverage": 0.80,
+            "weekly_pi80_width_ratio": 1.0,
+            "weekly_pi96_coverage": 0.96,
+            "weekly_pi96_width_ratio": 1.0,
+            "weekly_quantile_crossing_rate": 0.0,
+            "weekly_sorted_quantile_crossing_rate": 0.0,
+            "weekly_ordered_quantile_crossing_rate": 0.0,
+            "weekly_median_sort_gap_max": 0.0,
+            "weekly_sample_count": 120,
+            "weekly_sharpe_ratio": 0.45,
+            "weekly_sharpe_ratio_hac": 0.31,
+            "weekly_pinball_loss": 0.012,
+            "weekly_non_overlapping_sharpe": 0.28,
+            "weekly_non_overlapping_da": 0.54,
+            "weekly_non_overlapping_n": 24,
+        }
+        meta = SimpleNamespace(
+            symbol="HG=F",
+            trained_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+            checkpoint_path="models/tft/best_tft_asro.ckpt",
+            config_json="{}",
+            metrics_json=json.dumps(metrics),
+            importance_json=None,
+            quality_gate_passed=True,
+        )
+
+        class FakeQuery:
+            def filter(self, *_a):
+                return self
+
+            def order_by(self, *_a):
+                return self
+
+            def first(self):
+                return meta
+
+        class FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def query(self, _m):
+                return FakeQuery()
+
+        monkeypatch.setattr(main_module, "SessionLocal", lambda: FakeSession())
+        summary = asyncio.run(main_module.get_tft_summary("HG=F"))
+        gm = summary["quality_gate"]["metrics"]
+        assert gm["weekly_sharpe_ratio_hac"] == pytest.approx(0.31)
+        assert gm["weekly_mae_vs_naive_zero"] == pytest.approx(0.96)
+        assert gm["weekly_pred_positive_rate"] == pytest.approx(0.54)
+        assert gm["weekly_actual_positive_rate"] == pytest.approx(0.55)
+        assert gm["weekly_pinball_loss"] == pytest.approx(0.012)
+        assert gm["weekly_non_overlapping_sharpe"] == pytest.approx(0.28)
+
+    def test_long_term_router_mounted_and_snapshot_table_registered(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine, inspect as sa_inspect
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        import app.db as app_db
+        import app.long_term_routes as lt_routes
+        import app.main as main_module
+        from app.models import LongTermOutlookSnapshot
+
+        assert LongTermOutlookSnapshot.__tablename__ == "long_term_outlook_snapshots"
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        try:
+            # Verify Base.metadata.create_all sees LongTermOutlookSnapshot via app.models/app.db
+            app_db.Base.metadata.create_all(bind=engine)
+            assert "long_term_outlook_snapshots" in sa_inspect(engine).get_table_names()
+
+            Session = sessionmaker(bind=engine)
+            monkeypatch.setattr(lt_routes, "SessionLocal", Session)
+            resp = TestClient(main_module.app).get("/api/outlook/long-term/HG=F")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "unavailable"
+        finally:
+            engine.dispose()
+

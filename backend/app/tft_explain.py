@@ -197,6 +197,62 @@ def _layout_names(group: Sequence[dict]) -> list[str]:
     return [_json_text(item.get("feature")) or "" for item in group]
 
 
+def aggregate_interpretations(interpretations: Sequence[dict]) -> dict:
+    """Average raw VSN weights and encoder attention across active ensemble members."""
+    valid = [item for item in interpretations if isinstance(item, dict) and "attention" in item]
+    if not valid:
+        raise ValueError("No valid TFT interpretations available to aggregate")
+    if len(valid) == 1:
+        return valid[0]
+
+    def _avg_group(group_key: str) -> list[dict]:
+        sums: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        order: list[str] = []
+        for interp in valid:
+            for item in interp.get(group_key) or ():
+                feat = _json_text(item.get("feature")) or ""
+                weight = _sanitize_weight(item.get("weight"))
+                if not feat or weight is None:
+                    continue
+                if feat not in sums:
+                    sums[feat] = 0.0
+                    counts[feat] = 0
+                    order.append(feat)
+                sums[feat] += weight
+                counts[feat] += 1
+        averaged = {feat: sums[feat] / counts[feat] for feat in order if counts[feat] > 0}
+        total = sum(averaged.values())
+        if total > 0.0:
+            averaged = {feat: val / total for feat, val in averaged.items()}
+        return [{"feature": feat, "weight": averaged[feat]} for feat in order if feat in averaged]
+
+    first_attn = list(valid[0]["attention"])
+    attn_len = len(first_attn)
+    attn_sums = [0.0] * attn_len
+    attn_counts = [0] * attn_len
+    for interp in valid:
+        attn = list(interp.get("attention") or ())
+        if len(attn) != attn_len:
+            continue
+        for idx, raw_w in enumerate(attn):
+            w = _sanitize_weight(raw_w)
+            if w is not None:
+                attn_sums[idx] += w
+                attn_counts[idx] += 1
+    avg_attn = [
+        (attn_sums[idx] / attn_counts[idx]) if attn_counts[idx] > 0 else 0.0
+        for idx in range(attn_len)
+    ]
+
+    return {
+        "encoder": _avg_group("encoder"),
+        "decoder": _avg_group("decoder"),
+        "static": _avg_group("static"),
+        "attention": avg_attn,
+    }
+
+
 def build_explain_payload(
     *,
     interpretation: dict,
@@ -209,6 +265,7 @@ def build_explain_payload(
     run_id: Any = None,
     generated_at: Any = None,
     attention_pred_horizon: int = 0,
+    ensemble_size: Optional[int] = None,
 ) -> dict:
     """Assemble the ``explain_json`` payload for one TFT-ASRO forecast.
 
@@ -261,7 +318,7 @@ def build_explain_payload(
     if generated_at is None:
         generated_at = datetime.now(timezone.utc)
 
-    return {
+    payload: dict[str, Any] = {
         "schema_version": EXPLAIN_SCHEMA_VERSION,
         "symbol": _json_text(symbol),
         "reference_price_date": _json_date(reference_price_date),
@@ -285,6 +342,7 @@ def build_explain_payload(
         },
         "attention": {
             "method": "tft_attention",
+            "focus_basis": "pre_calibration_raw_decoder_step",
             "step": {
                 "kind": "first_forecast_day",
                 "horizon_index": int(attention_pred_horizon),
@@ -299,6 +357,9 @@ def build_explain_payload(
         },
         "notes": _NOTES,
     }
+    if ensemble_size is not None:
+        payload["ensemble_size"] = int(ensemble_size)
+    return payload
 
 
 def try_build_explain_payload(**kwargs: Any) -> Optional[dict]:

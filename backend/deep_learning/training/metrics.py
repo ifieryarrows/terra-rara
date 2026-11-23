@@ -93,13 +93,14 @@ def apply_weekly_median_cap_np(
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
     eps: float = 1e-12,
+    already_ordered: bool = False,
 ) -> tuple[np.ndarray, dict[str, float]]:
     """
     Bound the cumulative q50 path without using validation/test targets.
 
     The cap itself must be resolved from training targets before this helper is
-    called. Lower/upper raw quantile channels are left untouched; the production
-    monotonic transform rebuilds public quantiles around the bounded median.
+    called. When ``already_ordered`` is True, all quantile channels shift with
+    the bounded median so quantile spread and monotonicity remain intact.
     """
     arr = np.array(pred, dtype=np.float64, copy=True)
     if arr.ndim != 3:
@@ -120,7 +121,12 @@ def apply_weekly_median_cap_np(
         raw_abs = np.abs(raw_weekly)
         scale = np.minimum(1.0, cap_value / np.maximum(raw_abs, eps))
         applied = raw_abs > cap_value + eps
-        arr[:, :, median_idx] = arr[:, :, median_idx] * scale.reshape(-1, 1)
+        if already_ordered:
+            old_med = arr[:, :, median_idx : median_idx + 1]
+            new_med = old_med * scale.reshape(-1, 1, 1)
+            arr = arr + (new_med - old_med)
+        else:
+            arr[:, :, median_idx] = arr[:, :, median_idx] * scale.reshape(-1, 1)
 
     bounded_weekly = arr[:, :horizon, median_idx].sum(axis=1)
     diagnostics = {
@@ -697,14 +703,18 @@ def sortino_ratio(
     annualisation: float = 252.0,
 ) -> float:
     """
-    Annualised Sortino Ratio (penalises only downside volatility).
+    Annualised Sortino Ratio using RMS downside deviation below target MAR (0).
     """
-    excess = returns - risk_free_rate / annualisation
-    downside = excess[excess < 0]
-    downside_std = downside.std() if len(downside) > 1 else 1e-9
-    if downside_std < 1e-9:
+    arr = np.asarray(returns, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
         return 0.0
-    return float(np.sqrt(annualisation) * excess.mean() / downside_std)
+    excess = arr - (risk_free_rate / annualisation if annualisation else 0.0)
+    downside = np.minimum(excess, 0.0)
+    downside_dev = float(np.sqrt(np.mean(downside ** 2)))
+    if not np.isfinite(downside_dev) or downside_dev <= 1e-9 or not np.any(excess < 0.0):
+        return 0.0
+    return float(np.sqrt(annualisation) * excess.mean() / downside_dev)
 
 
 def directional_accuracy(
@@ -1305,24 +1315,21 @@ def compute_all_metrics(
 
     if y_pred_quantiles is not None:
         q_arr = np.asarray(y_pred_quantiles, dtype=np.float64)
-        ordered_q = monotonic_quantiles_np(q_arr)
-        raw_crossing = quantile_crossing_rate(q_arr)
-        ordered_crossing = quantile_crossing_rate(ordered_q)
-        metrics["quantile_crossing_rate"] = ordered_crossing
-        metrics["raw_quantile_crossing_rate"] = raw_crossing
-        metrics["ordered_quantile_crossing_rate"] = ordered_crossing
-        metrics["public_quantile_crossing_rate"] = ordered_crossing
-        metrics["sorted_quantile_crossing_rate"] = ordered_crossing
+        crossing = quantile_crossing_rate(q_arr)
         gap_mean, gap_max = quantile_median_sort_gap(q_arr)
+        metrics["quantile_crossing_rate"] = crossing
+        metrics["raw_quantile_crossing_rate"] = crossing
+        metrics["ordered_quantile_crossing_rate"] = crossing
+        metrics["public_quantile_crossing_rate"] = crossing
+        metrics["sorted_quantile_crossing_rate"] = crossing
+        metrics["median_sort_gap_mean"] = gap_mean
+        metrics["median_sort_gap_max"] = gap_max
         metrics["raw_median_sort_gap_mean"] = gap_mean
         metrics["raw_median_sort_gap_max"] = gap_max
-        ordered_gap_mean, ordered_gap_max = quantile_median_sort_gap(ordered_q)
-        metrics["median_sort_gap_mean"] = ordered_gap_mean
-        metrics["median_sort_gap_max"] = ordered_gap_max
-        metrics["ordered_median_sort_gap_mean"] = ordered_gap_mean
-        metrics["ordered_median_sort_gap_max"] = ordered_gap_max
-        metrics["sorted_median_sort_gap_mean"] = ordered_gap_mean
-        metrics["sorted_median_sort_gap_max"] = ordered_gap_max
+        metrics["ordered_median_sort_gap_mean"] = gap_mean
+        metrics["ordered_median_sort_gap_max"] = gap_max
+        metrics["sorted_median_sort_gap_mean"] = gap_mean
+        metrics["sorted_median_sort_gap_max"] = gap_max
 
     return metrics
 
@@ -1352,6 +1359,7 @@ def compute_weekly_metrics(
     weekly_cqr_params: dict | None = None,
     realized_vol: np.ndarray | None = None,
     empirical_train_weekly: np.ndarray | None = None,
+    already_ordered: bool = False,
 ) -> dict[str, float]:
     """
     Compute weekly-first metrics from a daily log-return path using RSS quantile
@@ -1363,8 +1371,13 @@ def compute_weekly_metrics(
     weekly_actual = cumulative_horizon(y_actual_path, horizon=horizon)
     raw_path = np.asarray(y_pred_quantiles_path, dtype=np.float64)
     median_idx = len(quantiles) // 2
-    ordered_path = monotonic_quantiles_np(raw_path, median_idx=median_idx)
+    ordered_path = (
+        raw_path
+        if already_ordered
+        else monotonic_quantiles_np(raw_path, median_idx=median_idx)
+    )
     raw_weekly_quantiles = aggregate_weekly_quantiles_np(raw_path[:, :horizon, :], median_idx=median_idx)
+    raw_weekly_sum_quantiles = raw_path[:, :horizon, :].sum(axis=1)
     weekly_quantiles = aggregate_weekly_quantiles_np(ordered_path[:, :horizon, :], median_idx=median_idx)
     if weekly_cqr_params:
         weekly_quantiles = apply_weekly_cqr(
@@ -1433,12 +1446,25 @@ def compute_weekly_metrics(
         annualisation=effective_annualisation,
         max_lag=max(horizon - 1, 0),
     )
-    non_overlapping_returns = strategy_returns[::max(horizon, 1)]
-    weekly_metrics["weekly_sharpe_ratio_non_overlapping"] = (
+    step = max(horizon, 1)
+    non_overlapping_actual = weekly_actual[::step]
+    non_overlapping_pred = weekly_pred[::step]
+    non_overlapping_returns = strategy_returns[::step]
+    non_overlapping_n = int(len(non_overlapping_actual))
+    non_overlapping_sharpe = (
         sharpe_ratio(non_overlapping_returns, annualisation=effective_annualisation)
-        if non_overlapping_returns.size >= 2
+        if non_overlapping_n >= 2
         else 0.0
     )
+    non_overlapping_da = (
+        directional_accuracy(non_overlapping_actual, non_overlapping_pred)
+        if non_overlapping_n >= 1
+        else 0.0
+    )
+    weekly_metrics["weekly_sharpe_ratio_non_overlapping"] = non_overlapping_sharpe
+    weekly_metrics["weekly_non_overlapping_sharpe"] = non_overlapping_sharpe
+    weekly_metrics["weekly_non_overlapping_da"] = non_overlapping_da
+    weekly_metrics["weekly_non_overlapping_n"] = float(non_overlapping_n)
     weekly_metrics["weekly_tail_capture_rate_flipped"] = tail_capture_rate(
         weekly_actual,
         -weekly_pred,
@@ -1451,21 +1477,18 @@ def compute_weekly_metrics(
     else:
         weekly_metrics["weekly_sign_correlation"] = 0.0
     weekly_metrics["weekly_interval_quantile_source"] = 1.0
-    weekly_metrics["weekly_approx_quantile_crossing_rate"] = quantile_crossing_rate(
-        raw_weekly_quantiles
-    )
+    raw_approx_crossing = quantile_crossing_rate(raw_weekly_quantiles)
+    raw_sum_crossing = quantile_crossing_rate(raw_weekly_sum_quantiles)
+    weekly_metrics["weekly_approx_quantile_crossing_rate"] = raw_approx_crossing
     approx_gap_mean, approx_gap_max = quantile_median_sort_gap(raw_weekly_quantiles)
     weekly_metrics["weekly_approx_median_sort_gap_mean"] = approx_gap_mean
     weekly_metrics["weekly_approx_median_sort_gap_max"] = approx_gap_max
-    weekly_metrics["weekly_raw_quantile_crossing_rate"] = quantile_crossing_rate(
-        raw_weekly_quantiles
+    weekly_metrics["weekly_raw_quantile_crossing_rate"] = max(
+        raw_approx_crossing, raw_sum_crossing
     )
-    weekly_metrics["weekly_ordered_quantile_crossing_rate"] = quantile_crossing_rate(
-        weekly_quantiles
-    )
-    weekly_metrics["weekly_public_quantile_crossing_rate"] = weekly_metrics[
-        "weekly_ordered_quantile_crossing_rate"
-    ]
+    post_cqr_crossing = quantile_crossing_rate(weekly_quantiles)
+    weekly_metrics["weekly_ordered_quantile_crossing_rate"] = post_cqr_crossing
+    weekly_metrics["weekly_public_quantile_crossing_rate"] = post_cqr_crossing
     weekly_metrics["weekly_magnitude_ratio"] = magnitude_ratio(weekly_actual, weekly_pred)
     weekly_metrics["weekly_mean_actual_abs"] = float(np.mean(np.abs(weekly_actual)))
     weekly_metrics["weekly_mean_pred_abs"] = float(np.mean(np.abs(weekly_pred)))
@@ -1530,6 +1553,7 @@ def evaluate_quantile_predictions(
     weekly_interval_conditioning_max_scale: float = 2.50,
     weekly_cqr_params: dict | None = None,
     realized_vol: np.ndarray | None = None,
+    already_ordered: bool = False,
 ) -> dict[str, float]:
     """
     Evaluate multi-horizon quantile predictions through the production metric path.
@@ -1573,8 +1597,13 @@ def evaluate_quantile_predictions(
         weekly_median_cap=weekly_median_cap,
         quantiles=quantiles,
         horizon=horizon,
+        already_ordered=already_ordered,
     )
-    ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
+    ordered_pred_np = (
+        eval_pred_np
+        if already_ordered
+        else monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
+    )
     raw_pred_t1 = pred_np[:, 0, :]
     pred_t1 = ordered_pred_np[:, 0, :]
     y_actual_t1 = select_prediction_horizon(y_actual_path, horizon_idx=0)
@@ -1598,6 +1627,7 @@ def evaluate_quantile_predictions(
     weekly_metrics_kwargs: dict[str, object] = {
         "quantiles": quantiles,
         "horizon": horizon,
+        "already_ordered": already_ordered,
     }
     if weekly_cqr_params is not None:
         weekly_metrics_kwargs["weekly_cqr_params"] = weekly_cqr_params
@@ -1611,7 +1641,11 @@ def evaluate_quantile_predictions(
     metrics.update(weekly_metrics)
     if weekly_median_cap is not None:
         weekly_actual = cumulative_horizon(y_actual_path[:n_path], horizon=horizon)
-        raw_ordered_pred_np = monotonic_quantiles_np(pred_np[:n_path], median_idx=median_idx)
+        raw_ordered_pred_np = (
+            pred_np[:n_path]
+            if already_ordered
+            else monotonic_quantiles_np(pred_np[:n_path], median_idx=median_idx)
+        )
         bounded_ordered_pred_np = ordered_pred_np[:n_path]
         raw_weekly_pred = raw_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
         bounded_weekly_pred = bounded_ordered_pred_np[:, :horizon, median_idx].sum(axis=1)

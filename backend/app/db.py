@@ -507,7 +507,7 @@ def init_db():
     Also runs any necessary migrations for schema changes.
     """
     # Import models to register them with Base
-    from app import models  # noqa: F401
+    from app import long_term_models, models  # noqa: F401
 
     engine = get_engine()
     try:

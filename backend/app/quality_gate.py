@@ -36,6 +36,7 @@ def evaluate_quality_gate(
     weekly_pi96_width_ratio: Optional[float] = None,
     weekly_quantile_crossing_rate: Optional[float] = None,
     weekly_sorted_quantile_crossing_rate: Optional[float] = None,
+    weekly_ordered_quantile_crossing_rate: Optional[float] = None,
     weekly_median_sort_gap_max: Optional[float] = None,
     weekly_sample_count: Optional[int] = None,
     weekly_pred_positive_rate: Optional[float] = None,
@@ -89,7 +90,9 @@ def evaluate_quality_gate(
     if weekly_median_bound_applied_rate is None:
         reasons.append("Missing weekly_median_bound_applied_rate")
 
-    if weekly_mae_vs_naive_zero is not None and weekly_mae_vs_naive_zero > 1.12:
+    if weekly_mae_vs_naive_zero is None or not math.isfinite(weekly_mae_vs_naive_zero):
+        reasons.append("Missing/invalid weekly_mae_vs_naive_zero")
+    elif weekly_mae_vs_naive_zero > 1.12:
         reasons.append(f"WeeklyMAEvsNaiveZero={weekly_mae_vs_naive_zero:.4f} > 1.12")
 
     if weekly_pred_positive_rate is None:
@@ -143,19 +146,27 @@ def evaluate_quality_gate(
     if weekly_quantile_crossing_rate is None:
         reasons.append("Missing weekly_quantile_crossing_rate")
     elif weekly_quantile_crossing_rate > 0.001:
-        raise AssertionError(
+        reasons.append(
             f"WeeklyPublicQuantileCrossing={weekly_quantile_crossing_rate:.4f} > 0.001"
         )
 
     if weekly_sorted_quantile_crossing_rate is None:
         reasons.append("Missing weekly_sorted_quantile_crossing_rate")
     elif weekly_sorted_quantile_crossing_rate > 0.001:
-        raise AssertionError(
+        reasons.append(
             f"WeeklyOrderedQuantileCrossing={weekly_sorted_quantile_crossing_rate:.4f} > 0.001"
         )
 
+    if (
+        weekly_ordered_quantile_crossing_rate is not None
+        and weekly_ordered_quantile_crossing_rate > 0.001
+    ):
+        reasons.append(
+            f"WeeklyPostCQRQuantileCrossing={weekly_ordered_quantile_crossing_rate:.4f} > 0.001"
+        )
+
     if weekly_median_sort_gap_max is not None and weekly_median_sort_gap_max > 0.001:
-        raise AssertionError(
+        reasons.append(
             f"WeeklyOrderedMedianSortGapMax={weekly_median_sort_gap_max:.4f} > 0.001"
         )
 
@@ -170,9 +181,9 @@ def evaluate_quality_gate(
     if quantile_crossing_rate is None:
         reasons.append("Missing quantile_crossing_rate")
     elif quantile_crossing_rate > 0.001:
-        raise AssertionError(f"PublicQuantileCrossing={quantile_crossing_rate:.4f} > 0.001")
+        reasons.append(f"PublicQuantileCrossing={quantile_crossing_rate:.4f} > 0.001")
     if median_sort_gap_max is not None and median_sort_gap_max > 0.001:
-        raise AssertionError(f"OrderedMedianSortGapMax={median_sort_gap_max:.4f} > 0.001")
+        reasons.append(f"OrderedMedianSortGapMax={median_sort_gap_max:.4f} > 0.001")
     if pi80_width is not None and pi80_width < 0.0:
         reasons.append(f"PI80Width={pi80_width:.4f} < 0.0")
     if pi96_width is not None and pi96_width < 0.0:
@@ -241,6 +252,9 @@ def evaluate_quality_gate_metrics(
         ),
         weekly_sorted_quantile_crossing_rate=_metric_float(
             metrics, "weekly_sorted_quantile_crossing_rate"
+        ),
+        weekly_ordered_quantile_crossing_rate=_metric_float(
+            metrics, "weekly_ordered_quantile_crossing_rate"
         ),
         weekly_median_sort_gap_max=_metric_float(
             metrics, "weekly_median_sort_gap_max"

@@ -152,6 +152,7 @@ class TFTPredictor:
         self._monotonic_quantile_transform: bool = False
         self._ensemble_checkpoint_names: list[str] = []
         self._ensemble_models: list = []
+        self._expected_ensemble_size: Optional[int] = None
         self._hybrid_blend: dict = {}
 
     @property
@@ -394,33 +395,47 @@ class TFTPredictor:
             if isinstance(raw_ensemble, list)
             else []
         )
+        meta_test_metrics = metadata.get("test_metrics") if isinstance(metadata.get("test_metrics"), dict) else {}
+        expected_ens = meta_test_metrics.get("ensemble_size")
+        self._expected_ensemble_size = int(expected_ens) if expected_ens is not None else None
         raw_hybrid = metadata.get("hybrid_blend") or {}
         self._hybrid_blend = dict(raw_hybrid) if isinstance(raw_hybrid, dict) else {}
         self._metadata_checked = True
 
     def _load_ensemble_models(self) -> list:
         primary = self.model
+        expected_size = getattr(self, "_expected_ensemble_size", None)
         if not self._ensemble_checkpoint_names or not self._checkpoint_path:
+            if expected_size is not None and int(expected_size) > 1:
+                raise IncompatibleTFTCheckpointError(
+                    f"Incomplete TFT ensemble: expected {int(expected_size)} checkpoints, loaded 1."
+                )
             return [primary]
         if len(self._ensemble_models) > 1:
             return self._ensemble_models
         ckpt_dir = Path(self._checkpoint_path).parent
         primary_name = Path(self._checkpoint_path).name
-        try:
-            from deep_learning.models.tft_copper import load_tft_model
-        except Exception:
-            return [primary]
+        from deep_learning.models.tft_copper import load_tft_model
+
         models = [primary]
         for name in self._ensemble_checkpoint_names:
             if not name or name == primary_name:
                 continue
             candidate = ckpt_dir / name
             if not candidate.exists():
-                continue
+                raise IncompatibleTFTCheckpointError(
+                    f"Missing required TFT ensemble checkpoint: {candidate}. Retraining required."
+                )
             try:
                 models.append(load_tft_model(str(candidate)))
             except Exception as exc:
-                logger.debug("Skipping optional ensemble checkpoint %s: %s", candidate, exc)
+                raise IncompatibleTFTCheckpointError(
+                    f"Failed to load TFT ensemble checkpoint {candidate}: {exc}"
+                ) from exc
+        if expected_size is not None and int(expected_size) > len(models):
+            raise IncompatibleTFTCheckpointError(
+                f"Incomplete TFT ensemble: expected {int(expected_size)} checkpoints, loaded {len(models)}."
+            )
         self._ensemble_models = models
         return models
 
@@ -514,34 +529,46 @@ class TFTPredictor:
             if name not in master_df.columns
         ]
         if missing_checkpoint_features:
-            # One-shot self-heal: if a stale pre-promotion checkpoint remained
-            # cached on disk, force a fresh HF Hub artifact download and reload
-            # before declaring the live forecast degraded.
-            refreshed = False
+            # One-shot atomic self-heal: download to staging directory, validate
+            # full artifact set before replacing cached files in-place.
             try:
-                from deep_learning.models.hub import download_tft_artifacts
+                import shutil
+                import tempfile
+                from deep_learning.models.hub import (
+                    download_tft_artifacts,
+                    validate_tft_artifact_set,
+                )
 
                 tft_dir = Path(self._checkpoint_path).parent
-                refreshed = download_tft_artifacts(
-                    local_dir=tft_dir,
-                    repo_id=self.cfg.training.hf_model_repo,
-                    force_all=True,
-                )
-                if refreshed:
-                    self._model = None
-                    self._ensemble_models = []
-                    self._pca = None
-                    self._metadata_checked = False
-                    model = self.model
-                    dataset_parameters = _checkpoint_dataset_parameters(model)
-                    checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(
-                        dataset_parameters
+                tft_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(
+                    dir=str(tft_dir.parent),
+                    prefix=".tft_refresh_",
+                ) as tmp_stage:
+                    stage_dir = Path(tmp_stage)
+                    refreshed = download_tft_artifacts(
+                        local_dir=stage_dir,
+                        repo_id=self.cfg.training.hf_model_repo,
+                        force_all=True,
                     )
-                    missing_checkpoint_features = [
-                        name
-                        for name in checkpoint_known + checkpoint_unknown
-                        if name not in master_df.columns
-                    ]
+                    if refreshed and validate_tft_artifact_set(stage_dir):
+                        for item in stage_dir.iterdir():
+                            if item.is_file():
+                                shutil.copy2(item, tft_dir / item.name)
+                        self._model = None
+                        self._ensemble_models = []
+                        self._pca = None
+                        self._metadata_checked = False
+                        model = self.model
+                        dataset_parameters = _checkpoint_dataset_parameters(model)
+                        checkpoint_unknown, checkpoint_known = _checkpoint_feature_contract(
+                            dataset_parameters
+                        )
+                        missing_checkpoint_features = [
+                            name
+                            for name in checkpoint_known + checkpoint_unknown
+                            if name not in master_df.columns
+                        ]
             except Exception as refresh_exc:
                 logger.warning(
                     "Forced HF Hub checkpoint refresh after feature mismatch failed: %s",
@@ -618,14 +645,21 @@ class TFTPredictor:
 
         dl = ds.to_dataloader(train=False, batch_size=1, num_workers=0)
 
-        ensemble_models = [model]
         try:
             ensemble_models = self._load_ensemble_models()
+        except IncompatibleTFTCheckpointError as ens_err:
+            logger.warning("TFT ensemble incomplete/incompatible: %s", ens_err)
+            return self._degraded_retrain_required(str(ens_err))
         except Exception as ens_exc:
             logger.debug("Using primary TFT model only: %s", ens_exc)
+            ensemble_models = [model]
 
         try:
             import torch
+            from deep_learning.training.metrics import monotonic_quantiles_np
+
+            quantiles_tuple = tuple(self.cfg.model.quantiles)
+            median_idx = len(quantiles_tuple) // 2
 
             # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
             # Avoids the inhomogeneous-shape error from mode="raw" which returns a
@@ -639,6 +673,7 @@ class TFTPredictor:
                 predict_kwargs["trainer_kwargs"] = {"logger": False}
 
             member_preds = []
+            all_members_ordered = True
             for member_model in ensemble_models:
                 pred_tensor = member_model.predict(dl, **predict_kwargs)
                 if isinstance(pred_tensor, torch.Tensor):
@@ -651,6 +686,27 @@ class TFTPredictor:
                     member_sample = member_arr
                 else:
                     member_sample = member_arr.reshape(1, -1)
+                member_sample = np.asarray(member_sample, dtype=np.float64)
+                emits_ordered = bool(
+                    getattr(getattr(member_model, "loss", None), "emits_ordered_quantiles", False)
+                )
+                is_logits = bool(
+                    self._monotonic_quantile_transform
+                    or getattr(getattr(member_model, "loss", None), "__class__", type(None)).__name__
+                    == "WeeklyASROPFLoss"
+                    or (
+                        member_sample.ndim == 2
+                        and member_sample.shape[-1] > 1
+                        and np.any(np.diff(member_sample, axis=-1) < -1e-12)
+                    )
+                )
+                if not emits_ordered and (len(ensemble_models) > 1 or is_logits):
+                    member_sample = monotonic_quantiles_np(
+                        member_sample[None, ...],
+                        median_idx=median_idx,
+                    )[0]
+                elif not emits_ordered and not is_logits:
+                    all_members_ordered = False
                 member_preds.append(member_sample)
 
             pred_for_format = (
@@ -672,13 +728,32 @@ class TFTPredictor:
                 if prior_col is not None and not master_df.empty:
                     theta_val = pd.to_numeric(master_df.iloc[-1].get(prior_col), errors="coerce")
                     if pd.notna(theta_val) and np.isfinite(float(theta_val)):
-                        pred_for_format = apply_theta_hybrid_shift_to_path(
-                            pred_for_format,
-                            float(theta_val),
-                            hybrid_blend=self._hybrid_blend,
-                            quantiles=tuple(self.cfg.model.quantiles),
-                            horizon=int(self.cfg.forecast.primary_horizon_days),
-                        )
+                        if "already_ordered" in inspect.signature(apply_theta_hybrid_shift_to_path).parameters:
+                            pred_for_format = apply_theta_hybrid_shift_to_path(
+                                pred_for_format,
+                                float(theta_val),
+                                hybrid_blend=self._hybrid_blend,
+                                quantiles=quantiles_tuple,
+                                horizon=int(self.cfg.forecast.primary_horizon_days),
+                                already_ordered=all_members_ordered,
+                            )
+                        elif all_members_ordered:
+                            w_theta = float(np.clip(float(self._hybrid_blend.get("w_theta", 0.0) or 0.0), 0.0, 1.0))
+                            w_tft = 1.0 - w_theta
+                            h = min(int(self.cfg.forecast.primary_horizon_days), pred_for_format.shape[0])
+                            if w_theta > 0.0 and h > 0:
+                                tft_med = float(pred_for_format[:h, median_idx].sum())
+                                blended = w_tft * tft_med + w_theta * float(theta_val)
+                                delta_per_day = (blended - tft_med) / float(max(h, 1))
+                                pred_for_format[:h, :] = pred_for_format[:h, :] + delta_per_day
+                        else:
+                            pred_for_format = apply_theta_hybrid_shift_to_path(
+                                pred_for_format,
+                                float(theta_val),
+                                hybrid_blend=self._hybrid_blend,
+                                quantiles=quantiles_tuple,
+                                horizon=int(self.cfg.forecast.primary_horizon_days),
+                            )
 
             if int(self._direction_sign_multiplier) != 1:
                 from deep_learning.training.metrics import apply_direction_sign_multiplier_np
@@ -771,6 +846,7 @@ class TFTPredictor:
                         weekly_median_cap=self._weekly_median_cap,
                         quantiles=tuple(self.cfg.model.quantiles),
                         horizon=effective_horizon,
+                        already_ordered=all_members_ordered,
                     )[0][0]
 
         except IncompatibleTFTCheckpointError as exc:
@@ -788,20 +864,22 @@ class TFTPredictor:
             if pd.notna(val_vol) and np.isfinite(float(val_vol)) and float(val_vol) > 0.0:
                 latest_realized_vol = float(val_vol)
 
-        result = format_prediction(
-            pred_for_format,
-            quantiles=self.cfg.model.quantiles,
-            baseline_price=baseline_price,
-            reference_price_date=reference_price_date,
-            conformal_adjustment=conformal_adjustment,
-            weekly_cqr_params=conformal_artifact if conformal_artifact.get("cqr_enabled") else None,
-            realized_vol=latest_realized_vol,
-            is_monotonic_logits=bool(
+        format_kwargs: Dict[str, Any] = {
+            "quantiles": self.cfg.model.quantiles,
+            "baseline_price": baseline_price,
+            "reference_price_date": reference_price_date,
+            "conformal_adjustment": conformal_adjustment,
+            "weekly_cqr_params": conformal_artifact if conformal_artifact.get("cqr_enabled") else None,
+            "realized_vol": latest_realized_vol,
+            "is_monotonic_logits": bool(
                 self._monotonic_quantile_transform
                 or getattr(getattr(model, "loss", None), "__class__", type(None)).__name__
                 == "WeeklyASROPFLoss"
             ),
-        )
+        }
+        if "already_ordered" in inspect.signature(format_prediction).parameters:
+            format_kwargs["already_ordered"] = all_members_ordered
+        result = format_prediction(pred_for_format, **format_kwargs)
 
         # The decoder frame is the authority for horizon/date alignment. Do
         # not let the API or frontend recreate forecast dates from "today".
@@ -878,19 +956,30 @@ class TFTPredictor:
     ) -> Optional[Dict[str, Any]]:
         """Best-effort VSN/attention explanation for the latest encoder window.
 
-        Returns ``None`` whenever extraction or payload building fails; an
-        optional explanation must never fail the prediction path.
+        Aggregates raw VSN weights and encoder attention across active ensemble
+        members when available. Returns ``None`` whenever extraction or payload
+        building fails; an optional explanation must never fail the prediction path.
         """
         try:
-            from app.tft_explain import try_build_explain_payload
+            from app.tft_explain import aggregate_interpretations, try_build_explain_payload
             from deep_learning.models.tft_copper import interpret_batch
 
             # `_run_interpretation` (tft_copper) enforces eval mode for the
             # forward pass and restores the original mode afterwards.
             batch = next(iter(dataloader))
             x = batch[0] if isinstance(batch, (tuple, list)) else batch
+            active_models = list(getattr(self, "_ensemble_models", None) or [model])
+            interpretations: list[dict] = []
+            for member_model in active_models:
+                try:
+                    interpretations.append(interpret_batch(member_model, x))
+                except Exception as member_exc:
+                    logger.warning("Skipping ensemble member explain extraction: %s", member_exc)
+            if not interpretations:
+                raise RuntimeError("No ensemble members produced a valid TFT interpretation")
+            combined = aggregate_interpretations(interpretations)
             return try_build_explain_payload(
-                interpretation=interpret_batch(model, x),
+                interpretation=combined,
                 window_dates=[self._date_label(value) for value in history.index],
                 feature_frame=history,
                 reference_price_date=reference_price_date,
@@ -898,6 +987,7 @@ class TFTPredictor:
                 checkpoint=str(self._checkpoint_path),
                 trained_at=(self.get_model_metadata(session) or {}).get("trained_at"),
                 generated_at=datetime.now(timezone.utc),
+                ensemble_size=len(interpretations) if len(interpretations) > 1 else None,
             )
         except Exception as exc:
             logger.warning(
@@ -991,6 +1081,37 @@ class TFTPredictor:
         except Exception:
             return None
 
+    @staticmethod
+    def _latest_weekday_price_bar(session, symbol: str):
+        """Return latest finite positive weekday PriceBar (filtering weekend ghost bars)."""
+        from app.models import PriceBar
+        from app.price_utils import finite_positive_price, latest_finite_price_bar
+
+        latest_bar = latest_finite_price_bar(session, symbol)
+        if latest_bar is not None and latest_bar.date is not None:
+            try:
+                if latest_bar.date.weekday() < 5 and finite_positive_price(latest_bar.close) is not None:
+                    return latest_bar
+            except Exception:
+                pass
+
+        rows = (
+            session.query(PriceBar)
+            .filter(PriceBar.symbol == symbol)
+            .order_by(PriceBar.date.desc())
+            .limit(30)
+            .all()
+        )
+        for bar in rows:
+            if bar.date is None:
+                continue
+            try:
+                if bar.date.weekday() < 5 and finite_positive_price(bar.close) is not None:
+                    return bar
+            except Exception:
+                continue
+        return None
+
     def _latest_price_baseline(
         self,
         session,
@@ -1010,9 +1131,9 @@ class TFTPredictor:
         reference_price_date = fallback_date
 
         try:
-            from app.price_utils import finite_positive_price, latest_finite_price_bar
+            from app.price_utils import finite_positive_price
 
-            latest_bar = latest_finite_price_bar(session, symbol)
+            latest_bar = self._latest_weekday_price_bar(session, symbol)
             if latest_bar is not None and finite_positive_price(latest_bar.close) is not None:
                 baseline_price = finite_positive_price(latest_bar.close)
                 reference_price_date = self._date_label(latest_bar.date)
@@ -1033,9 +1154,7 @@ class TFTPredictor:
             (staleness_days, is_stale)
         """
         try:
-            from app.price_utils import latest_finite_price_bar
-
-            latest = latest_finite_price_bar(session, symbol)
+            latest = self._latest_weekday_price_bar(session, symbol)
         except Exception as exc:
             logger.warning("Freshness check skipped: %s", exc)
             return (0, False)
@@ -1068,6 +1187,7 @@ class TFTPredictor:
                 TFTModelMetadata.symbol == self.cfg.feature_store.target_symbol,
                 TFTModelMetadata.quality_gate_passed.is_(True),
             )
+            .order_by(TFTModelMetadata.trained_at.desc())
             .first()
         )
         if meta is None:
@@ -1240,6 +1360,33 @@ def generate_tft_analysis(
     is_forecast_healthy = bool(prediction.get("is_forecast_healthy", True))
     is_stale = bool(prediction.get("is_stale", False))
 
+    weekly_q10 = prediction.get("weekly_return_q10_calibrated")
+    weekly_q90 = prediction.get("weekly_return_q90_calibrated")
+    width_5d = (
+        float(weekly_q90) - float(weekly_q10)
+        if weekly_q10 is not None and weekly_q90 is not None
+        else None
+    )
+    snr_5d = (
+        abs(float(weekly_ret or 0.0)) / max(float(width_5d) * 0.5, 1e-6)
+        if width_5d is not None and width_5d > 0.0
+        else 0.0
+    )
+    if not is_forecast_healthy:
+        weekly_regime = "degraded"
+    elif direction == "BULLISH" and snr_5d >= 0.35:
+        weekly_regime = "trending_bull"
+    elif direction == "BEARISH" and snr_5d >= 0.35:
+        weekly_regime = "trending_bear"
+    elif risk_level == "HIGH":
+        weekly_regime = "high_vol_range"
+    elif direction == "BULLISH":
+        weekly_regime = "mild_bull"
+    elif direction == "BEARISH":
+        weekly_regime = "mild_bear"
+    else:
+        weekly_regime = "neutral_range"
+
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
@@ -1252,20 +1399,20 @@ def generate_tft_analysis(
         "weekly_trend": direction,
         "primary_horizon": "5D",
         "primary_forecast_return": weekly_ret,
-        "primary_forecast_q10": prediction.get("weekly_return_q10_calibrated"),
-        "primary_forecast_q90": prediction.get("weekly_return_q90_calibrated"),
+        "primary_forecast_q10": weekly_q10,
+        "primary_forecast_q90": weekly_q90,
         "t1_impulse": t1_impulse,
         "t1_return": t1_ret,
         "weekly_forecast": {
             "horizon": "5D",
             "expected_return": weekly_ret,
-            "q10_return": prediction.get("weekly_return_q10_calibrated"),
-            "q90_return": prediction.get("weekly_return_q90_calibrated"),
+            "q10_return": weekly_q10,
+            "q90_return": weekly_q90,
             "calibrated": bool(prediction.get("weekly_interval_calibrated", False)),
             "calibration_adjustment": prediction.get("weekly_interval_calibration_adjustment"),
             "t1_impulse": t1_impulse,
             "t1_return": t1_ret,
-            "regime": None,
+            "regime": weekly_regime,
         },
         "risk_level": risk_level,
         "prediction": prediction,

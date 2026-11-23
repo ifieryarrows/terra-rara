@@ -790,3 +790,6 @@ class BacktestReport(Base):
             f"<BacktestReport(symbol={self.symbol}, kind={self.report_kind}, "
             f"generated_at={self.generated_at}, verdict={self.verdict})>"
         )
+
+
+from app.long_term_models import LongTermOutlookSnapshot  # noqa: E402, F401

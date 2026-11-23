@@ -23,6 +23,7 @@ def test_missing_quantile_crossing_rate_fails():
         weekly_quantile_crossing_rate=0.0,
         weekly_sorted_quantile_crossing_rate=0.0,
         weekly_median_sort_gap_max=0.0,
+        weekly_mae_vs_naive_zero=0.98,
         weekly_sample_count=120,
     )
 
@@ -47,6 +48,7 @@ def test_missing_weekly_quantile_crossing_rate_fails():
         weekly_pi96_width_ratio=1.0,
         weekly_sorted_quantile_crossing_rate=0.0,
         weekly_median_sort_gap_max=0.0,
+        weekly_mae_vs_naive_zero=0.98,
         weekly_sample_count=120,
     )
 
@@ -72,6 +74,7 @@ def test_weekly_magnitude_explosion_has_explicit_reason():
         weekly_quantile_crossing_rate=0.0,
         weekly_sorted_quantile_crossing_rate=0.0,
         weekly_median_sort_gap_max=0.0,
+        weekly_mae_vs_naive_zero=0.98,
         weekly_sample_count=120,
     )
 

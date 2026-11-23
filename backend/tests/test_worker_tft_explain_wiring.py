@@ -184,3 +184,28 @@ def test_run_id_is_stamped_when_worker_run_is_none():
             assert explain["run_id"] is None
     finally:
         engine.dispose()
+
+
+def test_stage_55_checks_artifact_validity_and_wires_stage_57():
+    source = inspect.getsource(_execute_pipeline_stages_v2)
+    assert "if ckpt.exists() and artifact_set_valid:" in source
+    assert "run_long_term_outlook_stage" in source
+    assert "tft_snapshot_degraded" in source
+    assert "tft_persistence_error" in source
+
+
+def test_evaluate_pipeline_result_marks_tft_degraded_without_crashing():
+    from worker.tasks import evaluate_pipeline_result
+
+    critical, quality, msg = evaluate_pipeline_result(
+        {
+            "snapshot_generated": True,
+            "tft_snapshot_generated": False,
+            "tft_snapshot_degraded": True,
+            "tft_persistence_error": "invalid_tft_artifact_set",
+        },
+        train_model=False,
+    )
+    assert critical == {}
+    assert quality == "degraded"
+    assert "TFT" in msg

@@ -1891,7 +1891,7 @@ def test_feature_store_core_five_signals_and_news_decoupling_default(monkeypatch
         assert core_col in master.columns
 
 
-def test_weekly_asro_drift_prior_uses_l1_plus_l2_penalty():
+def test_weekly_asro_drift_prior_uses_smooth_l2_penalty():
     actual = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]])
     loss_fn = WeeklyASROPFLoss(
         quantiles=list(QUANTILES),
@@ -1906,12 +1906,12 @@ def test_weekly_asro_drift_prior_uses_l1_plus_l2_penalty():
         lambda_directional=0.0,
         weekly_target_scale=0.04,
     )
-    # Construct median step sum = 0.004 (so norm_mean = 0.004 / 0.04 = 0.1)
-    # Pure L2 would give 0.01; L1 + L2 gives 0.1 + 0.01 = 0.11!
+    # Construct median step sum = 0.004 (so norm_mean = 0.004 / 0.04 = 0.1).
+    # Smooth L2 drift prior gives norm_mean^2 = 0.01 without an L1 kink at 0.
     pred = torch.zeros(2, 5, 7, dtype=torch.float32)
     pred[..., :] = torch.tensor([-2.5, -1.8, -1.5, 0.0008, -1.5, -1.8, -2.5])
     loss_val = float(loss_fn.loss(pred, actual).detach())
-    assert loss_val == pytest.approx(0.11, rel=1e-3)
+    assert loss_val == pytest.approx(0.01, rel=1e-3)
 
 
 def test_filter_ensemble_members_rejects_drifted_or_weak_seeds_without_val_mean_subtraction():
@@ -1920,7 +1920,7 @@ def test_filter_ensemble_members_rejects_drifted_or_weak_seeds_without_val_mean_
     candidates = [
         {"seed": 42, "path": Path("best_tft_asro.ckpt"), "val_loss": 0.3824, "val_mae_vs_naive": 0.945, "val_pred_mean": 0.00014, "train_pred_mean": 0.0035},
         {"seed": 137, "path": Path("best_tft_asro_seed1.ckpt"), "val_loss": 0.3890, "val_mae_vs_naive": 0.910, "val_pred_mean": 0.00291, "train_pred_mean": 0.01069},
-        {"seed": 256, "path": Path("best_tft_asro_seed2.ckpt"), "val_loss": 0.4109, "val_mae_vs_naive": 1.0034, "val_pred_mean": -0.00162, "train_pred_mean": 0.00689},
+        {"seed": 256, "path": Path("best_tft_asro_seed2.ckpt"), "val_loss": 0.4500, "val_mae_vs_naive": 1.0900, "val_pred_mean": -0.0120, "train_pred_mean": 0.00689},
     ]
     accepted, diags = _filter_ensemble_members(candidates)
     assert [c["seed"] for c in accepted] == [42]
@@ -1928,23 +1928,22 @@ def test_filter_ensemble_members_rejects_drifted_or_weak_seeds_without_val_mean_
     assert diags[1]["accepted"] is False
     assert diags[2]["accepted"] is False
 
-    # Fallback keeps single strongest member untouched if none clear all 4 bounds
+    # Fallback keeps up to top 2 finite non-degenerate seeds if none clear all strict gates
     all_bad = [
-        {"seed": 42, "path": Path("a.ckpt"), "val_loss": 0.40, "val_mae_vs_naive": 0.995, "val_pred_mean": 0.003, "train_pred_mean": 0.006},
-        {"seed": 137, "path": Path("b.ckpt"), "val_loss": 0.39, "val_mae_vs_naive": 0.991, "val_pred_mean": 0.003, "train_pred_mean": 0.006},
+        {"seed": 42, "path": Path("a.ckpt"), "val_loss": 0.40, "val_mae_vs_naive": 1.08, "val_pred_mean": 0.015, "train_pred_mean": 0.012},
+        {"seed": 137, "path": Path("b.ckpt"), "val_loss": 0.39, "val_mae_vs_naive": 1.07, "val_pred_mean": 0.015, "train_pred_mean": 0.012},
     ]
     fb_acc, fb_diags = _filter_ensemble_members(all_bad)
-    assert [c["seed"] for c in fb_acc] == [137]
-    assert fb_diags[1].get("fallback_best") is True
+    assert [c["seed"] for c in fb_acc] == [137, 42]
+    assert all(d.get("fallback_best") is True for d in fb_diags)
 
 
-def test_theta_hybrid_blend_applies_min_theta_insurance_floor_under_selection_optimism():
+def test_theta_hybrid_blend_never_forces_theta_when_worsening_validation_score():
     from deep_learning.calibration.hybrid import fit_theta_hybrid_blend
 
     rng = np.random.default_rng(2026)
     n = 95
     actual = rng.normal(0.0, 0.025, n)
-    # Simulate selection optimism where TFT leads on VAL while Theta also holds valid edge
     tft_opt = 0.65 * actual + rng.normal(0.0, 0.012, n)
     theta_good = 0.35 * actual + rng.normal(0.0, 0.018, n)
 
@@ -1959,7 +1958,139 @@ def test_theta_hybrid_blend_applies_min_theta_insurance_floor_under_selection_op
     assert blend["enabled"] is True
     assert blend["w_theta"] >= 0.25
     assert blend["w_tft"] <= 0.75
-    assert blend["reason"] in {"theta_regime_insurance_floor", "validation_skill_improved"}
+    assert blend["reason"] == "validation_skill_improved"
+
+    # When Theta opposes validation truth and degrades skill, hybrid must stay disabled
+    theta_bad = -0.8 * actual + rng.normal(0.0, 0.02, n)
+    no_force = fit_theta_hybrid_blend(
+        actual,
+        tft_opt,
+        theta_bad,
+        min_tft_weight=0.35,
+        max_theta_weight=0.65,
+        min_theta_weight=0.25,
+    )
+    assert no_force["enabled"] is False
+    assert no_force["w_theta"] == 0.0
+    assert no_force["reason"] == "tft_standalone_preferred"
+
+
+def test_tft_backtest_runner_ordered_ensemble_calibration_parity_and_fail_closed(tmp_path, monkeypatch):
+    from deep_learning.config import get_tft_config
+    from deep_learning.training.metrics import monotonic_quantiles_np
+
+    dates = pd.bdate_range("2025-11-03", periods=45)
+    rng = np.random.default_rng(7)
+    closes = 5.0 * np.exp(np.cumsum(rng.normal(0.0005, 0.01, len(dates))))
+    eval_df = pd.DataFrame(
+        {
+            "target": np.concatenate([[0.0], np.diff(np.log(closes))]),
+            "HG_F_ret1": rng.normal(0.0, 0.01, len(dates)),
+            "realized_vol_20d": np.full(len(dates), 0.02),
+            "day_of_week": dates.dayofweek.astype(float),
+            "time_idx": np.arange(len(dates), dtype=int),
+            "group_id": "copper",
+        },
+        index=dates,
+    )
+
+    ckpt_1 = tmp_path / "best_tft_asro.ckpt"
+    ckpt_2 = tmp_path / "best_tft_asro_seed1.ckpt"
+    ckpt_1.write_text("seed1")
+    ckpt_2.write_text("seed2")
+    (tmp_path / "tft_metadata.json").write_text(
+        json.dumps(
+            {
+                "config": {"weekly_median_cap": 0.030, "monotonic_quantile_transform": True},
+                "direction_calibration": {
+                    "direction_sign_multiplier": 1,
+                    "weekly_sign_threshold": 0.0,
+                    "weekly_magnitude_scale": 0.50,
+                },
+                "magnitude_calibration": {"scale": 0.50},
+                "interval_calibration": {"weekly_interval_scale": 1.0},
+                "ensemble_checkpoints": [ckpt_1.name, ckpt_2.name],
+                "test_metrics": {"ensemble_size": 2},
+            }
+        )
+    )
+
+    logits_1 = np.array([-3.5, -2.5, -1.8, 0.015, -1.8, -2.5, -3.5], dtype=np.float32)
+    logits_2 = np.array([-1.5, -1.0, -0.8, 0.025, -0.8, -1.0, -1.5], dtype=np.float32)
+
+    class FakeSeedModel:
+        class loss:
+            quantiles = list(QUANTILES)
+
+        def __init__(self, row_logits):
+            self._row = torch.tensor(row_logits)
+
+        def predict(self, dl, mode="quantiles", return_y=False):
+            n_items = len(dl.dataset)
+            preds = self._row.view(1, 1, -1).repeat(n_items, 5, 1)
+            if return_y:
+                ys = torch.cat([b[1][0] for b in dl])
+                return SimpleNamespace(output=preds, y=(ys,))
+            return preds
+
+    m1 = FakeSeedModel(logits_1)
+    m2 = FakeSeedModel(logits_2)
+
+    runner = TFTBacktestRunner(
+        BacktestConfig(
+            oos_start=dates[15].date().isoformat(),
+            oos_end=dates[-1].date().isoformat(),
+        )
+    )
+    monkeypatch.setattr(runner, "_ensure_tft_artifacts", lambda _cfg: ckpt_1)
+    monkeypatch.setattr(runner, "_build_eval_dataframe", lambda _cfg, _feats: eval_df.copy())
+    monkeypatch.setattr(
+        runner,
+        "_resolve_target_close_series",
+        lambda _cfg, _df, last_known_price=float("nan"): pd.Series(closes, index=dates),
+    )
+    monkeypatch.setattr(
+        "deep_learning.models.tft_copper.load_tft_model",
+        lambda p: m2 if "seed1" in str(p) else m1,
+    )
+    monkeypatch.setattr(
+        "deep_learning.inference.predictor._checkpoint_dataset_parameters",
+        lambda _m: {
+            "time_idx": "time_idx",
+            "target": "target",
+            "group_ids": ["group_id"],
+            "max_encoder_length": 10,
+            "max_prediction_length": 5,
+            "time_varying_unknown_reals": ["HG_F_ret1"],
+            "time_varying_known_reals": ["day_of_week"],
+            "static_categoricals": ["group_id"],
+            "allow_missing_timesteps": True,
+        },
+    )
+    monkeypatch.setattr(
+        "deep_learning.inference.predictor._checkpoint_feature_contract",
+        lambda _p: (["HG_F_ret1"], ["day_of_week"]),
+    )
+
+    _, pred_df = runner.run_backtest(["DX-Y.NYB"])
+    # Raw weekly medians: 5*0.015=0.075 and 5*0.025=0.125 -> avg 0.100 -> *0.50 mag_scale = 0.050 -> capped to 0.030!
+    assert pred_df["pred_return"].iloc[0] == pytest.approx(0.030, abs=1e-5)
+
+    # Removing secondary ensemble checkpoint must raise loudly
+    ckpt_2.unlink()
+    with pytest.raises(RuntimeError, match="Missing required TFT ensemble checkpoint"):
+        runner.run_backtest(["DX-Y.NYB"])
+
+    # Missing checkpoint feature must raise loudly instead of silent zero-fill
+    monkeypatch.setattr(
+        "deep_learning.data.feature_store.build_tft_dataframe",
+        lambda _s, _cfg, **_kw: (eval_df.drop(columns=["HG_F_ret1"]).copy(), [], [], ["target"], 5.0),
+    )
+    bad_runner = TFTBacktestRunner(
+        BacktestConfig(oos_start=dates[15].date().isoformat(), oos_end=dates[-1].date().isoformat())
+    )
+    with pytest.raises(RuntimeError, match="missing required checkpoint features"):
+        bad_runner._build_eval_dataframe(get_tft_config(), ["HG_F_ret1"])
 
 
 

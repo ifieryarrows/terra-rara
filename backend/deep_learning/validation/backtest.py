@@ -44,6 +44,7 @@ def run_backtest(
     step_size: int = 10,
     annualisation: float = 252.0,
     use_hac: bool = False,
+    tail_threshold: Optional[float] = None,
 ) -> dict:
     """
     Walk-forward backtest across overlapping windows.
@@ -87,10 +88,22 @@ def run_backtest(
         yp = y_pred_median[start:end]
 
         strategy_returns = np.sign(yp) * ya
+        is_multi_day = bool(use_hac or annualisation < 200.0)
         if use_hac:
-            win_sharpe = sharpe_ratio_hac(strategy_returns, annualisation=annualisation)
+            win_sharpe = sharpe_ratio_hac(
+                strategy_returns,
+                annualisation=annualisation,
+                max_lag=4 if annualisation < 200.0 else 0,
+            )
         else:
             win_sharpe = sharpe_ratio(strategy_returns, annualisation=annualisation)
+
+        if tail_threshold is not None:
+            win_tail_threshold = float(tail_threshold)
+        elif is_multi_day and len(ya) > 0:
+            win_tail_threshold = float(np.nanpercentile(np.abs(ya), 75))
+        else:
+            win_tail_threshold = 0.015
 
         mae_val = float(np.abs(ya - yp).mean())
         naive_zero_mae = float(np.abs(ya).mean())
@@ -102,7 +115,7 @@ def run_backtest(
             "da": directional_accuracy(ya, yp),
             "sharpe": win_sharpe,
             "sortino": sortino_ratio(strategy_returns, annualisation=annualisation),
-            "tail_capture": tail_capture_rate(ya, yp),
+            "tail_capture": tail_capture_rate(ya, yp, tail_threshold=win_tail_threshold),
             "mae": mae_val,
             "mae_vs_naive_zero": mae_vs_naive,
             "rmse": float(np.sqrt(((ya - yp) ** 2).mean())),
@@ -138,6 +151,7 @@ def run_backtest(
         "max_da": float(df["da"].max()),
         "mean_sharpe": float(df["sharpe"].mean()),
         "std_sharpe": float(df["sharpe"].std()) if len(df) > 1 else 0.0,
+        "mean_sortino": float(df["sortino"].mean()),
         "mean_vr": float(df["variance_ratio"].mean()),
         "mean_mae": float(df["mae"].mean()),
         "mean_mae_vs_naive_zero": float(df["mae_vs_naive_zero"].mean()),

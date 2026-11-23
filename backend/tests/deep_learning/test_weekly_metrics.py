@@ -712,3 +712,33 @@ def test_fit_weekly_magnitude_scale_reduces_heavy_cap_saturation():
     assert 0.65 <= cal["validation_magnitude_ratio_after"] <= 1.35
 
 
+def test_weekly_metrics_include_non_overlapping_diagnostics_and_respect_ordered_flag():
+    actual = np.full((15, 5), 0.01, dtype=float)
+    # Build already-ordered quantile paths directly (avoid second softplus distorting offsets).
+    offsets = np.array([-0.020, -0.012, -0.005, 0.0, 0.005, 0.012, 0.020])
+    ordered = np.zeros((15, 5, 7), dtype=float)
+    for i in range(15):
+        sign = 1.0 if (i % 5 == 0 or i % 2 == 0) else -1.0
+        ordered[i] = (sign * 0.005) + offsets[None, :]
+
+    m = compute_weekly_metrics(actual, ordered, horizon=5, already_ordered=True)
+    assert m["weekly_non_overlapping_n"] == 3.0
+    assert m["weekly_non_overlapping_da"] == 1.0
+    assert np.isfinite(m["weekly_non_overlapping_sharpe"])
+    assert m["weekly_quantile_crossing_rate"] == 0.0
+    assert m["weekly_ordered_quantile_crossing_rate"] == 0.0
+
+    # Verify evaluate_quantile_predictions detects crossed quantiles when already_ordered=True
+    crossed_ordered = ordered.copy()
+    crossed_ordered[:, :, 1], crossed_ordered[:, :, 2] = (
+        crossed_ordered[:, :, 2].copy(),
+        crossed_ordered[:, :, 1].copy(),
+    )
+    m_crossed = evaluate_quantile_predictions(
+        actual, crossed_ordered, horizon=5, already_ordered=True
+    )
+    assert m_crossed["quantile_crossing_rate"] > 0.0
+    assert m_crossed["weekly_quantile_crossing_rate"] > 0.0
+    assert m_crossed["weekly_ordered_quantile_crossing_rate"] > 0.0
+
+

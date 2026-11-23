@@ -236,16 +236,20 @@ class ErrorResponse(BaseModel):
 
 
 class ConsensusSignal(BaseModel):
-    """Consensus signal combining XGBoost and TFT."""
+    """Consensus signal combining XGBoost (1D diagnostic) and TFT (5D primary)."""
     consensus_direction: str = Field(..., description="BULLISH, BEARISH, or NEUTRAL")
     confidence: str = Field(..., description="HIGH, MEDIUM, or LOW")
     position_scale: float = Field(..., description="0.0 to 1.0 scaling factor for position sizing")
     blended_return: float = Field(..., description="Blended expected return from both models")
-    xgb_return_raw: float = Field(..., description="Raw XGBoost predicted return")
-    xgb_return_adjusted: float = Field(..., description="Debiased XGBoost predicted return")
-    tft_return: float = Field(..., description="TFT-ASRO median predicted return")
+    xgb_return_raw: float = Field(..., description="Raw XGBoost predicted 1D return")
+    xgb_return_adjusted: float = Field(..., description="Debiased XGBoost predicted 1D return")
+    tft_return: float = Field(..., description="TFT-ASRO primary 5D median predicted return")
     xgb_direction: int = Field(..., description="-1, 0, or 1")
     tft_direction: int = Field(..., description="-1, 0, or 1")
+    tft_horizon: Optional[str] = Field("5D", description="Primary TFT horizon ('5D' or 'none')")
+    xgb_horizon: Optional[str] = Field("1D", description="XGBoost diagnostic horizon ('1D')")
+    tft_degraded: bool = Field(False, description="True when TFT snapshot was missing, unhealthy, or stale")
+    degraded_reasons: List[str] = Field(default_factory=list, description="Reasons TFT snapshot was excluded from consensus")
 
 
 class QualityGateResponse(BaseModel):
@@ -290,7 +294,9 @@ class TFTModelSummaryResponse(BaseModel):
 
 class BacktestReportResponse(BaseModel):
     """Latest backtest report results."""
-    report_date: str = Field(..., description="ISO timestamp of report generation")
+    available: bool = Field(True, description="Whether a TFT backtest report exists")
+    message: Optional[str] = Field(None, description="Status or empty-state guidance message")
+    report_date: Optional[str] = Field(None, description="ISO timestamp of report generation")
     summary_metrics: Dict[str, Any] = Field(default_factory=dict, description="Overall backtest metrics")
     window_metrics: List[Dict[str, Any]] = Field(default_factory=list, description="Metrics per rolling window")
     theta_comparison: Optional[Dict[str, Any]] = Field(None, description="Comparison with Theta baseline")
