@@ -85,11 +85,15 @@ class WeeklyLossComponentLogger(pl.Callback):
     """Log weekly loss component scales at validation epoch boundaries."""
 
     def on_validation_epoch_start(self, trainer, pl_module):
+        if getattr(trainer, "sanity_checking", False) is True:
+            return
         loss = getattr(pl_module, "loss", None)
         if hasattr(loss, "reset_component_accumulators"):
             loss.reset_component_accumulators()
 
     def on_validation_epoch_end(self, trainer, pl_module):
+        if getattr(trainer, "sanity_checking", False) is True:
+            return
         loss = getattr(pl_module, "loss", None)
         if not hasattr(loss, "component_means"):
             return
@@ -98,14 +102,8 @@ class WeeklyLossComponentLogger(pl.Callback):
         if not stats.get("n_batches"):
             return
 
-        # ``val_loss`` is the framework's quantile metric in the current
-        # PyTorch Forecasting stack.  It does not include the weekly ASRO
-        # components recorded above, so monitoring it can select a checkpoint
-        # that is well calibrated per day but directionally collapsed over
-        # five days.  Publish both the complete validation objective and a
-        # gate-oriented selection metric before the later callbacks run. The
-        # extra positive-rate term is validation-only and targets the existing
-        # sign-collapse guard without changing any gate threshold.
+        # Publish the complete validation weekly objective and gate-aligned
+        # alias from the active loss accumulator before checkpoint callbacks run.
         pl_module.log(
             "val_weekly_loss",
             float(stats["total_loss_mean"]),
@@ -127,18 +125,20 @@ class WeeklyLossComponentLogger(pl.Callback):
 
         epoch = getattr(trainer, "current_epoch", 0)
         logger.info(
-            "Weekly loss components | epoch=%s weekly_q=%.6f t1_q=%.6f t1_dir=%.6f "
-            "dispersion=%.6f magnitude=%.6f naive=%.6f bias=%.6f "
+            "Weekly loss components | epoch=%s weekly_q=%.6f subhorizon_q=%.6f t1_q=%.6f "
+            "t1_dir=%.6f dispersion=%.6f magnitude=%.6f naive=%.6f bias=%.6f drift_prior=%.6f "
             "saturation=%.6f positive_rate=%.6f interval=%.6f directional=%.6f "
             "total=%.6f dominant=%s",
             epoch,
             stats["weekly_q_loss_mean"],
+            stats.get("subhorizon_q_loss_mean", 0.0),
             stats["t1_q_loss_mean"],
             stats["t1_directional_loss_mean"],
             stats["dispersion_loss_mean"],
             stats.get("magnitude_loss_mean", 0.0),
             stats.get("naive_loss_mean", 0.0),
             stats.get("bias_loss_mean", 0.0),
+            stats.get("drift_prior_loss_mean", 0.0),
             stats.get("saturation_loss_mean", 0.0),
             stats.get("positive_rate_loss_mean", 0.0),
             stats.get("interval_loss_mean", 0.0),

@@ -39,6 +39,36 @@ from deep_learning.models.losses import (
 logger = logging.getLogger(__name__)
 
 
+def ensure_ordered_quantiles_from_model_output(
+    pred_np: np.ndarray,
+    model: Any = None,
+    *,
+    median_idx: Optional[int] = None,
+) -> np.ndarray:
+    """Convert raw model prediction output into ordered quantiles exactly once.
+
+    When ``model.loss`` sets ``emits_ordered_quantiles = True`` (as
+    ``WeeklyASROPFLoss.to_quantiles`` does), ``model.predict(..., mode="quantiles")``
+    has already applied the structural monotonic transform and returns ordered
+    quantiles directly. Legacy models / mocks without that flag keep single-pass
+    monotonic enforcement when crossings are detected or raw delta logits are
+    supplied.
+    """
+    arr = np.asarray(pred_np, dtype=np.float64)
+    loss_obj = getattr(model, "loss", None)
+    if bool(getattr(loss_obj, "emits_ordered_quantiles", False)):
+        return arr
+    if arr.ndim < 2 or arr.shape[-1] <= 1:
+        return arr
+    diffs = np.diff(arr, axis=-1)
+    if np.any(diffs < -1e-12):
+        from deep_learning.training.metrics import monotonic_quantiles_np
+
+        m_idx = int(median_idx) if median_idx is not None else arr.shape[-1] // 2
+        return monotonic_quantiles_np(arr, median_idx=m_idx)
+    return arr
+
+
 def _bound_weekly_median_path(
     y_pred: torch.Tensor,
     *,
@@ -437,11 +467,14 @@ try:
     class WeeklyASROPFLoss(_PFQuantileLoss):
         """Scale-normalized weekly ASRO + quantile loss over a 5-step log-return path."""
 
+        emits_ordered_quantiles: bool = True
+
         def __init__(
             self,
             quantiles: list,
             lambda_weekly_quantile: float = 1.00,
             lambda_t1_quantile: float = 0.25,
+            lambda_subhorizon_quantile: float = 0.0,
             lambda_t1_directional: float = 0.0,
             lambda_dispersion: float = 0.0,
             lambda_directional: float = 0.14,
@@ -460,6 +493,7 @@ try:
             super().__init__(quantiles=quantiles)
             self.lambda_weekly_quantile = lambda_weekly_quantile
             self.lambda_t1_quantile = lambda_t1_quantile
+            self.lambda_subhorizon_quantile = lambda_subhorizon_quantile
             self.lambda_t1_directional = lambda_t1_directional
             self.lambda_dispersion = lambda_dispersion
             self.lambda_directional = lambda_directional
@@ -485,6 +519,20 @@ try:
                 persistent=False,
             )
             self.reset_component_accumulators()
+
+        def to_quantiles(self, y_pred: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            """Convert unconstrained output delta logits into ordered quantiles."""
+            return enforce_monotonic_quantiles(
+                y_pred.float(),
+                median_idx=self.median_idx,
+                min_gap=1e-5,
+                gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
+                init_bias=-3.0,
+            )
+
+        def to_prediction(self, y_pred: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            """Return point median prediction across the forecast horizon."""
+            return y_pred[..., self.median_idx]
 
         def update(self, y_pred: torch.Tensor, target) -> None:  # type: ignore[override]
             """Accumulate scalar weekly loss without MultiHorizonMetric's 1/(B*H) dilution."""
@@ -520,6 +568,7 @@ try:
             self._component_sums = {
                 "weekly_q": 0.0,
                 "t1_q": 0.0,
+                "subhorizon_q": 0.0,
                 "t1_directional": 0.0,
                 "dispersion": 0.0,
                 "magnitude": 0.0,
@@ -533,11 +582,13 @@ try:
                 "total": 0.0,
             }
             self._component_batches = 0
+            self._component_weight_sum = 0.0
 
         def _record_components(
             self,
             weekly_q_loss: torch.Tensor,
             t1_q_loss: torch.Tensor,
+            subhorizon_q_loss: torch.Tensor,
             t1_directional_loss: torch.Tensor,
             dispersion_loss: torch.Tensor,
             magnitude_loss: torch.Tensor,
@@ -549,21 +600,26 @@ try:
             interval_loss: torch.Tensor,
             directional_loss: torch.Tensor,
             total_loss: torch.Tensor,
+            *,
+            batch_weight: float = 1.0,
         ) -> None:
-            self._component_sums["weekly_q"] += float(weekly_q_loss.detach().mean().cpu())
-            self._component_sums["t1_q"] += float(t1_q_loss.detach().mean().cpu())
-            self._component_sums["t1_directional"] += float(t1_directional_loss.detach().mean().cpu())
-            self._component_sums["dispersion"] += float(dispersion_loss.detach().mean().cpu())
-            self._component_sums["magnitude"] += float(magnitude_loss.detach().mean().cpu())
-            self._component_sums["naive"] += float(naive_relative_loss.detach().mean().cpu())
-            self._component_sums["bias"] += float(bias_loss.detach().mean().cpu())
-            self._component_sums["drift_prior"] += float(drift_prior_loss.detach().mean().cpu())
-            self._component_sums["saturation"] += float(saturation_loss.detach().mean().cpu())
-            self._component_sums["positive_rate"] += float(positive_rate_loss.detach().mean().cpu())
-            self._component_sums["interval"] += float(interval_loss.detach().mean().cpu())
-            self._component_sums["directional"] += float(directional_loss.detach().mean().cpu())
-            self._component_sums["total"] += float(total_loss.detach().mean().cpu())
+            w = max(float(batch_weight), 1.0)
+            self._component_sums["weekly_q"] += w * float(weekly_q_loss.detach().mean().cpu())
+            self._component_sums["t1_q"] += w * float(t1_q_loss.detach().mean().cpu())
+            self._component_sums["subhorizon_q"] += w * float(subhorizon_q_loss.detach().mean().cpu())
+            self._component_sums["t1_directional"] += w * float(t1_directional_loss.detach().mean().cpu())
+            self._component_sums["dispersion"] += w * float(dispersion_loss.detach().mean().cpu())
+            self._component_sums["magnitude"] += w * float(magnitude_loss.detach().mean().cpu())
+            self._component_sums["naive"] += w * float(naive_relative_loss.detach().mean().cpu())
+            self._component_sums["bias"] += w * float(bias_loss.detach().mean().cpu())
+            self._component_sums["drift_prior"] += w * float(drift_prior_loss.detach().mean().cpu())
+            self._component_sums["saturation"] += w * float(saturation_loss.detach().mean().cpu())
+            self._component_sums["positive_rate"] += w * float(positive_rate_loss.detach().mean().cpu())
+            self._component_sums["interval"] += w * float(interval_loss.detach().mean().cpu())
+            self._component_sums["directional"] += w * float(directional_loss.detach().mean().cpu())
+            self._component_sums["total"] += w * float(total_loss.detach().mean().cpu())
             self._component_batches += 1
+            self._component_weight_sum += w
 
         def component_means(self) -> dict:
             n_batches = self._component_batches
@@ -572,6 +628,7 @@ try:
                     "n_batches": 0,
                     "weekly_q_loss_mean": 0.0,
                     "t1_q_loss_mean": 0.0,
+                    "subhorizon_q_loss_mean": 0.0,
                     "t1_directional_loss_mean": 0.0,
                     "dispersion_loss_mean": 0.0,
                     "magnitude_loss_mean": 0.0,
@@ -586,9 +643,11 @@ try:
                     "dominant_component": None,
                 }
 
+            denom = self._component_weight_sum if self._component_weight_sum > 0.0 else float(n_batches)
             components = {
                 "weekly_q": abs(self.lambda_weekly_quantile) * self._component_sums["weekly_q"],
                 "t1_q": abs(self.lambda_t1_quantile) * self._component_sums["t1_q"],
+                "subhorizon_q": abs(self.lambda_subhorizon_quantile) * self._component_sums["subhorizon_q"],
                 "t1_directional": abs(self.lambda_t1_directional) * self._component_sums["t1_directional"],
                 "dispersion": abs(self.lambda_dispersion) * self._component_sums["dispersion"],
                 "magnitude": abs(self.lambda_magnitude) * self._component_sums["magnitude"],
@@ -602,19 +661,20 @@ try:
             }
             return {
                 "n_batches": n_batches,
-                "weekly_q_loss_mean": self._component_sums["weekly_q"] / n_batches,
-                "t1_q_loss_mean": self._component_sums["t1_q"] / n_batches,
-                "t1_directional_loss_mean": self._component_sums["t1_directional"] / n_batches,
-                "dispersion_loss_mean": self._component_sums["dispersion"] / n_batches,
-                "magnitude_loss_mean": self._component_sums["magnitude"] / n_batches,
-                "naive_loss_mean": self._component_sums["naive"] / n_batches,
-                "bias_loss_mean": self._component_sums["bias"] / n_batches,
-                "drift_prior_loss_mean": self._component_sums["drift_prior"] / n_batches,
-                "saturation_loss_mean": self._component_sums["saturation"] / n_batches,
-                "positive_rate_loss_mean": self._component_sums["positive_rate"] / n_batches,
-                "interval_loss_mean": self._component_sums["interval"] / n_batches,
-                "directional_loss_mean": self._component_sums["directional"] / n_batches,
-                "total_loss_mean": self._component_sums["total"] / n_batches,
+                "weekly_q_loss_mean": self._component_sums["weekly_q"] / denom,
+                "t1_q_loss_mean": self._component_sums["t1_q"] / denom,
+                "subhorizon_q_loss_mean": self._component_sums["subhorizon_q"] / denom,
+                "t1_directional_loss_mean": self._component_sums["t1_directional"] / denom,
+                "dispersion_loss_mean": self._component_sums["dispersion"] / denom,
+                "magnitude_loss_mean": self._component_sums["magnitude"] / denom,
+                "naive_loss_mean": self._component_sums["naive"] / denom,
+                "bias_loss_mean": self._component_sums["bias"] / denom,
+                "drift_prior_loss_mean": self._component_sums["drift_prior"] / denom,
+                "saturation_loss_mean": self._component_sums["saturation"] / denom,
+                "positive_rate_loss_mean": self._component_sums["positive_rate"] / denom,
+                "interval_loss_mean": self._component_sums["interval"] / denom,
+                "directional_loss_mean": self._component_sums["directional"] / denom,
+                "total_loss_mean": self._component_sums["total"] / denom,
                 "dominant_component": max(components, key=components.get),
             }
 
@@ -710,6 +770,20 @@ try:
                 if self.lambda_t1_quantile != 0.0
                 else zero
             )
+            if self.lambda_subhorizon_quantile != 0.0 and horizon_days > 2:
+                sub_losses = []
+                for k in range(2, horizon_days):
+                    pred_k_quantiles = aggregate_weekly_quantiles_torch(
+                        ordered_pred[:, :k, :],
+                        median_idx=self.median_idx,
+                    )
+                    actual_k = y_actual[:, :k].sum(dim=1)
+                    scale_k = scale_w * math.sqrt(float(k) / float(horizon_days))
+                    sub_losses.append(self._pinball(pred_k_quantiles, actual_k) / scale_k)
+                subhorizon_q_loss = torch.stack(sub_losses).mean()
+            else:
+                subhorizon_q_loss = zero
+
             effective_t1_median = 0.80 * median_path[:, 0] + 0.20 * raw_median_path[:, 0]
             t1_directional_loss = (
                 _directional_sign_loss(
@@ -726,11 +800,15 @@ try:
             effective_weekly_median = 0.80 * pred_weekly_median + 0.20 * raw_pred_weekly_median
             eps = self.sharpe_eps
 
-            # Demeaned, scale-matched ASRO directional utility: adding any constant
-            # bullish/bearish offset gives strictly zero reward on mixed batches.
+            # Demeaned ASRO directional utility only on shuffled training batches;
+            # chronological validation batches must not flip positive trend returns negative.
             if self.lambda_directional != 0.0:
                 actual_det = actual_weekly.detach()
-                if actual_det.numel() > 1 and float(actual_det.std(unbiased=False)) > 1e-6:
+                if (
+                    self.training
+                    and actual_det.numel() > 1
+                    and float(actual_det.std(unbiased=False)) > 1e-6
+                ):
                     pred_for_dir = effective_weekly_median - effective_weekly_median.mean()
                     norm_actual = (actual_det - actual_det.mean()) / scale_w
                 else:
@@ -750,10 +828,10 @@ try:
             else:
                 bias_loss = zero
 
-            # Zero-drift prior (L1 + L2) penalizes both linear pinball skew pull and large offsets
+            # Smooth L2-only weak mean-centering guard (zero kink at origin)
             if self.lambda_drift_prior != 0.0:
                 norm_mean = effective_weekly_median.mean() / scale_w
-                drift_prior_loss = norm_mean.abs() + norm_mean.pow(2)
+                drift_prior_loss = norm_mean.pow(2)
             else:
                 drift_prior_loss = zero
 
@@ -802,6 +880,7 @@ try:
 
             weekly_q_loss = _to_scalar(weekly_q_loss)
             t1_q_loss = _to_scalar(t1_q_loss)
+            subhorizon_q_loss = _to_scalar(subhorizon_q_loss)
             t1_directional_loss = _to_scalar(t1_directional_loss)
             dispersion_loss = _to_scalar(dispersion_loss)
             magnitude_loss = _to_scalar(magnitude_loss)
@@ -816,6 +895,7 @@ try:
             total_loss = (
                 self.lambda_weekly_quantile * weekly_q_loss
                 + self.lambda_t1_quantile * t1_q_loss
+                + self.lambda_subhorizon_quantile * subhorizon_q_loss
                 + self.lambda_t1_directional * t1_directional_loss
                 + self.lambda_dispersion * dispersion_loss
                 + self.lambda_magnitude * magnitude_loss
@@ -831,6 +911,7 @@ try:
             self._record_components(
                 weekly_q_loss,
                 t1_q_loss,
+                subhorizon_q_loss,
                 t1_directional_loss,
                 dispersion_loss,
                 magnitude_loss,
@@ -842,6 +923,7 @@ try:
                 interval_loss,
                 directional_loss,
                 total_loss,
+                batch_weight=float(max(int(y_actual.shape[0]), 1)),
             )
             return total_loss
 
@@ -882,6 +964,147 @@ def _initialize_tft_output_layer(model, quantiles: Sequence[float]) -> None:
                     bias[idx].fill_(val)
 
 
+class _DecoupledQuantileHead(torch.nn.Module):
+    """Gain-balanced output linear wrapper that frees outer quantile spread adaptation.
+
+    Stores standard ``weight`` and ``bias`` tensors in ``state_dict`` via
+    ``_save_to_state_dict`` / ``_load_from_state_dict`` so Lightning checkpoints,
+    checkpoint soup averaging, and ``TemporalFusionTransformer.load_from_checkpoint``
+    remain 100% natively compatible. Internally, median logits use a modest
+    ``median_logit_gain`` (0.25) while outer quantile delta logits use
+    ``spread_logit_gain`` (20.0) to counteract ``0.03 * softplus`` slope shrinkage
+    and expose separate ``median_bias`` (conservative LR) vs ``spread_bias`` (head LR).
+    """
+
+    def __init__(
+        self,
+        base_linear: torch.nn.Linear,
+        *,
+        median_idx: int,
+        median_logit_gain: float = 0.25,
+        spread_logit_gain: float = 20.0,
+    ) -> None:
+        super().__init__()
+        out_features, in_features = base_linear.weight.shape
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
+        self.median_idx = int(median_idx)
+        self.median_logit_gain = float(median_logit_gain)
+        self.spread_logit_gain = float(spread_logit_gain)
+        self._spread_indices = [idx for idx in range(self.out_features) if idx != self.median_idx]
+
+        gain = torch.full(
+            (self.out_features,),
+            self.spread_logit_gain,
+            dtype=base_linear.weight.dtype,
+            device=base_linear.weight.device,
+        )
+        gain[self.median_idx] = self.median_logit_gain
+        self.register_buffer("_channel_gain", gain, persistent=False)
+
+        with torch.no_grad():
+            self.weight = torch.nn.Parameter((base_linear.weight.detach() / gain[:, None]).clone())
+            if base_linear.bias is not None:
+                bias_vec = base_linear.bias.detach()
+            else:
+                bias_vec = torch.zeros(
+                    self.out_features,
+                    dtype=base_linear.weight.dtype,
+                    device=base_linear.weight.device,
+                )
+            self.median_bias = torch.nn.Parameter(
+                (bias_vec[self.median_idx : self.median_idx + 1] / self.median_logit_gain).clone()
+            )
+            self.spread_bias = torch.nn.Parameter(
+                (bias_vec[self._spread_indices] / self.spread_logit_gain).clone()
+                if self._spread_indices
+                else torch.empty(
+                    0,
+                    dtype=base_linear.weight.dtype,
+                    device=base_linear.weight.device,
+                )
+            )
+
+    def _effective_weight(self) -> torch.Tensor:
+        gain = self._channel_gain.to(device=self.weight.device, dtype=self.weight.dtype)
+        return self.weight * gain[:, None]
+
+    def _effective_bias(self) -> torch.Tensor:
+        parts = []
+        if self.median_idx > 0:
+            parts.append(self.spread_bias[: self.median_idx] * self.spread_logit_gain)
+        parts.append(self.median_bias * self.median_logit_gain)
+        if self.median_idx + 1 < self.out_features:
+            parts.append(self.spread_bias[self.median_idx :] * self.spread_logit_gain)
+        return torch.cat(parts, dim=0)
+
+    @property
+    def bias(self) -> torch.Tensor:
+        return self._effective_bias()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.linear(x, self._effective_weight(), self._effective_bias())
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars) -> None:
+        with torch.no_grad():
+            w = self._effective_weight()
+            b = self._effective_bias()
+            destination[f"{prefix}weight"] = w if keep_vars else w.detach()
+            destination[f"{prefix}bias"] = b if keep_vars else b.detach()
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        w_key = f"{prefix}weight"
+        b_key = f"{prefix}bias"
+        if w_key in state_dict and b_key in state_dict:
+            w_val = state_dict.pop(w_key)
+            b_val = state_dict.pop(b_key)
+            with torch.no_grad():
+                gain_col = self._channel_gain.to(device=self.weight.device, dtype=self.weight.dtype)
+                self.weight.copy_(
+                    w_val.to(device=self.weight.device, dtype=self.weight.dtype) / gain_col[:, None]
+                )
+                b_cast = b_val.to(device=self.median_bias.device, dtype=self.median_bias.dtype)
+                self.median_bias.copy_(
+                    b_cast[self.median_idx : self.median_idx + 1] / self.median_logit_gain
+                )
+                if self._spread_indices:
+                    idx_t = torch.as_tensor(
+                        self._spread_indices,
+                        device=b_cast.device,
+                        dtype=torch.long,
+                    )
+                    self.spread_bias.copy_(
+                        b_cast.index_select(0, idx_t) / self.spread_logit_gain
+                    )
+            return
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
+
+
+def _wrap_decoupled_quantile_head(model, quantiles: Sequence[float]) -> None:
+    """Wrap standard linear ``output_layer`` in ``_DecoupledQuantileHead``."""
+    output_layer = getattr(model, "output_layer", None)
+    if output_layer is None or len(quantiles) <= 1:
+        return
+    median_idx = len(quantiles) // 2
+    if isinstance(output_layer, torch.nn.Linear):
+        model.output_layer = _DecoupledQuantileHead(output_layer, median_idx=median_idx)
+    elif isinstance(output_layer, torch.nn.ModuleList):
+        for i, layer in enumerate(output_layer):
+            if isinstance(layer, torch.nn.Linear) and layer.weight.shape[0] == len(quantiles):
+                output_layer[i] = _DecoupledQuantileHead(layer, median_idx=median_idx)
+
+
 def create_tft_model(
     training_dataset,
     cfg: Optional[TFTASROConfig] = None,
@@ -912,6 +1135,7 @@ def create_tft_model(
             quantiles=quantiles,
             lambda_weekly_quantile=cfg.weekly_loss.lambda_weekly_quantile,
             lambda_t1_quantile=cfg.weekly_loss.lambda_t1_quantile,
+            lambda_subhorizon_quantile=cfg.weekly_loss.lambda_subhorizon_quantile,
             lambda_t1_directional=cfg.weekly_loss.lambda_t1_directional,
             lambda_dispersion=cfg.weekly_loss.lambda_dispersion,
             lambda_magnitude=cfg.weekly_loss.lambda_magnitude,
@@ -926,18 +1150,18 @@ def create_tft_model(
             weekly_target_scale=weekly_target_scale,
         )
         logger.info(
-            "Using weekly ASRO loss | weekly_q=%.2f t1_q=%.2f t1_dir=%.2f dispersion=%.2f "
-            "magnitude=%.2f naive=%.2f bias=%.2f dir=%.2f saturation=%.2f "
-            "positive_rate=%.2f interval=%.2f "
-            "median_cap=%s "
-            "monotonic_transform=true gap_scale=%.3f",
+            "Using weekly ASRO loss | weekly_q=%.2f sub_q=%.2f t1_q=%.2f t1_dir=%.2f dispersion=%.2f "
+            "magnitude=%.2f naive=%.2f bias=%.2f drift=%.2f dir=%.2f saturation=%.2f "
+            "positive_rate=%.2f interval=%.2f median_cap=%s monotonic_transform=true gap_scale=%.3f",
             cfg.weekly_loss.lambda_weekly_quantile,
+            cfg.weekly_loss.lambda_subhorizon_quantile,
             cfg.weekly_loss.lambda_t1_quantile,
             cfg.weekly_loss.lambda_t1_directional,
             cfg.weekly_loss.lambda_dispersion,
             cfg.weekly_loss.lambda_magnitude,
             cfg.weekly_loss.lambda_naive,
             cfg.weekly_loss.lambda_bias,
+            cfg.weekly_loss.lambda_drift_prior,
             cfg.weekly_loss.lambda_directional,
             cfg.weekly_loss.lambda_saturation,
             cfg.weekly_loss.lambda_positive_rate,
@@ -984,10 +1208,12 @@ def create_tft_model(
         log_val_interval=1,
     )
     _initialize_tft_output_layer(model, quantiles)
+    if use_asro and cfg.forecast.primary_horizon_days == 5 and WeeklyASROPFLoss is not None:
+        _wrap_decoupled_quantile_head(model, quantiles)
 
-    # Configure AdamW with decoupled output-head learning rates so feature weights
-    # can learn conditional return sensitivity while output biases stay conservative
-    # (preventing unconditional positive/negative drift collapse).
+    # Configure AdamW with decoupled output-head learning rates: median_bias gets
+    # the conservative bias LR cap (0.05x) while output weights and spread_bias
+    # learn at output_head_lr_mult * lr so interval widths can adapt across regimes.
     _base_lr = float(cfg.model.learning_rate)
     _head_weight_lr = _base_lr * float(cfg.model.output_head_lr_mult)
     _head_bias_lr = _base_lr * min(0.05, 0.25 * float(cfg.model.output_head_lr_mult))
@@ -1002,7 +1228,9 @@ def create_tft_model(
             if not param.requires_grad:
                 continue
             if "output_layer" in name:
-                if name.endswith("bias"):
+                if name.endswith("median_bias") or (
+                    name.endswith("bias") and "spread_bias" not in name
+                ):
                     head_bias_params.append(param)
                 else:
                     head_weight_params.append(param)
@@ -1400,6 +1628,7 @@ def format_prediction(
     weekly_cqr_params: Optional[Dict[str, Any]] = None,
     realized_vol: Optional[float] = None,
     is_monotonic_logits: bool = False,
+    already_ordered: bool = False,
 ) -> Dict[str, Any]:
     """
     Convert daily log-return TFT quantiles into public simple-return fields.
@@ -1407,9 +1636,12 @@ def format_prediction(
     Internal model space is a 5-step daily log-return path. Public return
     fields are simple returns, and prices are derived with
     ``baseline_price * exp(cumulative_log_return)``. When
-    ``is_monotonic_logits`` is True, ``raw_prediction`` holds unconstrained
-    delta-step logits parameterized for ``enforce_monotonic_quantiles`` rather
-    than directly ordered quantiles.
+    ``already_ordered`` is True, ``raw_prediction`` already holds ordered
+    quantiles (e.g. from ``WeeklyASROPFLoss.to_quantiles`` or an ordered-space
+    ensemble mean) and bypasses ``enforce_monotonic_quantiles`` so spreads are
+    never double-softplussed. When ``is_monotonic_logits`` is True,
+    ``raw_prediction`` holds unconstrained delta-step logits parameterized for
+    ``enforce_monotonic_quantiles``.
     """
     import math as _math
 
@@ -1427,15 +1659,57 @@ def format_prediction(
     q98_idx = q_list.index(0.98) if 0.98 in q_list else len(q_list) - 1
     raw_pred = pred.copy()
 
-    ordered_tensor = enforce_monotonic_quantiles(
-        torch.as_tensor(raw_pred, dtype=torch.float64),
-        median_idx=median_idx,
-        min_gap=1e-5,
-        gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
-        init_bias=-3.0,
-    )
-    pred = ordered_tensor.detach().cpu().numpy()
-    ordered_diffs = np.diff(pred, axis=-1) if pred.shape[-1] > 1 else np.array([])
+    if is_monotonic_logits:
+        quantile_crossing_detected = False
+        raw_quantile_crossing_rate = 0.0
+        raw_median_sort_gap = 0.0
+    else:
+        quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
+        crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
+        quantile_crossing_detected = bool(crossing_mask.any())
+        raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
+        sorted_raw = np.sort(raw_pred, axis=-1)
+        raw_median_sort_gap = float(
+            np.max(np.abs(raw_pred[..., median_idx] - sorted_raw[..., median_idx]))
+        )
+
+    if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
+        logger.warning(
+            "format_prediction: invalid baseline_price=%s; price fields will be null",
+            baseline_price,
+        )
+
+    anomaly_bound = 0.12
+    raw_median_0 = float(raw_pred[0, median_idx])
+
+    if already_ordered:
+        bounded_pred = raw_pred.copy()
+        if quantile_crossing_detected:
+            bounded_pred = np.maximum.accumulate(bounded_pred, axis=-1)
+        # Cohesive translation clip across all quantile channels preserves spread & ordering
+        med_col = bounded_pred[..., median_idx]
+        clipped_med = np.clip(med_col, -anomaly_bound, anomaly_bound)
+        shift = clipped_med - med_col
+        bounded_pred = bounded_pred + shift[..., None]
+    else:
+        # Clip median BEFORE enforcing monotonic spread distances so q50 can never
+        # clip past q25/q75 and introduce post-hoc quantile crossings.
+        clipped_logits = raw_pred.copy()
+        clipped_logits[..., median_idx] = np.clip(
+            clipped_logits[..., median_idx],
+            -anomaly_bound,
+            anomaly_bound,
+        )
+        ordered_tensor = enforce_monotonic_quantiles(
+            torch.as_tensor(clipped_logits, dtype=torch.float64),
+            median_idx=median_idx,
+            min_gap=1e-5,
+            gap_scale=DEFAULT_MONOTONIC_GAP_SCALE,
+            init_bias=-3.0,
+        )
+        bounded_pred = ordered_tensor.detach().cpu().numpy()
+
+    ordered_diffs = np.diff(bounded_pred, axis=-1) if bounded_pred.shape[-1] > 1 else np.array([])
     ordered_crossing_mask = (
         ordered_diffs < -1e-12 if ordered_diffs.size else np.array([], dtype=bool)
     )
@@ -1450,20 +1724,9 @@ def format_prediction(
 
     if is_monotonic_logits:
         quantile_crossing_detected = bool(ordered_crossing_mask.any())
-        raw_quantile_crossing_rate = 0.0
-        raw_median_sort_gap = 0.0
-    else:
-        quantile_diffs = np.diff(raw_pred, axis=-1) if raw_pred.shape[-1] > 1 else np.array([])
-        crossing_mask = quantile_diffs < -1e-12 if quantile_diffs.size else np.array([], dtype=bool)
-        quantile_crossing_detected = bool(crossing_mask.any())
-        raw_quantile_crossing_rate = float(crossing_mask.mean()) if crossing_mask.size else 0.0
-        sorted_raw = np.sort(raw_pred, axis=-1)
-        raw_median_sort_gap = float(
-            np.max(np.abs(raw_pred[..., median_idx] - sorted_raw[..., median_idx]))
-        )
 
     ordered_median_sort_gap = float(
-        np.max(np.abs(pred[..., median_idx] - np.sort(pred, axis=-1)[..., median_idx]))
+        np.max(np.abs(bounded_pred[..., median_idx] - np.sort(bounded_pred, axis=-1)[..., median_idx]))
     )
     if quantile_crossing_detected:
         logger.info(
@@ -1474,15 +1737,7 @@ def format_prediction(
             raw_median_sort_gap,
         )
 
-    if _math.isnan(baseline_price) or _math.isinf(baseline_price) or baseline_price <= 0:
-        logger.warning(
-            "format_prediction: invalid baseline_price=%s; price fields will be null",
-            baseline_price,
-        )
-
-    anomaly_bound = 0.12
-    raw_median_0 = float(raw_pred[0, median_idx])
-    corrected_median_0 = float(pred[0, median_idx])
+    corrected_median_0 = float(bounded_pred[0, median_idx])
     anomaly_detected = (
         abs(raw_median_0) > anomaly_bound
         or abs(corrected_median_0) > anomaly_bound
@@ -1494,13 +1749,6 @@ def format_prediction(
             raw_median_0,
             corrected_median_0,
         )
-
-    bounded_pred = pred.copy()
-    bounded_pred[..., median_idx] = np.clip(
-        bounded_pred[..., median_idx],
-        -anomaly_bound,
-        anomaly_bound,
-    )
 
     def _valid_price_base() -> bool:
         return bool(baseline_price > 0 and np.isfinite(baseline_price))
@@ -1582,6 +1830,13 @@ def format_prediction(
         weekly_q10_log_cal = weekly_q10_log_raw - conformal_adjustment
         weekly_q90_log_cal = weekly_q90_log_raw + conformal_adjustment
         interval_calibrated = conformal_adjustment > 0
+        if interval_calibrated and daily_forecasts:
+            weekly_q02_log_cal = float(weekly_quantile_logs[q02_idx]) - conformal_adjustment
+            weekly_q98_log_cal = float(weekly_quantile_logs[q98_idx]) + conformal_adjustment
+            daily_forecasts[-1]["price_q10"] = _price(weekly_q10_log_cal)
+            daily_forecasts[-1]["price_q90"] = _price(weekly_q90_log_cal)
+            daily_forecasts[-1]["price_q02"] = _price(weekly_q02_log_cal)
+            daily_forecasts[-1]["price_q98"] = _price(weekly_q98_log_cal)
 
     q10_price = first.get("price_q10")
     q90_price = first.get("price_q90")

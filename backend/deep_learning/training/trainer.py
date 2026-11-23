@@ -131,18 +131,20 @@ KNOWN_GOOD_CONFIG = {
     "hidden_continuous_size": 6,
     "learning_rate": 5e-4,
     "output_head_lr_mult": 0.20,
-    "weight_decay": 1.5e-2,
+    "weight_decay": 2e-2,
+    "mrmr_top_k": 5,
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
     "lambda_madl": 0.40,
     "lambda_weekly_quantile": 1.00,
     "lambda_t1_quantile": 0.20,
+    "lambda_subhorizon_quantile": 0.15,
     "lambda_t1_directional": 0.0,
     "lambda_dispersion": 0.0,
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 4.0,
+    "lambda_drift_prior": 1.00,
     "lambda_directional": 0.10,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
@@ -159,9 +161,11 @@ CONTROLLED_WEEKLY_OPTUNA_PARAMS = (
     "learning_rate",
     "output_head_lr_mult",
     "weight_decay",
+    "mrmr_top_k",
     "batch_size",
     "lambda_weekly_quantile",
     "lambda_t1_quantile",
+    "lambda_subhorizon_quantile",
     "lambda_t1_directional",
     "lambda_dispersion",
     "lambda_magnitude",
@@ -180,6 +184,7 @@ REQUIRED_PROMOTABLE_METRICS = (
     "weekly_directional_accuracy",
     "weekly_magnitude_ratio",
     "weekly_tail_capture_rate",
+    "weekly_mae_vs_naive_zero",
     "weekly_pi80_coverage",
     "weekly_pi80_width_ratio",
     "weekly_pi96_coverage",
@@ -241,12 +246,18 @@ def _validation_ranked_checkpoint_paths(
 def _build_uniform_checkpoint_soup(
     source_paths: list[Path],
     destination: Path,
-) -> None:
+    *,
+    max_epoch_gap: Optional[int] = 5,
+) -> bool:
     """Average compatible model weights into one deployable Lightning checkpoint.
 
     Source checkpoints have already been ranked by the validation monitor. Test
     predictions and labels are unavailable here by design. Non-floating state
     (for example counters) is retained from the best-ranked checkpoint.
+    Enforces an epoch-proximity constraint ``abs(ep_a - ep_b) <= max_epoch_gap``
+    when integer epoch metadata is present so disjoint training basins are not
+    destructively averaged. Returns ``True`` if multiple checkpoints were
+    averaged, else ``False``.
     """
     if not source_paths:
         raise ValueError("At least one checkpoint is required for promotion")
@@ -257,7 +268,7 @@ def _build_uniform_checkpoint_soup(
     destination.parent.mkdir(parents=True, exist_ok=True)
     if len(source_paths) == 1:
         shutil.copy2(source_paths[0], destination)
-        return
+        return False
 
     def _load(path: Path) -> dict:
         try:
@@ -275,10 +286,37 @@ def _build_uniform_checkpoint_soup(
         if tuple(state) != reference_keys:
             raise RuntimeError(f"Checkpoint state keys differ: {path}")
 
+    # Filter out secondary checkpoints whose training epoch is farther than max_epoch_gap
+    # from the primary validation-best checkpoint (distinct basins fail linear interpolation).
+    selected_indices = [0]
+    ref_epoch = payloads[0].get("epoch")
+    for idx in range(1, len(payloads)):
+        cand_epoch = payloads[idx].get("epoch")
+        if (
+            max_epoch_gap is not None
+            and isinstance(ref_epoch, int)
+            and isinstance(cand_epoch, int)
+            and abs(int(cand_epoch) - int(ref_epoch)) > int(max_epoch_gap)
+        ):
+            logger.info(
+                "Skipping checkpoint soup member %s (epoch=%s too far from best epoch=%s; max_gap=%d)",
+                source_paths[idx].name,
+                cand_epoch,
+                ref_epoch,
+                int(max_epoch_gap),
+            )
+            continue
+        selected_indices.append(idx)
+
+    if len(selected_indices) <= 1:
+        shutil.copy2(source_paths[0], destination)
+        return False
+
+    selected_states = [state_dicts[i] for i in selected_indices]
     averaged_payload = payloads[0]
     averaged_state = averaged_payload["state_dict"]
     for key in reference_keys:
-        tensors = [state[key] for state in state_dicts]
+        tensors = [state[key] for state in selected_states]
         reference = tensors[0]
         if any(tensor.shape != reference.shape for tensor in tensors[1:]):
             raise RuntimeError(f"Checkpoint tensor shape differs for {key}")
@@ -293,6 +331,7 @@ def _build_uniform_checkpoint_soup(
             averaged_state[key] = reference
 
     torch.save(averaged_payload, destination)
+    return True
 
 
 def _validate_quantile_prediction_shape(pred_np: np.ndarray, cfg: TFTASROConfig) -> None:
@@ -317,6 +356,8 @@ def _predict_quantiles_to_np(
     dataloader,
     cfg: TFTASROConfig,
     return_y: bool = False,
+    *,
+    ordered: bool = False,
 ):
     y_actual_np = None
     pred = None
@@ -345,6 +386,15 @@ def _predict_quantiles_to_np(
 
     pred_np = pred.cpu().numpy() if hasattr(pred, "cpu") else np.asarray(pred)
     _validate_quantile_prediction_shape(pred_np, cfg)
+    if ordered:
+        from deep_learning.models.tft_copper import ensure_ordered_quantiles_from_model_output
+
+        median_idx = len(cfg.model.quantiles) // 2
+        pred_np = ensure_ordered_quantiles_from_model_output(
+            pred_np,
+            model=mdl,
+            median_idx=median_idx,
+        )
     if return_y:
         return pred_np, y_actual_np
     return pred_np
@@ -372,6 +422,7 @@ def _compute_test_metrics_from_quantiles(
     weekly_interval_conditioning_values: Optional[np.ndarray] = None,
     weekly_cqr_params: Optional[dict] = None,
     realized_vol: Optional[np.ndarray] = None,
+    already_ordered: bool = False,
 ) -> dict[str, float]:
     from deep_learning.training.metrics import evaluate_quantile_predictions
 
@@ -384,6 +435,8 @@ def _compute_test_metrics_from_quantiles(
         "horizon": cfg.forecast.primary_horizon_days,
         "weekly_median_cap": cfg.weekly_loss.weekly_median_cap,
     }
+    if already_ordered:
+        evaluator_kwargs["already_ordered"] = True
     # Keep the historical evaluator call shape for downstream diagnostics and
     # tests when no validation-fitted interval adjustment is needed.
     calibration = weekly_interval_calibration or {}
@@ -427,7 +480,12 @@ def _compute_test_metrics_from_quantiles(
         pred_np[:n_path],
         **evaluator_kwargs,
     )
-    _log_weekly_alignment_sample(y_actual_path[:n_path], pred_np[:n_path], cfg)
+    _log_weekly_alignment_sample(
+        y_actual_path[:n_path],
+        pred_np[:n_path],
+        cfg,
+        already_ordered=already_ordered,
+    )
     _require_promotable_metrics(test_metrics)
     return test_metrics
 
@@ -506,6 +564,7 @@ def _log_weekly_alignment_sample(
     pred_np: np.ndarray,
     cfg: TFTASROConfig,
     max_rows: int = 10,
+    already_ordered: bool = False,
 ) -> None:
     from deep_learning.training.metrics import (
         apply_weekly_median_cap_np,
@@ -523,13 +582,23 @@ def _log_weekly_alignment_sample(
     median_idx = len(cfg.model.quantiles) // 2
     horizon = cfg.forecast.primary_horizon_days
     weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=horizon)
-    eval_pred_np, _ = apply_weekly_median_cap_np(
-        pred_np[:n],
-        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-        quantiles=cfg.model.quantiles,
-        horizon=horizon,
-    )
-    ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
+    if already_ordered:
+        eval_pred_np, _ = apply_weekly_median_cap_np(
+            pred_np[:n],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=cfg.model.quantiles,
+            horizon=horizon,
+            already_ordered=True,
+        )
+        ordered_pred_np = eval_pred_np
+    else:
+        eval_pred_np, _ = apply_weekly_median_cap_np(
+            pred_np[:n],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=cfg.model.quantiles,
+            horizon=horizon,
+        )
+        ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
     weekly_pred = ordered_pred_np[:, :horizon, median_idx].sum(axis=1)
 
     logger.info("WEEKLY ALIGNMENT SAMPLE:")
@@ -557,15 +626,27 @@ def _iso_index_date(value) -> Optional[str]:
     return None
 
 
-def _compute_split_dates(master_df: pd.DataFrame, *, train_size: int, val_size: int) -> dict[str, Optional[str]]:
+def _compute_split_dates(
+    master_df: pd.DataFrame,
+    *,
+    train_size: int,
+    val_size: int,
+    train_end_pos: Optional[int] = None,
+    val_start_pos: Optional[int] = None,
+    val_end_pos: Optional[int] = None,
+    test_start_pos: Optional[int] = None,
+) -> dict[str, Optional[str]]:
     """Record ISO date boundaries for chronological train / val / test partitions."""
     if master_df.empty:
         return {}
     n = len(master_df)
-    tr_end = max(0, min(train_size - 1, n - 1))
-    val_start = max(0, min(train_size, n - 1))
-    val_end = max(val_start, min(train_size + val_size - 1, n - 1))
-    test_start = min(train_size + val_size, n - 1)
+    tr_end = max(0, min((train_size - 1) if train_end_pos is None else int(train_end_pos), n - 1))
+    val_start = max(0, min(train_size if val_start_pos is None else int(val_start_pos), n - 1))
+    val_end = max(
+        val_start,
+        min((train_size + val_size - 1) if val_end_pos is None else int(val_end_pos), n - 1),
+    )
+    test_start = min((train_size + val_size) if test_start_pos is None else int(test_start_pos), n - 1)
     return {
         "train_start_date": _iso_index_date(master_df.index[0]),
         "train_end_date": _iso_index_date(master_df.index[tr_end]),
@@ -601,7 +682,6 @@ def _train_single_tft_seed(
     from deep_learning.models.tft_copper import create_tft_model, load_tft_model
     from deep_learning.training.callbacks import (
         CurriculumLossScheduler,
-        SWACallback,
         WeeklyLossComponentLogger,
     )
 
@@ -640,7 +720,6 @@ def _train_single_tft_seed(
             initial_lambda_madl=0.05,
             target_lambda_madl=cfg.asro.lambda_madl,
         ))
-    callbacks.append(SWACallback(swa_start_pct=0.75))
 
     n_batches = len(train_dl)
     log_steps = max(1, min(5, n_batches))
@@ -674,8 +753,8 @@ def _train_single_tft_seed(
             max_count=source_count,
         )
         source_paths = [path for path, _score in ranked_checkpoints]
-        _build_uniform_checkpoint_soup(source_paths, destination_path)
-        if len(source_paths) > 1:
+        soup_averaged = _build_uniform_checkpoint_soup(source_paths, destination_path)
+        if len(source_paths) > 1 and soup_averaged:
             best_score = float(ranked_checkpoints[0][1])
             soup_accepted = False
             try:
@@ -701,6 +780,10 @@ def _train_single_tft_seed(
                 source_paths = [source_paths[0]]
                 ranked_checkpoints = [ranked_checkpoints[0]]
                 checkpoint_selection["method"] = "best_validation_checkpoint_soup_reverted"
+        elif len(source_paths) > 1 and not soup_averaged:
+            source_paths = [source_paths[0]]
+            ranked_checkpoints = [ranked_checkpoints[0]]
+            checkpoint_selection["method"] = "best_validation_checkpoint_epoch_gap_skipped"
         effective_val_loss = (
             float(checkpoint_selection["soup_val_score"])
             if checkpoint_selection.get("method") == "uniform_top2_weight_soup"
@@ -725,6 +808,7 @@ def _evaluate_seed_member_stats(
     cfg: TFTASROConfig,
     *,
     val_loss: float,
+    already_ordered: bool = False,
 ) -> dict:
     """Compute validation skill and train/val drift statistics for one ensemble seed."""
     from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
@@ -747,13 +831,22 @@ def _evaluate_seed_member_stats(
             "train_pred_mean": 0.0,
         }
 
-    eval_val, _ = apply_weekly_median_cap_np(
-        pred_val_np[:n_val],
-        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-        quantiles=quantiles,
-        horizon=horizon,
-    )
-    ord_val = monotonic_quantiles_np(eval_val, median_idx=median_idx)
+    if already_ordered:
+        ord_val, _ = apply_weekly_median_cap_np(
+            pred_val_np[:n_val],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=quantiles,
+            horizon=horizon,
+            already_ordered=True,
+        )
+    else:
+        eval_val, _ = apply_weekly_median_cap_np(
+            pred_val_np[:n_val],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=quantiles,
+            horizon=horizon,
+        )
+        ord_val = monotonic_quantiles_np(eval_val, median_idx=median_idx)
     wq_val = aggregate_weekly_quantiles_np(ord_val[:, :horizon, :], median_idx=median_idx)
     val_med = wq_val[:, median_idx]
     actual_w = cumulative_horizon(val_actual_path[:n_val], horizon=horizon)
@@ -763,13 +856,22 @@ def _evaluate_seed_member_stats(
 
     train_med_mean = 0.0
     if len(pred_train_np) > 0:
-        eval_tr, _ = apply_weekly_median_cap_np(
-            pred_train_np,
-            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-            quantiles=quantiles,
-            horizon=horizon,
-        )
-        ord_tr = monotonic_quantiles_np(eval_tr, median_idx=median_idx)
+        if already_ordered:
+            ord_tr, _ = apply_weekly_median_cap_np(
+                pred_train_np,
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                quantiles=quantiles,
+                horizon=horizon,
+                already_ordered=True,
+            )
+        else:
+            eval_tr, _ = apply_weekly_median_cap_np(
+                pred_train_np,
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                quantiles=quantiles,
+                horizon=horizon,
+            )
+            ord_tr = monotonic_quantiles_np(eval_tr, median_idx=median_idx)
         wq_tr = aggregate_weekly_quantiles_np(ord_tr[:, :horizon, :], median_idx=median_idx)
         train_med_mean = float(np.mean(wq_tr[:, median_idx]))
 
@@ -784,15 +886,17 @@ def _evaluate_seed_member_stats(
 def _filter_ensemble_members(
     candidates: list[dict],
     *,
-    max_val_mae_vs_naive: float = 0.99,
-    max_val_loss_ratio: float = 1.05,
-    max_abs_val_pred_mean: float = 0.0025,
-    max_abs_train_pred_mean: float = 0.005,
+    max_val_mae_vs_naive: float = 1.06,
+    max_val_loss_ratio: float = 1.08,
+    max_abs_val_pred_mean: float = 0.010,
+    max_abs_train_pred_mean: float = 0.008,
 ) -> tuple[list[dict], list[dict]]:
-    """Keep only seeds passing validation skill, loss ratio, and train/val drift gates.
+    """Keep seeds passing validation skill, loss ratio, and train/val drift gates.
 
-    Predictions are never validation-mean subtracted; drifting or weak seeds are
-    dropped outright, falling back to the single best seed if none pass all gates.
+    Calibration gates are sized for small (~80-100 bar / ~19 independent weeks)
+    chronological validation windows without subtracting validation means. If no
+    seed clears all strict gates simultaneously, keeps the top 2 finite
+    non-collapsed seeds to preserve multi-seed variance reduction.
     """
     if not candidates:
         return [], []
@@ -848,7 +952,7 @@ def _filter_ensemble_members(
             accepted.append(item)
 
     if not accepted:
-        best_idx = min(
+        ranked_indices = sorted(
             range(len(candidates)),
             key=lambda i: (
                 float(candidates[i].get("val_mae_vs_naive", float("inf")))
@@ -859,9 +963,19 @@ def _filter_ensemble_members(
                 else float("inf"),
             ),
         )
-        accepted = [candidates[best_idx]]
-        diagnostics[best_idx]["accepted"] = True
-        diagnostics[best_idx]["fallback_best"] = True
+        non_degenerate = [
+            i
+            for i in ranked_indices
+            if np.isfinite(float(candidates[i].get("val_mae_vs_naive", float("inf"))))
+            and np.isfinite(float(candidates[i].get("val_loss", float("inf"))))
+            and float(candidates[i].get("val_mae_vs_naive", float("inf"))) <= 1.25
+            and abs(float(candidates[i].get("val_pred_mean", 0.0))) <= 0.03
+        ]
+        fallback_indices = non_degenerate[:2] if len(non_degenerate) >= 2 else [ranked_indices[0]]
+        accepted = [candidates[i] for i in fallback_indices]
+        for i in fallback_indices:
+            diagnostics[i]["accepted"] = True
+            diagnostics[i]["fallback_best"] = True
 
     return accepted, diagnostics
 
@@ -897,6 +1011,7 @@ def train_tft_model(
         from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # type: ignore[no-redef]
 
     from app.db import SessionLocal, init_db
+    import deep_learning.data.dataset as _dataset_mod
     from deep_learning.data.feature_store import build_tft_dataframe
     from deep_learning.data.dataset import build_datasets, create_dataloaders
     from deep_learning.models.tft_copper import create_tft_model, get_variable_importance, format_prediction
@@ -906,7 +1021,6 @@ def train_tft_model(
     )
     from deep_learning.training.callbacks import (
         CurriculumLossScheduler,
-        SWACallback,
         WeeklyLossComponentLogger,
     )
 
@@ -966,14 +1080,34 @@ def train_tft_model(
     )
     train_dl, val_dl, test_dl = create_dataloaders(training_ds, validation_ds, test_ds, cfg)
 
-    n_rows = len(master_df)
-    test_size = int(n_rows * cfg.training.test_ratio)
-    val_size = int(n_rows * cfg.training.val_ratio)
-    train_size = n_rows - val_size - test_size
-    train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
-    val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
-    max_time_idx = int(master_df["time_idx"].iloc[-1])
-    split_dates = _compute_split_dates(master_df, train_size=train_size, val_size=val_size)
+    split_bounds_fn = getattr(_dataset_mod, "compute_dataset_split_bounds", None)
+    if callable(split_bounds_fn):
+        bounds = split_bounds_fn(
+            master_df,
+            cfg,
+            purge_gap=int(cfg.forecast.primary_horizon_days),
+        )
+        train_cutoff = int(bounds["train_cutoff"])
+        val_cutoff = int(bounds["val_cutoff"])
+        max_time_idx = int(bounds["max_time_idx"])
+        split_dates = _compute_split_dates(
+            master_df,
+            train_size=int(bounds["train_size"]),
+            val_size=int(bounds["val_size"]),
+            train_end_pos=int(bounds["train_end_pos"]),
+            val_start_pos=int(bounds["val_start_pos"]),
+            val_end_pos=int(bounds["val_end_pos"]),
+            test_start_pos=int(bounds["test_start_pos"]),
+        )
+    else:
+        n_rows = len(master_df)
+        test_size = int(n_rows * cfg.training.test_ratio)
+        val_size = int(n_rows * cfg.training.val_ratio)
+        train_size = n_rows - val_size - test_size
+        train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
+        val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
+        max_time_idx = int(master_df["time_idx"].iloc[-1])
+        split_dates = _compute_split_dates(master_df, train_size=train_size, val_size=val_size)
     weekly_direction_model: dict = {
         "version": 1,
         "enabled": False,
@@ -1050,12 +1184,18 @@ def train_tft_model(
     primary_best_path = ""
     checkpoint_selection: dict = {}
 
+    create_train_dl_fn = getattr(_dataset_mod, "create_train_dataloader", None)
     for seed_idx, seed_val in enumerate(ensemble_seeds):
         member_ckpt_dir = ckpt_dir if seed_idx == 0 else ckpt_dir / f"seed_{seed_val}"
         member_dest = final_path if seed_idx == 0 else final_path.parent / f"best_tft_asro_seed{seed_idx}.ckpt"
+        seed_train_dl = (
+            create_train_dl_fn(training_ds, cfg, seed=int(seed_val))
+            if (callable(create_train_dl_fn) and (seed_idx > 0 or int(seed_val) != int(cfg.training.seed)))
+            else train_dl
+        )
         mdl, trn, bpath, sel = _train_single_tft_seed(
             training_ds=training_ds,
-            train_dl=train_dl,
+            train_dl=seed_train_dl,
             val_dl=val_dl,
             cfg=cfg,
             seed=seed_val,
@@ -1070,7 +1210,7 @@ def train_tft_model(
             primary_trainer = trn
             primary_best_path = bpath
             checkpoint_selection = sel
-            n_batches = len(train_dl)
+            n_batches = len(seed_train_dl)
             total_params = sum(p.numel() for p in primary_model.parameters())
             trainable_params = sum(p.numel() for p in primary_model.parameters() if p.requires_grad)
             logger.info(
@@ -1138,215 +1278,215 @@ def train_tft_model(
     ensemble_member_diagnostics: list[dict] = []
     theta_prior_col = hybrid_blend["prior_feature"]
 
-    try:
-        from deep_learning.calibration.conformal import fit_weekly_cqr
-        from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
-        from deep_learning.training.metrics import (
-            apply_weekly_median_cap_np,
-            cumulative_horizon,
-            monotonic_quantiles_np,
-        )
+    from deep_learning.calibration.conformal import fit_weekly_cqr
+    from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
+    from deep_learning.training.metrics import (
+        apply_weekly_median_cap_np,
+        cumulative_horizon,
+    )
 
-        train_eval_dl = training_ds.to_dataloader(
-            train=False,
-            batch_size=cfg.training.batch_size,
-            num_workers=0,
-        )
-        for rec_idx, rec in enumerate(candidate_records):
-            m_val_pred, m_val_y = _predict_quantiles_to_np(
-                rec["model"], val_dl, cfg, return_y=(rec_idx == 0)
+    train_eval_dl = training_ds.to_dataloader(
+        train=False,
+        batch_size=cfg.training.batch_size,
+        num_workers=0,
+    )
+    for rec_idx, rec in enumerate(candidate_records):
+        if rec_idx == 0:
+            m_val_pred, val_actual_path = _predict_quantiles_to_np(
+                rec["model"], val_dl, cfg, return_y=True, ordered=True
             )
-            if rec_idx == 0:
-                val_actual_path = m_val_y
-            m_train_pred = _predict_quantiles_to_np(
-                rec["model"], train_eval_dl, cfg, return_y=False
-            )
-            stats = _evaluate_seed_member_stats(
-                m_val_pred,
-                val_actual_path if val_actual_path is not None else np.empty((0, cfg.forecast.primary_horizon_days)),
-                m_train_pred,
-                cfg,
-                val_loss=float(rec.get("val_loss", float("inf"))),
-            )
-            rec["val_pred_np"] = m_val_pred
-            rec.update(stats)
-
-        if len(candidate_records) > 1:
-            accepted_records, ensemble_member_diagnostics = _filter_ensemble_members(candidate_records)
-            for diag in ensemble_member_diagnostics:
-                logger.info(
-                    "Ensemble seed=%s accepted=%s val_loss=%.4f val_mae/0=%.4f val_mean=%+.5f train_mean=%+.5f reasons=%s",
-                    diag["seed"],
-                    diag["accepted"],
-                    diag["val_loss"],
-                    diag["val_mae_vs_naive"],
-                    diag["val_pred_mean"],
-                    diag["train_pred_mean"],
-                    diag["reject_reasons"],
-                )
         else:
-            accepted_records = candidate_records
-            if candidate_records:
-                rec0 = candidate_records[0]
-                ensemble_member_diagnostics = [
-                    {
-                        "seed": rec0.get("seed"),
-                        "checkpoint": Path(rec0["path"]).name if rec0.get("path") else None,
-                        "val_loss": float(rec0.get("val_loss", float("inf"))),
-                        "val_mae_vs_naive": float(rec0.get("val_mae_vs_naive", float("inf"))),
-                        "val_pred_mean": float(rec0.get("val_pred_mean", 0.0)),
-                        "train_pred_mean": float(rec0.get("train_pred_mean", 0.0)),
-                        "accepted": True,
-                        "reject_reasons": [],
-                    }
-                ]
-
-        # Reconcile surviving checkpoints cleanly onto contiguous HF Hub slots
-        staged_payloads = [
-            Path(rec["path"]).read_bytes()
-            for rec in accepted_records
-            if rec.get("path") is not None and Path(rec["path"]).exists()
-        ]
-        if len(staged_payloads) == len(accepted_records) and accepted_records:
-            for sec_i in range(1, len(ensemble_seeds)):
-                sec_path = final_path.parent / f"best_tft_asro_seed{sec_i}.ckpt"
-                if sec_path.exists():
-                    sec_path.unlink()
-            reconciled_paths: list[Path] = []
-            for slot_i, payload_bytes in enumerate(staged_payloads):
-                slot_path = (
-                    final_path
-                    if slot_i == 0
-                    else final_path.parent / f"best_tft_asro_seed{slot_i}.ckpt"
-                )
-                slot_path.write_bytes(payload_bytes)
-                reconciled_paths.append(slot_path)
-            ensemble_ckpt_paths = reconciled_paths
-
-        ensemble_models = [rec["model"] for rec in accepted_records if rec.get("model") is not None] or [model]
-        evaluation_model = ensemble_models[0]
-        if accepted_records and accepted_records[0].get("selection"):
-            checkpoint_selection = accepted_records[0]["selection"]
-        if accepted_records and accepted_records[0].get("trainer"):
-            trainer = accepted_records[0]["trainer"]
-        logger.info(
-            "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s ensemble=%d/%d",
-            checkpoint_selection.get("method"),
-            checkpoint_selection.get("source_checkpoints"),
-            checkpoint_selection.get("source_scores"),
-            final_path,
-            len(ensemble_models),
-            len(candidate_records),
+            m_val_pred = _predict_quantiles_to_np(
+                rec["model"], val_dl, cfg, return_y=False, ordered=True
+            )
+        m_train_pred = _predict_quantiles_to_np(
+            rec["model"], train_eval_dl, cfg, return_y=False, ordered=True
         )
-
-        val_pred_members = [rec["val_pred_np"] for rec in accepted_records if rec.get("val_pred_np") is not None]
-        val_pred_np = (
-            np.mean(np.stack(val_pred_members, axis=0), axis=0)
-            if len(val_pred_members) > 1
-            else val_pred_members[0]
+        stats = _evaluate_seed_member_stats(
+            m_val_pred,
+            val_actual_path if val_actual_path is not None else np.empty((0, cfg.forecast.primary_horizon_days)),
+            m_train_pred,
+            cfg,
+            val_loss=float(rec.get("val_loss", float("inf"))),
+            already_ordered=True,
         )
+        rec["val_pred_np"] = m_val_pred
+        rec.update(stats)
 
-        if val_actual_path is not None and len(val_actual_path) > 0:
-            n_val = min(len(val_actual_path), len(val_pred_np))
-            direction_calibration["sample_count"] = int(n_val)
-            magnitude_calibration["sample_count"] = int(n_val)
-            interval_calibration["sample_count"] = int(n_val)
-
-            val_realized_vol = None
-            if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
-                try:
-                    val_realized_vol = _dataset_origin_conditioning_values(
-                        master_df,
-                        validation_ds,
-                        feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
-                        horizon=cfg.forecast.primary_horizon_days,
-                        start_exclusive=train_cutoff - 1,
-                        end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
-                        expected_count=n_val,
-                    )
-                except Exception as vol_exc:
-                    logger.debug("Validation realized_vol lookup skipped: %s", vol_exc)
-
-            val_theta_prior = None
-            if theta_prior_col in master_df.columns:
-                try:
-                    val_theta_prior = _dataset_origin_conditioning_values(
-                        master_df,
-                        validation_ds,
-                        feature_name=theta_prior_col,
-                        horizon=cfg.forecast.primary_horizon_days,
-                        start_exclusive=train_cutoff - 1,
-                        end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
-                        expected_count=n_val,
-                    )
-                except Exception as th_exc:
-                    logger.debug("Validation Theta prior lookup skipped: %s", th_exc)
-
-            median_idx = len(cfg.model.quantiles) // 2
-            val_eval_pred, _ = apply_weekly_median_cap_np(
-                val_pred_np[:n_val],
-                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-                quantiles=tuple(cfg.model.quantiles),
-                horizon=cfg.forecast.primary_horizon_days,
+    if len(candidate_records) > 1:
+        accepted_records, ensemble_member_diagnostics = _filter_ensemble_members(candidate_records)
+        for diag in ensemble_member_diagnostics:
+            logger.info(
+                "Ensemble seed=%s accepted=%s val_loss=%.4f val_mae/0=%.4f val_mean=%+.5f train_mean=%+.5f reasons=%s",
+                diag["seed"],
+                diag["accepted"],
+                diag["val_loss"],
+                diag["val_mae_vs_naive"],
+                diag["val_pred_mean"],
+                diag["train_pred_mean"],
+                diag["reject_reasons"],
             )
-            val_ordered = monotonic_quantiles_np(val_eval_pred, median_idx=median_idx)
-            val_weekly_q = aggregate_weekly_quantiles_np(
-                val_ordered[:, : cfg.forecast.primary_horizon_days, :],
-                median_idx=median_idx,
-            )
-            val_weekly_actual = cumulative_horizon(
-                val_actual_path[:n_val],
-                horizon=cfg.forecast.primary_horizon_days,
-            )
-
-            if val_theta_prior is not None:
-                hybrid_blend = fit_theta_hybrid_blend(
-                    val_weekly_actual,
-                    val_weekly_q[:, median_idx],
-                    val_theta_prior[:n_val],
-                    horizon=cfg.forecast.primary_horizon_days,
-                )
-                if hybrid_blend.get("enabled"):
-                    val_pred_np[:n_val] = apply_theta_hybrid_shift_to_path(
-                        val_pred_np[:n_val],
-                        val_theta_prior[:n_val],
-                        hybrid_blend=hybrid_blend,
-                        quantiles=tuple(cfg.model.quantiles),
-                        horizon=cfg.forecast.primary_horizon_days,
-                    )
-                    val_eval_pred, _ = apply_weekly_median_cap_np(
-                        val_pred_np[:n_val],
-                        weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-                        quantiles=tuple(cfg.model.quantiles),
-                        horizon=cfg.forecast.primary_horizon_days,
-                    )
-                    val_ordered = monotonic_quantiles_np(val_eval_pred, median_idx=median_idx)
-                    val_weekly_q = aggregate_weekly_quantiles_np(
-                        val_ordered[:, : cfg.forecast.primary_horizon_days, :],
-                        median_idx=median_idx,
-                    )
-
-            weekly_cqr_params = fit_weekly_cqr(
-                val_weekly_actual,
-                val_weekly_q,
-                quantiles=tuple(cfg.model.quantiles),
-                realized_vol=val_realized_vol,
-            )
-            interval_calibration.update(
+    else:
+        accepted_records = candidate_records
+        if candidate_records:
+            rec0 = candidate_records[0]
+            ensemble_member_diagnostics = [
                 {
-                    "cqr_enabled": bool(weekly_cqr_params.get("cqr_enabled", False)),
-                    "q_hat_80": float(weekly_cqr_params.get("q_hat_80", 0.0) or 0.0),
-                    "q_hat_96": float(weekly_cqr_params.get("q_hat_96", 0.0) or 0.0),
-                    "vol_normalized": bool(weekly_cqr_params.get("vol_normalized", False)),
-                    "validation_pi80_coverage": float(
-                        weekly_cqr_params.get("validation_pi80_coverage_calibrated", 0.0) or 0.0
-                    ),
+                    "seed": rec0.get("seed"),
+                    "checkpoint": Path(rec0["path"]).name if rec0.get("path") else None,
+                    "val_loss": float(rec0.get("val_loss", float("inf"))),
+                    "val_mae_vs_naive": float(rec0.get("val_mae_vs_naive", float("inf"))),
+                    "val_pred_mean": float(rec0.get("val_pred_mean", 0.0)),
+                    "train_pred_mean": float(rec0.get("train_pred_mean", 0.0)),
+                    "accepted": True,
+                    "reject_reasons": [],
                 }
+            ]
+
+    # Reconcile surviving checkpoints cleanly onto contiguous HF Hub slots
+    staged_payloads = [
+        Path(rec["path"]).read_bytes()
+        for rec in accepted_records
+        if rec.get("path") is not None and Path(rec["path"]).exists()
+    ]
+    if len(staged_payloads) == len(accepted_records) and accepted_records:
+        for sec_i in range(1, len(ensemble_seeds)):
+            sec_path = final_path.parent / f"best_tft_asro_seed{sec_i}.ckpt"
+            if sec_path.exists():
+                sec_path.unlink()
+        reconciled_paths: list[Path] = []
+        for slot_i, payload_bytes in enumerate(staged_payloads):
+            slot_path = (
+                final_path
+                if slot_i == 0
+                else final_path.parent / f"best_tft_asro_seed{slot_i}.ckpt"
             )
-    except Exception as exc:
-        logger.warning(
-            "Validation Split CQR unavailable; retaining raw RSS intervals: %s",
-            exc,
+            slot_path.write_bytes(payload_bytes)
+            reconciled_paths.append(slot_path)
+        ensemble_ckpt_paths = reconciled_paths
+
+    ensemble_models = [rec["model"] for rec in accepted_records if rec.get("model") is not None] or [model]
+    evaluation_model = ensemble_models[0]
+    if accepted_records and accepted_records[0].get("selection"):
+        checkpoint_selection = accepted_records[0]["selection"]
+    if accepted_records and accepted_records[0].get("trainer"):
+        trainer = accepted_records[0]["trainer"]
+    logger.info(
+        "Promoted validation checkpoint artifact | method=%s sources=%s scores=%s path=%s ensemble=%d/%d",
+        checkpoint_selection.get("method"),
+        checkpoint_selection.get("source_checkpoints"),
+        checkpoint_selection.get("source_scores"),
+        final_path,
+        len(ensemble_models),
+        len(candidate_records),
+    )
+
+    val_pred_members = [rec["val_pred_np"] for rec in accepted_records if rec.get("val_pred_np") is not None]
+    val_pred_np = (
+        np.mean(np.stack(val_pred_members, axis=0), axis=0)
+        if len(val_pred_members) > 1
+        else val_pred_members[0]
+    )
+
+    if val_actual_path is not None and len(val_actual_path) > 0:
+        n_val = min(len(val_actual_path), len(val_pred_np))
+        direction_calibration["sample_count"] = int(n_val)
+        magnitude_calibration["sample_count"] = int(n_val)
+        interval_calibration["sample_count"] = int(n_val)
+
+        val_realized_vol = None
+        if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
+            try:
+                val_realized_vol = _dataset_origin_conditioning_values(
+                    master_df,
+                    validation_ds,
+                    feature_name=WEEKLY_INTERVAL_CONDITIONING_FEATURE,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                    expected_count=n_val,
+                )
+            except Exception as vol_exc:
+                logger.debug("Validation realized_vol lookup skipped: %s", vol_exc)
+
+        val_theta_prior = None
+        if theta_prior_col in master_df.columns:
+            try:
+                val_theta_prior = _dataset_origin_conditioning_values(
+                    master_df,
+                    validation_ds,
+                    feature_name=theta_prior_col,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                    expected_count=n_val,
+                )
+            except Exception as th_exc:
+                logger.debug("Validation Theta prior lookup skipped: %s", th_exc)
+
+        median_idx = len(cfg.model.quantiles) // 2
+        val_ordered, _ = apply_weekly_median_cap_np(
+            val_pred_np[:n_val],
+            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+            quantiles=tuple(cfg.model.quantiles),
+            horizon=cfg.forecast.primary_horizon_days,
+            already_ordered=True,
+        )
+        val_weekly_q = aggregate_weekly_quantiles_np(
+            val_ordered[:, : cfg.forecast.primary_horizon_days, :],
+            median_idx=median_idx,
+        )
+        val_weekly_actual = cumulative_horizon(
+            val_actual_path[:n_val],
+            horizon=cfg.forecast.primary_horizon_days,
+        )
+
+        if val_theta_prior is not None:
+            hybrid_blend = fit_theta_hybrid_blend(
+                val_weekly_actual,
+                val_weekly_q[:, median_idx],
+                val_theta_prior[:n_val],
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+            if hybrid_blend.get("enabled"):
+                val_pred_np[:n_val] = apply_theta_hybrid_shift_to_path(
+                    val_pred_np[:n_val],
+                    val_theta_prior[:n_val],
+                    hybrid_blend=hybrid_blend,
+                    quantiles=tuple(cfg.model.quantiles),
+                    horizon=cfg.forecast.primary_horizon_days,
+                    already_ordered=True,
+                )
+                val_ordered, _ = apply_weekly_median_cap_np(
+                    val_pred_np[:n_val],
+                    weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                    quantiles=tuple(cfg.model.quantiles),
+                    horizon=cfg.forecast.primary_horizon_days,
+                    already_ordered=True,
+                )
+                val_weekly_q = aggregate_weekly_quantiles_np(
+                    val_ordered[:, : cfg.forecast.primary_horizon_days, :],
+                    median_idx=median_idx,
+                )
+
+        weekly_cqr_params = fit_weekly_cqr(
+            val_weekly_actual,
+            val_weekly_q,
+            quantiles=tuple(cfg.model.quantiles),
+            realized_vol=val_realized_vol,
+        )
+        interval_calibration.update(
+            {
+                "cqr_enabled": bool(weekly_cqr_params.get("cqr_enabled", False)),
+                "q_hat_80": float(weekly_cqr_params.get("q_hat_80", 0.0) or 0.0),
+                "q_hat_96": float(weekly_cqr_params.get("q_hat_96", 0.0) or 0.0),
+                "vol_normalized": bool(weekly_cqr_params.get("vol_normalized", False)),
+                "base_vol_power": float(weekly_cqr_params.get("base_vol_power", 1.0) or 1.0),
+                "n_eff": float(weekly_cqr_params.get("n_eff", 0.0) or 0.0),
+                "validation_pi80_coverage": float(
+                    weekly_cqr_params.get("validation_pi80_coverage_calibrated", 0.0) or 0.0
+                ),
+            }
         )
 
     direction_sign_multiplier = 1
@@ -1357,16 +1497,18 @@ def train_tft_model(
     logger.info("Validation-only Hybrid Theta blend: %s", hybrid_blend)
     logger.info("Validation-only Split CQR calibration: %s", weekly_cqr_params or interval_calibration)
 
-    # ---- 8. Evaluate on the promoted ensemble ----
+    # ---- 8. Evaluate on the promoted ensemble (in ordered quantile space) ----
     test_metrics = {}
     if test_dl is not None:
         test_pred_members = []
         pred_0, y_actual_path = _predict_quantiles_to_np(
-            ensemble_models[0], test_dl, cfg, return_y=True
+            ensemble_models[0], test_dl, cfg, return_y=True, ordered=True
         )
         test_pred_members.append(pred_0)
         for extra_mdl in ensemble_models[1:]:
-            test_pred_members.append(_predict_quantiles_to_np(extra_mdl, test_dl, cfg, return_y=False))
+            test_pred_members.append(
+                _predict_quantiles_to_np(extra_mdl, test_dl, cfg, return_y=False, ordered=True)
+            )
         pred_np = (
             np.mean(np.stack(test_pred_members, axis=0), axis=0)
             if len(test_pred_members) > 1
@@ -1392,6 +1534,7 @@ def train_tft_model(
                     hybrid_blend=hybrid_blend,
                     quantiles=tuple(cfg.model.quantiles),
                     horizon=cfg.forecast.primary_horizon_days,
+                    already_ordered=True,
                 )
             except Exception as th_test_exc:
                 logger.warning("Test Theta hybrid shift skipped: %s", th_test_exc)
@@ -1417,6 +1560,7 @@ def train_tft_model(
             cfg,
             weekly_cqr_params=weekly_cqr_params,
             realized_vol=test_realized_vol,
+            already_ordered=True,
         )
         test_metrics["ensemble_size"] = ensemble_size
         logger.info("Test metrics: %s", {k: f"{v:.4f}" for k, v in test_metrics.items()})
@@ -1440,6 +1584,7 @@ def train_tft_model(
         weekly_cqr_params=weekly_cqr_params,
         precomputed_val_pred_np=val_pred_np,
         precomputed_val_actual_path=val_actual_path,
+        already_ordered=True,
     )
 
     # ---- 8. Variable importance ----
@@ -1467,6 +1612,7 @@ def train_tft_model(
             "lambda_crossing": cfg.asro.lambda_crossing,
             "lambda_weekly_quantile": cfg.weekly_loss.lambda_weekly_quantile,
             "lambda_t1_quantile": cfg.weekly_loss.lambda_t1_quantile,
+            "lambda_subhorizon_quantile": cfg.weekly_loss.lambda_subhorizon_quantile,
             "lambda_t1_directional": cfg.weekly_loss.lambda_t1_directional,
             "lambda_dispersion": cfg.weekly_loss.lambda_dispersion,
             "lambda_magnitude": cfg.weekly_loss.lambda_magnitude,
@@ -1488,6 +1634,7 @@ def train_tft_model(
             "monotonic_quantile_transform": True,
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
+            "mrmr_top_k": cfg.feature_store.mrmr_top_k,
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "primary_horizon_days": cfg.forecast.primary_horizon_days,
@@ -1584,6 +1731,7 @@ def _write_conformal_calibration_artifact(
     weekly_cqr_params: Optional[dict] = None,
     precomputed_val_pred_np: Optional[np.ndarray] = None,
     precomputed_val_actual_path: Optional[np.ndarray] = None,
+    already_ordered: bool = False,
 ) -> Optional[Path]:
     """
     Fit interval adjustment on validation/calibration data, never final test.
@@ -1615,7 +1763,7 @@ def _write_conformal_calibration_artifact(
             y_actual_path = np.asarray(precomputed_val_actual_path, dtype=np.float64)
         else:
             pred_np, y_actual_path = _predict_quantiles_to_np(
-                model, val_dl, cfg, return_y=True
+                model, val_dl, cfg, return_y=True, ordered=already_ordered
             )
         if y_actual_path is None or len(y_actual_path) == 0:
             return None
@@ -1718,16 +1866,25 @@ def _write_conformal_calibration_artifact(
             return None
 
         weekly_actual = cumulative_horizon(y_actual_path[:n], horizon=cfg.forecast.primary_horizon_days)
-        eval_pred_np, _ = apply_weekly_median_cap_np(
-            pred_np[:n],
-            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
-            quantiles=cfg.model.quantiles,
-            horizon=cfg.forecast.primary_horizon_days,
-        )
-        ordered_pred_np = monotonic_quantiles_np(
-            eval_pred_np,
-            median_idx=len(cfg.model.quantiles) // 2,
-        )
+        if already_ordered:
+            ordered_pred_np, _ = apply_weekly_median_cap_np(
+                pred_np[:n],
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                quantiles=cfg.model.quantiles,
+                horizon=cfg.forecast.primary_horizon_days,
+                already_ordered=True,
+            )
+        else:
+            eval_pred_np, _ = apply_weekly_median_cap_np(
+                pred_np[:n],
+                weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                quantiles=cfg.model.quantiles,
+                horizon=cfg.forecast.primary_horizon_days,
+            )
+            ordered_pred_np = monotonic_quantiles_np(
+                eval_pred_np,
+                median_idx=len(cfg.model.quantiles) // 2,
+            )
         weekly_quantiles = aggregate_weekly_quantiles_np(
             ordered_pred_np[:, : cfg.forecast.primary_horizon_days, :],
             median_idx=len(cfg.model.quantiles) // 2,
@@ -1800,6 +1957,16 @@ def _write_conformal_calibration_artifact(
             "q_hat_96": float(cqr_data.get("q_hat_96", 0.0) or 0.0),
             "median_val_vol": cqr_data.get("median_val_vol"),
             "vol_normalized": bool(cqr_data.get("vol_normalized", False)),
+            "base_vol_power": (
+                float(cqr_data["base_vol_power"])
+                if cqr_data.get("base_vol_power") is not None
+                else 1.0
+            ),
+            "n_eff": cqr_data.get("n_eff"),
+            "overlap_horizon": int(
+                cqr_data.get("overlap_horizon", cfg.forecast.primary_horizon_days)
+                or cfg.forecast.primary_horizon_days
+            ),
             "min_half_width_retention": float(cqr_data.get("min_half_width_retention", 0.35) or 0.35),
             "global_adjustment": float(global_adj),
             "base_conformal_adjustment": float(conformal_adj),
@@ -1970,12 +2137,15 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
     training_overrides = {
         k: params[k] for k in ("batch_size",) if k in params
     }
+    feature_store_overrides = {
+        k: int(params[k]) for k in ("mrmr_top_k",) if k in params
+    }
     weekly_loss_overrides = {
         k: params[k] for k in (
-            "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_t1_directional",
-            "lambda_directional", "lambda_dispersion", "lambda_magnitude",
-            "lambda_naive", "lambda_bias", "lambda_drift_prior", "lambda_saturation",
-            "lambda_positive_rate", "lambda_interval",
+            "lambda_weekly_quantile", "lambda_t1_quantile", "lambda_subhorizon_quantile",
+            "lambda_t1_directional", "lambda_directional", "lambda_dispersion",
+            "lambda_magnitude", "lambda_naive", "lambda_bias", "lambda_drift_prior",
+            "lambda_saturation", "lambda_positive_rate", "lambda_interval",
             "weekly_median_cap_abs_median_multiple",
             "weekly_median_cap_mean_abs_multiple", "weekly_median_cap_std_multiple",
         ) if k in params
@@ -1989,7 +2159,19 @@ def _overlay_training_config(cfg: TFTASROConfig, params: dict) -> TFTASROConfig:
         else cfg.weekly_loss
     )
     new_training = replace(cfg.training, **training_overrides) if training_overrides else cfg.training
-    return replace(cfg, model=new_model, asro=new_asro, weekly_loss=new_weekly_loss, training=new_training)
+    new_feature_store = (
+        replace(cfg.feature_store, **feature_store_overrides)
+        if feature_store_overrides
+        else cfg.feature_store
+    )
+    return replace(
+        cfg,
+        model=new_model,
+        asro=new_asro,
+        weekly_loss=new_weekly_loss,
+        training=new_training,
+        feature_store=new_feature_store,
+    )
 
 
 def _importance_metadata_payload(result: dict) -> str:

@@ -138,3 +138,18 @@ def test_weekly_loss_logger_publishes_validation_objective():
         logger=True,
         sync_dist=False,
     )
+
+
+def test_weekly_loss_logger_skips_sanity_checking():
+    cb = WeeklyLossComponentLogger()
+    loss = MagicMock()
+    pl_module = MagicMock()
+    pl_module.loss = loss
+    trainer = MagicMock()
+    trainer.sanity_checking = True
+
+    cb.on_validation_epoch_start(trainer, pl_module)
+    cb.on_validation_epoch_end(trainer, pl_module)
+
+    loss.reset_component_accumulators.assert_not_called()
+    pl_module.log.assert_not_called()

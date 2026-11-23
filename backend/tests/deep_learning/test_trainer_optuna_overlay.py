@@ -61,6 +61,7 @@ def test_apply_optuna_results_uses_controlled_baseline_with_weekly_search_params
                     "max_encoder_length": 90,
                     "hidden_size": 24,
                     "learning_rate": 3.2e-4,
+                    "mrmr_top_k": 8,
                     "batch_size": 16,
                     "lambda_magnitude": 0.50,
                     "lambda_naive": 0.35,
@@ -91,6 +92,7 @@ def test_apply_optuna_results_uses_controlled_baseline_with_weekly_search_params
     assert resolved.model.max_encoder_length == 90
     assert resolved.model.hidden_size == 24
     assert resolved.model.learning_rate == 3.2e-4
+    assert resolved.feature_store.mrmr_top_k == 8
     assert resolved.training.batch_size == 16
     assert resolved.weekly_loss.lambda_directional == 0.05
     assert resolved.weekly_loss.lambda_dispersion == 0.0

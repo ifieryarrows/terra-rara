@@ -397,8 +397,10 @@ def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["hidden_continuous_size"] == 6
     assert KNOWN_GOOD_TRIAL_PARAMS["attention_head_size"] == 1
     assert KNOWN_GOOD_TRIAL_PARAMS["output_head_lr_mult"] == 0.20
+    assert KNOWN_GOOD_TRIAL_PARAMS["weight_decay"] == 2e-2
+    assert KNOWN_GOOD_TRIAL_PARAMS["mrmr_top_k"] == 5
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 4.0
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 1.00
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.10
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -438,10 +440,13 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.model.attention_head_size in {1, 2}
     assert cfg.model.hidden_continuous_size in {4, 6}
     assert cfg.model.output_head_lr_mult in {0.15, 0.20, 0.25}
+    assert cfg.model.weight_decay in {1e-2, 2e-2, 3e-2}
+    assert cfg.feature_store.mrmr_top_k in {5, 6, 8, 12}
     assert cfg.training.batch_size == 32
     assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
     assert cfg.weekly_loss.lambda_t1_quantile in {0.15, 0.20, 0.25}
-    assert cfg.weekly_loss.lambda_drift_prior in {2.5, 4.0, 6.0}
+    assert cfg.weekly_loss.lambda_subhorizon_quantile == 0.15
+    assert cfg.weekly_loss.lambda_drift_prior in {0.15, 0.35, 0.75, 1.00}
     assert cfg.weekly_loss.lambda_directional in {0.05, 0.10, 0.15}
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0
@@ -514,4 +519,139 @@ def test_select_preflight_safe_trial_prefers_quality_gate_magnitude_compliance()
 
     assert result["best_trial"] == 1
     assert result["best_params"] == {"lambda_magnitude": 0.58}
+
+
+def test_hyperopt_avoids_final_fold_pruning_and_t1_da_leakage():
+    source = inspect.getsource(hyperopt_module._objective)
+    run_source = inspect.getsource(hyperopt_module.run_hyperopt)
+    assert "effective_da = avg_weekly_da" in source
+    assert "max(avg_da, avg_weekly_da)" not in source
+    assert "fold_vr_penalty" not in source
+    assert "fold_idx < (n_folds - 1)" in source
+    assert "mrmr_top_k" in source
+    assert "purge_gap" in source
+    assert "apply_mrmr=False" in run_source
+
+    base_cfg = get_tft_config()
+    trial_cfg = create_trial_config(_RecordingTrial(), base_cfg)
+    assert trial_cfg.training.max_epochs == base_cfg.training.max_epochs
+    assert trial_cfg.training.early_stopping_patience == base_cfg.training.early_stopping_patience
+    assert trial_cfg.model.reduce_on_plateau_patience == base_cfg.model.reduce_on_plateau_patience
+
+
+def test_run_hyperopt_writes_post_study_snapshot_with_winning_mrmr_top_k(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from dataclasses import replace
+    import pandas as pd
+    import deep_learning.data.feature_store as feature_store_module
+    import app.db as app_db
+
+    snap_file = tmp_path / "feature_snapshot.pkl"
+    monkeypatch.setenv("TFT_FEATURE_SNAPSHOT_PATH", str(snap_file))
+    monkeypatch.setattr(app_db, "init_db", lambda *a, **kw: None)
+    monkeypatch.setattr(app_db, "SessionLocal", lambda: nullcontext(object()))
+
+    calls = []
+    idx = pd.bdate_range("2024-01-02", periods=30)
+    dummy_df = pd.DataFrame(
+        {
+            "time_idx": list(range(30)),
+            "group_id": ["copper"] * 30,
+            "target": [0.001] * 30,
+            "target_5d_log_return": [0.005] * 30,
+        },
+        index=idx,
+    )
+
+    def fake_build_tft_dataframe(session, cfg=None, *, drop_missing_target=True, apply_mrmr=True, use_snapshot=True):
+        calls.append({
+            "mrmr_top_k": int(cfg.feature_store.mrmr_top_k),
+            "apply_mrmr": bool(apply_mrmr),
+            "use_snapshot": bool(use_snapshot),
+        })
+        if apply_mrmr and use_snapshot:
+            snap_file.write_bytes(b"snapshot")
+        return dummy_df, ["f1"], ["day_of_week"], ["target"], 4.5
+
+    monkeypatch.setattr(feature_store_module, "build_tft_dataframe", fake_build_tft_dataframe)
+
+    base_cfg = replace(
+        get_tft_config(),
+        training=replace(
+            get_tft_config().training,
+            checkpoint_dir=str(tmp_path / "ckpts"),
+            best_model_path=str(tmp_path / "best_tft_asro.ckpt"),
+        ),
+    )
+
+    def fake_objective(trial, cfg, master_data):
+        t_cfg = create_trial_config(trial, cfg)
+        chosen_k = int(t_cfg.feature_store.mrmr_top_k)
+        trial.set_user_attr("avg_quantile_crossing_rate", 0.0)
+        trial.set_user_attr("avg_weekly_pred_positive_rate", 0.50)
+        trial.set_user_attr("avg_weekly_actual_positive_rate", 0.50)
+        trial.set_user_attr("avg_weekly_pi80_coverage", 0.80)
+        trial.set_user_attr("avg_weekly_pi80_width_ratio", 1.0)
+        trial.set_user_attr("avg_weekly_mae_vs_naive_zero", 0.95)
+        trial.set_user_attr("avg_variance_ratio", 0.80)
+        trial.set_user_attr("avg_weekly_magnitude_ratio", 0.85)
+        trial.set_user_attr("avg_weekly_raw_magnitude_ratio", 0.90)
+        trial.set_user_attr("avg_directional_accuracy", 0.55)
+        # Prefer mrmr_top_k=12 in this synthetic objective to prove post-study snapshot follows best_params
+        return 0.10 if chosen_k == 12 else 0.90
+
+    monkeypatch.setattr(hyperopt_module, "_objective", fake_objective)
+
+    import sys
+    from types import ModuleType
+
+    class _FakeTrialObj(_RecordingTrial):
+        def __init__(self, number, preset_mrmr_k):
+            super().__init__()
+            self.number = number
+            self._preset_mrmr_k = preset_mrmr_k
+            self.user_attrs = {}
+            self.params = {}
+
+        def suggest_categorical(self, name, choices):
+            val = self._preset_mrmr_k if name == "mrmr_top_k" else choices[0]
+            self.params[name] = val
+            return val
+
+        def suggest_float(self, name, low, high, log=False):
+            val = float(low)
+            self.params[name] = val
+            return val
+
+        def set_user_attr(self, key, val):
+            self.user_attrs[key] = val
+
+    class _FakeStudyObj:
+        def __init__(self):
+            self.trials = []
+            self.enqueued = []
+
+        def enqueue_trial(self, params):
+            self.enqueued.append(params)
+
+        def optimize(self, func, n_trials=2, show_progress_bar=False):
+            for i, k_val in enumerate((5, 12)[:n_trials]):
+                t = _FakeTrialObj(i, k_val)
+                val = func(t)
+                self.trials.append(
+                    _trial(i, "COMPLETE", val, dict(t.params), dict(t.user_attrs))
+                )
+
+    fake_optuna = ModuleType("optuna")
+    fake_optuna.samplers = SimpleNamespace(TPESampler=lambda **kw: None)
+    fake_optuna.pruners = SimpleNamespace(MedianPruner=lambda **kw: None)
+    fake_optuna.create_study = lambda **kw: _FakeStudyObj()
+    monkeypatch.setitem(sys.modules, "optuna", fake_optuna)
+
+    res = hyperopt_module.run_hyperopt(n_trials=2, base_cfg=base_cfg)
+    assert res["best_params"]["mrmr_top_k"] == 12
+    assert len(calls) == 2
+    assert calls[0] == {"mrmr_top_k": 5, "apply_mrmr": False, "use_snapshot": False}
+    assert calls[1] == {"mrmr_top_k": 12, "apply_mrmr": True, "use_snapshot": True}
+    assert snap_file.exists()
 

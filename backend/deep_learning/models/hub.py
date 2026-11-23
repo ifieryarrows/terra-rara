@@ -38,6 +38,12 @@ _REQUIRED_ARTIFACTS = [
     "artifact_manifest.json",
 ]
 
+_PRUNABLE_OPTIONAL_ARTIFACTS = (
+    "best_tft_asro_seed1.ckpt",
+    "best_tft_asro_seed2.ckpt",
+    "pca_finbert.joblib",
+)
+
 _REVISION_FILE = ".hf_revision"
 
 
@@ -318,11 +324,23 @@ def upload_tft_artifacts(
         api = HfApi(token=token)
         api.create_repo(repo_id, repo_type="model", exist_ok=True, private=True)
 
-        # Use a single atomic commit when operating against the real HfApi
-        is_real_hf_api = type(api).__module__.startswith("huggingface_hub")
-        if is_real_hf_api and hasattr(api, "create_commit"):
+        local_present = {fpath.name for fpath in files_to_upload}
+        stale_candidates = [
+            name for name in _PRUNABLE_OPTIONAL_ARTIFACTS if name not in local_present
+        ]
+        remote_stale: list[str] = []
+        if stale_candidates and hasattr(api, "list_repo_files"):
             try:
-                from huggingface_hub import CommitOperationAdd
+                remote_files = set(api.list_repo_files(repo_id=repo_id, repo_type="model"))
+                remote_stale = [name for name in stale_candidates if name in remote_files]
+            except Exception as exc:
+                logger.debug("Could not list remote HF repo files for pruning: %s", exc)
+
+        # Use a single atomic commit when CommitOperationAdd/Delete & create_commit are available
+        is_real_hf_api = type(api).__module__.startswith("huggingface_hub")
+        if hasattr(api, "create_commit"):
+            try:
+                from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 
                 operations = [
                     CommitOperationAdd(
@@ -330,6 +348,9 @@ def upload_tft_artifacts(
                         path_or_fileobj=str(fpath),
                     )
                     for fpath in files_to_upload
+                ] + [
+                    CommitOperationDelete(path_in_repo=stale_name)
+                    for stale_name in remote_stale
                 ]
                 api.create_commit(
                     repo_id=repo_id,
@@ -338,13 +359,15 @@ def upload_tft_artifacts(
                     commit_message=commit_message,
                 )
                 logger.info(
-                    "Uploaded %d TFT artifacts in a single atomic commit to %s",
+                    "Uploaded %d TFT artifacts (pruned %d stale) in an atomic commit to %s",
                     len(files_to_upload),
+                    len(remote_stale),
                     repo_id,
                 )
                 return True
             except ImportError:
-                pass
+                if is_real_hf_api:
+                    pass
 
         for fpath in files_to_upload:
             api.upload_file(
@@ -355,6 +378,19 @@ def upload_tft_artifacts(
                 commit_message=commit_message,
             )
             logger.info("Uploaded %s to %s/%s", fpath.name, repo_id, fpath.name)
+
+        for stale_name in remote_stale:
+            if hasattr(api, "delete_file"):
+                try:
+                    api.delete_file(
+                        path_in_repo=stale_name,
+                        repo_id=repo_id,
+                        repo_type="model",
+                        commit_message=commit_message,
+                    )
+                    logger.info("Pruned stale optional artifact %s from %s", stale_name, repo_id)
+                except Exception as exc:
+                    logger.warning("Failed to delete stale remote artifact %s: %s", stale_name, exc)
 
         return True
 
@@ -543,11 +579,14 @@ def sync_tft_artifacts_if_stale(
 
         for name in _ARTIFACTS:
             src = staging_dir / name
+            dst = local_dir / name
             if src.exists():
-                dst = local_dir / name
                 tmp_dst = local_dir / f".tmp_{name}"
                 shutil.copy2(src, tmp_dst)
                 os.replace(tmp_dst, dst)
+            elif name in _PRUNABLE_OPTIONAL_ARTIFACTS and dst.exists():
+                dst.unlink()
+                logger.info("Removed stale optional TFT artifact %s during sync", name)
 
         if remote_sha:
             rev_path.write_text(remote_sha, encoding="utf-8")

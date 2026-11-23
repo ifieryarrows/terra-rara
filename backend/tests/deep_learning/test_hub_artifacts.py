@@ -190,3 +190,85 @@ def test_remote_repo_sha_calls_model_info_without_repo_type(monkeypatch):
         types.SimpleNamespace(HfApi=StrictHfApi),
     )
     assert hub._remote_repo_sha("org/model", "token") == "abc123def456"
+
+
+def test_upload_prunes_stale_optional_artifacts_and_sync_unlinks_local(tmp_path, monkeypatch):
+    local_dir = tmp_path / "tft"
+    local_dir.mkdir()
+    # 1-seed model without seed1/seed2 or pca_finbert
+    for name in ("best_tft_asro.ckpt", "tft_metadata.json", "conformal_calibration.json", "optuna_results.json"):
+        path = local_dir / name
+        path.write_text(json.dumps(_valid_metadata()) if name == "tft_metadata.json" else "artifact", encoding="utf-8")
+
+    commits = []
+
+    class _AddOp:
+        def __init__(self, *, path_in_repo, path_or_fileobj):
+            self.op = "add"
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
+
+    class _DelOp:
+        def __init__(self, *, path_in_repo):
+            self.op = "delete"
+            self.path_in_repo = path_in_repo
+
+    class AtomicHfApi:
+        def __init__(self, token):
+            self.token = token
+
+        def create_repo(self, *args, **kwargs):
+            return None
+
+        def list_repo_files(self, *, repo_id, repo_type):
+            assert repo_id == "org/model"
+            return [
+                "best_tft_asro.ckpt",
+                "best_tft_asro_seed1.ckpt",
+                "pca_finbert.joblib",
+                "tft_metadata.json",
+            ]
+
+        def create_commit(self, *, repo_id, repo_type, operations, commit_message):
+            del repo_id, repo_type, commit_message
+            commits.append(operations)
+
+    monkeypatch.setenv("HF_TOKEN", "token")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(
+            HfApi=AtomicHfApi,
+            CommitOperationAdd=_AddOp,
+            CommitOperationDelete=_DelOp,
+        ),
+    )
+    assert hub.upload_tft_artifacts(local_dir, "org/model") is True
+    deleted_paths = {op.path_in_repo for op in commits[0] if op.op == "delete"}
+    assert deleted_paths == {"best_tft_asro_seed1.ckpt", "pca_finbert.joblib"}
+
+    # Verify sync_tft_artifacts_if_stale removes stale optional local files when absent remotely
+    stale_dir = tmp_path / "sync_target"
+    stale_dir.mkdir()
+    (stale_dir / "best_tft_asro.ckpt").write_bytes(b"old")
+    (stale_dir / "best_tft_asro_seed1.ckpt").write_bytes(b"stale-seed1")
+    (stale_dir / "pca_finbert.joblib").write_bytes(b"stale-pca")
+    (stale_dir / "tft_metadata.json").write_text(json.dumps(_valid_metadata()), encoding="utf-8")
+    hub.write_artifact_manifest(stale_dir)
+    (stale_dir / ".hf_revision").write_text("old_sha", encoding="utf-8")
+
+    monkeypatch.setattr(hub, "_remote_repo_sha", lambda repo_id, token: "new_sha")
+
+    def fake_download(*, local_dir, repo_id, force_all=False):
+        del repo_id, force_all
+        target = tmp_path / "sync_target" if str(local_dir) == str(stale_dir) else local_dir
+        (target / "best_tft_asro.ckpt").write_bytes(b"new-ckpt")
+        (target / "tft_metadata.json").write_text(json.dumps(_valid_metadata()), encoding="utf-8")
+        hub.write_artifact_manifest(target)
+        return True
+
+    monkeypatch.setattr(hub, "download_tft_artifacts", fake_download)
+    assert hub.sync_tft_artifacts_if_stale(stale_dir, "org/model") is True
+    assert not (stale_dir / "best_tft_asro_seed1.ckpt").exists()
+    assert not (stale_dir / "pca_finbert.joblib").exists()
+    assert (stale_dir / "best_tft_asro.ckpt").read_bytes() == b"new-ckpt"

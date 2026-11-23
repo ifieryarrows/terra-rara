@@ -103,3 +103,23 @@ def test_validation_checkpoint_ranking_excludes_degraded_secondary_epochs(tmp_pa
         (best, pytest.approx(4.6587)),
         (near, pytest.approx(4.78)),
     ]
+
+
+def test_uniform_checkpoint_soup_enforces_epoch_proximity_constraint(tmp_path):
+    early = tmp_path / "ep02.ckpt"
+    far = tmp_path / "ep15.ckpt"
+    close = tmp_path / "ep05.ckpt"
+    out_skip = tmp_path / "out_skip.ckpt"
+    out_soup = tmp_path / "out_soup.ckpt"
+
+    torch.save({"state_dict": {"w": torch.tensor([1.0])}, "epoch": 2}, early)
+    torch.save({"state_dict": {"w": torch.tensor([5.0])}, "epoch": 15}, far)
+    torch.save({"state_dict": {"w": torch.tensor([3.0])}, "epoch": 5}, close)
+
+    did_soup_far = _build_uniform_checkpoint_soup([early, far], out_skip, max_epoch_gap=5)
+    assert did_soup_far is False
+    assert _load_checkpoint(out_skip)["state_dict"]["w"].item() == pytest.approx(1.0)
+
+    did_soup_close = _build_uniform_checkpoint_soup([early, close], out_soup, max_epoch_gap=5)
+    assert did_soup_close is True
+    assert _load_checkpoint(out_soup)["state_dict"]["w"].item() == pytest.approx(2.0)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -20,7 +21,7 @@ import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -67,9 +68,10 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "dropout": 0.30,
     "learning_rate": 5e-4,
     "output_head_lr_mult": 0.20,
-    "weight_decay": 1.5e-2,
+    "weight_decay": 2e-2,
+    "mrmr_top_k": 5,
     "lambda_t1_quantile": 0.20,
-    "lambda_drift_prior": 4.0,
+    "lambda_drift_prior": 1.00,
     "lambda_directional": 0.10,
 }
 
@@ -533,9 +535,9 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         output_head_lr_mult=float(
             trial.suggest_categorical("output_head_lr_mult", [0.15, 0.20, 0.25])
         ),
-        reduce_on_plateau_patience=4,
+        reduce_on_plateau_patience=int(base_cfg.model.reduce_on_plateau_patience),
         gradient_clip_val=base_cfg.model.gradient_clip_val,
-        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-2, 1.5e-2, 3e-2])),
+        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-2, 2e-2, 3e-2])),
     )
 
     asro_cfg = ASROConfig(
@@ -548,12 +550,13 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     weekly_loss_cfg = WeeklyLossConfig(
         lambda_weekly_quantile=1.00,
         lambda_t1_quantile=float(trial.suggest_categorical("lambda_t1_quantile", [0.15, 0.20, 0.25])),
+        lambda_subhorizon_quantile=base_cfg.weekly_loss.lambda_subhorizon_quantile,
         lambda_t1_directional=0.0,
         lambda_dispersion=0.0,
         lambda_magnitude=0.0,
         lambda_naive=0.0,
         lambda_bias=0.0,
-        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [2.5, 4.0, 6.0])),
+        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.15, 0.35, 0.75, 1.00])),
         lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.05, 0.10, 0.15])),
         lambda_saturation=0.0,
         lambda_positive_rate=0.0,
@@ -564,8 +567,8 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
     )
 
     training_cfg = TrainingConfig(
-        max_epochs=30,
-        early_stopping_patience=6,
+        max_epochs=int(base_cfg.training.max_epochs),
+        early_stopping_patience=int(base_cfg.training.early_stopping_patience),
         batch_size=base_cfg.training.batch_size,
         val_ratio=base_cfg.training.val_ratio,
         test_ratio=base_cfg.training.test_ratio,
@@ -577,6 +580,11 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         best_model_path=str(Path(base_cfg.training.checkpoint_dir) / f"trial_{trial.number}" / "best.ckpt"),
     )
 
+    feature_store_cfg = replace(
+        base_cfg.feature_store,
+        mrmr_top_k=int(trial.suggest_categorical("mrmr_top_k", [5, 6, 8, 12])),
+    )
+
     return TFTASROConfig(
         embedding=base_cfg.embedding,
         sentiment=base_cfg.sentiment,
@@ -584,7 +592,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         model=model_cfg,
         asro=asro_cfg,
         training=training_cfg,
-        feature_store=base_cfg.feature_store,
+        feature_store=feature_store_cfg,
         forecast=base_cfg.forecast,
         weekly_loss=weekly_loss_cfg,
     )
@@ -599,14 +607,13 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     window — the core structural issue identified in REG-2026-001.
 
     Composite score per fold (lower is better):
-        fold_score = val_loss + vr_penalty
+        fold_score = weekly_objective + crossing_penalty - da_adjustment
 
     Final score:
         mean(fold_scores) + consistency_penalty + da_penalty
 
-    After each fold, an intermediate score is reported to Optuna so
-    the MedianPruner can kill clearly-bad trials early (after 1 fold
-    instead of waiting for all 3).
+    After each intermediate fold, scores and health checks are evaluated so
+    bad trials prune early without discarding a completed final fold.
     """
     suppress_lightning_noise()
     try:
@@ -620,7 +627,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     import numpy as np
     import torch
     from deep_learning.data.dataset import build_cv_folds, create_dataloaders
-    from deep_learning.models.tft_copper import create_tft_model
+    from deep_learning.models.tft_copper import (
+        create_tft_model,
+        ensure_ordered_quantiles_from_model_output,
+    )
     from deep_learning.training.callbacks import (
         CurriculumLossScheduler,
         WeeklyLossComponentLogger,
@@ -629,7 +639,6 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         apply_weekly_median_cap_np,
         cumulative_horizon,
         evaluate_quantile_predictions,
-        monotonic_quantiles_np,
         resolve_weekly_median_cap,
         summarize_dataloader_target_scale,
     )
@@ -640,9 +649,15 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
     n_folds = getattr(trial_cfg.training, "cv_n_folds", 3)
 
     try:
+        cv_kwargs: dict[str, Any] = {"n_folds": n_folds}
+        cv_sig = inspect.signature(build_cv_folds).parameters
+        if "purge_gap" in cv_sig:
+            cv_kwargs["purge_gap"] = int(trial_cfg.forecast.primary_horizon_days)
+        if "mrmr_top_k" in cv_sig:
+            cv_kwargs["mrmr_top_k"] = int(trial_cfg.feature_store.mrmr_top_k)
         cv_folds = build_cv_folds(
             master_df, tv_unknown, tv_known, target_cols,
-            trial_cfg, n_folds=n_folds,
+            trial_cfg, **cv_kwargs,
         )
     except Exception as exc:
         logger.warning("Trial %d CV fold creation failed: %s", trial.number, exc)
@@ -815,7 +830,6 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
         )
 
         # ---- per-fold metrics ----
-        fold_vr_penalty = 0.0
         fold_da = 0.5
         fold_sharpe = 0.0
         fold_vr = 0.0
@@ -866,14 +880,19 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 raise ValueError(
                     f"Prediction horizon too short: {pred_np.shape[1]} < {trial_cfg.forecast.primary_horizon_days}"
                 )
-            eval_pred_np, _ = apply_weekly_median_cap_np(
+            pred_np = ensure_ordered_quantiles_from_model_output(
+                pred_np,
+                model=model,
+                median_idx=median_idx,
+            )
+            ordered_pred_np, _ = apply_weekly_median_cap_np(
                 pred_np,
                 weekly_median_cap=fold_cfg.weekly_loss.weekly_median_cap,
                 quantiles=fold_cfg.model.quantiles,
                 horizon=fold_cfg.forecast.primary_horizon_days,
+                already_ordered=True,
             )
-            ordered_pred_np = monotonic_quantiles_np(eval_pred_np, median_idx=median_idx)
-            raw_ordered_pred_np = monotonic_quantiles_np(pred_np, median_idx=median_idx)
+            raw_ordered_pred_np = pred_np
 
             if y_actual_path is None:
                 y_actual_parts = []
@@ -889,14 +908,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                 quantiles=fold_cfg.model.quantiles,
                 horizon=fold_cfg.forecast.primary_horizon_days,
                 weekly_median_cap=fold_cfg.weekly_loss.weekly_median_cap,
+                already_ordered=True,
             )
 
             fold_vr = float(metrics.get("variance_ratio", 0.0))
-
-            if fold_vr < 0.5:
-                fold_vr_penalty = 2.0 * (1.0 - fold_vr / 0.5)
-            elif fold_vr > 1.5:
-                fold_vr_penalty = 0.5 * (fold_vr - 1.5)
 
             fold_da = float(metrics.get("directional_accuracy", 0.5))
             fold_weekly_da = float(metrics.get("weekly_directional_accuracy", 0.5))
@@ -1042,11 +1057,12 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             fold_crossing_rate,
         )
 
-        # Prune only on genuine ordered/catastrophic weekly failures (never on raw softplus gap logits).
+        # Prune on intermediate folds for genuine ordered/catastrophic weekly failures;
+        # never throw away an already-completed final fold via per-fold pruning.
+        can_prune_intermediate = (1 <= fold_idx < (n_folds - 1)) and not protect_trial
         if (
             fold_weekly_sharpe < FOLD_SHARPE_PRUNE_THRESHOLD
-            and fold_idx >= 1
-            and not protect_trial
+            and can_prune_intermediate
         ):
             logger.warning(
                 "Trial %d PRUNED at fold %d: fold_weekly_sharpe=%.4f < %.1f",
@@ -1056,7 +1072,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "fold_sharpe_prune")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_mr < 0.01 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_mr < 0.01 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_magnitude_ratio=%.4f < 0.01",
                 trial.number, fold_idx + 1, fold_weekly_mr,
@@ -1064,7 +1080,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_magnitude_collapse")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_mr > 3.5 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_mr > 3.5 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_magnitude_ratio=%.4f > 3.5",
                 trial.number, fold_idx + 1, fold_weekly_mr,
@@ -1083,8 +1099,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
                     and fold_weekly_actual_positive_rate > 0.35
                 )
             )
-            and fold_idx >= 1
-            and not protect_trial
+            and can_prune_intermediate
         ):
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_pred_positive_rate=%.4f "
@@ -1095,7 +1110,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_positive_rate_explosion")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_pi80_coverage < 0.15 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_pi80_coverage < 0.15 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_pi80_coverage=%.4f < 0.15",
                 trial.number, fold_idx + 1, fold_weekly_pi80_coverage,
@@ -1103,7 +1118,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_pi80_undercoverage")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_mae_vs_naive_zero > 2.5 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_mae_vs_naive_zero > 2.5 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_mae_vs_naive_zero=%.4f > 2.5",
                 trial.number, fold_idx + 1, fold_weekly_mae_vs_naive_zero,
@@ -1111,7 +1126,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_mae_vs_naive_explosion")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_pi80_width_ratio > 4.0 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_pi80_width_ratio > 4.0 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_pi80_width_ratio=%.4f > 4.0",
                 trial.number, fold_idx + 1, fold_weekly_pi80_width_ratio,
@@ -1119,7 +1134,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "weekly_interval_width_explosion")
             raise optuna.exceptions.TrialPruned()
 
-        if fold_weekly_pi96_width_ratio > 4.0 and fold_idx >= 1 and not protect_trial:
+        if fold_weekly_pi96_width_ratio > 4.0 and can_prune_intermediate:
             logger.warning(
                 "Trial %d PRUNED at fold %d: weekly_pi96_width_ratio=%.4f > 4.0",
                 trial.number, fold_idx + 1, fold_weekly_pi96_width_ratio,
@@ -1129,8 +1144,7 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
 
         if (
             (fold_crossing_rate > 0.01 or fold_weekly_sorted_crossing > 0.01)
-            and fold_idx >= 1
-            and not protect_trial
+            and can_prune_intermediate
         ):
             logger.warning(
                 "Trial %d PRUNED at fold %d: ordered crossing daily=%.4f weekly=%.4f > 0.01",
@@ -1139,10 +1153,10 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             trial.set_user_attr("prune_reason", "crossing_prune")
             raise optuna.exceptions.TrialPruned()
 
-        # Report running average so MedianPruner can kill bad trials early
+        # Report running average so MedianPruner can kill bad trials on intermediate folds
         running_avg = float(np.mean(fold_scores))
         trial.report(running_avg, fold_idx)
-        if trial.should_prune() and not protect_trial:
+        if fold_idx < (n_folds - 1) and trial.should_prune() and not protect_trial:
             trial.set_user_attr("prune_reason", "median_prune")
             raise optuna.exceptions.TrialPruned()
 
@@ -1283,8 +1297,8 @@ def _objective(trial, base_cfg: TFTASROConfig, master_data: tuple) -> float:
             f"daily={avg_crossing:.6f}, weekly={avg_weekly_sorted_crossing:.6f}"
         )
 
-    # Soft penalty: avg DA below threshold across both primary weekly & daily heads
-    effective_da = max(avg_da, avg_weekly_da)
+    # Soft penalty strictly on primary weekly directional accuracy (no T+1 leakage)
+    effective_da = avg_weekly_da
     da_penalty = 1.0 * max(0.0, 0.48 - effective_da) if effective_da < 0.48 else 0.0
 
     final_score = avg_score + consistency_penalty + da_penalty
@@ -1330,8 +1344,18 @@ def run_hyperopt(
     pl.seed_everything(base_cfg.training.seed, workers=True)
 
     logger.info("Building feature store for hyperopt ...")
+    snap_path_env = os.environ.get("TFT_FEATURE_SNAPSHOT_PATH", "").strip()
     with SessionLocal() as session:
-        master_data = build_tft_dataframe(session, base_cfg)
+        btf_sig = inspect.signature(build_tft_dataframe).parameters
+        if "apply_mrmr" in btf_sig:
+            master_data = build_tft_dataframe(
+                session,
+                base_cfg,
+                apply_mrmr=False,
+                use_snapshot=False,
+            )
+        else:
+            master_data = build_tft_dataframe(session, base_cfg)
 
     snapshot_id = _data_snapshot_id(master_data[0])
     run_suffix = os.environ.get("GITHUB_RUN_ID") or datetime.now(timezone.utc).strftime(
@@ -1397,6 +1421,28 @@ def run_hyperopt(
         logger.info("Best params: %s", result["best_params"])
 
     structural_report = result.get("structural_invalidity_report") or {}
+    if snap_path_env and "apply_mrmr" in btf_sig and not Path(snap_path_env).exists():
+        best_params = result.get("best_params") or {}
+        if (
+            result.get("best_trial") is not None
+            and structural_report.get("verdict") != "STRUCTURAL_FAILURE"
+            and "mrmr_top_k" in best_params
+        ):
+            selected_mrmr_k = int(best_params["mrmr_top_k"])
+        else:
+            selected_mrmr_k = int(base_cfg.feature_store.mrmr_top_k)
+        snapshot_cfg = replace(
+            base_cfg,
+            feature_store=replace(base_cfg.feature_store, mrmr_top_k=selected_mrmr_k),
+        )
+        with SessionLocal() as session:
+            build_tft_dataframe(
+                session,
+                snapshot_cfg,
+                apply_mrmr=True,
+                use_snapshot=True,
+            )
+
     if structural_report.get("verdict") == "STRUCTURAL_FAILURE":
         logger.error(
             "Optuna structural failure persisted to artifact; final training "

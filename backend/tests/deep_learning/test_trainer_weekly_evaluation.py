@@ -156,3 +156,109 @@ def test_runtime_environment_metadata_records_reproducibility_state():
     assert metadata["torch_runtime"] is not None
     assert metadata["torch_runtime"]["num_threads"] >= 1
     assert metadata["torch_runtime"]["deterministic_algorithms"] is True
+
+
+def test_filter_ensemble_members_avoids_overpruning_and_preserves_top2_fallback():
+    from deep_learning.training.trainer import _filter_ensemble_members
+
+    # On ~19 validation weeks, realistic mae=1.02 and sample val_mean=0.004 should pass together
+    healthy = [
+        {"seed": 42, "path": "a.ckpt", "val_loss": 1.00, "val_mae_vs_naive": 1.02, "val_pred_mean": 0.004, "train_pred_mean": 0.002},
+        {"seed": 137, "path": "b.ckpt", "val_loss": 1.04, "val_mae_vs_naive": 1.03, "val_pred_mean": -0.005, "train_pred_mean": -0.003},
+        {"seed": 256, "path": "c.ckpt", "val_loss": 1.35, "val_mae_vs_naive": 1.15, "val_pred_mean": 0.025, "train_pred_mean": 0.015},
+    ]
+    accepted, _ = _filter_ensemble_members(healthy)
+    assert [m["seed"] for m in accepted] == [42, 137]
+
+    # When all 3 exceed strict bounds modestly, fallback preserves top-2 finite seeds instead of 1 noisy seed
+    borderline = [
+        {"seed": 42, "path": "a.ckpt", "val_loss": 1.00, "val_mae_vs_naive": 1.08, "val_pred_mean": 0.008, "train_pred_mean": 0.004},
+        {"seed": 137, "path": "b.ckpt", "val_loss": 1.02, "val_mae_vs_naive": 1.09, "val_pred_mean": 0.009, "train_pred_mean": 0.004},
+        {"seed": 256, "path": "c.ckpt", "val_loss": 1.50, "val_mae_vs_naive": 1.30, "val_pred_mean": 0.050, "train_pred_mean": 0.020},
+    ]
+    fb_acc, _ = _filter_ensemble_members(borderline)
+    assert [m["seed"] for m in fb_acc] == [42, 137]
+
+
+def test_hybrid_blend_macro_zscore_and_theta_rolling_invariance():
+    import pandas as pd
+    from deep_learning.calibration.hybrid import (
+        apply_theta_hybrid_shift_to_path,
+        compute_causal_macro_fair_value_zscore,
+        compute_causal_theta_5d_series,
+        fit_theta_hybrid_blend,
+    )
+
+    rng = np.random.default_rng(11)
+    y = rng.normal(0.0, 0.03, size=80)
+    # TFT has slight real edge; Theta correlates modestly with opposite timing -> blending worsens score
+    p_tft = y * 0.40 + rng.normal(0.0, 0.005, size=80)
+    p_theta = -y * 0.10 + rng.normal(0.0, 0.010, size=80)
+    blend = fit_theta_hybrid_blend(y, p_tft, p_theta)
+    assert blend["enabled"] is False
+    assert blend["w_theta"] == 0.0
+
+    # apply_theta_hybrid_shift_to_path(..., already_ordered=True) shifts all channels coherently
+    ord_path = np.tile(np.array([[-0.03, -0.02, -0.01, 0.0, 0.01, 0.02, 0.03]]), (80, 5, 1))
+    shifted = apply_theta_hybrid_shift_to_path(
+        ord_path,
+        np.full(80, 0.02),
+        hybrid_blend={"enabled": True, "w_theta": 0.5},
+        already_ordered=True,
+    )
+    assert np.all(np.diff(shifted, axis=-1) > 0)
+    assert np.allclose(shifted[:, :, 5] - shifted[:, :, 1], 0.04)
+
+    # Low-vol macro proxy (std ~ 0.002) should contribute comparably to high-vol target in Ridge zscore
+    idx = pd.bdate_range("2023-01-02", periods=100)
+    dxy = rng.normal(0.0, 0.002, size=100)
+    hg = -3.0 * dxy + rng.normal(0.0, 0.001, size=100)
+    df = pd.DataFrame({"HG=F_ret20": hg, "DX_Y_NYB_ret20": dxy}, index=idx)
+    z = compute_causal_macro_fair_value_zscore(df, window=60, min_periods=40, ridge_alpha=1.0)
+    # Without standardization, ridge_alpha=1 on variance 4e-6 would leave residual == hg (std ~0.006);
+    # with standardized X, strong linear signal removes explained variance cleanly and standardizes z
+    assert np.isfinite(z.to_numpy()).all()
+    assert abs(float(z.iloc[-1])) <= 4.0
+
+    # Rolling theta_5d_prior depends only on trailing lookback_window bars, invariant to earlier years
+    px_base = pd.Series(4.0 * np.exp(np.cumsum(rng.normal(0.0, 0.01, size=200))), index=pd.bdate_range("2022-01-03", periods=200))
+    px_shifted_early = px_base.copy()
+    px_shifted_early.iloc[:50] = px_shifted_early.iloc[:50] * 0.5
+    s1 = compute_causal_theta_5d_series(px_base, lookback_window=126, max_eval_tail=10)
+    s2 = compute_causal_theta_5d_series(px_shifted_early, lookback_window=126, max_eval_tail=10)
+    assert np.allclose(s1.iloc[-10:].to_numpy(), s2.iloc[-10:].to_numpy(), atol=1e-9)
+
+    # Heavily single-sign skewed Theta prior (>70% positive on balanced validation truth) must be rejected
+    y_bal = rng.normal(0.0, 0.03, size=92)
+    p_tft_ok = 0.25 * y_bal + rng.normal(0.0, 0.005, size=92)
+    p_theta_skewed = np.abs(rng.normal(0.004, 0.002, size=92)) + 0.001  # ~100% positive
+    skew_blend = fit_theta_hybrid_blend(y_bal, p_tft_ok, p_theta_skewed)
+    assert skew_blend["enabled"] is False
+    assert skew_blend["w_theta"] == 0.0
+    assert skew_blend["reason"] == "tft_standalone_preferred"
+
+
+def test_ordered_space_ensemble_averaging_avoids_jensen_pi80_shrinkage():
+    from types import SimpleNamespace
+    from deep_learning.models.tft_copper import ensure_ordered_quantiles_from_model_output
+
+    # Raw crossed logits vs pre-ordered WeeklyASROPFLoss output handling
+    ordered_loss_mdl = SimpleNamespace(loss=SimpleNamespace(emits_ordered_quantiles=True))
+    cfg = get_tft_config()
+    seed1_ord = np.tile(np.array([[-0.03, -0.02, -0.01, -0.01, 0.00, 0.01, 0.02]]), (6, 5, 1))
+    seed2_ord = np.tile(np.array([[-0.01, 0.00, 0.01, 0.02, 0.03, 0.04, 0.05]]), (6, 5, 1))
+
+    p1 = _predict_quantiles_to_np(_DummyModel(seed1_ord), dataloader=object(), cfg=cfg, ordered=True)
+    # Bypass re-softplussing when emits_ordered_quantiles=True
+    p1_checked = ensure_ordered_quantiles_from_model_output(p1, model=ordered_loss_mdl)
+    p2 = _predict_quantiles_to_np(_DummyModel(seed2_ord), dataloader=object(), cfg=cfg, ordered=True)
+    avg_ord = np.mean(np.stack([p1_checked, p2], axis=0), axis=0)
+
+    # Mean of two ordered spreads (0.03 and 0.04) keeps 0.035 exact without Jensen collapse
+    assert np.allclose(avg_ord[:, :, 5] - avg_ord[:, :, 1], 0.035)
+    assert np.all(np.diff(avg_ord, axis=-1) > 0)
+
+    # Crossed raw logits on legacy mock without emits_ordered_quantiles are ordered once
+    crossed = np.tile(np.array([[-2.5, -1.8, -1.5, 0.001, -1.5, -1.8, -2.5]]), (4, 5, 1))
+    converted = ensure_ordered_quantiles_from_model_output(crossed, model=_DummyModel(crossed))
+    assert np.all(np.diff(converted, axis=-1) > 0)

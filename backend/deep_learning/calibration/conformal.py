@@ -110,18 +110,38 @@ def _vol_scale_factors(
     return factors, float(ref)
 
 
-def _split_conformal_quantile(scores: np.ndarray, alpha: float) -> float:
-    """Finite-sample split conformal quantile at level ``ceil((1 - alpha)(n + 1)) / n``."""
+def _effective_sample_size(n: int, overlap_horizon: int = 5) -> float:
+    """MA(h-1)-adjusted effective sample count for rolling horizon forecasts."""
+    if n <= 0:
+        return 0.0
+    horizon = max(int(overlap_horizon), 1)
+    return max(float(n) / float(horizon), 1.0)
+
+
+def _split_conformal_quantile(
+    scores: np.ndarray,
+    alpha: float,
+    *,
+    overlap_horizon: int = 5,
+) -> float:
+    """Finite-sample split conformal quantile with MA-overlap ``n_eff`` & upper guard."""
     clean = np.asarray(scores, dtype=np.float64)
     clean = clean[np.isfinite(clean)]
     n = len(clean)
     if n == 0:
         return 0.0
-    level = min(1.0, max(0.0, float(np.ceil((1.0 - alpha) * (n + 1))) / float(n)))
+    alpha_f = min(max(float(alpha), 1e-4), 0.99)
+    n_eff = _effective_sample_size(n, overlap_horizon=overlap_horizon)
+    raw_level = (1.0 - alpha_f) * (n_eff + 1.0) / n_eff
+    # Cap below 1.0 (1 - 0.5*alpha) so small n_eff on PI96 (alpha=0.04) never
+    # degenerates to level >= 1.0 and lets a single extreme outlier explode spreads.
+    upper_cap = min(1.0 - 0.5 * alpha_f, 1.0 - 1.0 / max(float(n) * 2.0, 4.0))
+    upper_cap = max(upper_cap, 1.0 - alpha_f)
+    level = min(upper_cap, max(1.0 - alpha_f, float(raw_level)))
     try:
-        return float(np.quantile(clean, level, method="higher" if level < 1.0 else "linear"))
+        return float(np.quantile(clean, level, method="linear"))
     except TypeError:  # pragma: no cover - numpy<1.22 fallback
-        return float(np.quantile(clean, level, interpolation="higher" if level < 1.0 else "linear"))
+        return float(np.quantile(clean, level, interpolation="linear"))
 
 
 def fit_weekly_cqr(
@@ -133,6 +153,7 @@ def fit_weekly_cqr(
     alpha_80: float = 0.20,
     alpha_96: float = 0.04,
     min_samples: int = 20,
+    overlap_horizon: int = 5,
 ) -> dict[str, float | int | bool | str | None]:
     """Fit Split / Volatility-Normalized Conformalized Quantile Regression (CQR).
 
@@ -144,15 +165,19 @@ def fit_weekly_cqr(
     q_arr = np.asarray(ordered_weekly_quantiles, dtype=np.float64)
     q_list = list(quantiles)
     n = min(len(y), len(q_arr))
+    n_eff = _effective_sample_size(n, overlap_horizon=overlap_horizon)
     if q_arr.ndim != 2 or q_arr.shape[1] != len(q_list) or n < int(min_samples):
         return {
             "cqr_enabled": False,
             "method": "split_cqr_vol_normalized",
             "n_calibration": int(n),
+            "n_eff": float(n_eff),
+            "overlap_horizon": int(max(int(overlap_horizon), 1)),
             "q_hat_80": 0.0,
             "q_hat_96": 0.0,
             "median_val_vol": None,
             "vol_normalized": False,
+            "base_vol_power": 1.0,
             "alpha_80": float(alpha_80),
             "alpha_96": float(alpha_96),
             "validation_pi80_coverage_raw": interval_coverage(
@@ -196,13 +221,15 @@ def fit_weekly_cqr(
     scores_80 = compute_nonconformity(y, scaled_q[:, q10_idx], scaled_q[:, q90_idx]) / vol_factors
     scores_96 = compute_nonconformity(y, scaled_q[:, q02_idx], scaled_q[:, q98_idx]) / vol_factors
 
-    q_hat_80 = _split_conformal_quantile(scores_80, alpha_80)
-    q_hat_96 = _split_conformal_quantile(scores_96, alpha_96)
+    q_hat_80 = _split_conformal_quantile(scores_80, alpha_80, overlap_horizon=overlap_horizon)
+    q_hat_96 = _split_conformal_quantile(scores_96, alpha_96, overlap_horizon=overlap_horizon)
 
     params: dict[str, float | int | bool | str | None] = {
         "cqr_enabled": True,
         "method": "split_cqr_vol_normalized",
         "n_calibration": int(n),
+        "n_eff": float(n_eff),
+        "overlap_horizon": int(max(int(overlap_horizon), 1)),
         "q_hat_80": float(q_hat_80),
         "q_hat_96": float(q_hat_96),
         "median_val_vol": float(median_val_vol) if median_val_vol is not None else None,
@@ -291,8 +318,27 @@ def apply_weekly_cqr(
     min_step = 1e-4
 
     med = arr[:, med_idx]
-    low_80_raw_hw = np.maximum(med - arr[:, q10_idx], min_step) * base_vol_scale
-    hi_80_raw_hw = np.maximum(arr[:, q90_idx] - med, min_step) * base_vol_scale
+    low_80_raw_unscaled = np.maximum(med - arr[:, q10_idx], min_step)
+    hi_80_raw_unscaled = np.maximum(arr[:, q90_idx] - med, min_step)
+    frac_lo_25 = (
+        np.clip(
+            med - arr[:, q25_idx],
+            min_step * 0.5,
+            np.maximum(low_80_raw_unscaled - min_step * 0.5, min_step * 0.5),
+        )
+        / low_80_raw_unscaled
+    )
+    frac_hi_75 = (
+        np.clip(
+            arr[:, q75_idx] - med,
+            min_step * 0.5,
+            np.maximum(hi_80_raw_unscaled - min_step * 0.5, min_step * 0.5),
+        )
+        / hi_80_raw_unscaled
+    )
+
+    low_80_raw_hw = low_80_raw_unscaled * base_vol_scale
+    hi_80_raw_hw = hi_80_raw_unscaled * base_vol_scale
     low_80_cal_hw = np.maximum(low_80_raw_hw + q_hat_80 * vol_factors, np.maximum(min_step, min_retention * low_80_raw_hw))
     hi_80_cal_hw = np.maximum(hi_80_raw_hw + q_hat_80 * vol_factors, np.maximum(min_step, min_retention * hi_80_raw_hw))
 
@@ -313,10 +359,20 @@ def apply_weekly_cqr(
     arr[:, q02_idx] = med - low_96_cal_hw
     arr[:, q98_idx] = med + hi_96_cal_hw
 
-    # Keep inner quartiles strictly inside [q10, q50] and [q50, q90]
+    # Scale inner quartiles proportionally inside calibrated [q10, q50] and [q50, q90]
     if q10_idx < q25_idx < med_idx:
-        arr[:, q25_idx] = np.clip(arr[:, q25_idx], arr[:, q10_idx] + min_step * 0.5, med - min_step * 0.5)
+        lo_25_hw = np.clip(
+            frac_lo_25 * low_80_cal_hw,
+            min_step * 0.5,
+            np.maximum(low_80_cal_hw - min_step * 0.5, min_step * 0.5),
+        )
+        arr[:, q25_idx] = np.clip(med - lo_25_hw, arr[:, q10_idx] + min_step * 0.5, med - min_step * 0.5)
     if med_idx < q75_idx < q90_idx:
-        arr[:, q75_idx] = np.clip(arr[:, q75_idx], med + min_step * 0.5, arr[:, q90_idx] - min_step * 0.5)
+        hi_75_hw = np.clip(
+            frac_hi_75 * hi_80_cal_hw,
+            min_step * 0.5,
+            np.maximum(hi_80_cal_hw - min_step * 0.5, min_step * 0.5),
+        )
+        arr[:, q75_idx] = np.clip(med + hi_75_hw, med + min_step * 0.5, arr[:, q90_idx] - min_step * 0.5)
 
     return arr[0] if was_1d else arr

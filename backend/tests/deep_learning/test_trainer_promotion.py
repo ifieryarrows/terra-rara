@@ -23,6 +23,7 @@ def _candidate_result(*, weekly_sharpe: float = 0.40) -> dict:
             "weekly_directional_accuracy": 0.55,
             "weekly_magnitude_ratio": 1.0,
             "weekly_tail_capture_rate": 0.50,
+            "weekly_mae_vs_naive_zero": 0.90,
             "weekly_pi80_coverage": 0.80,
             "weekly_pi80_width_ratio": 1.0,
             "weekly_pi96_coverage": 0.96,

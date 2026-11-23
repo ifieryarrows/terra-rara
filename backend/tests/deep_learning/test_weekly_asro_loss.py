@@ -438,3 +438,110 @@ def test_weekly_loss_retains_directional_and_positive_rate_gradients_past_cap():
     median_grad = raw_pred.grad[..., 3]
     assert torch.isfinite(median_grad).all()
     assert median_grad.abs().max().item() > 1e-4
+
+
+def test_weekly_loss_to_quantiles_l2_drift_subhorizon_and_eval_non_demeaned():
+    loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_subhorizon_quantile=1.0,
+        lambda_t1_directional=0.0,
+        lambda_dispersion=0.0,
+        lambda_magnitude=0.0,
+        lambda_naive=0.0,
+        lambda_bias=0.0,
+        lambda_drift_prior=0.0,
+        lambda_directional=0.0,
+        lambda_saturation=0.0,
+        lambda_positive_rate=0.0,
+        lambda_interval=0.0,
+    )
+    assert getattr(loss, "emits_ordered_quantiles", False) is True
+
+    # Break decoder nullspace: intermediate steps h=1..3 (days 2..4) must receive non-zero gradient
+    raw_pred = torch.zeros((4, 5, 7), dtype=torch.float32, requires_grad=True)
+    actual = torch.full((4, 5), 0.01, dtype=torch.float32)
+    ordered = loss.to_quantiles(raw_pred)
+    assert ordered.shape == raw_pred.shape
+    assert torch.all(torch.diff(ordered, dim=-1) > 0)
+
+    sub_loss = loss.loss(raw_pred, actual)
+    sub_loss.backward()
+    assert raw_pred.grad is not None
+    for step_idx in range(4):  # t+1..t+4
+        assert raw_pred.grad[:, step_idx, 3].abs().max().item() > 1e-4
+
+    # Smooth L2 drift prior: pure (mean/scale)^2 (zero L1 kink at 0)
+    drift_loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_subhorizon_quantile=0.0,
+        lambda_bias=0.0,
+        lambda_drift_prior=1.0,
+        lambda_directional=0.0,
+        weekly_target_scale=0.02,
+    )
+    tiny_pos = torch.full((4, 5, 7), 0.0002, dtype=torch.float32)
+    actual_mix = torch.tensor([[0.01] * 5, [-0.01] * 5, [0.005] * 5, [-0.005] * 5])
+    expected_l2 = (0.001 / 0.02) ** 2
+    assert drift_loss.loss(tiny_pos, actual_mix).item() == pytest.approx(expected_l2, rel=1e-4)
+
+    # Validation eval() mode must NOT batch-demean positive-trend directional targets
+    dir_loss = tft_copper.WeeklyASROPFLoss(
+        QUANTILES,
+        lambda_weekly_quantile=0.0,
+        lambda_t1_quantile=0.0,
+        lambda_subhorizon_quantile=0.0,
+        lambda_directional=1.0,
+        weekly_target_scale=0.02,
+    )
+    trend_actual = torch.tensor([[0.002] * 5, [0.004] * 5, [0.006] * 5, [0.008] * 5])
+    pos_pred = _path_from_median(torch.full_like(trend_actual, 0.004))
+    neg_pred = _path_from_median(torch.full_like(trend_actual, -0.004))
+    dir_loss.eval()
+    assert dir_loss.loss(pos_pred, trend_actual).item() < dir_loss.loss(neg_pred, trend_actual).item()
+
+
+def test_decoupled_quantile_head_frees_outer_spread_grad_and_roundtrips_native_ckpt():
+    from types import SimpleNamespace
+
+    quantiles = QUANTILES
+    linear = torch.nn.Linear(12, 7)
+    tft_copper._initialize_tft_output_layer(SimpleNamespace(output_layer=linear), quantiles)
+    ref_x = torch.randn(16, 5, 12)
+    expected_out = linear(ref_x).detach()
+
+    head = tft_copper._DecoupledQuantileHead(linear, median_idx=3)
+    assert torch.allclose(head(ref_x), expected_out, atol=1e-6)
+
+    # State dict exports canonical Linear weight+bias compatible with vanilla nn.Linear
+    sd = head.state_dict()
+    assert set(sd.keys()) == {"weight", "bias"}
+    restored_linear = torch.nn.Linear(12, 7)
+    restored_linear.load_state_dict(sd, strict=True)
+    assert torch.allclose(restored_linear(ref_x), expected_out, atol=1e-6)
+
+    # Reverse reload into _DecoupledQuantileHead works bit-for-bit
+    head2 = tft_copper._DecoupledQuantileHead(torch.nn.Linear(12, 7), median_idx=3)
+    head2.load_state_dict(sd, strict=True)
+    assert torch.allclose(head2(ref_x), expected_out, atol=1e-6)
+
+    # Backward pass: spread_bias gets meaningful amplified gradient relative to median_bias
+    loss_fn = tft_copper.WeeklyASROPFLoss(
+        quantiles,
+        lambda_weekly_quantile=1.0,
+        lambda_t1_quantile=0.20,
+        lambda_subhorizon_quantile=0.15,
+        lambda_drift_prior=0.15,
+        lambda_directional=0.10,
+        weekly_target_scale=0.03,
+    )
+    actual = torch.randn(16, 5) * 0.01
+    out = head(ref_x)
+    loss_val = loss_fn.loss(out, actual)
+    loss_val.backward()
+    assert head.spread_bias.grad is not None
+    assert head.median_bias.grad is not None
+    assert head.spread_bias.grad.abs().mean().item() > 1e-3

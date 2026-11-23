@@ -44,14 +44,16 @@ def compute_causal_theta_5d_series(
     *,
     horizon: int = 5,
     min_window: int = 60,
+    lookback_window: int = 126,
     max_eval_tail: Optional[int] = None,
 ) -> pd.Series:
-    """Compute expanding-origin causal 5D cumulative log-return Theta forecasts.
+    """Compute rolling-origin causal 5D cumulative log-return Theta forecasts.
 
     For each bar index ``i >= max(min_window - 1, start_idx)``, evaluates
-    ``theta_forecast(close.iloc[: i + 1], horizon=horizon)`` and converts the
-    cumulative price forecast to log-return ``log(pred_price / last_price)``.
-    When ``max_eval_tail`` is supplied (e.g. live inference), earlier rows stay
+    ``theta_forecast`` over a fixed trailing ``lookback_window`` (preventing
+    expanding-origin multi-year drift) and converts the cumulative price
+    forecast to log-return ``log(pred_price / last_price)``. When
+    ``max_eval_tail`` is supplied (e.g. live inference), earlier rows stay
     neutral ``0.0`` so latency stays sub-second.
     """
     from deep_learning.baselines.theta_model import theta_forecast
@@ -66,9 +68,11 @@ def compute_causal_theta_5d_series(
     if max_eval_tail is not None and int(max_eval_tail) > 0:
         start_pos = max(start_pos, n - int(max_eval_tail))
 
+    win_len = max(int(lookback_window), int(min_window), 30)
     values = np.zeros(n, dtype=np.float64)
     for idx in range(start_pos, n):
-        window_series = clean.iloc[: idx + 1].dropna()
+        start_slice = max(0, idx + 1 - win_len)
+        window_series = clean.iloc[start_slice : idx + 1].dropna()
         if len(window_series) < 30:
             continue
         last_px = float(window_series.iloc[-1])
@@ -100,10 +104,10 @@ def compute_causal_macro_fair_value_zscore(
 ) -> pd.Series:
     """Compute a strictly causal rolling Ridge macro fair-value residual z-score.
 
-    Regresses the target's 20-day return against demeaned backward-window
-    cross-asset 20-day returns (USD, oil, miners, China equity proxies). A
-    negative z-score indicates copper lags its macro basket ("cheap" relative to
-    macro peers); positive indicates overshoot. Zero-centered by construction.
+    Standardizes each predictor over the trailing causal window before solving
+    Ridge regression so low-volatility macro proxies (e.g. ``DX-Y.NYB``) receive
+    balanced regularization alongside volatile equity/commodity proxies. A negative
+    z-score indicates copper lags its macro basket; positive indicates overshoot.
     """
     out = pd.Series(0.0, index=price_features.index, dtype=float, name="macro_fair_value_zscore")
     if price_features.empty:
@@ -136,7 +140,7 @@ def compute_causal_macro_fair_value_zscore(
     zscores = np.zeros(n, dtype=np.float64)
     win = max(int(window), int(min_periods), p + 5)
     min_req = max(int(min_periods), p + 5)
-    eye = np.eye(p, dtype=np.float64) * float(max(ridge_alpha, 1e-6))
+    alpha_base = float(max(ridge_alpha, 1e-6))
 
     for i in range(min_req - 1, n):
         start = max(0, i - win + 1)
@@ -149,16 +153,27 @@ def compute_causal_macro_fair_value_zscore(
         yv = yw[valid]
         Xv = Xw[valid]
         x_mean = Xv.mean(axis=0, keepdims=True)
+        x_std = Xv.std(axis=0, keepdims=True)
+        active = x_std.reshape(-1) > 1e-8
+        if not active.any():
+            continue
+
         y_mean = float(yv.mean())
         Xc = Xv - x_mean
+        Xs = np.zeros_like(Xc)
+        Xs[:, active] = Xc[:, active] / x_std[:, active]
         yc = yv - y_mean
 
+        alpha_eff = alpha_base * max(float(len(yv)) * 0.10, 1.0)
+        Xs_act = Xs[:, active]
+        eye_act = np.eye(Xs_act.shape[1], dtype=np.float64) * alpha_eff
+
         try:
-            beta = np.linalg.solve(Xc.T @ Xc + eye, Xc.T @ yc)
+            beta_act = np.linalg.solve(Xs_act.T @ Xs_act + eye_act, Xs_act.T @ yc)
         except np.linalg.LinAlgError:
             continue
 
-        residuals = yc - (Xc @ beta)
+        residuals = yc - (Xs_act @ beta_act)
         res_std = float(np.std(residuals))
         if res_std > 1e-6 and np.isfinite(residuals[-1]):
             zscores[i] = float(np.clip(residuals[-1] / res_std, -4.0, 4.0))
@@ -210,13 +225,15 @@ def fit_theta_hybrid_blend(
     min_theta_weight: float = 0.25,
     theta_insurance_min_da: float = 0.52,
     theta_insurance_max_mae_ratio: float = 1.01,
+    max_prior_pos_skew: float = 0.20,
+    max_prior_excess_skew: float = 0.15,
 ) -> dict:
     """Fit a convex ``w_tft * TFT + w_theta * Theta`` blend on validation only.
 
     Enforces ``w_tft >= min_tft_weight`` so the multi-factor TFT prior remains a
-    substantive contributor. Activates when validation composite skill improves
-    cleanly OR when Theta shows standalone validation edge and applying the
-    structural ``min_theta_weight`` regime-insurance floor keeps MAE well-behaved.
+    substantive contributor. Activates strictly when validation composite skill
+    improves genuinely without material MAE degradation or extreme single-sign
+    prior skew; never forces Theta weight when blending degrades validation score.
     """
     y = np.asarray(val_actual_weekly, dtype=np.float64)
     p_tft = np.asarray(val_tft_weekly_median, dtype=np.float64)
@@ -237,6 +254,13 @@ def fit_theta_hybrid_blend(
             "reason": "insufficient_validation_signal",
         }
 
+    actual_pos_rate = float((y > 0.0).mean())
+    theta_pos_rate = float((p_theta > 0.0).mean())
+    theta_is_excessively_skewed = bool(
+        abs(theta_pos_rate - 0.50) > float(max_prior_pos_skew)
+        and abs(theta_pos_rate - actual_pos_rate) > float(max_prior_excess_skew)
+    )
+
     base = _blend_validation_score(y, p_tft, horizon=horizon)
     theta_base = _blend_validation_score(y, p_theta, horizon=horizon)
     theta_has_edge = bool(
@@ -248,20 +272,24 @@ def fit_theta_hybrid_blend(
 
     best_w_theta = 0.0
     best_stats = base
-    for w_th in grid:
-        if w_th <= 0.0:
-            continue
-        w_tf = 1.0 - w_th
-        blended = w_tf * p_tft + w_th * p_theta
-        stats = _blend_validation_score(y, blended, horizon=horizon)
-        if (
-            stats["score"] < best_stats["score"]
-            and stats["mae_vs_naive"] <= base["mae_vs_naive"] + float(max_mae_degradation)
-        ):
-            best_w_theta = w_th
-            best_stats = stats
+    balanced_actual = bool(0.30 <= actual_pos_rate <= 0.70)
+    if not theta_is_excessively_skewed:
+        for w_th in grid:
+            if w_th <= 0.0:
+                continue
+            w_tf = 1.0 - w_th
+            blended = w_tf * p_tft + w_th * p_theta
+            blended_pos_rate = float((blended > 0.0).mean())
+            if balanced_actual and (blended_pos_rate > 0.78 or blended_pos_rate < 0.22):
+                continue
+            stats = _blend_validation_score(y, blended, horizon=horizon)
+            if (
+                stats["score"] < best_stats["score"]
+                and stats["mae_vs_naive"] <= base["mae_vs_naive"] + float(max_mae_degradation)
+            ):
+                best_w_theta = w_th
+                best_stats = stats
 
-    floor_mae_slack = max(float(max_mae_degradation), 0.025)
     w_floor = round(min(max(0.0, float(min_theta_weight)), upper_theta), 4)
 
     improved = bool(
@@ -280,20 +308,19 @@ def fit_theta_hybrid_blend(
         selected_stats = best_stats
         if theta_has_edge and w_floor > selected_theta:
             blended_floor = (1.0 - w_floor) * p_tft + w_floor * p_theta
-            floor_stats = _blend_validation_score(y, blended_floor, horizon=horizon)
-            if floor_stats["mae_vs_naive"] <= base["mae_vs_naive"] + floor_mae_slack:
-                selected_theta = float(w_floor)
-                selected_stats = floor_stats
+            floor_pos_rate = float((blended_floor > 0.0).mean())
+            floor_ok = not (balanced_actual and (floor_pos_rate > 0.78 or floor_pos_rate < 0.22))
+            if floor_ok:
+                floor_stats = _blend_validation_score(y, blended_floor, horizon=horizon)
+                if (
+                    floor_stats["score"] <= base["score"] - float(min_improvement)
+                    and floor_stats["mae_vs_naive"] <= base["mae_vs_naive"] + float(max_mae_degradation)
+                    and floor_stats["score"] <= best_stats["score"] + 0.01
+                ):
+                    selected_theta = float(w_floor)
+                    selected_stats = floor_stats
         enabled = True
         reason = "validation_skill_improved"
-    elif theta_has_edge and w_floor > 0.0:
-        blended_floor = (1.0 - w_floor) * p_tft + w_floor * p_theta
-        floor_stats = _blend_validation_score(y, blended_floor, horizon=horizon)
-        if floor_stats["mae_vs_naive"] <= base["mae_vs_naive"] + floor_mae_slack:
-            enabled = True
-            selected_theta = float(w_floor)
-            selected_stats = floor_stats
-            reason = "theta_regime_insurance_floor"
 
     selected_tft = float(round(1.0 - selected_theta, 4))
 
@@ -326,12 +353,15 @@ def apply_theta_hybrid_shift_to_path(
     hybrid_blend: Optional[dict],
     quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
     horizon: int = 5,
+    already_ordered: bool = False,
 ) -> np.ndarray:
-    """Shift only the raw median logits so the weekly median equals the hybrid blend.
+    """Shift forecast median (or all ordered quantile channels) to match the hybrid blend.
 
-    Outer softplus gap logits remain untouched, so ``monotonic_quantiles_np``
-    deterministically shifts the entire quantile distribution by the exact
-    blended delta without introducing quantile crossings.
+    When ``already_ordered=True``, shifts every quantile channel by the exact
+    per-day delta so ordered daily/weekly spreads and strict monotonicity are
+    preserved without needing an extra ``monotonic_quantiles_np`` pass. When
+    ``already_ordered=False``, shifts only raw median logits prior to
+    ``monotonic_quantiles_np``.
     """
     out = np.asarray(pred_path_np, dtype=np.float64).copy()
     if not hybrid_blend or not hybrid_blend.get("enabled"):
@@ -367,6 +397,9 @@ def apply_theta_hybrid_shift_to_path(
         tft_med = out[:, :h, median_idx].sum(axis=1)
         blended = np.where(valid, w_tft * tft_med + w_theta * theta_arr, tft_med)
         delta_per_day = (blended - tft_med) / float(max(h, 1))
-        out[:, :h, median_idx] = out[:, :h, median_idx] + delta_per_day[:, None]
+        if already_ordered:
+            out[:, :h, :] = out[:, :h, :] + delta_per_day[:, None, None]
+        else:
+            out[:, :h, median_idx] = out[:, :h, median_idx] + delta_per_day[:, None]
 
     return out[0] if squeezed else out

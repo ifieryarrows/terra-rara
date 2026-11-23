@@ -84,7 +84,7 @@ class TFTModelConfig:
     reduce_on_plateau_patience: int = 4
     gradient_clip_val: float = 0.5
     # L2 regularisation via AdamW; prevents weight growth on small financial series.
-    weight_decay: float = 1.5e-2
+    weight_decay: float = 2e-2
 
 
 @dataclass(frozen=True)
@@ -132,16 +132,18 @@ class ASROConfig:
 @dataclass(frozen=True)
 class WeeklyLossConfig:
     # Proper-scoring core: scale-normalized weekly quantile pinball + auxiliary
-    # T+1 quantile pinball + strong zero-drift prior + demeaned ASRO directional utility.
-    # Legacy heuristic batch penalties default to 0.0 (fields kept for backward compat).
+    # T+1 / sub-horizon quantile pinball + smooth weak L2 mean-centering guard +
+    # demeaned ASRO directional utility. Legacy heuristic batch penalties default
+    # to 0.0 (fields kept for backward compat).
     lambda_weekly_quantile: float = 1.00
     lambda_t1_quantile: float = 0.20
+    lambda_subhorizon_quantile: float = 0.15
     lambda_t1_directional: float = 0.0
     lambda_dispersion: float = 0.0
     lambda_magnitude: float = 0.0
     lambda_naive: float = 0.0
     lambda_bias: float = 0.0
-    lambda_drift_prior: float = 4.0
+    lambda_drift_prior: float = 1.00
     lambda_directional: float = 0.10
     lambda_saturation: float = 0.0
     lambda_positive_rate: float = 0.0
@@ -178,7 +180,7 @@ class FeatureStoreConfig:
     calendar_features: bool = True
     macro_event_features: bool = True
     include_news_features: bool = False
-    mrmr_top_k: int = 12
+    mrmr_top_k: int = 5
 
 
 @dataclass

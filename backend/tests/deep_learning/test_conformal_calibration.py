@@ -231,3 +231,89 @@ def test_predict_quantiles_to_np_single_pass_avoids_double_iteration():
     assert y_np.shape == (10, 5)
     # dl was never iterated because return_y=True handled target extraction in model.predict
     assert dl.iter_count == 0
+
+
+def test_fit_weekly_cqr_records_n_eff_and_caps_outlier_level():
+    from deep_learning.calibration.conformal import fit_weekly_cqr
+
+    rng = np.random.default_rng(7)
+    n = 100
+    y = rng.normal(0.0, 0.025, size=n)
+    y[0] = 0.45  # extreme single crash outlier should not blow q_hat_96 to max outlier at level=1.0
+    med = np.zeros(n)
+    offsets = np.array([-0.04, -0.02, -0.01, 0.0, 0.01, 0.02, 0.04])
+    q_arr = med[:, None] + offsets[None, :]
+    vol = np.linspace(0.010, 0.020, n)
+
+    cqr = fit_weekly_cqr(y, q_arr, realized_vol=vol, overlap_horizon=5)
+
+    assert cqr["cqr_enabled"] is True
+    assert cqr["overlap_horizon"] == 5
+    assert cqr["n_eff"] == 20.0
+    assert cqr["base_vol_power"] == 1.0
+    # Extreme single outlier (0.45 - 0.04 = 0.41) must not dominate capped conformal level
+    assert float(cqr["q_hat_96"]) < 0.20
+
+
+def test_apply_weekly_cqr_scales_inner_quartiles_proportionally():
+    from deep_learning.calibration.conformal import apply_weekly_cqr
+
+    raw = np.array([[-0.04, -0.02, -0.01, 0.0, 0.01, 0.02, 0.04]])
+    # Identity calibration leaves q25/q75 exact
+    same = apply_weekly_cqr(
+        raw,
+        cqr_params={"cqr_enabled": True, "q_hat_80": 0.0, "q_hat_96": 0.0, "base_vol_power": 1.0, "median_val_vol": 0.02},
+        realized_vol=0.02,
+    )
+    assert np.allclose(same, raw)
+
+    # Doubling vol + positive q_hat_80 scales inner quartiles proportionally inside [q10, q90]
+    widened = apply_weekly_cqr(
+        raw,
+        cqr_params={"cqr_enabled": True, "q_hat_80": 0.01, "q_hat_96": 0.01, "base_vol_power": 1.0, "median_val_vol": 0.01},
+        realized_vol=0.02,
+    )
+    assert np.all(np.diff(widened[0]) > 0)
+    frac_lo_in = (raw[0, 3] - raw[0, 2]) / (raw[0, 3] - raw[0, 1])
+    frac_lo_out = (widened[0, 3] - widened[0, 2]) / (widened[0, 3] - widened[0, 1])
+    assert abs(frac_lo_out - frac_lo_in) < 1e-6
+
+
+def test_write_conformal_calibration_artifact_persists_base_vol_power(tmp_path):
+    from deep_learning.calibration.conformal import apply_weekly_cqr, fit_weekly_cqr
+
+    cfg = _cfg_for_tmp_model(tmp_path)
+    actual = torch.linspace(-0.03, 0.03, 40).reshape(-1, 1).repeat(1, 5) / 5.0
+    pred = torch.zeros((40, 5, 7), dtype=torch.float32)
+    offsets = [-0.012, -0.006, -0.003, 0.0, 0.003, 0.006, 0.012]
+    for i, off in enumerate(offsets):
+        pred[..., i] = off
+    vol = np.linspace(0.01, 0.03, 40)
+    feature_frame = pd.DataFrame(
+        {"time_idx": np.arange(41), "realized_vol_20d": np.concatenate(([0.01], vol))}
+    )
+    from deep_learning.models.monotonic_quantiles import aggregate_weekly_quantiles_np
+    weekly_q = aggregate_weekly_quantiles_np(pred.numpy(), median_idx=3)
+    weekly_y = actual.numpy().sum(axis=1)
+    in_mem_cqr = fit_weekly_cqr(weekly_y, weekly_q, realized_vol=vol)
+
+    path = _write_conformal_calibration_artifact(
+        cfg=cfg,
+        model=_DummyModel(pred),
+        val_dl=[(None, (actual, None))],
+        feature_frame=feature_frame,
+        validation_start_time=0,
+        validation_end_time=40,
+        weekly_cqr_params=in_mem_cqr,
+        already_ordered=True,
+    )
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    assert loaded["base_vol_power"] == 1.0
+    assert loaded["overlap_horizon"] == 5
+    assert loaded["n_eff"] == in_mem_cqr["n_eff"]
+
+    probe_q = weekly_q[:1]
+    assert np.allclose(
+        apply_weekly_cqr(probe_q, cqr_params=in_mem_cqr, realized_vol=0.025),
+        apply_weekly_cqr(probe_q, cqr_params=loaded, realized_vol=0.025),
+    )

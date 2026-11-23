@@ -59,3 +59,35 @@ def test_format_prediction_calibrated_interval_widens_without_moving_weekly_medi
     assert widened["weekly_log_return_q90_calibrated"] > base["weekly_log_return_q90_calibrated"]
     assert widened["weekly_interval_calibrated"] is True
     assert widened["public_quantile_crossing_rate"] == 0.0
+    assert np.isclose(
+        widened["daily_forecasts"][-1]["price_q10"],
+        100.0 * np.exp(widened["weekly_log_return_q10_calibrated"]),
+    )
+    assert np.isclose(
+        widened["daily_forecasts"][-1]["price_q90"],
+        100.0 * np.exp(widened["weekly_log_return_q90_calibrated"]),
+    )
+
+
+def test_format_prediction_clips_negative_anomaly_before_monotonic_and_preserves_ordered():
+    # Extreme negative median must clip before monotonic gaps so zero crossings occur
+    raw_anomalous = np.array([[-1.0, -0.5, -0.2, -0.25, -0.2, -0.5, -1.0]])
+    res_raw = format_prediction(raw_anomalous, baseline_price=100.0)
+    vals_raw = list(res_raw["quantiles_log"].values())
+    assert res_raw["anomaly_detected"] is True
+    assert res_raw["quantile_crossing_rate"] == 0.0
+    assert vals_raw == sorted(vals_raw)
+    assert res_raw["quantiles_log"]["q0.50"] == -0.12
+
+    # already_ordered=True preserves spreads exactly (no double softplus) and shifts vector cohesively
+    ordered_in = np.tile(np.array([[-0.03, -0.02, -0.01, 0.005, 0.015, 0.025, 0.035]]), (5, 1))
+    res_ord = format_prediction(ordered_in, baseline_price=100.0, already_ordered=True)
+    assert np.isclose(res_ord["predicted_log_return_q10"], -0.02)
+    assert np.isclose(res_ord["predicted_log_return_q90"], 0.025)
+
+    ordered_anom = np.array([[-0.30, -0.28, -0.26, -0.25, -0.24, -0.22, -0.20]])
+    res_shifted = format_prediction(ordered_anom, baseline_price=100.0, already_ordered=True)
+    vals_shifted = list(res_shifted["quantiles_log"].values())
+    assert vals_shifted == sorted(vals_shifted)
+    assert np.isclose(res_shifted["quantiles_log"]["q0.50"], -0.12)
+    assert np.isclose(res_shifted["quantiles_log"]["q0.90"] - res_shifted["quantiles_log"]["q0.10"], 0.06)
