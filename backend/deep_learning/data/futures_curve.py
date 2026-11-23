@@ -16,6 +16,16 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+SYNTHETIC_PROXY_CURVE_FEATURES: tuple[str, ...] = (
+    "futures_spread_pct",
+    "futures_spread_long",
+    "futures_spread_zscore",
+    "futures_curve_slope",
+    "futures_curve_slope_ma5",
+    "backwardation_flag",
+    "contango_flag",
+)
+
 
 def compute_futures_spread(
     front_month: pd.Series,
@@ -149,4 +159,5 @@ def build_futures_features_from_yfinance(
         features["futures_curve_slope"] = fallback_slope
         features["futures_curve_slope_ma5"] = fallback_slope
 
+    features.attrs["is_synthetic_proxy"] = True
     return features

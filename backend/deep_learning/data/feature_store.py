@@ -349,69 +349,7 @@ def _build_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
 # Price / technical features (reuses existing helpers)
 # ---------------------------------------------------------------------------
 
-def _sanitize_close_spikes(
-    close_series: pd.Series,
-    symbol: str = "target",
-    *,
-    max_abs_log_jump: float = 0.35,
-    confirm_bars: int = 2,
-    extreme_log_jump: float = 1.0,
-    extreme_confirm_bars: int = 3,
-) -> pd.Series:
-    """Replace transient corrupt price spikes causally without flatlining persistent shifts."""
-    close = close_series.astype(float).where(lambda s: s > 0.0).ffill()
-    if len(close) <= 1:
-        return close
-
-    close_vals = close.to_numpy(dtype=float, copy=False)
-    valid = np.isfinite(close_vals) & (close_vals > 0.0)
-    log_vals = np.zeros_like(close_vals)
-    log_vals[valid] = np.log(close_vals[valid])
-    has_jumps = bool((valid[1:] & valid[:-1] & (np.abs(np.diff(log_vals)) > max_abs_log_jump)).any())
-    if not has_jumps:
-        return close
-
-    close_vals = close_vals.copy()
-    repaired = 0
-    pending_anchor: float | None = None
-    pending_run = 0
-    for idx in range(1, len(close_vals)):
-        prev_val = close_vals[idx - 1]
-        cur_val = close_vals[idx]
-        if not (np.isfinite(prev_val) and prev_val > 0 and np.isfinite(cur_val) and cur_val > 0):
-            pending_anchor = None
-            pending_run = 0
-            continue
-        log_jump = abs(np.log(cur_val / prev_val))
-        if log_jump > max_abs_log_jump:
-            needed = extreme_confirm_bars if log_jump > extreme_log_jump else confirm_bars
-            if (
-                pending_anchor is not None
-                and abs(np.log(cur_val / pending_anchor)) <= max_abs_log_jump
-            ):
-                pending_run += 1
-                pending_anchor = cur_val
-            else:
-                pending_anchor = cur_val
-                pending_run = 1
-            if pending_run >= needed:
-                # Persistent shift confirmed purely from past/current bars; resume true level.
-                pending_anchor = None
-                pending_run = 0
-            else:
-                close_vals[idx] = prev_val
-                repaired += 1
-        else:
-            pending_anchor = None
-            pending_run = 0
-    if repaired:
-        logger.warning(
-            "Repaired %d corrupt single-day close spike(s) (> %.2f log jump) for %s",
-            repaired,
-            max_abs_log_jump,
-            symbol,
-        )
-    return pd.Series(close_vals, index=close_series.index, name=close_series.name)
+from app.price_utils import sanitize_close_spikes as _sanitize_close_spikes
 
 
 def _build_price_features(
@@ -434,9 +372,17 @@ def _build_price_features(
         return pd.DataFrame(), pd.DataFrame()
 
     sanitized_close = _sanitize_close_spikes(price_df["close"], symbol=symbol)
+    copied = False
     if not sanitized_close.equals(price_df["close"]):
         price_df = price_df.copy()
         price_df["close"] = sanitized_close
+        copied = True
+    if "adj_close" in price_df.columns:
+        sanitized_adj = _sanitize_close_spikes(price_df["adj_close"], symbol=f"{symbol}[adj]", ffill_invalid=False)
+        if not sanitized_adj.equals(price_df["adj_close"]):
+            if not copied:
+                price_df = price_df.copy()
+            price_df["adj_close"] = sanitized_adj
 
     features = generate_symbol_features(price_df, symbol, include_raw_ma=False)
     return price_df, features
@@ -534,6 +480,8 @@ def build_tft_dataframe(
     cfg: Optional[TFTASROConfig] = None,
     *,
     drop_missing_target: bool = True,
+    apply_mrmr: bool = True,
+    use_snapshot: bool = True,
 ) -> tuple[pd.DataFrame, list[str], list[str], list[str], float]:
     """
     Build the master DataFrame for TFT training / inference.
@@ -544,20 +492,22 @@ def build_tft_dataframe(
     The returned df has:
         - "time_idx"  : integer time index (required by pytorch_forecasting)
         - "group_id"  : constant "copper" (single series)
-        - "target"    : next-day daily log return
+        - "target"    : realized 1-day log return ``log(close[t]/close[t-1])``
         - columns for all three TFT feature categories
 
-    Training and validation need complete weekly targets, so the default
-    drops rows where ``target`` is missing. Live inference needs the latest
-    observed bar as the forecast anchor, so callers can keep that final row
-    and let the missing target be filled with a neutral dummy value.
+    Training and validation only require valid ``target`` rows (retaining the
+    final 5 bars so ``TimeSeriesDataSet`` can decode the last 5 OOS weekly
+    windows ending on the newest trading day). Live inference sets
+    ``drop_missing_target=False`` to keep the latest anchor bar. Passing
+    ``apply_mrmr=False, use_snapshot=False`` yields the full pre-selection
+    candidate frame for per-fold leak-free CV feature selection.
     """
     if cfg is None:
         cfg = get_tft_config()
 
     snapshot_path_raw = os.environ.get("TFT_FEATURE_SNAPSHOT_PATH", "").strip()
     snapshot_path = Path(snapshot_path_raw) if snapshot_path_raw else None
-    if snapshot_path is not None:
+    if snapshot_path is not None and use_snapshot and apply_mrmr:
         captured = _load_feature_snapshot(
             snapshot_path,
             drop_missing_target=drop_missing_target,
@@ -577,8 +527,7 @@ def build_tft_dataframe(
 
     from app.features import (
         load_multi_price_data,
-        generate_symbol_features,
-        align_to_target_calendar,
+        generate_aligned_symbol_features,
     )
 
     correl_symbols = [sym for sym in training_symbols if sym != target_symbol]
@@ -627,16 +576,31 @@ def build_tft_dataframe(
     }
 
     if other_dfs:
-        aligned = align_to_target_calendar(price_df, other_dfs, max_ffill=cfg.feature_store.max_ffill)
         feature_frames = [price_features]
-        for sym, df in aligned.items():
+        for sym, df in other_dfs.items():
             if not df.empty:
-                feature_frames.append(generate_symbol_features(df, sym, include_raw_ma=False))
+                aligned_feats = generate_aligned_symbol_features(
+                    df,
+                    sym,
+                    price_df.index,
+                    max_ffill=cfg.feature_store.max_ffill,
+                    include_raw_ma=False,
+                    sanitize_spikes=True,
+                )
+                if not aligned_feats.empty:
+                    feature_frames.append(aligned_feats)
         if len(feature_frames) > 1:
             price_features = pd.concat(feature_frames, axis=1)
-        logger.info("Added features from %d correlated symbols", len(aligned))
+        logger.info("Added native-bar features from %d correlated symbols", len(other_dfs))
 
     price_features = price_features.copy()
+
+    # Keep HG=F_ret1 as clean realized 1d log return matching `target`
+    # for autoregressive encoder context before macro residual calculation.
+    target_close_clean = _sanitize_close_spikes(price_df["close"], symbol=target_symbol)
+    price_features[f"{target_symbol}_ret1"] = np.log(
+        target_close_clean.where(target_close_clean > 0.0, np.nan)
+    ).diff()
 
     from deep_learning.calibration.hybrid import (
         compute_causal_macro_fair_value_zscore,
@@ -713,15 +677,26 @@ def build_tft_dataframe(
         emb_features = pd.DataFrame(index=target_index)
 
     # ---- 4. LME / physical market features ----
-    from deep_learning.data.lme_warehouse import fetch_lme_data, compute_lme_features, compute_proxy_lme_features
-    from deep_learning.data.futures_curve import build_futures_features_from_yfinance
+    from deep_learning.data.lme_warehouse import (
+        NON_STATIONARY_LME_FEATURES,
+        PROXY_LME_FEATURES,
+        compute_lme_features,
+        compute_proxy_lme_features,
+        fetch_lme_data,
+    )
+    from deep_learning.data.futures_curve import (
+        SYNTHETIC_PROXY_CURVE_FEATURES,
+        build_futures_features_from_yfinance,
+    )
 
     lme_raw = fetch_lme_data(
         cfg.lme,
         start_date=start_date.date().isoformat(),
         end_date=end_date.date().isoformat(),
+        session=session,
     )
-    if not lme_raw.empty:
+    has_real_lme = not lme_raw.empty
+    if has_real_lme:
         lme_features = compute_lme_features(lme_raw, windows=cfg.lme.stock_change_windows)
         lme_features = lme_features.reindex(target_index).ffill(limit=cfg.lme.max_ffill_days)
     else:
@@ -734,10 +709,25 @@ def build_tft_dataframe(
         end_date=end_date,
         hg_df=price_df,
     )
+    futures_is_synthetic = bool(getattr(futures_features, "attrs", {}).get("is_synthetic_proxy", True))
     if not futures_features.empty:
         futures_features = futures_features.reindex(target_index).ffill(limit=3)
     else:
         futures_features = pd.DataFrame(index=target_index)
+
+    # Track non-stationary or fake physical/curve proxy columns to suppress from TFT inputs
+    suppressed_proxy_cols: set[str] = set()
+    if has_real_lme:
+        suppressed_proxy_cols.update(NON_STATIONARY_LME_FEATURES)
+    else:
+        suppressed_proxy_cols.update(PROXY_LME_FEATURES)
+        suppressed_proxy_cols.update(lme_features.columns)
+        suppressed_proxy_cols.add("regime_inventory_tightness")
+    if futures_is_synthetic:
+        suppressed_proxy_cols.update(SYNTHETIC_PROXY_CURVE_FEATURES)
+        suppressed_proxy_cols.update(futures_features.columns)
+        if not has_real_lme:
+            suppressed_proxy_cols.add("regime_inventory_tightness")
 
     # ---- 5. Calendar (known future) ----
     calendar_features = _build_calendar_features(target_index)
@@ -837,13 +827,20 @@ def build_tft_dataframe(
     master = master.loc[target_index]
 
     if drop_missing_target:
-        valid_mask = (
-            master[cfg.forecast.model_daily_target_col].notna()
-            & master[cfg.forecast.primary_target_col].notna()
-        )
+        # Filter only on causal realized 1d target so the final 5 valid OOS
+        # weekly decoder windows [T-4 .. T] are preserved for TimeSeriesDataSet.
+        valid_mask = master[cfg.forecast.model_daily_target_col].notna()
         master = master[valid_mask].copy()
     else:
         master = master.copy()
+
+    # Trim leading indicator warmup rows instead of zero-filling incomplete
+    # 20d/60d rolling windows (theta_5d_prior, macro_fair_value_zscore, ret20)
+    # into StandardScaler when enough history is available.
+    if len(master) >= 150:
+        master = master.iloc[59:].copy()
+    elif len(master) >= 80:
+        master = master.iloc[20:].copy()
 
     master = master.fillna(0.0)
 
@@ -878,9 +875,18 @@ def build_tft_dataframe(
         "material_move_5d",
     }
     unsigned_vol_cols = {c for c in master.columns if _is_unsigned_vol_feature(c)}
+    sanitized_proxy_cols = {
+        c.replace(".", "_").replace("-", "_") for c in suppressed_proxy_cols
+    }
+    duplicate_ratio_cols = {
+        c for c in master.columns
+        if c.endswith("_price_sma_ratio")
+        and f"{c[:-len('_price_sma_ratio')]}_close_sma_20_ratio" in master.columns
+    }
+    forbidden_cols = excluded_calendar_cols | unsigned_vol_cols | sanitized_proxy_cols | duplicate_ratio_cols
     all_feature_cols = [
         c for c in master.columns
-        if c not in non_feature_cols and c not in unsigned_vol_cols
+        if c not in non_feature_cols and c not in forbidden_cols
     ]
     time_varying_known = [c for c in TFT_KNOWN_CALENDAR_FEATURES if c in master.columns]
     time_varying_unknown = [c for c in all_feature_cols if c not in calendar_col_set]
@@ -893,6 +899,7 @@ def build_tft_dataframe(
         *(
             f"{target_prefix}_{suffix}"
             for suffix in (
+                "ret1",
                 "ret5",
                 "close_sma_20_ratio",
                 "signed_vol_ratio",
@@ -908,6 +915,21 @@ def build_tft_dataframe(
     if missing_regime:
         raise ValueError(f"Missing regime features: {missing_regime}")
 
+    group_prefixes = list(
+        dict.fromkeys(
+            [target_prefix]
+            + [sym.replace(".", "_").replace("-", "_") for sym in training_symbols]
+        )
+    )
+    master.attrs["feature_selection_contract"] = {
+        "known_features": list(time_varying_known),
+        "forced_unknown_features": list(forced_unknown),
+        "forbidden_features": sorted(forbidden_cols),
+        "preserve_features": sorted(non_feature_cols),
+        "group_prefixes": group_prefixes,
+        "theta_prior_col": theta_prior_col,
+    }
+
     logger.info(
         "Feature store raw: %d rows, %d unknown features, %d known features, %d embedding dims",
         len(master),
@@ -922,24 +944,36 @@ def build_tft_dataframe(
     theta_prior_backup = (
         master[theta_prior_col].copy() if theta_prior_col in master.columns else None
     )
-    if cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > 0:
+    if apply_mrmr and cfg.feature_store.mrmr_top_k > 0 and len(time_varying_unknown) > 0:
+        from deep_learning.data.dataset import compute_dataset_split_bounds
         from deep_learning.data.feature_selection import select_features
 
-        test_size = int(len(master) * cfg.training.test_ratio)
-        val_size = int(len(master) * cfg.training.val_ratio)
-        train_size = len(master) - val_size - test_size
-        if train_size <= 0:
+        try:
+            bounds = compute_dataset_split_bounds(master, cfg)
+            train_end_pos = int(bounds["train_end_pos"])
+        except ValueError:
+            test_size = int(len(master) * cfg.training.test_ratio)
+            val_size = int(len(master) * cfg.training.val_ratio)
+            train_end_pos = len(master) - val_size - test_size
+        if train_end_pos <= 0:
             raise ValueError("Feature selection requires a non-empty chronological training partition")
 
-        group_prefixes = [sym.replace(".", "_").replace("-", "_") for sym in training_symbols]
+        horizon = int(cfg.forecast.primary_horizon_days)
+        selection_end = (
+            max(1, train_end_pos - horizon)
+            if train_end_pos > horizon + 30
+            else train_end_pos
+        )
+
         master, time_varying_unknown, time_varying_known = select_features(
             master,
             target_col=cfg.forecast.primary_target_col,
             mrmr_top_k=cfg.feature_store.mrmr_top_k,
             known_features=time_varying_known,
             forced_unknown_features=forced_unknown,
-            forbidden_features=list(non_feature_cols | excluded_calendar_cols | unsigned_vol_cols),
-            selection_df=master.iloc[:train_size],
+            forbidden_features=sorted(forbidden_cols),
+            preserve_features=sorted(non_feature_cols),
+            selection_df=master.iloc[:selection_end],
             max_per_group=2,
             group_prefixes=group_prefixes,
         )
@@ -958,7 +992,7 @@ def build_tft_dataframe(
     last_close = float(valid_close.iloc[-1]) if len(valid_close) > 0 else float('nan')
 
     configured_sha = os.environ.get("TFT_EXPECTED_DATA_SNAPSHOT_SHA", "").strip().lower()
-    if configured_sha:
+    if configured_sha and apply_mrmr:
         actual_sha = data_snapshot_sha256(master)
         if actual_sha != configured_sha:
             raise RuntimeError(
@@ -966,7 +1000,7 @@ def build_tft_dataframe(
                 f"expected={configured_sha} actual={actual_sha}"
             )
 
-    if snapshot_path is not None:
+    if snapshot_path is not None and use_snapshot and apply_mrmr:
         _write_feature_snapshot(
             snapshot_path,
             master,

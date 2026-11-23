@@ -20,6 +20,7 @@ References:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional, Sequence
 
 import numpy as np
@@ -169,11 +170,31 @@ def _filter_healthy_training_features(
     return kept, dropped
 
 
+def _build_prefix_aliases(known_prefixes: Sequence[str]) -> tuple[tuple[str, str], ...]:
+    """Build longest-first (prefix_variant, canonical_group) pairs for symbol grouping."""
+    aliases: dict[str, str] = {}
+    for raw_prefix in known_prefixes:
+        canonical = str(raw_prefix or "").strip()
+        if not canonical:
+            continue
+        variants = {
+            canonical,
+            canonical.replace(".", "_").replace("-", "_"),
+            re.sub(r"[^A-Za-z0-9]+", "_", canonical).strip("_"),
+        }
+        for variant in variants:
+            if variant and variant not in aliases:
+                aliases[variant] = canonical
+    return tuple(sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True))
+
+
 def _infer_feature_group(col: str, known_prefixes: Sequence[str] = ()) -> str:
     """Infer feature group/family so one correlated symbol cannot crowd out all slots."""
-    for prefix in sorted(set(known_prefixes), key=len, reverse=True):
-        if prefix and col.startswith(f"{prefix}_"):
-            return prefix
+    for variant, canonical in _build_prefix_aliases(known_prefixes):
+        if col.startswith(f"{variant}_"):
+            return canonical
+    if col == "macro_fair_value_zscore":
+        return "macro_fair_value"
     if col.startswith("emb_pca_"):
         return "emb_pca"
     if (
@@ -191,8 +212,12 @@ def _infer_feature_group(col: str, known_prefixes: Sequence[str] = ()) -> str:
         return "sentiment"
     if col.startswith("regime_"):
         return "regime"
-    if col.startswith("lme_") or col.startswith("proxy_") or col.startswith("futures_"):
+    if col.startswith("lme_"):
         return "physical"
+    if col.startswith("futures_") or col in {"backwardation_flag", "contango_flag"}:
+        return "futures_curve"
+    if col.startswith("proxy_"):
+        return "proxy_physical"
     return col
 
 
@@ -392,6 +417,29 @@ def vsn_prune(
 # Combined pipeline
 # ---------------------------------------------------------------------------
 
+def _is_stationary_forced_feature(series: pd.Series, *, max_half_shift_z: float = 6.0) -> bool:
+    """Reject forced seed priors that exhibit extreme regime mean shift in training."""
+    valid = pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=np.float64)
+    if len(valid) < 200 or not np.isfinite(valid).all():
+        return True
+    std = float(np.std(valid))
+    if std < 1e-8:
+        return False
+    mid = len(valid) // 2
+    h1, h2 = valid[:mid], valid[mid:]
+    within_std = float(np.sqrt(0.5 * (np.var(h1) + np.var(h2))))
+    denom = max(within_std, 1e-8)
+    shift_z = abs(float(np.mean(h2)) - float(np.mean(h1))) / denom
+    if shift_z > float(max_half_shift_z):
+        return False
+    if shift_z > 3.0:
+        time_idx = pd.Series(np.arange(len(valid), dtype=np.float64))
+        time_corr = pd.Series(valid).corr(time_idx, method="spearman")
+        if np.isfinite(time_corr) and abs(float(time_corr)) > 0.92:
+            return False
+    return True
+
+
 def select_features(
     df: pd.DataFrame,
     target_col: str = "target",
@@ -399,6 +447,7 @@ def select_features(
     known_features: Optional[list[str]] = None,
     forced_unknown_features: Optional[list[str]] = None,
     forbidden_features: Optional[list[str]] = None,
+    preserve_features: Optional[list[str]] = None,
     selection_df: Optional[pd.DataFrame] = None,
     max_per_group: Optional[int] = None,
     group_prefixes: Optional[Sequence[str]] = None,
@@ -407,12 +456,16 @@ def select_features(
     Run MRMR selection on unknown features while preserving known features.
 
     Args:
-        df:              Master DataFrame from feature_store.
-        target_col:      Target column name.
-        mrmr_top_k:      How many unknown features to keep.
-        known_features:  List of time_varying_known_reals (calendar etc.) — always kept.
-        selection_df: Training-only frame used to fit MRMR. ``df`` remains the
-            full chronological frame returned to downstream split builders.
+        df:                 Master DataFrame from feature_store.
+        target_col:         Target column name.
+        mrmr_top_k:         How many unknown features to keep.
+        known_features:     List of time_varying_known_reals (calendar etc.) — always kept.
+        forbidden_features: Columns excluded from model inputs AND omitted from output DataFrame
+                            unless explicitly listed in ``preserve_features``.
+        preserve_features:  Required target/helper columns (e.g. ``target``, ``realized_vol_20d``)
+                            to keep in the returned DataFrame while excluding from candidate inputs.
+        selection_df:       Training-only frame used to fit MRMR. ``df`` remains the
+                            full chronological frame returned to downstream split builders.
 
     Returns:
         (filtered_df, new_unknown_features, known_features)
@@ -423,6 +476,8 @@ def select_features(
         forced_unknown_features = []
     if forbidden_features is None:
         forbidden_features = []
+    if preserve_features is None:
+        preserve_features = []
 
     if selection_df is None:
         selection_df = df
@@ -433,9 +488,9 @@ def select_features(
             f"{missing_selection_cols}"
         )
 
-    forbidden = set(forbidden_features)
     meta_cols = ["time_idx", "group_id", target_col]
-    preserve_cols = set(meta_cols) | set(known_features) | forbidden
+    preserve_cols = set(meta_cols) | set(known_features) | set(preserve_features)
+    forbidden = set(forbidden_features) - preserve_cols
 
     unknown_candidates = [
         c for c in df.columns
@@ -443,18 +498,30 @@ def select_features(
     ]
     raw_forced_unknown = [
         c for c in forced_unknown_features
-        if c in df.columns and c not in preserve_cols
+        if c in df.columns and c not in preserve_cols and c not in forbidden
     ]
 
     healthy_unknown, _ = _filter_healthy_training_features(selection_df, unknown_candidates)
     healthy_set = set(healthy_unknown)
-    forced_unknown = [c for c in raw_forced_unknown if c in healthy_set]
+    forced_unknown = [
+        c
+        for c in raw_forced_unknown
+        if c in healthy_set and _is_stationary_forced_feature(selection_df[c])
+    ]
     if len(raw_forced_unknown) != len(forced_unknown):
-        deferred = [c for c in raw_forced_unknown if c not in healthy_set]
-        logger.info("Deferred sparse/constant forced features: %s", deferred)
+        deferred = [c for c in raw_forced_unknown if c not in set(forced_unknown)]
+        logger.info("Deferred unhealthy/non-stationary forced features: %s", deferred)
 
     # Preserve healthy candidates while keeping non-empty fallback when synthetic frames fail filter
     effective_candidates = healthy_unknown if healthy_unknown else unknown_candidates
+
+    def _ordered_keep_cols(selected_cols: list[str]) -> list[str]:
+        selected_set = set(selected_cols)
+        return [
+            c
+            for c in df.columns
+            if c in preserve_cols or (c in selected_set and c not in forbidden)
+        ]
 
     if len(effective_candidates) <= mrmr_top_k:
         logger.info(
@@ -462,8 +529,8 @@ def select_features(
             len(effective_candidates), mrmr_top_k,
         )
         selected = sorted(set(effective_candidates) | set(forced_unknown))
-        keep_cols = [c for c in list(preserve_cols) + selected if c in df.columns]
-        return df[keep_cols].copy(), selected, known_features
+        keep_cols = _ordered_keep_cols(selected)
+        return df[keep_cols].copy(), selected, list(known_features)
 
     mrmr_kwargs: dict = {
         "target_col": target_col,
@@ -482,9 +549,7 @@ def select_features(
     selected_unknown = mrmr_select(selection_df, **mrmr_kwargs)
     selected_unknown = sorted(set(selected_unknown) | set(forced_unknown))
 
-    keep_cols = list(preserve_cols) + selected_unknown
-    keep_cols = [c for c in keep_cols if c in df.columns]
-
+    keep_cols = _ordered_keep_cols(selected_unknown)
     filtered = df[keep_cols].copy()
 
     logger.info(
@@ -494,4 +559,104 @@ def select_features(
         len(selected_unknown), len(known_features), len(meta_cols),
     )
 
-    return filtered, selected_unknown, known_features
+    return filtered, selected_unknown, list(known_features)
+
+
+def build_fold_scoped_features(
+    master_df: pd.DataFrame,
+    *,
+    train_end_pos: int,
+    target_col: str = "target_5d_log_return",
+    mrmr_top_k: int = 12,
+    horizon: int = 5,
+    known_features: Optional[Sequence[str]] = None,
+    forced_unknown_features: Optional[Sequence[str]] = None,
+    forbidden_features: Optional[Sequence[str]] = None,
+    preserve_features: Optional[Sequence[str]] = None,
+    max_per_group: Optional[int] = 2,
+    group_prefixes: Optional[Sequence[str]] = None,
+    theta_prior_col: Optional[str] = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Run leak-free MRMR selection strictly inside a single CV training fold.
+
+    Trims the final ``horizon`` rows from ``selection_df`` so multi-day
+    forward ``target_5d_log_return`` labels never cross into the purge gap or
+    validation split, while keeping all chronological rows in ``filtered_df`` for
+    subsequent ``TimeSeriesDataSet`` construction.
+    """
+    contract = dict(getattr(master_df, "attrs", {}).get("feature_selection_contract") or {})
+    resolved_known = list(
+        known_features if known_features is not None else contract.get("known_features", [])
+    )
+    resolved_forced = list(
+        forced_unknown_features
+        if forced_unknown_features is not None
+        else contract.get("forced_unknown_features", [])
+    )
+    resolved_forbidden = list(
+        forbidden_features
+        if forbidden_features is not None
+        else contract.get("forbidden_features", [])
+    )
+    resolved_preserve = list(
+        preserve_features
+        if preserve_features is not None
+        else contract.get("preserve_features", [])
+    )
+    resolved_prefixes = list(
+        group_prefixes if group_prefixes is not None else contract.get("group_prefixes", [])
+    )
+    resolved_theta_col = theta_prior_col or contract.get("theta_prior_col")
+    if not resolved_preserve:
+        for col in (
+            "time_idx",
+            "group_id",
+            "target",
+            "target_1d_log_return",
+            "target_5d_log_return",
+            "realized_vol_20d",
+            "material_move_5d",
+        ):
+            if col in master_df.columns:
+                resolved_preserve.append(col)
+
+    n_train = max(1, min(int(train_end_pos), len(master_df)))
+    eff_horizon = max(0, int(horizon))
+    selection_end = max(1, n_train - eff_horizon) if n_train > eff_horizon + 30 else n_train
+    selection_df = master_df.iloc[:selection_end]
+
+    theta_backup = (
+        master_df[resolved_theta_col].copy()
+        if resolved_theta_col and resolved_theta_col in master_df.columns
+        else None
+    )
+
+    if int(mrmr_top_k) <= 0:
+        preserve_set = set(resolved_preserve) | set(resolved_known) | {"time_idx", "group_id", target_col}
+        forbidden_set = set(resolved_forbidden) - preserve_set
+        candidates = [
+            c for c in master_df.columns if c not in preserve_set and c not in forbidden_set
+        ]
+        healthy, _ = _filter_healthy_training_features(selection_df, candidates)
+        unknown_out = healthy if healthy else candidates
+        keep_set = preserve_set | set(unknown_out)
+        filtered = master_df[[c for c in master_df.columns if c in keep_set]].copy()
+        if theta_backup is not None and resolved_theta_col not in filtered.columns:
+            filtered[resolved_theta_col] = theta_backup.reindex(filtered.index).fillna(0.0)
+        return filtered, unknown_out, resolved_known
+
+    filtered, unknown_out, known_out = select_features(
+        master_df,
+        target_col=target_col,
+        mrmr_top_k=int(mrmr_top_k),
+        known_features=resolved_known,
+        forced_unknown_features=resolved_forced,
+        forbidden_features=resolved_forbidden,
+        preserve_features=resolved_preserve,
+        selection_df=selection_df,
+        max_per_group=max_per_group,
+        group_prefixes=resolved_prefixes or None,
+    )
+    if theta_backup is not None and resolved_theta_col not in filtered.columns:
+        filtered[resolved_theta_col] = theta_backup.reindex(filtered.index).fillna(0.0)
+    return filtered, unknown_out, known_out

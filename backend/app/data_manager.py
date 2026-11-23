@@ -490,7 +490,8 @@ def fetch_symbol_with_retry(symbol: str, start_date, end_date, max_retries: int 
             df = ticker.history(
                 start=start_date.strftime("%Y-%m-%d"),
                 end=end_date.strftime("%Y-%m-%d"),
-                interval="1d"
+                interval="1d",
+                auto_adjust=False,
             )
             return df
         except Exception as e:
@@ -550,7 +551,7 @@ def _extract_ticker_slice_from_batch(batch_df: pd.DataFrame, symbol: str) -> Opt
         return None
 
 
-def ingest_prices(session: Session) -> dict:
+def ingest_prices(session: Session, *, lookback_days: Optional[int] = None) -> dict:
     """
     Ingest price data for all configured symbols.
     
@@ -573,16 +574,26 @@ def ingest_prices(session: Session) -> dict:
     logger.info(f"Ingesting prices for {len(symbols)} symbols (dashboard={len(dashboard_symbols)}, training={len(training_symbols)})")
     
     stats = {}
-    
-    # Full lookback range (used only for first-time fetches)
+
+    effective_lookback = int(lookback_days) if lookback_days is not None else int(settings.lookback_days)
+    if lookback_days is None and getattr(settings, "tft_enabled", False):
+        try:
+            from deep_learning.config import get_tft_config
+
+            effective_lookback = max(effective_lookback, int(get_tft_config().training.lookback_days))
+        except Exception:
+            pass
+
+    # Full lookback range (used for first-time fetches and historical backfills)
     end_date = datetime.now(timezone.utc)
-    full_start_date = end_date - timedelta(days=settings.lookback_days)
+    full_start_date = end_date - timedelta(days=effective_lookback)
     
     # Overlap buffer: re-fetch last 3 days to catch any corrections/adjustments
     OVERLAP_DAYS = 3
     
     from app.price_utils import (
         earliest_finite_price_dates,
+        exchange_local_date,
         finite_number,
         finite_positive_price,
         latest_finite_price_bar,
@@ -709,20 +720,17 @@ def ingest_prices(session: Session) -> dict:
                     volume = finite_number(row.get("Volume"))
                     # Normalize exchange-local calendar day to canonical UTC midnight
                     # so timezone-aware vs naive feeds never create same-day duplicates.
-                    if hasattr(date_idx, "to_pydatetime"):
-                        bar_date = date_idx.to_pydatetime()
-                    else:
-                        bar_date = pd.Timestamp(date_idx).to_pydatetime()
+                    local_day = exchange_local_date(date_idx, symbol)
+                    if local_day is None or local_day.weekday() >= 5:
+                        rejected += 1
+                        logger.debug("%s: skipping invalid/weekend ghost bar at %s", symbol, date_idx)
+                        continue
                     bar_date = datetime(
-                        bar_date.year,
-                        bar_date.month,
-                        bar_date.day,
+                        local_day.year,
+                        local_day.month,
+                        local_day.day,
                         tzinfo=timezone.utc,
                     )
-                    if bar_date.weekday() >= 5:
-                        rejected += 1
-                        logger.debug("%s: skipping weekend ghost bar at %s", symbol, bar_date.date())
-                        continue
 
                     deduped_rows[(symbol, bar_date)] = {
                         "symbol": symbol,

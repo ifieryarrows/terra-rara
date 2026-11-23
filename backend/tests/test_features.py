@@ -227,8 +227,9 @@ class TestRowsToPriceDfHygiene:
             ("2025-01-28T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
             ("2025-01-28T05:00:00Z", 4.18, 4.25, 4.15, 4.22, 54000.0, 4.22),
             ("2025-01-29T00:00:00Z", 100.0, 105.0, 95.0, 102.0, 1000.0, 102.0),
-            ("2025-01-30T04:00:00Z", 4.22, 4.28, 4.20, 4.26, 48000.0, 4.26),
-            ("2025-01-30T05:00:00Z", 4.26, 4.30, 4.24, 4.29, 51000.0, 4.29),
+            # In Jan (EST = UTC-5), 05:00 UTC and 14:00 UTC are both NY trading day 2025-01-30
+            ("2025-01-30T05:00:00Z", 4.22, 4.28, 4.20, 4.26, 48000.0, 4.26),
+            ("2025-01-30T14:00:00Z", 4.26, 4.30, 4.24, 4.29, 51000.0, 4.29),
         ]
 
         df = _rows_to_price_df(rows, "HG=F")
@@ -280,5 +281,98 @@ class TestRowsToPriceDfHygiene:
         df = _rows_to_price_df(rows, "ASIA")
 
         assert list(df.index) == list(pd.to_datetime(["2025-01-28", "2025-01-29"]))
+
+    def test_prefers_canonical_utc_midnight_over_stale_offset_and_drops_nan_close(self):
+        from app.features import _rows_to_price_df
+
+        # Even though 05:00Z has a later wall-clock timestamp on 2024-01-22,
+        # canonical 00:00Z (latest auto_adjust=False ingest) must win.
+        rows = [
+            ("2024-01-22T00:00:00Z", 46.0, 46.5, 45.5, 46.2, 50000.0, 42.10),
+            ("2024-01-22T05:00:00Z", 41.0, 41.5, 40.5, 41.2, 48000.0, 41.20),
+            ("2024-01-23T00:00:00Z", 46.2, 47.0, 46.0, float("nan"), 10000.0, float("nan")),
+            ("2024-01-24T00:00:00Z", 46.5, 47.2, 46.1, 46.9, 51000.0, 42.74),
+        ]
+        df = _rows_to_price_df(rows, "BHP")
+
+        assert list(df.index) == list(pd.to_datetime(["2024-01-22", "2024-01-24"]))
+        assert df.loc[pd.Timestamp("2024-01-22"), "close"] == pytest.approx(46.2)
+        assert df.loc[pd.Timestamp("2024-01-22"), "adj_close"] == pytest.approx(42.10)
+
+    def test_hk_1600_utc_maps_to_next_hkt_trading_day(self):
+        from app.features import _rows_to_price_df
+
+        # Sunday 2026-11-15T16:00:00Z == Monday 2026-11-16 00:00 HKT -> must NOT be dropped as weekend
+        rows = [
+            ("2026-11-15T16:00:00Z", 25.9, 26.2, 25.8, 25.98, 100000.0, 25.98),
+            ("2026-11-16T00:00:00Z", 25.9, 26.2, 25.8, 26.05, 110000.0, 26.05),
+        ]
+        df = _rows_to_price_df(rows, "2899.HK")
+        assert len(df) == 1
+        assert df.index[0] == pd.Timestamp("2026-11-16")
+        assert df.iloc[0]["close"] == pytest.approx(26.05)
+
+
+class TestAdjCloseAndStationaryHygiene:
+    def test_rsi_boundary_conditions(self):
+        # Monotonic uptrend -> 100.0, monotonic downtrend -> 0.0, flat -> 50.0
+        up = pd.Series([10.0, 11.0, 12.0, 13.0, 14.0])
+        down = pd.Series([14.0, 13.0, 12.0, 11.0, 10.0])
+        flat = pd.Series([10.0, 10.0, 10.0, 10.0, 10.0])
+
+        assert compute_rsi(up).iloc[-1] == pytest.approx(100.0)
+        assert compute_rsi(down).iloc[-1] == pytest.approx(0.0)
+        assert compute_rsi(flat).iloc[-1] == pytest.approx(50.0)
+
+    def test_generate_symbol_features_uses_adj_close_and_eliminates_duplicate_ratio(self):
+        dates = pd.bdate_range("2025-01-01", periods=30)
+        # Simulate a 2-for-1 split / large ex-dividend drop in raw close while adj_close is smooth
+        raw_close = np.array([100.0] * 20 + [50.0] * 10, dtype=float)
+        adj_close = np.linspace(50.0, 52.9, 30, dtype=float)
+        df = pd.DataFrame(
+            {"close": raw_close, "adj_close": adj_close, "volume": 1000.0},
+            index=dates,
+        )
+
+        feats = generate_symbol_features(df, "BHP", include_raw_ma=False)
+        assert "BHP_price_sma_ratio" not in feats.columns
+        assert "BHP_close_sma_20_ratio" in feats.columns
+        # No -50% fake crash in ret1 or ret5
+        assert feats["BHP_ret1"].dropna().abs().max() < 0.05
+        assert feats["BHP_ret5"].dropna().abs().max() < 0.05
+
+        # Legacy include_raw_ma=True still emits price_sma_ratio
+        feats_raw = generate_symbol_features(df, "BHP", include_raw_ma=True)
+        assert "BHP_price_sma_ratio" in feats_raw.columns
+
+    def test_generate_aligned_symbol_features_avoids_holiday_vol_distortion(self):
+        from app.features import generate_aligned_symbol_features
+
+        target_dates = pd.bdate_range("2025-01-01", periods=30)
+        # Drop every 3rd day as foreign holiday in correlated symbol
+        native_dates = target_dates[[i for i in range(len(target_dates)) if i % 3 != 1]]
+        rng = np.random.default_rng(12)
+        native_close = 20.0 * np.exp(np.cumsum(rng.normal(0.0, 0.02, len(native_dates))))
+        native_df = pd.DataFrame({"close": native_close, "adj_close": native_close}, index=native_dates)
+
+        native_direct = generate_symbol_features(native_df, "HBM.TO", include_raw_ma=False)
+        aligned = generate_aligned_symbol_features(
+            native_df,
+            "HBM.TO",
+            target_dates,
+            max_ffill=3,
+            include_raw_ma=False,
+        )
+
+        # Native vol_20 on active bars must match exactly (zero fake 0% holiday damping)
+        common_idx = native_dates[-5:]
+        pd.testing.assert_series_equal(
+            aligned.loc[common_idx, "HBM.TO_vol_10"],
+            native_direct.loc[common_idx, "HBM.TO_vol_10"],
+        )
+        # Holiday bar gets ret1 == 0.0 rather than repeating previous trading day's return
+        holiday_dt = target_dates[10]
+        assert holiday_dt not in native_dates
+        assert aligned.loc[holiday_dt, "HBM.TO_ret1"] == pytest.approx(0.0)
 
 

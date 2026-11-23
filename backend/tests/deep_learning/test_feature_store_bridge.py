@@ -125,10 +125,140 @@ def test_build_tft_dataframe_drops_missing_target_by_default(monkeypatch):
 
     master, *_ = build_tft_dataframe(object(), _minimal_tft_cfg())
 
-    assert master.index.max() == dates[-6]
-    assert dates[-5] not in master.index
+    # Only row 0 (where causal target = log_close.diff() is NaN) is dropped;
+    # the last 5 bars stay present so TimeSeriesDataSet can form the last OOS 5D window.
+    assert dates[0] not in master.index
+    assert master.index.max() == dates[-1]
+    assert dates[-5] in master.index
     assert master["target"].isna().sum() == 0
     assert master["target_5d_log_return"].isna().sum() == 0
+    assert master.loc[dates[-6], "target_5d_log_return"] == pytest.approx(float(np.log(6.20 / 6.01)))
+
+
+def test_build_tft_dataframe_trims_warmup_excludes_proxies_and_includes_ret1(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from app.features import generate_symbol_features
+    from deep_learning.config import get_tft_config
+
+    monkeypatch.setenv("TFT_FEATURE_SNAPSHOT_PATH", str(tmp_path / "should_not_exist.pkl"))
+    dates = pd.bdate_range("2025-01-01", periods=170)
+    rng = np.random.default_rng(123)
+
+    def _px(base: float, scale: float) -> pd.DataFrame:
+        close = pd.Series(base * np.exp(np.cumsum(rng.normal(0.0, scale, len(dates)))), index=dates)
+        return pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(dates), 10000.0),
+            },
+            index=dates,
+        )
+
+    hg_px = _px(4.5, 0.012)
+    dxy_px = _px(100.0, 0.007)
+    bhp_px = _px(55.0, 0.015)
+    hg_feats = generate_symbol_features(hg_px, "HG=F", include_raw_ma=False)
+
+    monkeypatch.setattr(feature_store, "load_training_symbols", lambda: ["DX-Y.NYB", "BHP"])
+    monkeypatch.setattr(feature_store, "_build_price_features", lambda *_a, **_kw: (hg_px, hg_feats))
+    monkeypatch.setattr(
+        "app.features.load_multi_price_data",
+        lambda *_a, **_kw: {"DX-Y.NYB": dxy_px, "BHP": bhp_px},
+    )
+    monkeypatch.setattr("deep_learning.data.lme_warehouse.fetch_lme_data", lambda *_a, **_kw: pd.DataFrame())
+
+    cfg = replace(
+        get_tft_config(),
+        training=replace(get_tft_config().training, lookback_days=260),
+    )
+
+    # 1. Pre-selection frame for CV does NOT overwrite TFT_FEATURE_SNAPSHOT_PATH
+    raw_master, raw_unk, _raw_kn, _, _ = build_tft_dataframe(
+        object(), cfg, apply_mrmr=False, use_snapshot=False
+    )
+    assert not (tmp_path / "should_not_exist.pkl").exists()
+    assert len(raw_master) == len(dates) - 60  # 1 row dropped for target.notna() + 59 warmup rows
+    assert raw_master.index.max() == dates[-1]  # last 5 OOS days preserved
+    assert "HG=F_ret1" in raw_unk
+    for bad in (
+        "backwardation_flag",
+        "contango_flag",
+        "futures_curve_slope",
+        "proxy_vol_spike",
+        "regime_inventory_tightness",
+        "HG=F_price_sma_ratio",
+        "HG=F_vol_10",
+    ):
+        assert bad not in raw_unk
+
+    # 2. Full MRMR selection drops forbidden/proxy/unsigned_vol cols from master too
+    monkeypatch.delenv("TFT_FEATURE_SNAPSHOT_PATH", raising=False)
+    master, tv_unknown, tv_known, _, _ = build_tft_dataframe(object(), cfg)
+    assert tv_known == ["day_of_week"]
+    assert "HG=F_ret1" in tv_unknown
+    assert "HG=F_ret5" in tv_unknown
+    assert "HG=F_close_sma_20_ratio" in tv_unknown
+    assert "HG=F_signed_vol_ratio" in tv_unknown
+    assert "HG=F_theta_5d_prior" in tv_unknown
+    assert "macro_fair_value_zscore" in tv_unknown
+    assert "backwardation_flag" not in master.columns
+    assert "futures_curve_slope" not in master.columns
+    assert "proxy_vol_spike" not in master.columns
+    assert "cal_sin_day" not in master.columns
+    assert "HG=F_vol_10" not in master.columns
+    assert "HG=F_price_sma_ratio" not in master.columns
+
+
+def test_build_tft_dataframe_loads_real_lme_from_db_and_excludes_raw_tonnage(monkeypatch):
+    from dataclasses import replace
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    from app.features import generate_symbol_features
+    from app.models import LMEWarehouseData, PriceBar
+    from deep_learning.config import get_tft_config
+
+    monkeypatch.delenv("TFT_FEATURE_SNAPSHOT_PATH", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    dates = pd.bdate_range("2025-01-01", periods=170)
+    rng = np.random.default_rng(7)
+    hg_closes = 4.5 * np.exp(np.cumsum(rng.normal(0.0, 0.012, len(dates))))
+    lme_stock = 180000.0 + np.cumsum(rng.normal(-200.0, 1500.0, len(dates)))
+
+    with Session() as session:
+        for dt, px, stk in zip(dates, hg_closes, lme_stock):
+            dt_utc = dt.to_pydatetime().replace(tzinfo=pd.Timestamp.utcnow().tz)
+            session.add(PriceBar(symbol="HG=F", date=dt_utc, close=float(px), adj_close=float(px), volume=10000.0))
+            session.add(
+                LMEWarehouseData(
+                    date=dt_utc,
+                    total_stock_tonnes=float(stk),
+                    cancelled_warrants_tonnes=float(stk * 0.12),
+                    on_warrant_tonnes=float(stk * 0.88),
+                    cancelled_ratio=0.12 + float(rng.normal(0.0, 0.01)),
+                )
+            )
+        session.commit()
+
+        monkeypatch.setattr(feature_store, "load_training_symbols", lambda: [])
+        cfg = replace(
+            get_tft_config(),
+            training=replace(get_tft_config().training, lookback_days=600),
+            feature_store=replace(get_tft_config().feature_store, mrmr_top_k=0),
+        )
+        master, tv_unknown, _, _, _ = build_tft_dataframe(session, cfg)
+        assert "lme_stock_zscore" in tv_unknown
+        assert "lme_cancelled_ratio" in tv_unknown
+        assert "lme_stock_total" not in tv_unknown
+        assert "lme_stock_change_5d" not in tv_unknown
+        assert "lme_depletion_rate" not in tv_unknown
+    engine.dispose()
 
 
 def test_build_tft_dataframe_keeps_latest_bar_for_inference(monkeypatch):

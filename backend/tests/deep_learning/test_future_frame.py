@@ -35,3 +35,30 @@ def test_future_decoder_rows_do_not_forward_fill_news_or_returns():
     assert future["HG_F_ret1"].eq(0.0).all()
     assert future["regime_usd_pressure"].eq(1.0).all()
     assert not future["day_of_week"].eq(0.0).all()
+
+
+def test_future_business_dates_skips_us_comex_holidays():
+    from deep_learning.data.future_frame import _future_business_dates
+
+    # Thanksgiving 2026-11-26 (Thu) must be skipped after 2026-11-24
+    thanksgiving_seq = _future_business_dates("2026-11-24", 4)
+    assert [d.date().isoformat() for d in thanksgiving_seq] == [
+        "2026-11-25",
+        "2026-11-27",
+        "2026-11-30",
+        "2026-12-01",
+    ]
+
+    # Good Friday 2026-04-03 (Fri) must be skipped after 2026-04-02
+    good_friday_seq = _future_business_dates("2026-04-02", 2)
+    assert [d.date().isoformat() for d in good_friday_seq] == [
+        "2026-04-06",
+        "2026-04-07",
+    ]
+
+    # Observed Independence Day 2026-07-03 (Fri) must be skipped after 2026-07-02
+    july4_seq = _future_business_dates("2026-07-02", 2)
+    assert [d.date().isoformat() for d in july4_seq] == [
+        "2026-07-06",
+        "2026-07-07",
+    ]

@@ -28,6 +28,85 @@ from deep_learning.config import LMEConfig, get_tft_config
 
 logger = logging.getLogger(__name__)
 
+NON_STATIONARY_LME_FEATURES: frozenset[str] = frozenset(
+    {
+        "lme_stock_total",
+        "lme_stock_change_1d",
+        "lme_stock_change_5d",
+        "lme_stock_change_10d",
+        "lme_stock_change_20d",
+        "lme_depletion_rate",
+    }
+)
+PROXY_LME_FEATURES: tuple[str, ...] = (
+    "proxy_vol_zscore",
+    "proxy_vol_spike",
+    "proxy_vol_price_interaction",
+    "proxy_momentum_spread",
+)
+
+
+def load_lme_from_db(
+    session,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    """Load persisted LME warehouse records from ``lme_warehouse_data`` if present."""
+    if session is None or not hasattr(session, "query"):
+        return pd.DataFrame()
+    try:
+        from app.models import LMEWarehouseData
+
+        query = session.query(
+            LMEWarehouseData.date,
+            LMEWarehouseData.total_stock_tonnes,
+            LMEWarehouseData.cancelled_warrants_tonnes,
+            LMEWarehouseData.on_warrant_tonnes,
+            LMEWarehouseData.cancelled_ratio,
+        )
+        if start_date is not None:
+            start_ts = pd.Timestamp(start_date)
+            if start_ts.tzinfo is None:
+                start_ts = start_ts.tz_localize("UTC")
+            query = query.filter(LMEWarehouseData.date >= start_ts.to_pydatetime())
+        if end_date is not None:
+            end_ts = pd.Timestamp(end_date)
+            if end_ts.tzinfo is None:
+                end_ts = end_ts.tz_localize("UTC")
+            query = query.filter(LMEWarehouseData.date <= end_ts.to_pydatetime())
+
+        rows = query.order_by(LMEWarehouseData.date.asc()).all()
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(
+            rows,
+            columns=[
+                "date",
+                "total_stock_tonnes",
+                "cancelled_warrants_tonnes",
+                "on_warrant_tonnes",
+                "cancelled_ratio",
+            ],
+        )
+        df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.normalize()
+        df = df.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="last")
+        df = df.set_index("date").sort_index()
+        numeric_cols = [
+            "total_stock_tonnes",
+            "cancelled_warrants_tonnes",
+            "on_warrant_tonnes",
+            "cancelled_ratio",
+        ]
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        if "cancelled_ratio" in df.columns and df["cancelled_ratio"].isna().all():
+            stock = df["total_stock_tonnes"].replace(0, np.nan)
+            df["cancelled_ratio"] = df["cancelled_warrants_tonnes"] / stock
+        return df
+    except Exception as exc:
+        logger.debug("LME DB lookup skipped: %s", exc)
+        return pd.DataFrame()
+
 
 # ---------------------------------------------------------------------------
 # Data fetching
@@ -108,12 +187,21 @@ def fetch_lme_data(
     cfg: Optional[LMEConfig] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    session=None,
 ) -> pd.DataFrame:
     """
     Unified LME data loader with automatic source selection.
+
+    Checks ``lme_warehouse_data`` in DB first, then Nasdaq Data Link if
+    configured. Returns an empty DataFrame when no genuine physical feed exists.
     """
     if cfg is None:
         cfg = get_tft_config().lme
+
+    db_df = load_lme_from_db(session, start_date=start_date, end_date=end_date)
+    if not db_df.empty:
+        logger.info("Loaded %d LME records from lme_warehouse_data DB table", len(db_df))
+        return db_df
 
     api_key = os.environ.get(cfg.nasdaq_api_key_env, "")
 
@@ -123,7 +211,7 @@ def fetch_lme_data(
             logger.info("Loaded %d LME records from Nasdaq Data Link", len(df))
             return df
 
-    logger.info("LME API unavailable - generating proxy features from price data")
+    logger.info("LME physical data unavailable (0 DB rows, no API feed)")
     return pd.DataFrame()
 
 

@@ -290,3 +290,82 @@ class TestBatchExtraction:
 
         assert _extract_ticker_slice_from_batch(df, "MISSING") is None
         assert _extract_ticker_slice_from_batch(None, "HG=F") is None
+
+
+class TestPriceIngestionExchangeAndBackfill:
+    def test_fetch_symbol_with_retry_uses_auto_adjust_false(self, monkeypatch):
+        import pandas as pd
+        from app import data_manager
+
+        observed = {}
+
+        class FakeTicker:
+            def __init__(self, symbol):
+                observed["symbol"] = symbol
+
+            def history(self, **kwargs):
+                observed["kwargs"] = kwargs
+                return pd.DataFrame({"Close": [4.5]}, index=pd.to_datetime(["2026-01-02"]))
+
+        monkeypatch.setattr(data_manager.yf, "Ticker", FakeTicker)
+        monkeypatch.setattr(data_manager, "_ensure_yf_tz_cache", lambda: None)
+
+        df = data_manager.fetch_symbol_with_retry(
+            "BHP",
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 5, tzinfo=timezone.utc),
+        )
+        assert not df.empty
+        assert observed["kwargs"]["auto_adjust"] is False
+
+    def test_ingest_prices_maps_hk_1600_utc_to_monday_and_backfills_five_years(self, monkeypatch):
+        import pandas as pd
+        from types import SimpleNamespace
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app import data_manager
+        from app.models import Base, PriceBar
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        observed_starts = {}
+
+        def fake_fetch(symbol, s_date, _e_date):
+            observed_starts[symbol] = s_date
+            if symbol == "2899.HK":
+                # 2026-11-15T16:00:00Z == Monday 2026-11-16 00:00 HKT (must stay!)
+                idx = pd.to_datetime(["2026-11-15T16:00:00Z", "2026-11-16T16:00:00Z"])
+                return pd.DataFrame(
+                    {"Open": [25.0, 26.0], "High": [26.0, 27.0], "Low": [24.5, 25.5], "Close": [25.8, 26.5], "Adj Close": [25.8, 26.5], "Volume": [100.0, 120.0]},
+                    index=idx,
+                )
+            # 2026-11-15T23:00:00Z == Sunday 18:00 EST (must be rejected!)
+            idx = pd.to_datetime(["2026-11-15T23:00:00Z", "2026-11-16T05:00:00Z"])
+            return pd.DataFrame(
+                {"Open": [5.5, 5.6], "High": [5.6, 5.7], "Low": [5.4, 5.5], "Close": [5.55, 5.65], "Adj Close": [5.55, 5.65], "Volume": [100.0, 120.0]},
+                index=idx,
+            )
+
+        fake_settings = SimpleNamespace(
+            symbols_list=["HG=F", "2899.HK"],
+            training_symbols=["HG=F", "2899.HK"],
+            lookback_days=365,
+            tft_enabled=True,
+        )
+        monkeypatch.setattr(data_manager, "get_settings", lambda: fake_settings)
+        monkeypatch.setattr(data_manager, "get_db_type", lambda: "sqlite")
+        monkeypatch.setattr(data_manager, "_ensure_yf_tz_cache", lambda: None)
+        monkeypatch.setattr(data_manager, "fetch_symbol_with_retry", fake_fetch)
+
+        try:
+            with Session() as session:
+                stats = data_manager.ingest_prices(session)
+                assert stats["2899.HK"]["imported"] == 2
+                assert stats["2899.HK"]["rejected"] == 0
+                assert stats["HG=F"]["rejected"] == 1
+                hk_bars = session.query(PriceBar).filter(PriceBar.symbol == "2899.HK").order_by(PriceBar.date).all()
+                assert [b.date.date().isoformat() for b in hk_bars] == ["2026-11-16", "2026-11-17"]
+                assert (datetime.now(timezone.utc) - observed_starts["2899.HK"]).days >= 1820
+        finally:
+            engine.dispose()

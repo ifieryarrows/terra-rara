@@ -82,12 +82,6 @@ def build_regime_event_features(master_like: pd.DataFrame) -> pd.DataFrame:
         ("GXC_ret1", "FXI_ret1", "MCHI_ret1", "ASHR_ret1"),
         idx,
     )
-    crude_ret = _first_present_series(
-        master_like,
-        ("CL=F_ret1", "CL_F_ret1"),
-        idx,
-    )
-    _ = crude_ret
 
     lme_draw = pd.Series(master_like.get("lme_stock_change_5d", _zero(idx)), index=idx).fillna(0.0).astype(float)
     cancelled_ratio = pd.Series(master_like.get("lme_cancelled_ratio", _zero(idx)), index=idx).fillna(0.0).astype(float)

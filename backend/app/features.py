@@ -30,6 +30,11 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models import PriceBar, DailySentiment, DailySentimentV2
+from app.price_utils import (
+    exchange_local_date,
+    is_canonical_utc_midnight,
+    sanitize_close_spikes,
+)
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -39,39 +44,21 @@ logger = logging.getLogger(__name__)
 # Data Loading
 # =============================================================================
 
-def _normalize_bar_calendar_dates(raw_dates: pd.Series, utc_ts: pd.Series) -> pd.Series:
-    """Normalize bar dates to tz-naive midnight preserving explicit non-UTC exchange offsets."""
-    utc_norm = utc_ts.dt.tz_localize(None).dt.normalize()
+def _normalize_bar_calendar_dates(
+    raw_dates: pd.Series,
+    utc_ts: pd.Series,
+    symbol: Optional[str] = None,
+) -> pd.Series:
+    """Normalize bar dates to tz-naive midnight on the symbol's exchange calendar."""
     if raw_dates.empty:
-        return utc_norm
-
-    needs_offset_scan = False
-    for raw_val in raw_dates:
-        if isinstance(raw_val, datetime):
-            offset = raw_val.utcoffset()
-            if offset is not None and offset != timedelta(0):
-                needs_offset_scan = True
-                break
-        elif isinstance(raw_val, str):
-            stripped = raw_val.strip()
-            if not stripped.endswith(("Z", "z", "+00:00", "-00:00")):
-                needs_offset_scan = True
-                break
-
-    if not needs_offset_scan:
-        return utc_norm
+        return utc_ts.dt.tz_localize(None).dt.normalize()
 
     normalized = []
     for raw_val, utc_val in zip(raw_dates, utc_ts):
-        if isinstance(raw_val, datetime):
-            normalized.append(raw_val.date())
-        elif isinstance(raw_val, str) and not raw_val.strip().endswith(
-            ("Z", "z", "+00:00", "-00:00")
-        ):
-            parsed = pd.to_datetime(raw_val, errors="coerce")
-            normalized.append(parsed.date() if pd.notna(parsed) else utc_val.date())
-        else:
-            normalized.append(utc_val.date())
+        local_day = exchange_local_date(raw_val, symbol)
+        if local_day is None:
+            local_day = utc_val.date()
+        normalized.append(local_day)
     return pd.to_datetime(normalized)
 
 
@@ -107,7 +94,9 @@ def _rows_to_price_df(rows: list, symbol: str) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
 
-    cal_dates = _normalize_bar_calendar_dates(df["date"], raw_ts)
+    cal_dates = _normalize_bar_calendar_dates(df["date"], raw_ts, symbol=symbol)
+    df["_has_valid_adj"] = (df["adj_close"].notna() & (df["adj_close"] > 0.0)).astype(int)
+    df["_is_utc_midnight"] = [1 if is_canonical_utc_midnight(val) else 0 for val in df["date"]]
     df["_raw_ts"] = raw_ts.to_numpy()
     df["date"] = cal_dates.to_numpy()
 
@@ -154,7 +143,11 @@ def _rows_to_price_df(rows: list, symbol: str) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
 
-    df = df.sort_values("_raw_ts").drop(columns=["_raw_ts"])
+    # Prefer valid adj_close, then canonical 00:00 UTC bars, then latest timestamp.
+    df = (
+        df.sort_values(["_has_valid_adj", "_is_utc_midnight", "_raw_ts"])
+        .drop(columns=["_has_valid_adj", "_is_utc_midnight", "_raw_ts"])
+    )
     df = df.set_index("date")
     if df.index.duplicated().any():
         dup_count = int(df.index.duplicated(keep="last").sum())
@@ -162,6 +155,7 @@ def _rows_to_price_df(rows: list, symbol: str) -> pd.DataFrame:
             "Deduplicated %s same-calendar-day price bars for %s", dup_count, symbol
         )
         df = df[~df.index.duplicated(keep="last")]
+    df = df.sort_index()
     weekend_mask = df.index.dayofweek >= 5
     if weekend_mask.any():
         logger.warning(
@@ -353,22 +347,42 @@ def compute_rsi(prices: pd.Series, window: int = 14) -> pd.Series:
     RS = avg_gain / avg_loss
     """
     delta = prices.diff()
-    
+
     gain = delta.where(delta > 0, 0.0)
     loss = (-delta).where(delta < 0, 0.0)
-    
+
     avg_gain = gain.rolling(window=window, min_periods=1).mean()
     avg_loss = loss.rolling(window=window, min_periods=1).mean()
-    
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    
-    return rsi.fillna(50)  # Neutral RSI when undefined
+
+    rsi = pd.Series(50.0, index=prices.index, dtype=float)
+    both_zero = (avg_gain <= 0.0) & (avg_loss <= 0.0)
+    pure_up = (avg_loss <= 0.0) & (avg_gain > 0.0)
+    pure_down = (avg_gain <= 0.0) & (avg_loss > 0.0)
+    mixed = (~both_zero) & (~pure_up) & (~pure_down) & avg_gain.notna() & avg_loss.notna()
+
+    rs = avg_gain.loc[mixed] / avg_loss.loc[mixed]
+    rsi.loc[mixed] = 100.0 - (100.0 / (1.0 + rs))
+    rsi.loc[pure_up] = 100.0
+    rsi.loc[pure_down] = 0.0
+    rsi.loc[both_zero] = 50.0
+
+    return rsi
 
 
 def compute_volatility(returns: pd.Series, window: int = 10) -> pd.Series:
     """Rolling standard deviation of returns (volatility)."""
     return returns.rolling(window=window, min_periods=1).std()
+
+
+def _select_working_close(df: pd.DataFrame) -> pd.Series:
+    """Prefer valid positive ``adj_close`` (eliminating split/dividend seams), falling back to ``close``."""
+    raw_close = pd.to_numeric(df["close"], errors="coerce")
+    raw_close = raw_close.where(np.isfinite(raw_close) & (raw_close > 0.0), np.nan)
+    if "adj_close" not in df.columns:
+        return raw_close.astype(float)
+    adj_close = pd.to_numeric(df["adj_close"], errors="coerce")
+    adj_close = adj_close.where(np.isfinite(adj_close) & (adj_close > 0.0), np.nan)
+    return adj_close.where(adj_close.notna(), raw_close).astype(float)
 
 
 # =============================================================================
@@ -384,19 +398,26 @@ def generate_symbol_features(
     rsi_window: int = 14,
     vol_window: int = 10,
     include_raw_ma: bool = True,
+    sanitize_spikes: Optional[bool] = None,
 ) -> pd.DataFrame:
     """
     Generate features for a single symbol.
 
+    Uses valid positive ``adj_close`` (falling back to ``close`` when missing
+    or invalid) so ex-dividend drops and dedup seams do not inject fake returns.
     When ``include_raw_ma`` is True (legacy default), raw SMA_w/EMA_w levels
     are emitted alongside stationary features. When False, non-stationary raw
     price levels are replaced by stationary relative ratios and multi-horizon
-    log returns to prevent OOD covariate shift across price regimes.
+    log returns to prevent OOD covariate shift across price regimes, without
+    emitting duplicate ``price_sma_ratio`` alongside ``close_sma_20_ratio``.
     """
     features = pd.DataFrame(index=df.index)
     prefix = f"{symbol}_" if symbol else ""
 
-    close = df["close"].astype(float)
+    close = _select_working_close(df)
+    should_sanitize = (not include_raw_ma) if sanitize_spikes is None else bool(sanitize_spikes)
+    if should_sanitize and len(close) > 1:
+        close = sanitize_close_spikes(close, symbol=symbol or "symbol", ffill_invalid=False)
 
     # Returns
     ret1 = compute_returns(close, 1)
@@ -444,10 +465,60 @@ def generate_symbol_features(
     # Volatility
     features[f"{prefix}vol_{vol_window}"] = compute_volatility(ret1, vol_window)
 
-    # Price level (normalized by SMA for scale invariance)
-    features[f"{prefix}price_sma_ratio"] = close / sma_20.replace(0, np.nan)
+    # Emit legacy price_sma_ratio only when close_sma_20_ratio is not already present
+    # (prevents Pearson r=1.000 duplicate features in TFT candidate pools).
+    if include_raw_ma or f"{prefix}close_sma_20_ratio" not in features.columns:
+        features[f"{prefix}price_sma_ratio"] = close / sma_20.replace(0, np.nan)
 
     return features
+
+
+def generate_aligned_symbol_features(
+    df: pd.DataFrame,
+    symbol: str,
+    target_index: pd.Index,
+    *,
+    max_ffill: int = 3,
+    include_raw_ma: bool = False,
+    sanitize_spikes: Optional[bool] = None,
+) -> pd.DataFrame:
+    """Compute indicators on native active trading bars BEFORE aligning to ``target_index``.
+
+    Evaluating returns, rolling volatility, RSI, and risk-adjusted ratios on the
+    symbol's native sessions prevents foreign market holidays (forward-filled flat
+    closes) from injecting fake 0.0% daily returns that damp ``vol_20`` and bias
+    ``risk_adj_ret*``. Closed-market target dates receive 0.0 for daily ``ret1``
+    within ``max_ffill`` coverage while carrying forward valid native indicators.
+    """
+    if df.empty or len(target_index) == 0:
+        return pd.DataFrame(index=target_index)
+
+    working_close = _select_working_close(df)
+    valid_native = working_close.notna() & (working_close > 0.0)
+    if not valid_native.any():
+        return pd.DataFrame(index=target_index)
+
+    native_df = df.loc[valid_native].copy()
+    if native_df.index.duplicated().any():
+        native_df = native_df.loc[~native_df.index.duplicated(keep="last")]
+    native_df = native_df.sort_index()
+
+    native_feats = generate_symbol_features(
+        native_df,
+        symbol,
+        include_raw_ma=include_raw_ma,
+        sanitize_spikes=sanitize_spikes,
+    )
+    aligned_feats = native_feats.reindex(target_index).ffill(limit=max_ffill).infer_objects(copy=False)
+
+    prefix = f"{symbol}_" if symbol else ""
+    ret1_col = f"{prefix}ret1"
+    if ret1_col in aligned_feats.columns:
+        is_holiday_bar = ~target_index.isin(native_df.index)
+        has_coverage = aligned_feats.notna().any(axis=1)
+        aligned_feats.loc[is_holiday_bar & has_coverage, ret1_col] = 0.0
+
+    return aligned_feats
 
 
 def align_to_target_calendar(
@@ -495,13 +566,21 @@ def build_shared_feature_frame(
     max_ffill: int = 3,
 ) -> pd.DataFrame:
     """Single preprocessing contract used by XGBoost training and inference."""
-    aligned = align_to_target_calendar(target_df, other_dfs, max_ffill=max_ffill)
     feature_frames = [
-        generate_symbol_features(target_df, target_df.attrs.get("symbol", "HG=F"))
+        generate_symbol_features(target_df, target_df.attrs.get("symbol", "HG=F"), sanitize_spikes=True)
     ]
-    for symbol, frame in aligned.items():
-        if not frame.empty:
-            feature_frames.append(generate_symbol_features(frame, symbol))
+    for symbol, df in other_dfs.items():
+        if not df.empty:
+            aligned_feats = generate_aligned_symbol_features(
+                df,
+                symbol,
+                target_df.index,
+                max_ffill=max_ffill,
+                include_raw_ma=True,
+                sanitize_spikes=True,
+            )
+            if not aligned_feats.empty:
+                feature_frames.append(aligned_feats)
 
     all_features = (
         pd.concat(feature_frames, axis=1)

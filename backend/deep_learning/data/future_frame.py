@@ -2,16 +2,59 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import pandas as pd
+from pandas.tseries.holiday import (
+    AbstractHolidayCalendar,
+    GoodFriday,
+    Holiday,
+    USLaborDay,
+    USMartinLutherKingJr,
+    USMemorialDay,
+    USPresidentsDay,
+    USThanksgivingDay,
+    nearest_workday,
+)
+from pandas.tseries.offsets import CustomBusinessDay
 
 from deep_learning.config import TFTASROConfig
 from deep_learning.data.feature_store import _build_calendar_features
 from deep_learning.data.regime_features import REGIME_FEATURES
 
 
+class USMarketHolidayCalendar(AbstractHolidayCalendar):
+    """US/NYSE/COMEX exchange holiday calendar for deterministic offline scheduling."""
+
+    rules = [
+        Holiday("New Years Day", month=1, day=1, observance=nearest_workday),
+        USMartinLutherKingJr,
+        USPresidentsDay,
+        GoodFriday,
+        USMemorialDay,
+        Holiday("Juneteenth", month=6, day=19, start_date="2022-06-19", observance=nearest_workday),
+        Holiday("Independence Day", month=7, day=4, observance=nearest_workday),
+        USLaborDay,
+        USThanksgivingDay,
+        Holiday("Christmas", month=12, day=25, observance=nearest_workday),
+    ]
+
+
+@lru_cache(maxsize=1)
+def _us_market_business_day() -> CustomBusinessDay:
+    return CustomBusinessDay(calendar=USMarketHolidayCalendar())
+
+
 def _future_business_dates(last_date, horizon: int) -> pd.DatetimeIndex:
-    start = pd.Timestamp(last_date).normalize() + pd.offsets.BDay(1)
-    return pd.bdate_range(start=start, periods=horizon)
+    if horizon <= 0:
+        return pd.DatetimeIndex([])
+    base = pd.Timestamp(last_date)
+    if base.tzinfo is not None:
+        base = base.tz_localize(None)
+    bday = _us_market_business_day()
+    start = base.normalize() + bday
+    return pd.DatetimeIndex(
+        pd.bdate_range(start=start, periods=horizon, freq=bday).to_numpy()
+    )
 
 
 def build_future_decoder_rows(
