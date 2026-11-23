@@ -198,24 +198,55 @@ export interface TFTPrediction {
   };
 }
 
+export type TFTMetrics = {
+  mae?: number;
+  rmse?: number;
+  mae_vs_naive_zero?: number;
+  directional_accuracy?: number;
+  weekly_directional_accuracy?: number;
+  weekly_sample_count?: number;
+  sharpe_ratio?: number;
+  sortino_ratio?: number;
+  variance_ratio?: number;
+  pred_std?: number;
+  actual_std?: number;
+  tail_capture_rate?: number;
+  weekly_sharpe_ratio?: number;
+  weekly_sharpe_ratio_hac?: number;
+  weekly_sortino_ratio?: number;
+  weekly_magnitude_ratio?: number;
+  weekly_raw_magnitude_ratio?: number;
+  weekly_median_bound_applied_rate?: number;
+  weekly_median_cap?: number;
+  weekly_tail_capture_rate?: number;
+  weekly_pi80_coverage?: number;
+  weekly_pi80_width?: number;
+  weekly_pi80_width_ratio?: number;
+  weekly_pi96_coverage?: number;
+  weekly_pi96_width?: number;
+  weekly_pi96_width_ratio?: number;
+  weekly_mae_vs_naive_zero?: number;
+  weekly_pinball_loss?: number;
+  weekly_pinball_skill_vs_empirical?: number;
+  weekly_pred_positive_rate?: number;
+  weekly_actual_positive_rate?: number;
+  weekly_quantile_crossing_rate?: number;
+  weekly_sorted_quantile_crossing_rate?: number;
+  weekly_ordered_quantile_crossing_rate?: number;
+  weekly_median_sort_gap_max?: number;
+  quantile_crossing_rate?: number;
+  median_sort_gap_max?: number;
+  pi80_width?: number;
+  pi96_width?: number;
+};
+
 export interface TFTModelMetadata {
   symbol: string;
   trained_at: string | null;
   checkpoint_path: string | null;
   config: Record<string, any>;
-  metrics: {
-    mae?: number;
-    rmse?: number;
-    directional_accuracy?: number;
-    weekly_directional_accuracy?: number;
-    weekly_sample_count?: number;
-    sharpe_ratio?: number;
-    sortino_ratio?: number;
-    variance_ratio?: number;
-    pred_std?: number;
-    actual_std?: number;
-    tail_capture_rate?: number;
-  };
+  metrics: TFTMetrics;
+  quality_gate?: QualityGateResponse | null;
 }
 
 export interface TFTAnalysisResponse {
@@ -320,7 +351,7 @@ export interface TFTModelSummaryResponse {
   trained_at: string | null;
   checkpoint_path: string;
   config: Record<string, any>;
-  metrics: Record<string, number>;
+  metrics: TFTMetrics & Record<string, number | undefined>;
   variable_importance: Influencer[];
   /** How `variable_importance` was derived: `"vsn_encoder"`, `"mrmr"` or `null` when unknown. */
   variable_importance_method: string | null;
@@ -333,6 +364,160 @@ export interface BacktestReportResponse {
   window_metrics: Array<Record<string, any>>;
   theta_comparison: Record<string, any> | null;
   verdict: string | null;
+}
+
+// =============================================================================
+// Long-Term Outlook types (mirror backend/long_term/schemas.py)
+// =============================================================================
+
+export type LongTermStance = 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+export type LongTermHorizonKey = '20D' | '60D';
+export type LongTermPillarKey =
+  | 'trend_structure'
+  | 'usd_macro'
+  | 'china_industrial_demand'
+  | 'cross_asset_confirmation';
+
+export interface LongTermPillarMetric {
+  name: string;
+  value?: number | null;
+  formatted_value: string;
+  signal: LongTermStance;
+}
+
+export interface LongTermMacroPillar {
+  key: LongTermPillarKey;
+  label: string;
+  score: number;
+  score_pct: number;
+  stance: LongTermStance;
+  summary: string;
+  metrics: LongTermPillarMetric[];
+}
+
+export interface LongTermMacroScorecard {
+  composite_score: number;
+  composite_stance: LongTermStance;
+  pillars: Record<string, LongTermMacroPillar>;
+}
+
+export interface LongTermDriverItem {
+  feature: string;
+  label: string;
+  pillar: string;
+  z_score: number;
+  contribution_return: number;
+  direction: LongTermStance;
+}
+
+export interface LongTermEnsembleComponents {
+  macro_ridge_return: number;
+  theta_damped_return: number;
+  macro_ridge_weight: number;
+  theta_weight: number;
+  realized_vol_annualized: number;
+  horizon_vol: number;
+  cqr_q10_width: number;
+  cqr_q90_width: number;
+}
+
+export interface LongTermHorizonForecast {
+  horizon_key: LongTermHorizonKey;
+  horizon_label: string;
+  horizon_days: number;
+  horizon_weeks: number;
+  target_date?: string | null;
+  reference_price: number;
+  target_price_q50: number;
+  expected_return: number;
+  expected_return_pct: number;
+  expected_log_return: number;
+  price_q10: number;
+  price_q25: number;
+  price_q75: number;
+  price_q90: number;
+  return_q10: number;
+  return_q25: number;
+  return_q75: number;
+  return_q90: number;
+  stance: LongTermStance;
+  prob_bullish: number;
+  prob_neutral: number;
+  prob_bearish: number;
+  conviction: number;
+  conviction_label: 'HIGH' | 'MEDIUM' | 'LOW';
+  regime_threshold_pct: number;
+  components: LongTermEnsembleComponents;
+  key_drivers: LongTermDriverItem[];
+}
+
+export interface LongTermFoldMetrics {
+  fold_index: number;
+  train_start: string;
+  train_end: string;
+  test_start: string;
+  test_end: string;
+  n_train: number;
+  n_test: number;
+  n_non_overlapping: number;
+  directional_accuracy: number;
+  non_overlapping_da: number;
+  mae_vs_naive_zero: number;
+  mae_vs_theta: number;
+  sharpe_ratio: number;
+  pi80_coverage: number;
+  brier_score: number;
+}
+
+export interface LongTermValidationSummary {
+  horizon_key: LongTermHorizonKey;
+  horizon_weeks: number;
+  purge_gap_weeks: number;
+  annualisation: number;
+  n_folds: number;
+  n_purged_oos_samples: number;
+  n_non_overlapping_samples: number;
+  directional_accuracy: number;
+  non_overlapping_da: number;
+  mae_vs_naive_zero: number;
+  mae_vs_theta: number;
+  theta_directional_accuracy: number;
+  sharpe_ratio: number;
+  non_overlapping_sharpe: number;
+  pi80_coverage: number;
+  pi50_coverage: number;
+  pinball_loss_mean: number;
+  pinball_skill_vs_empirical: number;
+  brier_score: number;
+  regime_accuracy: number;
+  quantile_crossing_rate: number;
+  folds: LongTermFoldMetrics[];
+}
+
+export interface LongTermDataWindow {
+  start_date?: string | null;
+  end_date?: string | null;
+  weekly_bars: number;
+  years_covered: number;
+  fred_macro_enabled: boolean;
+  symbols_used: string[];
+}
+
+export interface LongTermOutlookResponse {
+  status: 'ok' | 'unavailable';
+  symbol: string;
+  as_of_date?: string | null;
+  generated_at?: string | null;
+  model_version?: string | null;
+  source: 'snapshot' | 'unavailable';
+  current_price?: number | null;
+  available_horizons: string[];
+  default_horizon: string;
+  data_window?: LongTermDataWindow | null;
+  horizons: Record<string, LongTermHorizonForecast>;
+  macro_scorecard?: LongTermMacroScorecard | null;
+  validation: Record<string, LongTermValidationSummary>;
+  message?: string | null;
 }
 
 // =============================================================================

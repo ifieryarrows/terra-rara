@@ -34,6 +34,7 @@ import type {
 } from '../types';
 import {
   useSentimentSummary,
+  useTftModelSummary,
 } from '../hooks/useQueries';
 import '../App.css';
 
@@ -45,15 +46,19 @@ const NewsIntelligencePanel = lazy(() =>
 const ModelFocusPanel = lazy(() =>
   import('../components/ModelFocusPanel').then(m => ({ default: m.ModelFocusPanel })),
 );
+const LongTermOutlookPanel = lazy(() =>
+  import('../features/forecast/LongTermOutlookPanel').then(m => ({ default: m.ConnectedLongTermOutlookPanel })),
+);
 const VenusParticles = lazy(() =>
   import('../components/ui/VenusParticles').then(m => ({ default: m.VenusParticles })),
 );
 
-type OverviewStreamLens = 'all' | 'forecast' | 'xai' | 'news' | 'map';
+type OverviewStreamLens = 'all' | 'forecast' | 'long-term' | 'xai' | 'news' | 'map';
 
 const STREAM_LENS_OPTIONS: readonly SegmentedTabOption<OverviewStreamLens>[] = [
   { value: 'all', label: 'All Streams', icon: Compass },
   { value: 'forecast', label: '5D & T+1 Models', icon: Activity },
+  { value: 'long-term', label: '1M / 1Q Outlook', icon: Compass },
   { value: 'xai', label: 'XAI Focus & Drivers', icon: Brain },
   { value: 'news', label: 'Copper News', icon: Newspaper },
   { value: 'map', label: 'Metals Map', icon: Globe },
@@ -180,6 +185,7 @@ export const OverviewPage = () => {
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<Date | null>(null);
   const sentimentSummary = useSentimentSummary(7, 6);
+  const tftSummary = useTftModelSummary(DEFAULT_COPPER_SYMBOL);
 
   const setBusy = useCallback((delta: 1 | -1) => {
     busyCount.current = Math.max(0, busyCount.current + delta);
@@ -401,6 +407,11 @@ export const OverviewPage = () => {
       Loading 5D model focus…
     </div>
   );
+  const longTermFallback = (
+    <div className="cm-commentary py-8 text-center text-xs text-slate-400" role="status">
+      Loading 1M / 1Q long-term outlook…
+    </div>
+  );
   const newsFallback = (
     <div className="cm-news-loading flex items-center justify-center gap-3" role="status">
       <span className="cm-inline-loader" aria-hidden="true" />
@@ -433,6 +444,14 @@ export const OverviewPage = () => {
   const tftDegradedMessage = tftAnalysis?.message || 'TFT weekly forecast is unavailable until the weekly model artifacts are refreshed.';
   const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
+  const mergedTftMetrics = useMemo(() => {
+    if (!tftMetrics && !tftSummary.data?.metrics) return undefined;
+    return {
+      ...(tftMetrics ?? {}),
+      ...(tftSummary.data?.metrics ?? {}),
+    };
+  }, [tftMetrics, tftSummary.data?.metrics]);
+  const tftQualityGate = tftSummary.data?.quality_gate ?? tftAnalysis?.model_metadata?.quality_gate ?? null;
   const tftDirection = tftAnalysis?.direction;
   const tftImpulse = tftAnalysis?.t1_impulse ?? tftAnalysis?.weekly_forecast?.t1_impulse ?? 'NEUTRAL';
   const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
@@ -573,6 +592,7 @@ export const OverviewPage = () => {
   };
 
   const showForecast = streamLens === 'all' || streamLens === 'forecast';
+  const showLongTerm = streamLens === 'all' || streamLens === 'forecast' || streamLens === 'long-term';
   const showXai = streamLens === 'all' || streamLens === 'xai';
   const showNews = streamLens === 'all' || streamLens === 'news';
   const showMap = streamLens === 'all' || streamLens === 'map';
@@ -702,7 +722,13 @@ export const OverviewPage = () => {
             delta={tftAnalysis?.t1_return != null ? `${dirGlyph(tftImpulse)[0]} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
             tone={t1Tone}
             badge="T+1"
-            hint={tftMetrics?.directional_accuracy != null ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%` : 'Step-1 quantile median'}
+            hint={
+              analysis?.predicted_return != null
+                ? `TFT Step-1 · XGB T+1 ${formatSignedPct(analysis.predicted_return)}`
+                : tftMetrics?.directional_accuracy != null
+                  ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%`
+                  : 'Step-1 quantile median'
+            }
           />
           <MetricTile
             label="7D News Sentiment"
@@ -743,7 +769,7 @@ export const OverviewPage = () => {
                         className="cm-sentiment-meter__pin"
                         style={{
                           left: `${sentimentPosPct}%`,
-                          color: sentimentDir === 'Bullish' ? 'var(--cm-positive)' : sentimentDir === 'Bearish' ? 'var(--cm-negative)' : 'var(--cm-copper)',
+                          color: sentimentDir === 'Bullish' ? 'var(--cm-positive)' : sentimentDir === 'Bearish' ? 'var(--cm-negative)' : 'var(--cm-muted)',
                         }}
                       />
                     </>
@@ -791,7 +817,7 @@ export const OverviewPage = () => {
             {showForecast && (
               <GlassCard
                 id="price-forecast"
-                eyebrow="01 // TRAJECTORY & QUANTILE CONE"
+                eyebrow="01 // 5D PRIMARY TRAJECTORY & QUANTILE CONE"
                 title={`Price Forecast · ${COPPER_INSTRUMENT.displayName}`}
                 icon={Activity}
                 colSpan={12}
@@ -815,14 +841,15 @@ export const OverviewPage = () => {
             {showForecast && (
               <GlassCard
                 id="weekly-outlook"
-                eyebrow="02 // 5D HORIZON CONSENSUS"
+                eyebrow="02 // 5D WEEKLY PRIMARY · TFT-ASRO"
                 title="Weekly model outlook"
                 icon={Brain}
-                colSpan={6}
+                colSpan={8}
                 className={clsx('cm-weekly-forecast-panel relative', tftBullish === null ? '' : tftBullish ? 'cm-weekly--bullish' : 'cm-weekly--bearish')}
                 headerExtra={
                   tftAnalysis && !tftDegraded ? (
                     <span className="cm-panel-telemetry-meta">
+                      <span>5D Cumulative</span>
                       <span>{tftCalibrated ? 'Calibrated 80% Band' : 'Raw Quantiles'}</span>
                     </span>
                   ) : null
@@ -962,142 +989,61 @@ export const OverviewPage = () => {
               </GlassCard>
             )}
 
-            {/* Influencers Card — shows category breakdown + ranked feature drivers */}
-            {showXai && (
-            <GlassCard
-              id="market-drivers"
-              eyebrow="03 // FEATURE ATTRIBUTION"
-              title="Market drivers"
-              icon={BarChart3}
-              colSpan={6}
-              headerExtra={
-                topDrivers.length ? (
-                  <span className="cm-panel-telemetry-meta">
-                    <span>Top {topDrivers.length} Signals</span>
-                  </span>
-                ) : null
-              }
-            >
-              <div className="space-y-4">
-                {topDrivers.length ? (
-                  <>
-                    {/* Category breakdown bar + interactive filter */}
-                    {driverBreakdown.length > 0 && (
-                      <div className="cm-driver-breakdown">
-                        <div className="cm-driver-spectrum" aria-hidden="true">
-                          {driverBreakdown.map((seg) => (
-                            <span
-                              key={seg.category}
-                              style={{
-                                width: `${seg.sharePct}%`,
-                                backgroundColor: seg.color,
-                                opacity: selectedDriverCategory === 'ALL' || selectedDriverCategory === seg.category ? 0.9 : 0.25,
-                              }}
-                              title={`${seg.label}: ${seg.sharePct.toFixed(0)}%`}
-                            />
-                          ))}
-                        </div>
-                        <div className="cm-driver-filter-row" role="group" aria-label="Filter drivers by category">
-                          <button
-                            type="button"
-                            className="cm-driver-filter-btn"
-                            aria-pressed={selectedDriverCategory === 'ALL'}
-                            onClick={() => setSelectedDriverCategory('ALL')}
-                          >
-                            All ({topDrivers.length})
-                          </button>
-                          {driverBreakdown.map((seg) => (
-                            <button
-                              key={seg.category}
-                              type="button"
-                              className="cm-driver-filter-btn"
-                              aria-pressed={selectedDriverCategory === seg.category}
-                              onClick={() =>
-                                setSelectedDriverCategory((prev) => (prev === seg.category ? 'ALL' : seg.category))
-                              }
-                            >
-                              <i className="cm-driver-dot" style={{ backgroundColor: seg.color }} aria-hidden="true" />
-                              <span>{seg.category}</span>
-                              <small>{seg.sharePct.toFixed(0)}%</small>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="cm-driver-list">
-                      {visibleDrivers.map((inf: Influencer) => {
-                        const maxImp = topDrivers[0]?.importance || 1;
-                        const label = formatDriverLabel(inf);
-                        const rank = topDrivers.indexOf(inf) + 1;
-                        return (
-                          <div
-                            key={inf.feature}
-                            tabIndex={0}
-                            className="cm-driver-row group"
-                          >
-                            <div className="cm-driver-row-head">
-                              <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                <span className="cm-driver-rank tabular-nums">0{rank}</span>
-                                {inf.category && (
-                                  <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
-                                    {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
-                                  </span>
-                                )}
-                                <span className="text-xs text-gray-200 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
-                                  {label}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {inf.time_horizon && (
-                                  <span className="cm-driver-horizon">{inf.time_horizon}</span>
-                                )}
-                                <span className="text-xs font-mono text-slate-300 tabular-nums">{(inf.importance * 100).toFixed(1)}%</span>
-                              </div>
-                            </div>
-                            <div className="cm-driver-bar-track">
-                              <div
-                                className="cm-driver-bar-fill"
-                                style={{ transformOrigin: 'left', transform: `scaleX(${Math.max(0.04, Math.min(1, inf.importance / maxImp))})` }}
-                              />
-                            </div>
-                            <div className="cm-driver-detail-line">
-                              <code>{inf.feature}</code>
-                              {inf.description && inf.description !== label && (
-                                <span>{inf.description}</span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
-                    <BarChart3 size={24} className="text-slate-400" />
-                    <p className="text-xs text-slate-400">Market drivers are unavailable</p>
-                    <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
-                  </div>
-                )}
-              </div>
-            </GlassCard>
-            )}
-
-            {/* Model Health + Pipeline Freshness Snapshot */}
+            {/* 5D Model Health + Quality Gate Snapshot */}
             {showForecast && (
               <GlassCard
                 id="model-reliability"
-                eyebrow="04 // CALIBRATION & PIPELINE"
+                eyebrow="03 // 5D QUALITY GATE & CALIBRATION"
                 title="Model reliability"
                 icon={Crosshair}
                 colSpan={4}
                 headerExtra={
-                  <span className={clsx('cm-panel-telemetry-meta', tftDegraded ? 'text-[#dda174]' : 'text-[#74c7a9]')}>
-                    <span>{tftDegraded ? 'Attention' : tftAnalysis ? 'Gate Active' : 'Pending'}</span>
+                  <span
+                    className={clsx(
+                      'cm-panel-telemetry-meta',
+                      tftDegraded || tftQualityGate?.passed === false
+                        ? 'text-[#db8296]'
+                        : 'text-[#74c7a9]',
+                    )}
+                  >
+                    <span>
+                      {tftDegraded
+                        ? 'Attention'
+                        : tftQualityGate?.passed === false
+                          ? 'Gate Breach'
+                          : tftQualityGate?.passed === true || tftAnalysis
+                            ? 'Gate Active'
+                            : 'Pending'}
+                    </span>
                   </span>
                 }
               >
-                <ModelReliability metrics={tftMetrics} unavailable={!!loadErrors['Deep-learning forecast']} />
+                <ModelReliability
+                  metrics={mergedTftMetrics}
+                  qualityGate={tftQualityGate}
+                  unavailable={!!loadErrors['Deep-learning forecast'] && !tftSummary.data}
+                />
+              </GlassCard>
+            )}
+
+            {/* Long-Term Outlook (1M / 20D & 1Q / 60D Structural Ensemble) */}
+            {showLongTerm && (
+              <GlassCard
+                id="long-term-outlook"
+                eyebrow="04 // 1M & 1Q STRATEGIC OUTLOOK · STRUCTURAL ENSEMBLE"
+                title="Long-Term Outlook · 1M / 1Q"
+                icon={Compass}
+                colSpan={12}
+                headerExtra={
+                  <span className="cm-panel-telemetry-meta">
+                    <span>20D &amp; 60D Horizons</span>
+                    <span>Macro Ridge + Damped Theta</span>
+                  </span>
+                }
+              >
+                <Suspense fallback={longTermFallback}>
+                  <LongTermOutlookPanel symbol={DEFAULT_COPPER_SYMBOL} />
+                </Suspense>
               </GlassCard>
             )}
 
@@ -1105,12 +1051,13 @@ export const OverviewPage = () => {
             {showXai && (
               <GlassCard
                 id="neural-analysis"
-                eyebrow="05 // PRE-CALIBRATION 5D EXPLAINABILITY"
-                title="Model focus · VSN & Attention"
+                eyebrow="05 // 5D MODEL FOCUS · PRE-CALIBRATION XAI"
+                title="5D Model Focus · VSN & Attention"
                 icon={Cpu}
-                colSpan={8}
+                colSpan={7}
                 headerExtra={
                   <span className="cm-panel-telemetry-meta">
+                    <span>5D TFT-ASRO</span>
                     <span>{explain ? 'Raw 5D Focus · Non-causal' : 'Awaiting Explainability'}</span>
                   </span>
                 }
@@ -1124,6 +1071,164 @@ export const OverviewPage = () => {
                       />
                     </Suspense>
                   ) : focusFallback}
+                </div>
+              </GlassCard>
+            )}
+
+            {/* Auxiliary T+1 Daily Diagnostic (XGBoost) — strictly separated from 5D TFT */}
+            {showXai && (
+              <GlassCard
+                id="market-drivers"
+                eyebrow="06 // T+1 DAILY DIAGNOSTIC · XGBOOST"
+                title="T+1 Daily Drivers · XGBoost"
+                icon={BarChart3}
+                colSpan={5}
+                headerExtra={
+                  <span className="cm-panel-telemetry-meta">
+                    <span>T+1 Auxiliary</span>
+                    {topDrivers.length ? <span>Top {topDrivers.length} Signals</span> : null}
+                  </span>
+                }
+              >
+                <div className="space-y-4">
+                  {/* T+1 XGBoost diagnostic telemetry strip to prevent horizon conflation */}
+                  <div className="border-b border-white/[0.07] pb-3 space-y-2">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] text-slate-400 uppercase tracking-wider block">
+                          Next-Day (T+1) XGBoost Return
+                        </span>
+                        <div className="flex flex-wrap items-baseline gap-2 mt-0.5">
+                          <strong
+                            className={clsx(
+                              'text-lg font-medium cm-tabular',
+                              analysis?.predicted_return == null
+                                ? 'text-slate-400'
+                                : analysis.predicted_return >= 0
+                                  ? 'text-[#74c7a9]'
+                                  : 'text-[#db8296]',
+                            )}
+                          >
+                            {formatSignedPct(analysis?.predicted_return)}
+                          </strong>
+                          {analysis?.predicted_price != null && (
+                            <span className="text-xs text-slate-300 cm-tabular">
+                              (${analysis.predicted_price.toFixed(2)} T+1)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {analysis?.baseline_price_date && (
+                        <span className="text-[11px] text-slate-400 cm-tabular">
+                          Ref {analysis.baseline_price_date}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Auxiliary single-day (T+1) XGBoost feature weights — independent of the 5D TFT-ASRO primary forecast and its VSN focus.
+                    </p>
+                  </div>
+
+                  {topDrivers.length ? (
+                    <>
+                      {/* Category breakdown bar + interactive filter */}
+                      {driverBreakdown.length > 0 && (
+                        <div className="cm-driver-breakdown">
+                          <div className="cm-driver-spectrum" aria-hidden="true">
+                            {driverBreakdown.map((seg) => (
+                              <span
+                                key={seg.category}
+                                style={{
+                                  width: `${seg.sharePct}%`,
+                                  backgroundColor: seg.color,
+                                  opacity: selectedDriverCategory === 'ALL' || selectedDriverCategory === seg.category ? 0.9 : 0.25,
+                                }}
+                                title={`${seg.label}: ${seg.sharePct.toFixed(0)}%`}
+                              />
+                            ))}
+                          </div>
+                          <div className="cm-driver-filter-row" role="group" aria-label="Filter T+1 XGBoost drivers by category">
+                            <button
+                              type="button"
+                              className="cm-driver-filter-btn"
+                              aria-pressed={selectedDriverCategory === 'ALL'}
+                              onClick={() => setSelectedDriverCategory('ALL')}
+                            >
+                              All ({topDrivers.length})
+                            </button>
+                            {driverBreakdown.map((seg) => (
+                              <button
+                                key={seg.category}
+                                type="button"
+                                className="cm-driver-filter-btn"
+                                aria-pressed={selectedDriverCategory === seg.category}
+                                onClick={() =>
+                                  setSelectedDriverCategory((prev) => (prev === seg.category ? 'ALL' : seg.category))
+                                }
+                              >
+                                <i className="cm-driver-dot" style={{ backgroundColor: seg.color }} aria-hidden="true" />
+                                <span>{seg.category}</span>
+                                <small>{seg.sharePct.toFixed(0)}%</small>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="cm-driver-list">
+                        {visibleDrivers.map((inf: Influencer) => {
+                          const maxImp = topDrivers[0]?.importance || 1;
+                          const label = formatDriverLabel(inf);
+                          const rank = topDrivers.indexOf(inf) + 1;
+                          return (
+                            <div
+                              key={inf.feature}
+                              tabIndex={0}
+                              className="cm-driver-row group"
+                            >
+                              <div className="cm-driver-row-head">
+                                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                  <span className="cm-driver-rank tabular-nums">0{rank}</span>
+                                  {inf.category && (
+                                    <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
+                                      {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
+                                    </span>
+                                  )}
+                                  <span className="text-xs text-gray-200 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
+                                    {label}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {inf.time_horizon && (
+                                    <span className="cm-driver-horizon">{inf.time_horizon}</span>
+                                  )}
+                                  <span className="text-xs font-mono text-slate-300 tabular-nums">{(inf.importance * 100).toFixed(1)}%</span>
+                                </div>
+                              </div>
+                              <div className="cm-driver-bar-track">
+                                <div
+                                  className="cm-driver-bar-fill"
+                                  style={{ transformOrigin: 'left', transform: `scaleX(${Math.max(0.04, Math.min(1, inf.importance / maxImp))})` }}
+                                />
+                              </div>
+                              <div className="cm-driver-detail-line">
+                                <code>{inf.feature}</code>
+                                {inf.description && inf.description !== label && (
+                                  <span>{inf.description}</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
+                      <BarChart3 size={24} className="text-slate-400" />
+                      <p className="text-xs text-slate-400">T+1 XGBoost drivers are unavailable</p>
+                      <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
+                    </div>
+                  )}
                 </div>
               </GlassCard>
             )}

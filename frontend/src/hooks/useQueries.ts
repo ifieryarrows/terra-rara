@@ -4,6 +4,7 @@ import {
   fetchConsensusSignal, 
   fetchTftModelSummary, 
   fetchLatestBacktest, 
+  fetchLongTermOutlook,
   fetchMarketHeatmap,
   fetchHeatmapCategoryContext,
   fetchAnalysis,
@@ -44,6 +45,20 @@ export function useBacktestReport() {
     queryKey: ['backtest-report'],
     queryFn: fetchLatestBacktest,
     refetchInterval: false, // Manual refresh or very long TTL
+  });
+}
+
+export function useLongTermOutlook(
+  symbol: string = DEFAULT_COPPER_SYMBOL,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['long-term-outlook', symbol],
+    queryFn: () => fetchLongTermOutlook(symbol),
+    enabled: options?.enabled ?? true,
+    refetchInterval: 300_000, // 5 minutes
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
   });
 }
 

@@ -1,10 +1,14 @@
 import axios from 'axios';
 import type {
   AnalysisReport,
+  BacktestReportResponse,
+  ConsensusSignal,
   HistoryResponse,
   HealthResponse,
   CommentaryResponse,
+  LongTermOutlookResponse,
   TFTAnalysisResponse,
+  TFTModelSummaryResponse,
   ExplainResponse,
   NewsFeedFilters,
   NewsItem,
@@ -158,24 +162,36 @@ export async function fetchLivePrice(): Promise<LivePriceResponse> {
 /**
  * Fetch Consensus Signal
  */
-export async function fetchConsensusSignal(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<any> {
-  const response = await api.get('/analysis/consensus', { params: { symbol } });
+export async function fetchConsensusSignal(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<ConsensusSignal> {
+  const response = await api.get<ConsensusSignal>('/analysis/consensus', { params: { symbol } });
   return response.data;
 }
 
 /**
  * Fetch TFT Model Summary
  */
-export async function fetchTftModelSummary(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<any> {
-  const response = await api.get('/models/tft/summary', { params: { symbol } });
+export async function fetchTftModelSummary(symbol: string = DEFAULT_COPPER_SYMBOL): Promise<TFTModelSummaryResponse> {
+  const response = await api.get<TFTModelSummaryResponse>('/models/tft/summary', { params: { symbol } });
   return response.data;
 }
 
 /**
  * Fetch Latest Backtest Report
  */
-export async function fetchLatestBacktest(): Promise<any> {
-  const response = await api.get('/models/tft/backtest/latest');
+export async function fetchLatestBacktest(): Promise<BacktestReportResponse> {
+  const response = await api.get<BacktestReportResponse>('/models/tft/backtest/latest');
+  return response.data;
+}
+
+/**
+ * Fetch snapshot-only Long-Term Copper Outlook (1M / 20D and 1Q / 60D)
+ */
+export async function fetchLongTermOutlook(
+  symbol: string = DEFAULT_COPPER_SYMBOL,
+): Promise<LongTermOutlookResponse> {
+  const response = await api.get<LongTermOutlookResponse>(
+    `/outlook/long-term/${encodeURIComponent(symbol)}`,
+  );
   return response.data;
 }
 

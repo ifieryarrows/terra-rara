@@ -7,6 +7,10 @@ import { RefreshButton } from '../components/ui/RefreshButton';
 import { SectionHeader } from '../components/ui/SectionHeader';
 import { useTftModelSummary } from '../hooks/useQueries';
 import { DEFAULT_COPPER_SYMBOL } from '../config/instruments';
+import {
+  computeQualityGateThresholds,
+  hasWeeklySignCollapse,
+} from '../features/forecast/ModelReliability';
 
 const fmtPct = (v?: number) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
 const fmtNum = (v?: number, digits = 4) => (v == null ? '—' : v.toFixed(digits));
@@ -27,18 +31,16 @@ export const ModelsPage = () => {
 
   const m = data.metrics ?? {};
   const weeklyDa = m.weekly_directional_accuracy;
-  const weeklySampleCount = m.weekly_sample_count;
-  const weeklyDaThreshold =
-    weeklySampleCount == null || weeklySampleCount >= 300
-      ? 0.49
-      : weeklySampleCount >= 150
-      ? 0.47
-      : 0.45;
+  const thresholds = computeQualityGateThresholds(m.weekly_sample_count);
+  const weeklyDaThreshold = thresholds.minWeeklyDa;
+  const hasHacSharpe = m.weekly_sharpe_ratio_hac != null;
   const weeklySharpe = m.weekly_sharpe_ratio_hac ?? m.weekly_sharpe_ratio;
-  const nEff = Math.max((weeklySampleCount ?? 100) / 5, 1);
-  const pi80Tol = Math.max(0.08, Math.min(0.18, 1.65 * Math.sqrt((0.8 * 0.2) / Math.max(nEff, 10))));
-  const pi80Low = 0.8 - pi80Tol;
-  const pi80High = Math.min(0.98, 0.8 + pi80Tol);
+  const pi80Low = thresholds.pi80Low;
+  const pi80High = thresholds.pi80High;
+  const weeklyMaeRatio = m.weekly_mae_vs_naive_zero;
+  const predPosRate = m.weekly_pred_positive_rate;
+  const actualPosRate = m.weekly_actual_positive_rate;
+  const signCollapsed = hasWeeklySignCollapse(predPosRate, actualPosRate);
   const sharpe = m.sharpe_ratio;
   const vr = m.variance_ratio;
   const mae = m.mae;
@@ -97,8 +99,8 @@ export const ModelsPage = () => {
           <Metric
             label="Weekly Sharpe Ratio"
             value={fmtNum(weeklySharpe, 2)}
-            tone={weeklySharpe != null ? (weeklySharpe >= -0.35 ? 'good' : 'bad') : 'neutral'}
-            hint="Newey-West HAC √52 · gate ≥ -0.35"
+            tone={weeklySharpe != null ? (weeklySharpe >= thresholds.minWeeklySharpe ? 'good' : 'bad') : 'neutral'}
+            hint={hasHacSharpe ? 'Newey-West HAC √52 · gate ≥ -0.35' : 'Sample √52 · gate ≥ -0.35'}
           />
           <Metric
             label="Weekly Sortino Ratio"
@@ -170,6 +172,22 @@ export const ModelsPage = () => {
             }
             hint={`80% interval empirical coverage · gate [${(pi80Low * 100).toFixed(0)}%, ${(pi80High * 100).toFixed(0)}%]`}
           />
+          {weeklyMaeRatio != null && (
+            <Metric
+              label="Weekly MAE vs Naive"
+              value={fmtNum(weeklyMaeRatio, 3)}
+              tone={weeklyMaeRatio <= 1.0 ? 'good' : weeklyMaeRatio <= thresholds.maxWeeklyMaeVsNaiveZero ? 'neutral' : 'bad'}
+              hint="Zero-baseline error ratio · gate ≤ 1.12"
+            />
+          )}
+          {(predPosRate != null || actualPosRate != null) && (
+            <Metric
+              label="Weekly Sign Balance"
+              value={`${predPosRate != null ? `${(predPosRate * 100).toFixed(0)}%` : '—'} / ${actualPosRate != null ? `${(actualPosRate * 100).toFixed(0)}%` : '—'}`}
+              tone={signCollapsed ? 'bad' : 'good'}
+              hint="Predicted vs actual positive weeks · anti-collapse"
+            />
+          )}
         </div>
       </section>
 
@@ -207,8 +225,8 @@ export const ModelsPage = () => {
           <Metric
             label="Daily Tail Capture"
             value={fmtPct(tail)}
-            tone={tail != null ? (tail >= tailCaptureThreshold ? 'good' : 'bad') : 'neutral'}
-            hint="Correct direction on extreme daily moves · ≥ 35%"
+            tone={tail != null ? (tail >= tailCaptureThreshold ? 'good' : 'neutral') : 'neutral'}
+            hint="Correct direction on extreme daily moves · diagnostic ≥ 35%"
           />
           <Metric
             label="Pred σ / Actual σ"

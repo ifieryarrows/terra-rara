@@ -15,6 +15,7 @@ import type {
   ExplainResponse,
   HealthResponse,
   HistoryResponse,
+  LongTermOutlookResponse,
   NewsListResponse,
   NewsStatsResponse,
   TFTAnalysisResponse,
@@ -36,6 +37,7 @@ vi.mock('../api', async () => {
     fetchConsensusSignal: vi.fn(),
     fetchTftModelSummary: vi.fn(),
     fetchLatestBacktest: vi.fn(),
+    fetchLongTermOutlook: vi.fn(),
     fetchMarketHeatmap: vi.fn(),
     fetchHeatmapCategoryContext: vi.fn(),
     fetchSentimentSummary: vi.fn(),
@@ -345,6 +347,197 @@ const HEATMAP_FIXTURE = {
   _meta: { payload_count: 1, refresh_in_progress: false },
 };
 
+const LONG_TERM_FIXTURE: LongTermOutlookResponse = {
+  status: 'ok',
+  symbol: 'HG=F',
+  as_of_date: '2026-11-11',
+  generated_at: '2026-11-12T10:00:00Z',
+  model_version: 'lt_structural_v1',
+  source: 'snapshot',
+  current_price: 4.525,
+  available_horizons: ['20D', '60D'],
+  default_horizon: '20D',
+  data_window: {
+    start_date: '2011-11-18',
+    end_date: '2026-11-11',
+    weekly_bars: 780,
+    years_covered: 15,
+    fred_macro_enabled: true,
+    symbols_used: ['HG=F', 'DX-Y.NYB', 'GXC'],
+  },
+  horizons: {
+    '20D': {
+      horizon_key: '20D',
+      horizon_label: '1 Month (20D)',
+      horizon_days: 20,
+      horizon_weeks: 4,
+      target_date: '2026-12-09',
+      reference_price: 4.525,
+      target_price_q50: 4.68,
+      expected_return: 0.0343,
+      expected_return_pct: 3.43,
+      expected_log_return: 0.0337,
+      price_q10: 4.24,
+      price_q25: 4.46,
+      price_q75: 4.91,
+      price_q90: 5.12,
+      return_q10: -0.063,
+      return_q25: -0.014,
+      return_q75: 0.085,
+      return_q90: 0.131,
+      stance: 'BULLISH',
+      prob_bullish: 0.56,
+      prob_neutral: 0.27,
+      prob_bearish: 0.17,
+      conviction: 0.64,
+      conviction_label: 'HIGH',
+      regime_threshold_pct: 2.5,
+      components: {
+        macro_ridge_return: 0.038,
+        theta_damped_return: 0.026,
+        macro_ridge_weight: 0.65,
+        theta_weight: 0.35,
+        realized_vol_annualized: 0.2,
+        horizon_vol: 0.056,
+        cqr_q10_width: 0.09,
+        cqr_q90_width: 0.088,
+      },
+      key_drivers: [],
+    },
+    '60D': {
+      horizon_key: '60D',
+      horizon_label: '1 Quarter (60D)',
+      horizon_days: 60,
+      horizon_weeks: 12,
+      target_date: '2027-02-05',
+      reference_price: 4.525,
+      target_price_q50: 4.82,
+      expected_return: 0.0652,
+      expected_return_pct: 6.52,
+      expected_log_return: 0.0631,
+      price_q10: 4.12,
+      price_q25: 4.48,
+      price_q75: 5.15,
+      price_q90: 5.54,
+      return_q10: -0.089,
+      return_q25: -0.01,
+      return_q75: 0.138,
+      return_q90: 0.224,
+      stance: 'BULLISH',
+      prob_bullish: 0.6,
+      prob_neutral: 0.24,
+      prob_bearish: 0.16,
+      conviction: 0.68,
+      conviction_label: 'HIGH',
+      regime_threshold_pct: 4.4,
+      components: {
+        macro_ridge_return: 0.072,
+        theta_damped_return: 0.052,
+        macro_ridge_weight: 0.65,
+        theta_weight: 0.35,
+        realized_vol_annualized: 0.2,
+        horizon_vol: 0.097,
+        cqr_q10_width: 0.14,
+        cqr_q90_width: 0.145,
+      },
+      key_drivers: [],
+    },
+  },
+  macro_scorecard: {
+    composite_score: 0.36,
+    composite_stance: 'BULLISH',
+    pillars: {
+      trend_structure: {
+        key: 'trend_structure',
+        label: 'Trend Structure',
+        score: 0.45,
+        score_pct: 72,
+        stance: 'BULLISH',
+        summary: 'Above 40W moving average.',
+        metrics: [],
+      },
+      usd_macro: {
+        key: 'usd_macro',
+        label: 'USD & Macro',
+        score: 0.2,
+        score_pct: 60,
+        stance: 'NEUTRAL',
+        summary: 'USD neutral.',
+        metrics: [],
+      },
+      china_industrial_demand: {
+        key: 'china_industrial_demand',
+        label: 'China & Industrial Demand',
+        score: 0.35,
+        score_pct: 68,
+        stance: 'BULLISH',
+        summary: 'China demand firm.',
+        metrics: [],
+      },
+      cross_asset_confirmation: {
+        key: 'cross_asset_confirmation',
+        label: 'Cross-Asset Confirmation',
+        score: 0.4,
+        score_pct: 70,
+        stance: 'BULLISH',
+        summary: 'Miners confirming.',
+        metrics: [],
+      },
+    },
+  },
+  validation: {
+    '20D': {
+      horizon_key: '20D',
+      horizon_weeks: 4,
+      purge_gap_weeks: 4,
+      annualisation: 12,
+      n_folds: 5,
+      n_purged_oos_samples: 300,
+      n_non_overlapping_samples: 75,
+      directional_accuracy: 0.56,
+      non_overlapping_da: 0.57,
+      mae_vs_naive_zero: 0.98,
+      mae_vs_theta: 0.96,
+      theta_directional_accuracy: 0.52,
+      sharpe_ratio: 0.68,
+      non_overlapping_sharpe: 0.71,
+      pi80_coverage: 0.81,
+      pi50_coverage: 0.51,
+      pinball_loss_mean: 0.015,
+      pinball_skill_vs_empirical: 0.04,
+      brier_score: 0.59,
+      regime_accuracy: 0.48,
+      quantile_crossing_rate: 0.0,
+      folds: [],
+    },
+    '60D': {
+      horizon_key: '60D',
+      horizon_weeks: 12,
+      purge_gap_weeks: 12,
+      annualisation: 4,
+      n_folds: 4,
+      n_purged_oos_samples: 240,
+      n_non_overlapping_samples: 20,
+      directional_accuracy: 0.59,
+      non_overlapping_da: 0.6,
+      mae_vs_naive_zero: 0.94,
+      mae_vs_theta: 0.92,
+      theta_directional_accuracy: 0.51,
+      sharpe_ratio: 0.74,
+      non_overlapping_sharpe: 0.77,
+      pi80_coverage: 0.79,
+      pi50_coverage: 0.49,
+      pinball_loss_mean: 0.022,
+      pinball_skill_vs_empirical: 0.06,
+      brier_score: 0.56,
+      regime_accuracy: 0.52,
+      quantile_crossing_rate: 0.0,
+      folds: [],
+    },
+  },
+  message: null,
+};
+
 function installMockApiDefaults() {
   vi.mocked(api.fetchAnalysis).mockResolvedValue(ANALYSIS_FIXTURE);
   vi.mocked(api.fetchHistory).mockResolvedValue(HISTORY_FIXTURE);
@@ -359,6 +552,7 @@ function installMockApiDefaults() {
   vi.mocked(api.fetchConsensusSignal).mockResolvedValue(CONSENSUS_FIXTURE);
   vi.mocked(api.fetchTftModelSummary).mockResolvedValue(TFT_SUMMARY_FIXTURE);
   vi.mocked(api.fetchLatestBacktest).mockResolvedValue(BACKTEST_FIXTURE);
+  vi.mocked(api.fetchLongTermOutlook).mockResolvedValue(LONG_TERM_FIXTURE);
   vi.mocked(api.fetchMarketHeatmap).mockResolvedValue(HEATMAP_FIXTURE);
   vi.mocked(api.fetchHeatmapCategoryContext).mockResolvedValue({
     categoryId: 'copper_miners',
@@ -476,25 +670,36 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
       expect(root).not.toBeNull();
     });
 
-    // Strict 5D vs T+1 separation + non-causal XAI focus disclosure
+    // Strict 5D vs T+1 separation + non-causal XAI focus disclosure + 1M/1Q Long-Term Outlook
     expect(screen.getByText('5D TFT Primary')).toBeInTheDocument();
     expect(screen.getByText('Expected 5D Performance')).toBeInTheDocument();
     expect(screen.getByText('T+1 TFT Step 1')).toBeInTheDocument();
-    expect(screen.queryByText(/√52|√252|Pipeline & Gate|Horizon Alignment|T\+1 XGBoost diagnostic/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Raw 5D Focus · Non-causal/i)).toBeInTheDocument();
+    expect(screen.getByText('Quality Gate Passed')).toBeInTheDocument();
+    expect(screen.getByText('T+1 Daily Drivers · XGBoost')).toBeInTheDocument();
+    expect(screen.getByText(/Auxiliary single-day \(T\+1\) XGBoost feature weights/i)).toBeInTheDocument();
     expect(screen.getByTestId('news-sentiment-readout')).toHaveTextContent(/▲\s*Bullish/);
     expect(screen.getByRole('meter', { name: /7D News Sentiment/i })).toHaveAttribute('value', '0.34');
+
+    // Long-Term Outlook (1M / 1Q) lazy surface resolves cleanly
+    const ltPanel = await screen.findByTestId('long-term-outlook-panel', {}, { timeout: 12_000 });
+    expect(ltPanel).toBeInTheDocument();
+    expect(within(ltPanel).getByTestId('lt-target-price')).toHaveTextContent('$4.68');
+    fireEvent.click(within(ltPanel).getByRole('tab', { name: /1 Quarter \(60D\)/i }));
+    expect(within(ltPanel).getByTestId('lt-target-price')).toHaveTextContent('$4.82');
 
     // Global Cuprum dock mounted via AppShell with synced telemetry context
     const cuprumStage = await screen.findByTestId('cuprum-companion-stage', {}, { timeout: 12_000 });
     expect(cuprumStage).toBeInTheDocument();
 
-    // Stream lens SegmentedTabs filtering across all five views
+    // Stream lens SegmentedTabs filtering across views
     const lensTablist = screen.getByRole('tablist', { name: /Filter open dashboard intelligence stream/i });
     expect(lensTablist).toBeInTheDocument();
 
     expect(container.querySelector('#price-forecast')).toBeInTheDocument();
     expect(container.querySelector('#weekly-outlook')).toBeInTheDocument();
+    expect(container.querySelector('#model-reliability')).toBeInTheDocument();
+    expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#market-drivers')).toBeInTheDocument();
     expect(container.querySelector('#neural-analysis')).toBeInTheDocument();
     expect(container.querySelector('#news-intelligence')).toBeInTheDocument();
@@ -504,17 +709,25 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     fireEvent.click(within(lensTablist).getByRole('tab', { name: /5D & T\+1 Models/i }));
     expect(container.querySelector('#price-forecast')).toBeInTheDocument();
     expect(container.querySelector('#weekly-outlook')).toBeInTheDocument();
+    expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#news-intelligence')).not.toBeInTheDocument();
     expect(container.querySelector('#market-map')).not.toBeInTheDocument();
 
-    // Switch to XAI Focus & Drivers
+    // Switch to 1M / 1Q Outlook lens
+    fireEvent.click(within(lensTablist).getByRole('tab', { name: /1M \/ 1Q Outlook/i }));
+    expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
+    expect(container.querySelector('#price-forecast')).not.toBeInTheDocument();
+
+    // Switch to XAI Focus & Drivers (5D TFT VSN vs T+1 XGBoost drivers)
     fireEvent.click(within(lensTablist).getByRole('tab', { name: /XAI Focus & Drivers/i }));
     const driversSection = container.querySelector('#market-drivers') as HTMLElement;
     expect(driversSection).toBeInTheDocument();
+    expect(within(driversSection).getByText('+0.85%')).toBeInTheDocument();
     expect(container.querySelector('#neural-analysis')).toBeInTheDocument();
+    expect(await within(container.querySelector('#neural-analysis') as HTMLElement).findByText('COMEX Warehouse Draws', {}, { timeout: 8_000 })).toBeInTheDocument();
     expect(container.querySelector('#price-forecast')).not.toBeInTheDocument();
 
-    // Interactive driver category filtering inside Market drivers
+    // Interactive driver category filtering inside T+1 Daily Drivers
     fireEvent.click(within(driversSection).getByRole('button', { name: /^Macro/i }));
     expect(within(driversSection).getByText('USD Dollar 5D Drift')).toBeInTheDocument();
     expect(within(driversSection).queryByText('Exchange Inventory Draw')).not.toBeInTheDocument();
@@ -532,7 +745,8 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     // Restore All Streams
     fireEvent.click(within(lensTablist).getByRole('tab', { name: /All Streams/i }));
     expect(container.querySelector('#price-forecast')).toBeInTheDocument();
+    expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#news-intelligence')).toBeInTheDocument();
     expect(container.querySelector('#market-map')).toBeInTheDocument();
-  }, 15_000);
+  }, 25_000);
 });
