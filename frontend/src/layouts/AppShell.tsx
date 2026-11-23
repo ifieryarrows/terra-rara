@@ -408,7 +408,7 @@ function AppShellContent() {
   return (
     <div className="cm-workspace">
       <Suspense fallback={null}>
-        <LazyTerraAtmosphere className="cm-terra-atmosphere--workspace" interactive />
+        <LazyTerraAtmosphere className="cm-terra-atmosphere--workspace" interactive galaxy />
       </Suspense>
       <a className="cm-skip" href="#main-content">Skip to workspace</a>
       <header

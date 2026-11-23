@@ -443,7 +443,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
 
   return <TransitionContext.Provider value={startTransition}>
     {children}
-    {active && <div className={`cm-logo-transition cm-logo-transition--${phase}${reducedMotion ? ' cm-logo-transition--reduced' : ''}`} role="status" aria-live="polite" aria-label="Opening CopperMind workspace">
+    {active && <div className={`cm-logo-transition cm-logo-transition--${phase}${targetKind === 'dashboard' ? ' cm-logo-transition--persist-galaxy' : ''}${reducedMotion ? ' cm-logo-transition--reduced' : ''}`} role="status" aria-live="polite" aria-label="Opening CopperMind workspace">
       {targetKind === 'dashboard' && phase !== 'scatter' && phase !== 'assemble'
         ? <Suspense fallback={null}><TransitionAtmosphere className="cm-terra-atmosphere--transition"/></Suspense>
         : null}
@@ -469,6 +469,7 @@ export function LogoTransitionProvider({ children }: { children: ReactNode }) {
           scatterMs={SCATTER_MS}
           assembleMs={ASSEMBLE_MS}
           releaseMs={RELEASE_MS}
+          persistEndGalaxy={targetKind === 'dashboard'}
         />
       </Suspense>
       <div className="cm-logo-transition__glow" aria-hidden="true"/>

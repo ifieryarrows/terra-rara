@@ -1,12 +1,15 @@
-import { memo, useEffect, useRef } from 'react';
+import { lazy, memo, Suspense, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
 import './TerraAtmosphere.css';
+
+const LazyWorkspaceGalaxy = lazy(() => import('./WorkspaceGalaxy'));
 
 let latestPointerPosition = { x: 0.5, y: 0.5 };
 
 type TerraAtmosphereProps = {
   progress?: MotionValue<number>;
   interactive?: boolean;
+  galaxy?: boolean;
   className?: string;
 };
 
@@ -165,7 +168,7 @@ function StarFieldCanvas({ subtle = false }: { subtle?: boolean }) {
   return <canvas ref={canvasRef} className="cm-atmosphere-starfield" aria-hidden="true" />;
 }
 
-export const TerraAtmosphere = memo(function TerraAtmosphere({ progress, interactive = false, className = '' }: TerraAtmosphereProps) {
+export const TerraAtmosphere = memo(function TerraAtmosphere({ progress, interactive = false, galaxy = false, className = '' }: TerraAtmosphereProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<HTMLDivElement>(null);
   const staticProgress = useMotionValue(1);
@@ -228,6 +231,11 @@ export const TerraAtmosphere = memo(function TerraAtmosphere({ progress, interac
       <motion.div className="cm-atmosphere-stars" style={{ opacity: starsOpacity, ...(progress ? { x: starsX } : {}) }}>
         <StarFieldCanvas subtle={Boolean(progress)} />
       </motion.div>
+      {galaxy ? (
+        <Suspense fallback={null}>
+          <LazyWorkspaceGalaxy />
+        </Suspense>
+      ) : null}
       {progress || interactive ? <div ref={pointerRef} className="cm-atmosphere-pointer" /> : null}
       <div className="cm-atmosphere-grain" />
     </div>

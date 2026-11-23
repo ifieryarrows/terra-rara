@@ -2877,6 +2877,8 @@ body:has(.cm-workspace) { min-width: min(20rem, 100%); }
 .cm-metric-tile--copper .cm-metric-tile__delta { color: var(--cm-copper); }
 .cm-metric-tile--forecast .cm-metric-tile__value,
 .cm-metric-tile--forecast .cm-metric-tile__delta { color: var(--cm-forecast); }
+.cm-metric-tile--neutral .cm-metric-tile__value,
+.cm-metric-tile--neutral .cm-metric-tile__delta { color: var(--cm-muted); }
 .cm-metric-tile__hint {
   color: var(--cm-muted);
   font-size: .67rem;

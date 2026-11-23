@@ -171,6 +171,10 @@
   opacity: 0;
 }
 
+.cm-logo-transition--persist-galaxy.cm-logo-transition--reveal .cm-logo-transition__particles {
+  transition: opacity 420ms ease;
+}
+
 .cm-logo-transition--reduced .cm-logo-transition__backdrop {
   animation-duration: 160ms;
 }
@@ -213,8 +217,9 @@ html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"] .cm-lan
   animation: cm-route-depart-clear 320ms ease-out both;
 }
 
-/* Hand off live Landing ParticleWorld cleanly to the 3D Galaxy -> Logo vortex field. */
-html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"][data-cm-galaxy-active="true"] .cm-landing .cm-particle-world {
+/* Hand off live Landing ParticleWorld or WorkspaceGalaxy cleanly to the 3D Galaxy -> Logo vortex field. */
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"][data-cm-galaxy-active="true"] .cm-landing .cm-particle-world,
+html[data-cm-logo-transition="true"][data-cm-route-transition="leaving"][data-cm-galaxy-active="true"] .cm-workspace .cm-workspace-galaxy {
   opacity: 0;
   transition: opacity 90ms ease-out;
 }
