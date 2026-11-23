@@ -69,6 +69,7 @@ COPY ./pipelines /code/pipelines
 COPY ./migrations /code/migrations
 COPY ./deep_learning /code/deep_learning
 COPY ./backtest /code/backtest
+COPY ./long_term /code/long_term
 
 # Copy pre-trained model files (from Kaggle)
 COPY ./data/models /data/models

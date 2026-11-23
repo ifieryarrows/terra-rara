@@ -363,3 +363,11 @@ def test_metric_helpers_sanity():
     assert quantile_crossing_rate(np.array([[0.0, 0.1, 0.2], [0.0, 0.3, 0.2]])) == pytest.approx(0.25)
     b = brier_multiclass(np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), np.array([0, 1]))
     assert b == pytest.approx(0.0)
+
+
+def test_dockerfile_copies_long_term_package():
+    """Guard against HF Space / Docker startup ModuleNotFoundError for long_term."""
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY ./long_term /code/long_term" in dockerfile
