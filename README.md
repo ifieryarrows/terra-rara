@@ -1,21 +1,60 @@
-# Terra Rara
+<div align="center">
 
-AI-powered copper futures price prediction platform combining XGBoost ML, TFT-ASRO deep learning, LLM-based sentiment analysis and cross-asset market data.
+<a href="https://terra-rara.vercel.app">
+  <img src="frontend/public/brand/terra-rara-social.png" alt="Terra Rara — CopperMind COMEX Copper Forecasting Platform" width="100%" />
+</a>
 
-[![Live Demo](https://img.shields.io/badge/demo-terra--rara.vercel.app-0969da)](https://terra-rara.vercel.app)
-[![API Docs](https://img.shields.io/badge/api-docs-10b981)](https://ifieryarrows-copper-mind.hf.space/api/docs)
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+<h1>Terra Rara · CopperMind</h1>
+
+<p>
+  <strong>Multi-horizon COMEX copper futures (<code>HG=F</code>) forecasting &amp; market intelligence platform</strong><br />
+  Modern 3-Seed TFT-ASRO + Fail-Open Chronos-2 Foundation Prior · Split CQR · XGBoost · Structural Macro · LLM Sentiment
+</p>
+
+<p>
+  <a href="https://terra-rara.vercel.app"><img src="https://img.shields.io/badge/Live_Demo-terra--rara.vercel.app-0969da?style=for-the-badge&logo=vercel&logoColor=white" alt="Live Demo" /></a>
+  <a href="https://ifieryarrows-copper-mind.hf.space/api/docs"><img src="https://img.shields.io/badge/API_Docs-FastAPI_Swagger-10b981?style=for-the-badge&logo=fastapi&logoColor=white" alt="API Docs" /></a>
+  <a href="https://github.com/ifieryarrows/terra-rara/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/ifieryarrows/terra-rara/tests.yml?branch=main&style=for-the-badge&label=CI_Tests" alt="CI Tests" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-e29a5f?style=for-the-badge" alt="License: MIT" /></a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11" />
+  <img src="https://img.shields.io/badge/PyTorch_Lightning-TFT--ASRO-792EE5?style=flat-square&logo=lightning&logoColor=white" alt="PyTorch Lightning" />
+  <img src="https://img.shields.io/badge/Amazon-Chronos--2-FF9900?style=flat-square" alt="Chronos-2" />
+  <img src="https://img.shields.io/badge/XGBoost-T%2B1_Diagnostic-189FDD?style=flat-square" alt="XGBoost" />
+  <img src="https://img.shields.io/badge/React_18-Vite_7_+_Tailwind_v4-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 18" />
+  <img src="https://img.shields.io/badge/PostgreSQL-Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase" />
+</p>
+
+<p>
+  <a href="#overview">Overview</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#architecture-evolution--benchmark-rationale">29-Model Benchmark</a> ·
+  <a href="#cuprum-companion">Cuprum Companion</a> ·
+  <a href="#getting-started">Quickstart</a> ·
+  <a href="#api-reference">API Reference</a>
+</p>
+
+</div>
+
+---
+
+> [!IMPORTANT]
+> **Informational Research Only:** Terra Rara does not provide trading signals or financial advice. The HTTP API is strictly **snapshot-only** (`backend/app/main.py`): all data ingestion, LLM scoring, feature generation, inference, and training execute asynchronously in background workers (`backend/worker/runner.py`) or GitHub Actions CI pipelines.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
+- [Cuprum Companion](#cuprum-companion)
 - [Architecture](#architecture)
-- [Directory Structure](#directory-structure)
 - [Symbol Sets](#symbol-sets)
 - [Model Details](#model-details)
   - [XGBoost](#xgboost-parameters)
   - [TFT-ASRO Deep Learning](#tft-asro-deep-learning)
+  - [Architecture Evolution & Benchmark Rationale](#architecture-evolution--benchmark-rationale)
+- [Directory Structure](#directory-structure)
 - [Getting Started](#getting-started)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -25,25 +64,25 @@ AI-powered copper futures price prediction platform combining XGBoost ML, TFT-AS
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [Security](#security)
-- [License](#license)
 
 ## Overview
 
-Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel models: an XGBoost regression model for next-day point estimates and a Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization (TFT-ASRO) for multi-day probabilistic forecasts. The system ingests daily news via Google News RSS, scores article sentiment using a multi-tier resilient LLM routing system (NVIDIA Nemotron 3.5 Super VL as primary, Liquid LFM 2.5 as reliable scoring/repair, with Gemma 4 fallbacks and local FinBERT fallback), extracts 768-dimensional FinBERT embeddings reduced to 8 dimensions via PCA and combines these with 250+ technical features computed from 17 correlated assets. LME warehouse stock data and futures curve signals provide physical-market context. A scheduled pipeline runs daily to refresh sentiment, generate AI-driven institutional market commentary and produce dynamic Cuprum companion dialogue powered primarily by IFM K2-Horizon (375B parameter reasoning model) with fail-open fallback to OpenRouter.
+Terra Rara predicts COMEX copper futures (`HG=F`) **returns** (never raw price levels) across three strictly separated horizons, combining causal cross-asset signals, deep probabilistic time-series modeling, foundation priors, and institutional LLM market reasoning:
 
-**XGBoost target**: Next-day simple return: `(close[t+1] / close[t]) - 1`
+| Horizon Layer | Engine & Target | Annualization & Calibration | Production Role |
+| --- | --- | --- | --- |
+| **Primary · 5-Day Cumulative** | **3-Seed Modern TFT-ASRO + 20% Fail-Open `Chronos-2`** (`target_5d_log_return`) | `sqrt(52)` Newey-West HAC · RSS quantiles · Linear-vol Split CQR (`q02..q98`) | Headline weekly probabilistic trajectory & risk bands (`/api/analysis/tft/HG=F`) |
+| **Diagnostic · Next-Day ($T+1$)** | **XGBoost Regressor** (`(close[t+1] / close[t]) - 1`) | `sqrt(252)` · Paired block-bootstrap symbol selection | Auxiliary short-step direction & consensus check (`/api/analysis`) |
+| **Structural · 20D / 60D Outlook** | **Causal Weekly Macro Scorecard** (`long_term/`) | FRED 10Y real yields, breakevens, USD, & miner cross-asset ratios | Slow fundamental macro regime layer (`/models` & `/dashboard`) |
 
-**TFT-ASRO target**: 5-day cumulative log-return (`target_5d_log_return`) primary forecast with 7-quantile probabilistic output (q0.02 through q0.98), accompanied by 1-day log-return auxiliary diagnostic.
-
-**Target users**: Traders, analysts and developers building commodity forecasting tools.
-
-**Non-goals**: This system does not provide trading signals or financial advice. Predictions are for informational purposes only.
+In parallel, daily scheduled workers ingest commodity news via Google News RSS, score article sentiment using resilient multi-tier LLM routing (`IFM K2-Horizon-375B` / NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5 / Gemma 4 with local FinBERT fallback), and drive institutional commentary and interactive **Cuprum** companion dialogue — while intentionally keeping news/FinBERT embeddings decoupled (`include_news_features=False`) from the 5-day neural core.
 
 ## Features
 
-- Predict next-day copper futures returns using XGBoost regression trained on 250+ features
-- Forecast 5-day returns with probabilistic confidence bands using TFT-ASRO deep learning
-- Score news sentiment using multi-tier LLM routing (NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5) with FinBERT fallback
+- Predict next-day copper futures returns using XGBoost regression trained on 250+ features (diagnostic layer)
+- Forecast 5-day cumulative log-returns using a 3-seed compact Modern TFT-ASRO ensemble blended 80/20 with a fail-open univariate zero-shot `Chronos-2` (`amazon/chronos-2`) foundation prior and Split CQR bands
+- Produce weekly causal 20D/60D structural macro outlooks (`long_term/`) using FRED real yields, inflation breakevens, broad USD, and miner cross-asset ratios
+- Score news sentiment using multi-tier LLM routing (NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5) with FinBERT fallback (post-model commentary & risk layer)
 - Extract FinBERT CLS embeddings (768-dim → 8-dim PCA) for deep semantic encoding optimized for sample efficiency
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
 - Aggregate daily sentiment using time-weighted exponential decay
@@ -59,87 +98,62 @@ Terra Rara predicts COMEX copper futures (HG=F) **returns** using two parallel m
 - Optimize TFT hyperparameters via Optuna TPE search with variance ratio penalty and deterministic replay
 - Dual storage model persistence with HuggingFace Hub checkpoints and atomic database artifacts
 
+## Cuprum Companion
+
+**Cuprum** is CopperMind's reactive market spirit surfaced in `/dashboard`, shifting dynamically with model consensus, volatility, and RAG-grounded top drivers in plain human language (`greeting`, `drivers_reply`, `outlook_reply`):
+
+<div align="center">
+
+| <img src="frontend/public/assets/cuprum/cuprum-molten-bull.png" width="96" alt="Molten Bull" /> | <img src="frontend/public/assets/cuprum/cuprum-tempered-neutral.png" width="96" alt="Tempered Neutral" /> | <img src="frontend/public/assets/cuprum/cuprum-patina-bear.png" width="96" alt="Patina Bear" /> |
+| :---: | :---: | :---: |
+| **Molten Bull** | **Tempered Neutral** | **Patina Bear** |
+| Consensus upside alignment with strong macro & miner confirmation | Mixed or range-bound signals; highlights opposing wires calmly | Downside / USD headwind regime with defensive risk-band context |
+
+</div>
+
 ## Architecture
 
+```mermaid
+flowchart TB
+    classDef fe fill:#141A26,stroke:#61DAFB,color:#F0F6FC,stroke-width:1.5px
+    classDef api fill:#141A26,stroke:#E29A5F,color:#F0F6FC,stroke-width:1.5px
+    classDef worker fill:#141A26,stroke:#3FB950,color:#F0F6FC,stroke-width:1.5px
+    classDef store fill:#0D111A,stroke:#7AA2F7,color:#F0F6FC,stroke-width:1.5px
+
+    subgraph Frontend["Vercel SPA + Prerendered Edge"]
+        UI["React 18 · Vite 7 · Tailwind v4<br/>/ · /dashboard · /models · /validation · /system"]:::fe
+    end
+
+    subgraph Backend["Hugging Face Space · FastAPI + Arq Worker"]
+        API["Snapshot-Only REST API (main.py)<br/>/api/analysis · /api/analysis/tft · /api/explain<br/>/api/market-heatmap · /api/commentary · /api/models/tft/summary"]:::api
+        CRON["GitHub Actions Schedulers<br/>Daily 00:10 UTC · TFT Sun 21:00 UTC · Screener Sun 18:00 UTC"]:::worker
+        WRK["Async Arq Worker (worker/runner.py)<br/>yfinance · Google RSS · LLM Router + FinBERT"]:::worker
+        MOD["Horizon-Separated Forecast Stack<br/>1) 3-Seed TFT-ASRO + 20% Chronos-2 + Split CQR (5D)<br/>2) XGBoost Regressor (T+1 Diagnostic)<br/>3) long_term/ Causal Macro Scorecard (20D/60D)"]:::worker
+    end
+
+    subgraph Data["Persistence & Registries"]
+        PG[("Supabase PostgreSQL<br/>price_bars · snapshots · tft_model_metadata<br/>backtest_reports · pipeline_run_metrics")]:::store
+        RED[("Redis Queue")]:::store
+        HUB[("HuggingFace Hub<br/>3-Seed Checkpoints · CQR · SHA Manifest")]:::store
+    end
+
+    UI <-->|"HTTPS / JSON"| API
+    API <-->|"Cached Snapshots Only"| PG
+    API -->|"Enqueue Job"| RED
+    CRON -->|"POST /api/pipeline/trigger"| API
+    RED --> WRK
+    WRK --> MOD
+    MOD -->|"Quality-Gated Write"| PG
+    MOD <-->|"Revision-Synced Artifacts"| HUB
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  FRONTEND (Vercel)                                                      │
-│  React 18 + Vite 7 + TailwindCSS v4 + React Router 7 + Framer Motion    │
-│  ├── Multi-page workspace: Landing (/), Overview (/dashboard),          │
-│  │   Models (/models), Validation (/validation), System (/system)       │
-│  ├── Bespoke Price Forecast & quantile bands chart (Recharts)           │
-│  ├── S&P / Finviz-style interactive treemap Heatmap (D3-hierarchy)     │
-│  ├── News Intelligence drawer with sentiment & commodity relevance      │
-│  ├── Blended Model Consensus & XGBoost feature importance               │
-│  └── Model Reliability & Walk-Forward Validation reporting              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  BACKEND (HuggingFace Spaces - Docker)                                  │
-│  FastAPI + Python 3.11 + Uvicorn + Redis                                │
-│                                                                         │
-│  REST API                                                               │
-│  ├── GET /api/analysis          → XGBoost next-day return prediction    │
-│  ├── GET /api/analysis/tft/{s}  → TFT-ASRO 5-day quantile forecast      │
-│  ├── GET /api/analysis/consensus→ Blended prediction (XGBoost + TFT)    │
-│  ├── GET /api/explain/{s}       → Stored TFT model-focus explanation    │
-│  ├── GET /api/history           → 180d historical price & sentiment     │
-│  ├── GET /api/market-heatmap    → Sector/category asset treemap (15m)   │
-│  ├── GET /api/market-prices     → Real-time quotes (14 symbols)         │
-│  ├── GET /api/commentary        → AI commentary, stance & Cuprum dialog │
-│  ├── GET /api/news              → Processed news intelligence feed      │
-│  ├── GET /api/models/tft/summary→ Quality gate status & TFT metrics     │
-│  ├── GET /api/health            → System & database health              │
-│  ├── POST /api/pipeline/trigger → Enqueue background pipeline job       │
-│  └── GET /api/pipeline/runs/{id}→ Pipeline run status tracking          │
-│                                                                         │
-│  ML PIPELINE (Daily @ 23:00 UTC / 02:00 Istanbul)                       │
-│  ├── 8 strategic queries → Google News RSS ingestion                    │
-│  ├── Resilient multi-tier LLM sentiment scoring (batch size 12)         │
-│  ├── FinBERT CLS embedding extraction + PCA (768→8 dim)                 │
-│  ├── 250+ feature engineering across 17 training symbols                │
-│  ├── XGBoost training (scheduled weekly on Sundays)                     │
-│  ├── TFT-ASRO inference (quantile forecasts from HF Hub checkpoint)    │
-│  ├── AI commentary & Cuprum dialogue via IFM K2 (OpenRouter fallback)  │
-│  └── Pipeline metrics & quality state recorded in database              │
-│                                                                         │
-│  DEEP LEARNING (Scheduled Retraining & Validation)                      │
-│  ├── Feature store: price + sentiment + embeddings + LME + calendar    │
-│  ├── TFT-ASRO model (pytorch-forecasting + Lightning)                  │
-│  ├── ASRO & Weekly Loss: Sharpe + quantile + MADL + crossing penalties │
-│  ├── Optuna hyperparameter search with variance ratio penalty          │
-│  ├── Strict Quality Gate: Weekly DA, magnitude, Sharpe & coverage audit│
-│  └── Checkpoint persistence via HuggingFace Hub + atomic DB artifacts  │
-└─────────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  DATA LAYER                                                             │
-│  ├── Supabase PostgreSQL                                                │
-│  │   ├── news_raw / news_processed  (reproducible news pipeline)        │
-│  │   ├── news_sentiments_v2         (commodity-aware LLM scores)        │
-│  │   ├── news_embeddings            (FinBERT CLS + 8-dim PCA vectors)   │
-│  │   ├── daily_sentiments_v2        (aggregated index)                  │
-│  │   ├── price_bars                 (OHLCV market bars)                 │
-│  │   ├── lme_warehouse_data         (LME copper stock levels)           │
-│  │   ├── analysis_snapshots         (cached XGBoost predictions)        │
-│  │   ├── tft_prediction_snapshots   (cached TFT quantile forecasts)     │
-│  │   ├── ai_commentaries            (market commentaries)               │
-│  │   ├── model_metadata             (XGBoost artifacts & params)        │
-│  │   ├── model_artifacts            (serialized model weights)          │
-│  │   ├── tft_model_metadata         (TFT-ASRO metrics & quality gate)   │
-│  │   ├── heatmap_cache              (market heatmap snapshots)          │
-│  │   ├── backtest_reports           (walk-forward validation runs)      │
-│  │   └── pipeline_run_metrics       (pipeline executions & monitoring)  │
-│  ├── Redis (pipeline job queue)                                         │
-│  ├── HuggingFace Hub (TFT checkpoint, calibration & PCA persistence)   │
-│  ├── yfinance (OHLCV price data & live quotes)                          │
-│  ├── Nasdaq Data Link (LME warehouse stocks, optional)                  │
-│  ├── TwelveData (backup live copper price)                              │
-│  └── Google News RSS (news source)                                      │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+
+<details>
+<summary><strong>Full Endpoint & Table Breakdown (Expand)</strong></summary>
+
+- **REST API (`backend/app/main.py`):** `/api/analysis`, `/api/analysis/tft/{symbol}`, `/api/analysis/consensus`, `/api/explain/{symbol}`, `/api/history`, `/api/market-heatmap`, `/api/market-prices`, `/api/commentary`, `/api/news`, `/api/models/tft/summary`, `/api/health`, `/api/pipeline/trigger`, `/api/pipeline/runs/{id}`.
+- **Supabase Tables:** `price_bars`, `news_raw`, `news_processed`, `news_sentiments_v2`, `news_embeddings`, `daily_sentiments_v2`, `lme_warehouse_data`, `analysis_snapshots`, `tft_prediction_snapshots`, `ai_commentaries`, `model_metadata`, `model_artifacts`, `tft_model_metadata`, `heatmap_cache`, `backtest_reports`, `pipeline_run_metrics`.
+
+</details>
 
 ## Symbol Sets
 
@@ -272,126 +286,167 @@ Approximately 250 features are generated for XGBoost:
 
 ### TFT-ASRO Deep Learning
 
-The TFT-ASRO (Temporal Fusion Transformer with Adaptive Sharpe Ratio Optimization) operates as a parallel model producing 5-day probabilistic forecasts. It runs independently from the XGBoost pipeline and uses a richer feature set.
+The primary 5-day probabilistic engine pairs a **3-seed compact Modern TFT-ASRO ensemble** (`pytorch-forecasting` + PyTorch Lightning) with a **20% fail-open `Chronos-2` (`amazon/chronos-2`) univariate zero-shot foundation prior**, RSS quantile horizon aggregation, and linear-volatility Split CQR calibration. It operates independently from the diagnostic $T+1$ XGBoost pipeline and the 20D/60D `long_term/` macro scorecard.
 
 #### Model Architecture
 
-| Parameter                  | Value | Notes                                                      |
-| -------------------------- | ----- | ---------------------------------------------------------- |
-| `hidden_size`            | 48    | Optimal size post-MRMR pruning; prevents VSN overfitting   |
-| `attention_head_size`    | 2     | Fewer heads for small, single-series dataset               |
-| `dropout`                | 0.30  | Regularization for small sample regime without collapse    |
-| `hidden_continuous_size` | 16    | Paired reduction with hidden_size                          |
-| `learning_rate`          | 2e-4  | Conservative AdamW learning rate                           |
-| `weight_decay`           | 5e-5  | L2 regularization preventing weight explosion              |
-| `max_encoder_length`     | 60    | 60 trading days of lookback                                |
-| `max_prediction_length`  | 5     | 5-day forecast horizon                                     |
-| `gradient_clip_val`      | 1.0   | Relaxed from 0.5; tanh-based Sharpe gradients are bounded  |
-| `batch_size`             | 16    | ~19 batches/epoch for stable gradient estimates            |
-| `lookback_days`          | 1095  | 3 years of market data (~500 samples vs ~313 previously)   |
+| Parameter                  | Value            | Notes                                                             |
+| -------------------------- | ---------------- | ----------------------------------------------------------------- |
+| `hidden_size`              | `12`             | Compact capacity limits overfitting on ~175 independent weekly blocks |
+| `hidden_continuous_size`   | `6`              | Paired compact continuous projection                              |
+| `attention_head_size`      | `1`              | Single temporal head prevents attention fragmentation on small series |
+| `dropout`                  | `0.30`           | Regularization without directional signal collapse                |
+| `learning_rate`            | `5e-4`           | AdamW backbone LR (`1e-4`-band differential head & bias decay)    |
+| `output_head_lr_mult`      | `0.35`           | Weight LR multiplier (biases capped at `0.05x`); lifts over-compression |
+| `weight_decay`             | `1.5e-2`         | L2 regularization via decoupled `AdamW`                           |
+| `max_encoder_length`       | `15`             | 15 trading days (3 weeks) of stationary context                   |
+| `max_prediction_length`    | `5`              | 5-day cumulative log-return horizon                               |
+| `gradient_clip_val`        | `0.5`            | Gradient norm stabilization                                       |
+| `batch_size`               | `32`             | Chronological batches with `val_ratio=0.08`, `test_ratio=0.10`     |
+| `lookback_days`            | `1825`           | 5 years of weekday-only deduplicated futures bars                 |
+| `ensemble_seeds`           | `(42, 137, 256)` | Filtered on validation MAE/0 & drift bounds (no `val_mean` shift) |
+| `foundation_prior.weight`  | `0.20`           | Fixed 80% TFT + 20% `amazon/chronos-2` prior (validation-guarded, fail-open) |
 
-#### Quantile Output & Monotonic Ordering
+#### Quantile Output, RSS Aggregation & Split CQR
 
-The model produces 7 quantiles instead of a single point estimate:
+The model outputs 7 strictly ordered quantiles over realized 1-day causal log returns (`target = log(close[t]/close[t-1])`):
 
-- q0.02, q0.10, q0.25, **q0.50 (median)**, q0.75, q0.90, q0.98
+- `q0.02`, `q0.10`, `q0.25`, **`q0.50` (median)**, `q0.75`, `q0.90`, `q0.98`
 
-Quantile crossings are strictly penalized during training (`lambda_crossing = 1.0`) and non-crossing order is mathematically guaranteed at inference via monotonic projection (`enforce_monotonic_quantiles`). This directly models 96% and 80% confidence intervals and captures tail risk.
+Multi-day uncertainty is aggregated using **root-sum-of-squares (RSS)** L2 quantile half-widths (`aggregate_weekly_quantiles_np`) alongside additive medians, preserving strict monotonicity (`quantile_crossing_rate == 0`) without assuming perfect daily comonotonicity. At calibration time (validation split only), **linear-volatility Split CQR** (`base_vol_power=1.0`, normalized by `realized_vol_20d`) tunes empirical 80% and 96% prediction intervals before test evaluation or live inference.
 
-#### ASRO & Weekly Loss Formulation
+#### WeeklyASROPFLoss Formulation
 
-The custom loss aligns optimization directly with financial risk-adjusted performance and scale control:
+`WeeklyASROPFLoss` overrides `Metric.update()` so batch backpropagation and `val_loss` share exact raw batch scale (eliminating `MultiHorizonMetric` `B * H` dilution):
 
+| Component                      | Weight / Default | Purpose                                                                 |
+| ------------------------------ | ---------------- | ----------------------------------------------------------------------- |
+| Weekly quantile pinball        | `1.00`           | Proper-scoring calibration across all 7 weekly quantiles                |
+| Auxiliary $T+1$ pinball        | `0.20`           | Short-step anchor scaled identically to weekly pinball loss             |
+| Sub-horizon pinball            | `0.15`           | Smooths intermediate path steps `[t+2..t+4]`                            |
+| Zero-drift L1+L2 prior         | `0.75`           | Prevents single-sign bull/bear drift without over-compressing amplitude |
+| Demeaned directional utility   | `0.12`           | Batch-demeaned ASRO Sharpe alignment (`WeeklyTargetScale`-normalized)   |
+| Legacy batch heuristic terms   | `0.00`           | `lambda_bias`, `dispersion`, `magnitude`, `naive`, `positive_rate` off  |
+
+#### Hybrid Inference Flow (80% Modern TFT-ASRO + 20% Chronos-2 Prior)
+
+Training (`trainer.py`), rolling walk-forward validation (`backtest/runner.py`), and live inference (`predictor.py`) execute identical stages in strict order:
+
+```mermaid
+flowchart LR
+    X["core5 Stationary Features<br/>(15d x 5 + day_of_week)"] --> TFT["3-Seed Modern TFT-ASRO<br/>(Ordered 5D Path)"]
+    C["Causal HG=F Closes<br/>(252d Univariate Zero-Shot)"] --> C2["amazon/chronos-2<br/>(9 -> 7 Log Quantiles)"]
+    C2 -->|"Val Sanity Gate<br/>(Fail-Open w=0.20)"| BL["Ordered-Space Blend<br/>0.80 TFT + 0.20 Chronos-2"]
+    TFT --> BL
+    BL --> CQR["Linear-Vol Split CQR<br/>(realized_vol_20d)"]
+    CQR --> PUB["Public Simple Returns<br/>& Price Bands (q02..q98)"]
 ```
-L_total = λ_quantile × L_calibration + (1 - λ_quantile) × (-tanh_sharpe) + L_auxiliary
-```
 
-| Component | Weight | Purpose |
-| --------- | ------ | ------- |
-| Quantile calibration | `λ_quantile = 0.25` | Keeps TFT probabilistic |
-| Sharpe component | `w_sharpe = 0.75` | Drives directional risk-adjusted learning |
-| Volatility calibration | `λ_vol = 0.30` | Q90-Q10 spread tracks actual return volatility |
-| Mean Absolute Directional Loss (MADL) | `λ_madl = 0.40` | Rewards correct direction scaled by magnitude (Kisiel & Gorse) |
-| Quantile crossing guard | `λ_crossing = 1.0` | Structural penalty enforcing monotonic quantile order |
-| Weekly quantile loss | `λ_weekly_quantile = 0.70` | Aligns loss with 5-day cumulative horizon |
-| Weekly directional weight | `λ_directional = 0.25` | Prioritizes multi-day direction over noise |
-| Weekly magnitude penalty | `λ_magnitude = 0.58` | Penalizes scale mismatches against historical targets |
-| Positive rate sign loss | `λ_positive_rate = 0.75` | Guards against single-direction prediction collapse |
-| Weekly median cap multiple | `1.20×` train median | Structural median boundary derived from training split |
+1. **Modern TFT-ASRO Ensemble (3 seeds):** Predicts ordered 5-day quantile paths from stationary `core5` inputs.
+2. **Causal `Chronos-2` Univariate Zero-Shot (`amazon/chronos-2`):** Takes only trailing historical `HG=F` closes up to origin `t` (`context_len=252` trading days, zero covariates, zero future leakage) and maps 9 step-5 price quantiles into 7 cumulative log-return quantiles.
+3. **Zero-DoF Validation Sanity Gate:** During training, enables the `0.20` prior weight only if `val_foundation_mae_vs_naive <= 1.25`, blend MAE degradation `<= 0.02`, and blended positive rate avoids single-sign collapse (`[0.15, 0.85]`).
+4. **Monotonic Ordered-Space Blend (`0.80 * W_TFT + 0.20 * W_C2`):** Shifts daily medians and scales quantile half-widths consistently with RSS aggregation, failing open to `100%` TFT-ASRO if `Chronos-2` is unavailable at runtime.
+5. **Split CQR & Contract Formatting:** Applies validation-fitted volatility-scaled CQR intervals and converts internal log returns to public simple returns and price targets.
 
 #### TFT Feature Categories
 
-The TFT ingests ~340 features across three categories:
+- **Time-varying unknown (`core5`, `mrmr_top_k=5` locked):** `HG=F_ret5`, `HG=F_close_sma_20_ratio`, `HG=F_signed_vol_ratio`, `HG=F_theta_5d_prior`, `macro_fair_value_zscore`. Raw unnormalized price levels (`include_raw_ma=False`) and unsigned `*_vol_*` features are excluded from encoder inputs (`realized_vol_20d` is retained strictly for Split CQR normalization).
+- **Time-varying known:** `day_of_week` normalized over Mon–Fri (`clip(dayofweek, 0, 4) / 4.0`). Weekend ghost futures bars (`dayofweek >= 5`) and static bias channels (`add_target_scales`, `add_encoder_length`, `add_relative_time_idx`) are stripped.
+- **Post-model news & sentiment:** Live news/FinBERT DB lookups are decoupled from TFT training (`include_news_features=False`) and operate in the institutional commentary, risk, and Cuprum companion layer.
 
-**Time-varying unknown (observed in past, unknown in future)**:
+#### Architecture Evolution & Benchmark Rationale
 
-- Copper prices, log returns, technical indicators (from 17 training assets)
-- FinBERT PCA embedding vectors (8 dimensions, reduced from 768 for sample efficiency)
-- Sentiment momentum (5/10/30-day SMA/EMA), surprise Z-score, volume-weighted sentiment
-- 11 commodity event-type intensities (supply disruption, inventory draw, macro USD, etc.)
-- LME warehouse stock changes (1/5/10/20-day), depletion rate, cancelled warrant ratio
-- Futures curve spread, contango/backwardation flags
-- Regime indicators (volatility regimes, rolling return percentiles)
+Rather than choosing model families or hyperparameters from single runs, we evaluated **29 models and variants** across **8 contiguous purged expanding-window folds × 250 test days = 2,000 OOS trading days (~400 non-overlapping 5D weeks, `2018-12-10` to `2026-11-18`)** plus a **750-day Modern Regime slice (`2023-11-27` to `2026-11-18`, Folds 5–7)** on deduplicated, weekend-free futures bars, scored with paired circular block-bootstrap tests and unrelaxed `app/quality_gate.py` checks.
 
-**Time-varying known (known in future)**:
+<p align="center">
+  <img src="docs/assets/benchmark-frontier.png" alt="29-Model Multi-Regime Benchmark Frontier" width="100%" />
+</p>
 
-- Day of week (one-hot), month (sinusoidal encoding)
-- US/China holiday calendars and market schedule boundaries
+<p align="center">
+  <img src="docs/assets/amplitude-polarity-audit.png" alt="Modern Regime Polarity Balance & Amplitude Recovery Audit" width="100%" />
+</p>
 
-**Static**:
+<details>
+<summary><strong>Full 29-Model Benchmark Leaderboard &amp; What Failed vs. What Worked (Expand)</strong></summary>
 
-- Group identifier (single series: "copper")
+| Model / Variant | Fold Gate (8F) | Pooled DA (NoOv) | Pooled HAC Sharpe (NoOv) | Modern HAC Sharpe | Pooled `MAE/0` | Modern `MAE/0` | Med \|Pred\| | Verdict |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | --- |
+| **`80% Modern TFT + 20% Chronos-2` (Selected)** | **6/8** | **54.2%** *(—)* | **+0.351** | **+0.347** | **0.9944** (#1) | **0.9877** (#1) | **0.15–0.20%** | **Selected: best overall accuracy/MAE/regime balance** |
+| `dual_tft_5y_15y_core5` (Unweighted 5y+15y) | 3/8 | 56.0% (57.8%) | **+0.509** (+0.941) | **+0.625** | 0.9961 | 0.9942 | 0.09% | Highest Sharpe, but 74% modern bull skew & 3/8 gate |
+| `tft_modern_5y_amp` (Standalone Modern TFT) | 4/8 | 52.6% (55.0%) | +0.280 (+0.693) | +0.375 | 0.9955 | 0.9921 | 0.12% | #1 standalone MAE/0, 49.9% neutral polarity in modern slice |
+| `tft_modern_15y_expdecay` (3y half-life) | 4/8 | 52.1% (56.0%) | +0.176 (+0.658) | +0.544 | 1.0062 | 1.0064 | 0.14% | Strong modern Sharpe & 50.1% balance; slight MAE cost |
+| `chronos_2_univariate_zs` (Zero-shot 252d) | **7/8** | 52.7% (54.7%) | +0.199 (+0.582) | +0.127 | 1.0315 | 1.0267 | **0.39%** | Best gate stability & Fold 7 (`DA 58.4%`, `SR +0.70`), weak long-run MAE |
+| `chronos_2_cov_core5_zs` (Multivariate ZS) | 5/8 | 50.7% (51.2%) | +0.039 (+0.168) | +0.045 | 1.0355 | 1.0231 | 0.48% | Raw zero-shot covariates hurt vs univariate price series |
+| `chronos_bolt_small_zs` | 7/8 | 52.3% (57.3%) | +0.120 (+0.548) | -0.095 | 1.0272 | 1.0335 | 0.55% | Negative modern-regime Sharpe; inferior to Chronos-2 |
+| `timesfm_2p5_200m_zs` (Google TimesFM 2.5) | 6/8 | 50.9% (51.7%) | +0.024 (+0.355) | -0.175 | 1.0035 | 1.0104 | 0.24% | Negative modern-regime Sharpe (-0.175); outperformed by Chronos-2 |
+| `ridge_volnorm_expanded` | 2/8 | 49.7% (51.5%) | +0.112 (+0.420) | +0.299 | 1.0136 | 1.0167 | 0.17% | Weak Pinball skill (-0.1405) & high MAE/0 |
+| `catboost_quantile_expanded` | 2/8 | 51.2% (52.5%) | +0.068 (+0.184) | +0.486 | 1.0035 | 0.9994 | 0.09% | 2/8 gate passes & weak pooled Sharpe |
+| `lgbm_quantile_expanded` | 2/8 | 50.0% (52.0%) | -0.023 (+0.151) | -0.026 | 1.0045 | 1.0011 | 0.12% | Negative pooled & modern Sharpe |
+| `dlinear_quantile_expanded` | 4/8 | 48.6% (49.2%) | -0.028 (-0.081) | +0.194 | 1.0796 | 1.0606 | 0.71% | Severe MAE degradation under noisy 5D returns |
+| `patchtst_micro_expanded` | 4/8 | 48.2% (49.5%) | -0.072 (-0.161) | +0.097 | 1.0451 | 1.0358 | 0.53% | Negative pooled Sharpe & high MAE/0 |
+| `theta_126d` (Statistical baseline) | 4/8 | 50.1% (52.5%) | -0.109 (+0.031) | -0.163 | 1.0036 | 0.9974 | 0.22% | Beaten by TFT-ASRO ($p = 0.001$ on Sharpe & Pinball) |
+| `panel_tft_15y` (Multi-asset shared TFT) | 2/8 | 48.2% (48.2%) | -0.241 (-0.438) | -0.088 | 1.0008 | 0.9992 | 0.17% | Cross-asset weight sharing hurt copper specificity |
+| `tft_asro_15y_macro_cot` (30 FRED/COT feats) | 1/8 | 45.6% (46.8%) | -0.252 (-0.484) | -0.358 | 1.0116 | 1.0237 | 0.11% | Worst model: 30 macro/COT columns caused severe 5D overfitting |
+
+**Key Architectural Takeaways (What Failed vs. What Worked):**
+
+1. **Why we kept TFT-ASRO over Tabular / Lightweight Neural Models:** On paired block-bootstrap tests over 2,000 OOS days, TFT-ASRO outperformed `naive_zero`, `theta_126d` ($\Delta \text{Sharpe} = +0.64 \text{ to } +1.06$, $p \le 0.044$), `Ridge`, `LightGBM`, `CatBoost`, `DLinear`, `PatchTST`, and multi-asset `Panel-TFT` across Sharpe, MAE/0, and Pinball skill.
+2. **Why we locked `core5` (`mrmr_top_k=5`) on 5D and kept FRED Macro in `long_term/`:** Expanding 5D inputs to 30 features (`FRED` rates/breakevens/dollar + `CFTC COT` positioning + extra assets) degraded **every** model family (`tft_asro_15y_macro_cot` dropped to `DA=45.6%`, `HAC SR=-0.252`). Slow macro and positioning signals belong in the 20D/60D `long_term/` layer, not a 5-day horizon.
+3. **Why we fixed forecast flatness without artificial upscaling:** Actual 5D copper moves have median magnitude `1.93%`, while old TFT medians averaged `0.09%`. Multiplying predictions up artificially (`__amp_scaled` or `DLinear`'s `0.71%–0.90%`) wrecked `MAE/0` (`1.025–1.131`, bootstrap $p \le 0.001$) because 5D predictable $R^2$ is ~1–3%. Relaxing head learning rate (`output_head_lr_mult=0.35`), tuning drift regularization (`lambda_drift_prior=0.75`), and blending **20% `Chronos-2`** lifted amplitude naturally to `0.15–0.20%` while achieving **the #1 lowest `MAE/0`** (`0.9944` pooled / `0.9877` modern).
+4. **Why we paired Modern TFT-ASRO with 20% `Chronos-2` (instead of running either alone or fitting weights on validation):** `Chronos-2` univariate zero-shot excelled at stability (`7/8` gate passes) and 2025–26 structural shifts (`Fold 7 DA=58.4%, SR=+0.70`), whereas `Modern TFT-ASRO` excelled at cross-asset copper accuracy (`MAE/0=0.9955`) and modern polarity balance (`49.9%` vs. the old `74%` bull bias). Grid-searching the blend weight on a ~20-week validation split (`ValFit`) overfit and dropped OOS Sharpe (`+0.351 -> +0.172`), so we adopted a **fixed 80/20 structural blend with a validation sanity guard**.
+5. **Why we tightened Optuna bounds & cleaned `price_bars`:** Removing `lambda_drift_prior < 0.75` and locking `mrmr_top_k=5` eliminated the Nov 23 Optuna `0.15` overfit (`94.8%` positive bull collapse), and deduplicating `16,532` duplicate/weekend futures bars in Supabase ensured clean training and evaluation boundaries.
+
+</details>
 
 #### Training and Optimization
 
-TFT training is scheduled weekly (Sundays at 22:00 UTC via GitHub Actions) or on-demand:
+TFT training runs weekly (Sundays at 21:00 UTC via `.github/workflows/tft-training.yml`) or on-demand:
 
 ```bash
 cd backend
 
-# Train TFT-ASRO model with default parameters
+# Train Modern TFT-ASRO + Chronos-2 hybrid with Optuna results (or KNOWN_GOOD_CONFIG)
 python -m deep_learning.training.trainer --symbol HG=F
 
-# Run deterministic weekly validation replay (bypass Optuna overlays)
+# Deterministic validation replay (bypasses Optuna overlays)
 python -m deep_learning.training.trainer --symbol HG=F --deterministic-weekly-validation
 
-# Run Optuna hyperparameter search
-python -m deep_learning.training.hyperopt --n-trials 50
-
-# Backfill FinBERT embeddings for historical news
-python -m deep_learning.data.embeddings --backfill --days 180 --pca-dim 8
+# Run Optuna hyperparameter search (mrmr_top_k locked to 5, lambda_drift_prior >= 0.75)
+python -m deep_learning.training.hyperopt --n-trials 30
 ```
 
 #### Financial Metrics & Promotion Quality Gate
 
-To prevent overfitting or prediction explosion, models are promoted to production **only** if they pass the strict deployment Quality Gate (`app/quality_gate.py`):
+Candidate checkpoints never overwrite active serving metadata or HF Hub state until `backend/app/quality_gate.py` passes **all** primary weekly blocking checks and HuggingFace Hub upload succeeds:
 
 | Gate Metric | Threshold | Invariant Rationale |
 | ----------- | --------- | ------------------- |
-| **Weekly Directional Accuracy** | $\ge 0.53$ ($\ge 0.51$ if $N < 80$) | Statistically meaningful directional edge |
-| **Weekly Magnitude Ratio** | $[0.65, 1.35]$ | Prevents muted or inflated multi-day return forecasts |
-| **Weekly Raw Magnitude Ratio** | $\le 3.0$ (hard block) | Raw unconstrained neural net output must not explode; warning if $> 1.8$ |
-| **Weekly Median Bound Applied Rate** | Warning if $> 0.30$ | Non-blocking alert if clipping applies to $> 30\%$ of predictions |
-| **Weekly Tail Capture Rate** | $\ge 0.45$ | Captures outsized commodity moves ($>75^{\text{th}}$ percentile) |
-| **Weekly PI80 Coverage** | $[0.74, 0.86]$ | Calibrated 80% empirical prediction interval |
-| **Weekly Sharpe Ratio** | $\ge -0.20$ | Annualized with $\sqrt{52}$; warning if $< 0.20$ |
-| **Daily Sharpe Ratio** | $\ge -0.30$ | Single-step diagnostic baseline, annualized with $\sqrt{252}$ |
-| **Quantile Crossing Rate** | $\le 0.001$ | Zero tolerance for quantile order inversions |
+| **Weekly Directional Accuracy** | $\ge 0.49$ ($\ge 0.47$ if $150 \le N < 300$, $\ge 0.45$ if $N < 150$) | Sample-size-aware directional edge floor |
+| **Weekly Magnitude Ratio** | $[0.02, 2.50]$ (`raw <= 3.0`) | Prevents trivial zero collapse or neural output explosion |
+| **Weekly MAE vs Naive Zero** | $\le 1.12$ | Guards point accuracy under noisy commodity returns |
+| **Weekly Sign Collapse Guard** | Rejects `pred_pos > 0.92` (`actual < 0.67`) or `< 0.08` (`actual > 0.33`) | Blocks degenerate single-direction models |
+| **Weekly PI80 Coverage** | Binomial tolerance around `0.80` (`width_ratio <= 2.2`) | Sample-size-aware 80% Split CQR interval calibration |
+| **Weekly PI96 Coverage** | $\ge 0.88$ ($\ge 0.85$ if $n_{\text{eff}} < 25$, `width_ratio <= 3.2`) | Tail risk band validity |
+| **Weekly HAC Sharpe Ratio** | $\ge -0.35$ (`sqrt(52)` Newey-West HAC) | Accounts for overlapping 5-day return autocorrelation |
+| **Quantile Crossing Rate** | $\le 0.001$ (raw, ordered & post-CQR) | Zero tolerance for quantile inversions or median sort gaps |
 
 #### Model Persistence
 
-TFT artifacts are saved both locally in `$MODEL_DIR` and synchronized with HuggingFace Hub:
+TFT artifacts are stored locally in `$MODEL_DIR` and synchronized with HuggingFace Hub (`ifieryarrows/copper-mind-tft`) with revision hash tracking (`sync_tft_artifacts_if_stale`):
 
 | Artifact | Description |
 | -------- | ----------- |
-| `best_tft_asro.ckpt` | PyTorch Lightning model checkpoint |
-| `tft_metadata.json` | Training metrics, quality gate results, hyperparameters |
-| `conformal_calibration.json` | Conformal prediction interval calibration scalars |
-| `pca_finbert.joblib` | Fitted IncrementalPCA dimensionality reduction model |
-| `optuna_results.json` | Best hyperparameter trial configurations |
-| `artifact_manifest.json` | SHA-256 hashes and metadata verifying artifact integrity |
+| `best_tft_asro.ckpt`, `_seed1.ckpt`, `_seed2.ckpt` | Accepted 3-seed PyTorch Lightning ensemble checkpoints |
+| `tft_metadata.json` | Metrics, quality gate audit, hybrid/foundation prior params & feature contract |
+| `conformal_calibration.json` | Validation-fitted linear-volatility Split CQR parameters |
+| `optuna_results.json` | Validation-selected Optuna hyperparameters & structural diagnostics |
+| `artifact_manifest.json` | SHA-256 hashes and contract health metadata |
+| `pca_finbert.joblib` | Optional FinBERT PCA artifact (post-model / legacy news mode) |
 
 ## Directory Structure
+
+<details>
+<summary><strong>Full Repository Tree (<code>backend/</code>, <code>frontend/</code>, <code>.github/workflows/</code>)</strong></summary>
 
 ```
 terra-rara/
@@ -424,17 +479,22 @@ terra-rara/
 │   │   │   ├── futures_curve.py      # Contango/backwardation signals
 │   │   │   ├── feature_store.py      # Centralized data fusion for TFT
 │   │   │   └── dataset.py            # TimeSeriesDataSet builder
+│   │   ├── calibration/
+│   │   │   ├── foundation_prior.py   # Fail-open Chronos-2 prior & monotonic blend
+│   │   │   ├── hybrid.py             # Causal Theta prior & macro fair-value z-score
+│   │   │   └── conformal.py          # Linear-volatility Split CQR calibration
 │   │   ├── models/
-│   │   │   ├── tft_copper.py         # TFT model + ASROPFLoss
+│   │   │   ├── tft_copper.py         # TFT model + WeeklyASROPFLoss
 │   │   │   ├── losses.py             # ASRO + WeeklyLoss + MADL
-│   │   │   ├── monotonic_quantiles.py# Non-crossing quantile projection
-│   │   │   └── hub.py                # HuggingFace Hub upload/download
+│   │   │   ├── monotonic_quantiles.py# RSS horizon & non-crossing projection
+│   │   │   └── hub.py                # HuggingFace Hub upload/download & sync
 │   │   ├── training/
-│   │   │   ├── trainer.py            # PyTorch Lightning training loop
+│   │   │   ├── trainer.py            # 3-seed PyTorch Lightning training loop
 │   │   │   ├── hyperopt.py           # Optuna TPE hyperparameter search
-│   │   │   └── metrics.py            # Sharpe, Sortino, DA, tail capture
+│   │   │   └── metrics.py            # HAC Sharpe, Sortino, DA, tail capture
 │   │   └── inference/
-│   │       └── predictor.py          # TFT live prediction pipeline
+│   │       └── predictor.py          # TFT + Chronos-2 live prediction pipeline
+│   ├── long_term/                    # Causal weekly 20D/60D FRED macro outlook
 │   ├── config/
 │   │   └── symbol_sets/      # Training symbol configurations
 │   │       ├── active.json   # Current training symbols (v2.0.0)
@@ -485,6 +545,8 @@ terra-rara/
 ├── env.example
 └── README.md
 ```
+
+</details>
 
 ## Screener Module
 
@@ -580,7 +642,10 @@ docker-compose up --build
 
 ## Configuration
 
-Copy `env.example` to `backend/.env` and configure:
+Copy `env.example` to `backend/.env` and configure core credentials (`DATABASE_URL`, `PIPELINE_TRIGGER_SECRET`, `HF_TOKEN`, `IFM_API_KEY` / `OPENROUTER_API_KEY`):
+
+<details>
+<summary><strong>Full Environment Variables Reference (Expand)</strong></summary>
 
 | Variable                              | Required | Default                                 | Description                                                    |
 | ------------------------------------- | -------- | --------------------------------------- | -------------------------------------------------------------- |
@@ -617,6 +682,8 @@ Copy `env.example` to `backend/.env` and configure:
 | `HF_HUB_DISABLE_PROGRESS_BARS`      | No       | `1`                                   | Disable Hugging Face progress bars                             |
 | `TRANSFORMERS_VERBOSITY`            | No       | `error`                               | Reduce Transformers log noise                                  |
 | `TRANSFORMERS_NO_ADVISORY_WARNINGS` | No       | `1`                                   | Disable advisory warnings from Transformers                    |
+
+</details>
 
 ### AI Commentary & Companion Routing Hierarchy
 
@@ -927,7 +994,7 @@ ruff check .
 
 ### Daily Pipeline
 
-The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily-pipeline.yml`) at 00:10 UTC (03:10 Istanbul), right after OpenRouter's 00:00 UTC daily quota reset and after Sunday's 22:00 UTC weekly TFT-ASRO training workflow completes. Local scheduler mode (`SCHEDULER_ENABLED=true`) is deprecated and reserved for standalone offline development:
+The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily-pipeline.yml`) at 00:10 UTC (03:10 Istanbul), right after OpenRouter's 00:00 UTC daily quota reset and after Sunday's 21:00 UTC weekly TFT-ASRO training workflow completes. Local scheduler mode (`SCHEDULER_ENABLED=true`) is deprecated and reserved for standalone offline development:
 
 1. Fetch news from 8 strategic Google News RSS queries
 2. Process news through reproducible pipeline (`news_raw` → `news_processed`)
@@ -936,12 +1003,12 @@ The pipeline is triggered daily by GitHub Actions cron (`.github/workflows/daily
 5. Compute FinBERT CLS embeddings and store 8-dimensional PCA-reduced vectors
 6. Aggregate daily sentiment with time-weighted decay (half-life: 7 days)
 7. Generate XGBoost prediction using active model (or retrain if `train_model=true` on Sundays)
-8. Generate TFT-ASRO inference from HF Hub checkpoint (quantile forecasts)
+8. Generate 5-day TFT-ASRO + Chronos-2 inference from HF Hub checkpoint (quantile forecasts)
 9. Generate AI commentary and daily Cuprum companion dialogue via IFM K2-Horizon (with OpenRouter fallback)
 10. Cache prediction snapshots in database
 11. Record run duration, fallback counts and `quality_state` to `pipeline_run_metrics` table
 
-TFT deep learning model retraining runs on a separate weekly workflow (Sundays at 22:00 UTC) with Optuna hyperparameter optimization and deployment Quality Gate validation.
+TFT deep learning model retraining runs on a separate weekly workflow (Sundays at 21:00 UTC) with hardened Optuna hyperparameter optimization (`mrmr_top_k=5`, `lambda_drift_prior >= 0.75`) and deployment Quality Gate validation.
 
 ### Pipeline Monitoring
 
@@ -1035,11 +1102,11 @@ Tracked metrics:
 
 ### TFT predictions are flat or near-zero
 
-**Symptom**: All quantile predictions cluster around zero with minimal spread.
+**Symptom**: All quantile medians cluster near zero (`|pred| < 0.05%`) or collapse to a single direction.
 
-**Cause**: Variance ratio collapse (VR < 0.5). The model learned to minimize loss by predicting near-constant values.
+**Cause**: Over-aggressive drift regularization (`lambda_drift_prior` collapsed or overly tight head LR) or uncalibrated Optuna parameters fitting noise. Note that 5-day copper $R^2$ is naturally ~1–3%, so Bayes-optimal medians sit around `0.15%–0.40%` while uncertainty is captured by Q10–Q90 bands.
 
-**Fix**: Run Optuna hyperparameter search with `python -m deep_learning.training.hyperopt --n-trials 50`. The search space includes variance ratio penalty to prevent this failure mode. Check that `lambda_vol >= 0.25` and `learning_rate <= 1e-3`.
+**Fix**: Use the modern `KNOWN_GOOD_CONFIG` (`output_head_lr_mult=0.35`, `lambda_drift_prior=0.75`, `lambda_directional=0.12`, `mrmr_top_k=5`) with the fail-open 20% `Chronos-2` prior. Avoid artificial multiplicative post-hoc scaling, which worsens `MAE/0` and Pinball skill.
 
 ## Contributing
 
