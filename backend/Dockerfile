@@ -56,8 +56,9 @@ RUN pip install --no-cache-dir /wheels/*.whl hf_transfer && rm -rf /wheels
 COPY ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-# Pre-cache ProsusAI/finbert weights in image layer to eliminate cold-start download on HF Space
+# Pre-cache ProsusAI/finbert and amazon/chronos-2 weights in image layer to eliminate cold-start download on HF Space
 RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('ProsusAI/finbert'); AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')" || true; \
+    python -c "from chronos import Chronos2Pipeline; Chronos2Pipeline.from_pretrained('amazon/chronos-2', device_map='cpu')" || true; \
     mkdir -p /data/hf_cache && chmod -R a+rwX /data/hf_cache
 
 # App code

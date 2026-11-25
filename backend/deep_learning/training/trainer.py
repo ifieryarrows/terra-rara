@@ -130,8 +130,8 @@ KNOWN_GOOD_CONFIG = {
     "dropout": 0.30,
     "hidden_continuous_size": 6,
     "learning_rate": 5e-4,
-    "output_head_lr_mult": 0.20,
-    "weight_decay": 2e-2,
+    "output_head_lr_mult": 0.35,
+    "weight_decay": 1.5e-2,
     "mrmr_top_k": 5,
     "lambda_vol": 0.30,
     "lambda_quantile": 0.25,
@@ -144,8 +144,8 @@ KNOWN_GOOD_CONFIG = {
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 1.00,
-    "lambda_directional": 0.10,
+    "lambda_drift_prior": 0.75,
+    "lambda_directional": 0.12,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
     "lambda_interval": 0.0,
@@ -557,6 +557,44 @@ def _dataset_origin_conditioning_values(
         end_inclusive=end_inclusive,
         expected_count=expected_count,
     )
+
+
+def _dataset_origin_row_positions(
+    feature_frame: Optional[pd.DataFrame],
+    dataset,
+    *,
+    horizon: int,
+    start_exclusive: int,
+    end_inclusive: int,
+    expected_count: int,
+) -> Optional[np.ndarray]:
+    """Resolve 0-based positional row indices in ``feature_frame`` for forecast origins."""
+    if feature_frame is None or feature_frame.empty or "time_idx" not in feature_frame.columns:
+        return None
+    time_vals = pd.to_numeric(feature_frame["time_idx"], errors="coerce").to_numpy(dtype=np.float64)
+    time_to_pos = {
+        int(t): idx
+        for idx, t in enumerate(time_vals)
+        if np.isfinite(t)
+    }
+    ds_index = getattr(dataset, "index", None)
+    if (
+        ds_index is not None
+        and "time" in ds_index
+        and "sequence_length" in ds_index
+    ):
+        origin_time = (
+            ds_index["time"].to_numpy(dtype=int)
+            + ds_index["sequence_length"].to_numpy(dtype=int)
+            - int(horizon)
+            - 1
+        )[: int(expected_count)]
+        if len(origin_time) == int(expected_count) and all(int(t) in time_to_pos for t in origin_time):
+            return np.asarray([time_to_pos[int(t)] for t in origin_time], dtype=int)
+    pos = np.where((time_vals > int(start_exclusive)) & (time_vals <= int(end_inclusive)))[0]
+    if len(pos) == int(expected_count):
+        return pos.astype(int)
+    return None
 
 
 def _log_weekly_alignment_sample(
@@ -1272,6 +1310,18 @@ def train_tft_model(
         "sample_count": 0,
         "reason": "not_evaluated",
     }
+    fnd_cfg = getattr(cfg, "foundation_prior", None)
+    foundation_prior: dict = {
+        "enabled": False,
+        "provider": str(getattr(fnd_cfg, "provider", "chronos2")),
+        "model_id": str(getattr(fnd_cfg, "model_id", "amazon/chronos-2")),
+        "weight": 0.0,
+        "configured_weight": float(getattr(fnd_cfg, "weight", 0.20)),
+        "context_len": int(getattr(fnd_cfg, "context_len", 252)),
+        "fit_split": "validation",
+        "sample_count": 0,
+        "reason": "not_evaluated",
+    }
     weekly_cqr_params: Optional[dict] = None
     val_actual_path = None
     val_pred_np = None
@@ -1469,6 +1519,76 @@ def train_tft_model(
                     median_idx=median_idx,
                 )
 
+        if (
+            fnd_cfg is not None
+            and bool(getattr(fnd_cfg, "enabled", True))
+            and "target_close" in master_df.columns
+        ):
+            try:
+                from deep_learning.calibration.foundation_prior import (
+                    apply_foundation_prior_to_ordered_path,
+                    evaluate_foundation_prior_on_validation,
+                    is_foundation_prior_runtime_allowed,
+                    predict_chronos2_weekly_log_quantiles,
+                )
+
+                val_origin_pos = _dataset_origin_row_positions(
+                    master_df,
+                    validation_ds,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=train_cutoff - 1,
+                    end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                    expected_count=n_val,
+                )
+                if val_origin_pos is not None and is_foundation_prior_runtime_allowed(True):
+                    closes_arr = pd.to_numeric(
+                        master_df["target_close"], errors="coerce"
+                    ).to_numpy(dtype=np.float64)
+                    val_foundation_q = predict_chronos2_weekly_log_quantiles(
+                        closes_arr,
+                        val_origin_pos,
+                        horizon=int(cfg.forecast.primary_horizon_days),
+                        context_len=int(fnd_cfg.context_len),
+                        batch_size=int(fnd_cfg.batch_size),
+                        model_id=str(fnd_cfg.model_id),
+                        allow_runtime=True,
+                    )
+                    foundation_prior = evaluate_foundation_prior_on_validation(
+                        val_weekly_actual,
+                        val_weekly_q,
+                        val_foundation_q,
+                        weight=float(fnd_cfg.weight),
+                        model_id=str(fnd_cfg.model_id),
+                        context_len=int(fnd_cfg.context_len),
+                        max_val_mae_vs_naive=float(fnd_cfg.max_val_mae_vs_naive),
+                        max_blend_mae_degradation=float(fnd_cfg.max_blend_mae_degradation),
+                        quantiles=tuple(cfg.model.quantiles),
+                    )
+                    if foundation_prior.get("enabled"):
+                        val_pred_np[:n_val] = apply_foundation_prior_to_ordered_path(
+                            val_pred_np[:n_val],
+                            val_foundation_q,
+                            foundation_prior=foundation_prior,
+                            quantiles=tuple(cfg.model.quantiles),
+                            horizon=cfg.forecast.primary_horizon_days,
+                        )
+                        val_ordered, _ = apply_weekly_median_cap_np(
+                            val_pred_np[:n_val],
+                            weekly_median_cap=cfg.weekly_loss.weekly_median_cap,
+                            quantiles=tuple(cfg.model.quantiles),
+                            horizon=cfg.forecast.primary_horizon_days,
+                            already_ordered=True,
+                        )
+                        val_weekly_q = aggregate_weekly_quantiles_np(
+                            val_ordered[:, : cfg.forecast.primary_horizon_days, :],
+                            median_idx=median_idx,
+                        )
+                else:
+                    foundation_prior["reason"] = "runtime_disabled_or_origin_missing"
+            except Exception as fnd_exc:
+                logger.warning("Validation foundation prior skipped (fail-open): %s", fnd_exc)
+                foundation_prior["reason"] = f"error:{fnd_exc}"
+
         weekly_cqr_params = fit_weekly_cqr(
             val_weekly_actual,
             val_weekly_q,
@@ -1495,6 +1615,7 @@ def train_tft_model(
     weekly_magnitude_scale = 1.0
     weekly_interval_scale = 1.0
     logger.info("Validation-only Hybrid Theta blend: %s", hybrid_blend)
+    logger.info("Validation-only Foundation Prior: %s", foundation_prior)
     logger.info("Validation-only Split CQR calibration: %s", weekly_cqr_params or interval_calibration)
 
     # ---- 8. Evaluate on the promoted ensemble (in ordered quantile space) ----
@@ -1538,6 +1659,55 @@ def train_tft_model(
                 )
             except Exception as th_test_exc:
                 logger.warning("Test Theta hybrid shift skipped: %s", th_test_exc)
+
+        if foundation_prior.get("enabled") and "target_close" in master_df.columns:
+            try:
+                from deep_learning.calibration.foundation_prior import (
+                    apply_foundation_prior_to_ordered_path,
+                    predict_chronos2_weekly_log_quantiles,
+                )
+
+                test_origin_pos = _dataset_origin_row_positions(
+                    master_df,
+                    test_ds,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=val_cutoff - 1,
+                    end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                    expected_count=len(pred_np),
+                )
+                if test_origin_pos is not None:
+                    closes_arr = pd.to_numeric(
+                        master_df["target_close"], errors="coerce"
+                    ).to_numpy(dtype=np.float64)
+                    test_foundation_q = predict_chronos2_weekly_log_quantiles(
+                        closes_arr,
+                        test_origin_pos,
+                        horizon=int(cfg.forecast.primary_horizon_days),
+                        context_len=int(
+                            foundation_prior.get(
+                                "context_len",
+                                getattr(fnd_cfg, "context_len", 252),
+                            )
+                        ),
+                        batch_size=int(getattr(fnd_cfg, "batch_size", 32)),
+                        model_id=str(
+                            foundation_prior.get(
+                                "model_id",
+                                getattr(fnd_cfg, "model_id", "amazon/chronos-2"),
+                            )
+                        ),
+                        allow_runtime=True,
+                    )
+                    if test_foundation_q is not None:
+                        pred_np = apply_foundation_prior_to_ordered_path(
+                            pred_np,
+                            test_foundation_q,
+                            foundation_prior=foundation_prior,
+                            quantiles=tuple(cfg.model.quantiles),
+                            horizon=cfg.forecast.primary_horizon_days,
+                        )
+            except Exception as fnd_test_exc:
+                logger.warning("Test foundation prior skipped (fail-open): %s", fnd_test_exc)
 
         test_realized_vol = None
         if WEEKLY_INTERVAL_CONDITIONING_FEATURE in master_df.columns:
@@ -1597,6 +1767,7 @@ def train_tft_model(
         "ensemble_size": len(ensemble_models) if ensemble_models else 1,
         "ensemble_member_diagnostics": ensemble_member_diagnostics,
         "hybrid_blend": hybrid_blend,
+        "foundation_prior": foundation_prior,
         "split_dates": split_dates,
         "test_metrics": test_metrics,
         "variable_importance": var_importance,
@@ -1635,6 +1806,8 @@ def train_tft_model(
             "max_encoder_length": cfg.model.max_encoder_length,
             "max_prediction_length": cfg.model.max_prediction_length,
             "mrmr_top_k": cfg.feature_store.mrmr_top_k,
+            "foundation_prior_enabled": bool(foundation_prior.get("enabled", False)),
+            "foundation_prior_weight": float(foundation_prior.get("weight", 0.0) or 0.0),
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "primary_horizon_days": cfg.forecast.primary_horizon_days,

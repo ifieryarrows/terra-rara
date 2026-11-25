@@ -816,6 +816,7 @@ def build_tft_dataframe(
         futures_features,
         regime_features,
         calendar_features,
+        close.rename("target_close").to_frame(),
         target_model.to_frame(),
         target_1d.to_frame(),
         target_5d.to_frame(),
@@ -868,6 +869,7 @@ def build_tft_dataframe(
     non_feature_cols = {
         "time_idx",
         "group_id",
+        "target_close",
         cfg.forecast.model_daily_target_col,
         cfg.forecast.auxiliary_target_col,
         cfg.forecast.primary_target_col,

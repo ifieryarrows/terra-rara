@@ -80,11 +80,11 @@ class TFTModelConfig:
     hidden_continuous_size: int = 6
     quantiles: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
     learning_rate: float = 5e-4
-    output_head_lr_mult: float = 0.20
+    output_head_lr_mult: float = 0.35
     reduce_on_plateau_patience: int = 4
     gradient_clip_val: float = 0.5
     # L2 regularisation via AdamW; prevents weight growth on small financial series.
-    weight_decay: float = 2e-2
+    weight_decay: float = 1.5e-2
 
 
 @dataclass(frozen=True)
@@ -143,8 +143,8 @@ class WeeklyLossConfig:
     lambda_magnitude: float = 0.0
     lambda_naive: float = 0.0
     lambda_bias: float = 0.0
-    lambda_drift_prior: float = 1.00
-    lambda_directional: float = 0.10
+    lambda_drift_prior: float = 0.75
+    lambda_directional: float = 0.12
     lambda_saturation: float = 0.0
     lambda_positive_rate: float = 0.0
     lambda_interval: float = 0.0
@@ -183,6 +183,18 @@ class FeatureStoreConfig:
     mrmr_top_k: int = 5
 
 
+@dataclass(frozen=True)
+class FoundationPriorConfig:
+    enabled: bool = True
+    provider: str = "chronos2"
+    model_id: str = "amazon/chronos-2"
+    weight: float = 0.20
+    context_len: int = 252
+    batch_size: int = 32
+    max_val_mae_vs_naive: float = 1.25
+    max_blend_mae_degradation: float = 0.02
+
+
 @dataclass
 class TFTASROConfig:
     """Top-level config aggregating all sub-configs."""
@@ -196,6 +208,7 @@ class TFTASROConfig:
     weekly_loss: WeeklyLossConfig = field(default_factory=WeeklyLossConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     feature_store: FeatureStoreConfig = field(default_factory=FeatureStoreConfig)
+    foundation_prior: FoundationPriorConfig = field(default_factory=FoundationPriorConfig)
 
     @property
     def model_root(self) -> Path:

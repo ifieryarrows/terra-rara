@@ -14,3 +14,4 @@ scipy==1.17.1
 torchmetrics==1.9.0
 transformers==5.15.0
 huggingface-hub==1.28.0
+chronos-forecasting==2.3.2

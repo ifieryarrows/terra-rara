@@ -67,12 +67,12 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "attention_head_size": 1,
     "dropout": 0.30,
     "learning_rate": 5e-4,
-    "output_head_lr_mult": 0.20,
-    "weight_decay": 2e-2,
+    "output_head_lr_mult": 0.35,
+    "weight_decay": 1.5e-2,
     "mrmr_top_k": 5,
     "lambda_t1_quantile": 0.20,
-    "lambda_drift_prior": 1.00,
-    "lambda_directional": 0.10,
+    "lambda_drift_prior": 0.75,
+    "lambda_directional": 0.12,
 }
 
 
@@ -533,11 +533,11 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         quantiles=base_cfg.model.quantiles,
         learning_rate=float(trial.suggest_float("learning_rate", 2e-4, 8e-4, log=True)),
         output_head_lr_mult=float(
-            trial.suggest_categorical("output_head_lr_mult", [0.15, 0.20, 0.25])
+            trial.suggest_categorical("output_head_lr_mult", [0.25, 0.35, 0.45])
         ),
         reduce_on_plateau_patience=int(base_cfg.model.reduce_on_plateau_patience),
         gradient_clip_val=base_cfg.model.gradient_clip_val,
-        weight_decay=float(trial.suggest_categorical("weight_decay", [1e-2, 2e-2, 3e-2])),
+        weight_decay=float(trial.suggest_categorical("weight_decay", [1.5e-2, 2e-2, 3e-2])),
     )
 
     asro_cfg = ASROConfig(
@@ -556,8 +556,8 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         lambda_magnitude=0.0,
         lambda_naive=0.0,
         lambda_bias=0.0,
-        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.15, 0.35, 0.75, 1.00])),
-        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.05, 0.10, 0.15])),
+        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.75, 1.00, 1.25])),
+        lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.08, 0.10, 0.12, 0.15])),
         lambda_saturation=0.0,
         lambda_positive_rate=0.0,
         lambda_interval=0.0,
@@ -582,7 +582,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
 
     feature_store_cfg = replace(
         base_cfg.feature_store,
-        mrmr_top_k=int(trial.suggest_categorical("mrmr_top_k", [5, 6, 8, 12])),
+        mrmr_top_k=int(trial.suggest_categorical("mrmr_top_k", [5])),
     )
 
     return TFTASROConfig(
@@ -595,6 +595,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         feature_store=feature_store_cfg,
         forecast=base_cfg.forecast,
         weekly_loss=weekly_loss_cfg,
+        foundation_prior=base_cfg.foundation_prior,
     )
 
 

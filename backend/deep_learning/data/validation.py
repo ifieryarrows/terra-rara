@@ -9,6 +9,7 @@ import pandas as pd
 
 
 WEEKLY_TARGET_HELPER_COLS = {
+    "target_close",
     "target_1d_log_return",
     "target_5d_log_return",
     "realized_vol_20d",

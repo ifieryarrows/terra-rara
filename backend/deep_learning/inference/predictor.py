@@ -154,6 +154,7 @@ class TFTPredictor:
         self._ensemble_models: list = []
         self._expected_ensemble_size: Optional[int] = None
         self._hybrid_blend: dict = {}
+        self._foundation_prior: dict = {}
 
     @property
     def _hub_checked(self) -> bool:
@@ -400,6 +401,8 @@ class TFTPredictor:
         self._expected_ensemble_size = int(expected_ens) if expected_ens is not None else None
         raw_hybrid = metadata.get("hybrid_blend") or {}
         self._hybrid_blend = dict(raw_hybrid) if isinstance(raw_hybrid, dict) else {}
+        raw_foundation = metadata.get("foundation_prior") or {}
+        self._foundation_prior = dict(raw_foundation) if isinstance(raw_foundation, dict) else {}
         self._metadata_checked = True
 
     def _load_ensemble_models(self) -> list:
@@ -661,21 +664,19 @@ class TFTPredictor:
             quantiles_tuple = tuple(self.cfg.model.quantiles)
             median_idx = len(quantiles_tuple) // 2
 
-            # mode="quantiles" returns a plain Tensor (n_samples, pred_len, n_quantiles)
-            # Avoids the inhomogeneous-shape error from mode="raw" which returns a
-            # NamedTuple; np.array() cannot convert that to a uniform array.
-            predict_kwargs = {"mode": "quantiles"}
-            try:
-                predict_parameters = inspect.signature(model.predict).parameters
-            except (TypeError, ValueError):
-                predict_parameters = {}
-            if "trainer_kwargs" in predict_parameters:
-                predict_kwargs["trainer_kwargs"] = {"logger": False}
-
             member_preds = []
             all_members_ordered = True
             for member_model in ensemble_models:
-                pred_tensor = member_model.predict(dl, **predict_kwargs)
+                member_predict_kwargs: Dict[str, Any] = {"mode": "quantiles"}
+                try:
+                    predict_parameters = inspect.signature(member_model.predict).parameters
+                except (TypeError, ValueError):
+                    predict_parameters = {}
+                if "trainer_kwargs" in predict_parameters:
+                    # Allocate a fresh dict per member because pytorch_forecasting mutates
+                    # trainer_kwargs["callbacks"] in place across predict() calls.
+                    member_predict_kwargs["trainer_kwargs"] = {"logger": False}
+                pred_tensor = member_model.predict(dl, **member_predict_kwargs)
                 if isinstance(pred_tensor, torch.Tensor):
                     member_arr = pred_tensor.cpu().numpy()
                 else:
@@ -754,6 +755,62 @@ class TFTPredictor:
                                 quantiles=quantiles_tuple,
                                 horizon=int(self.cfg.forecast.primary_horizon_days),
                             )
+
+            foundation_applied = False
+            if (
+                self._foundation_prior.get("enabled")
+                and "target_close" in master_df.columns
+                and not master_df.empty
+            ):
+                try:
+                    from deep_learning.calibration.foundation_prior import (
+                        CHRONOS2_MODEL_ID,
+                        apply_foundation_prior_to_ordered_path,
+                        predict_chronos2_weekly_log_quantiles,
+                    )
+
+                    fnd_cfg = getattr(self.cfg, "foundation_prior", None)
+                    fnd_closes = pd.to_numeric(
+                        master_df["target_close"], errors="coerce"
+                    ).to_numpy(dtype=np.float64)
+                    fnd_q = predict_chronos2_weekly_log_quantiles(
+                        fnd_closes,
+                        [len(fnd_closes) - 1],
+                        horizon=int(self.cfg.forecast.primary_horizon_days),
+                        context_len=int(
+                            self._foundation_prior.get(
+                                "context_len",
+                                getattr(fnd_cfg, "context_len", 252),
+                            )
+                        ),
+                        batch_size=1,
+                        model_id=str(
+                            self._foundation_prior.get(
+                                "model_id",
+                                getattr(fnd_cfg, "model_id", CHRONOS2_MODEL_ID),
+                            )
+                        ),
+                    )
+                    if fnd_q is not None and np.isfinite(fnd_q[0]).all():
+                        if not all_members_ordered:
+                            pred_for_format = monotonic_quantiles_np(
+                                pred_for_format[None, ...],
+                                median_idx=median_idx,
+                            )[0]
+                            all_members_ordered = True
+                        pred_for_format = apply_foundation_prior_to_ordered_path(
+                            pred_for_format,
+                            fnd_q[0],
+                            foundation_prior=self._foundation_prior,
+                            quantiles=quantiles_tuple,
+                            horizon=int(self.cfg.forecast.primary_horizon_days),
+                        )
+                        foundation_applied = True
+                except Exception as fnd_pred_exc:
+                    logger.warning(
+                        "Live foundation prior skipped (fail-open): %s",
+                        fnd_pred_exc,
+                    )
 
             if int(self._direction_sign_multiplier) != 1:
                 from deep_learning.training.metrics import apply_direction_sign_multiplier_np
@@ -920,6 +977,10 @@ class TFTPredictor:
             "ensemble_size": len(ensemble_models),
             "hybrid_blend_enabled": bool(self._hybrid_blend.get("enabled", False)),
             "hybrid_w_theta": float(self._hybrid_blend.get("w_theta", 0.0) or 0.0),
+            "foundation_prior_enabled": bool(self._foundation_prior.get("enabled", False)),
+            "foundation_prior_applied": bool(foundation_applied),
+            "foundation_prior_model_id": self._foundation_prior.get("model_id"),
+            "foundation_prior_weight": float(self._foundation_prior.get("weight", 0.0) or 0.0),
         }
 
         # Surface freshness + instrument identity so the UI can label the

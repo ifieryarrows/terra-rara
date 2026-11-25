@@ -1137,6 +1137,52 @@ class TFTBacktestRunner:
                         delta_per_day = (blended - tft_med) / float(max(h, 1))
                         pred_np[:, :h, :] = pred_np[:, :h, :] + delta_per_day[:, None, None]
 
+        foundation_prior = metadata.get("foundation_prior") or {}
+        if foundation_prior.get("enabled"):
+            try:
+                from deep_learning.calibration.foundation_prior import (
+                    CHRONOS2_MODEL_ID,
+                    apply_foundation_prior_to_ordered_path,
+                    predict_chronos2_weekly_log_quantiles,
+                )
+
+                if "target_close" in df.columns:
+                    full_closes = pd.to_numeric(df["target_close"], errors="coerce").to_numpy(dtype=np.float64)
+                else:
+                    close_for_fnd = self._resolve_target_close_series(
+                        cfg,
+                        df,
+                        last_known_price=float(getattr(self, "_last_known_price", float("nan"))),
+                    )
+                    full_closes = (
+                        pd.to_numeric(
+                            close_for_fnd.reindex(df.index, method="ffill").bfill(),
+                            errors="coerce",
+                        ).to_numpy(dtype=np.float64)
+                        if close_for_fnd is not None and not close_for_fnd.empty
+                        else np.empty(0, dtype=np.float64)
+                    )
+                if len(full_closes) == len(df) and len(origin_pos) > 0:
+                    df_origin_pos = np.asarray(origin_pos, dtype=int) + int(warmup_start)
+                    fnd_q = predict_chronos2_weekly_log_quantiles(
+                        full_closes,
+                        df_origin_pos,
+                        horizon=horizon,
+                        context_len=int(foundation_prior.get("context_len", 252)),
+                        batch_size=32,
+                        model_id=str(foundation_prior.get("model_id", CHRONOS2_MODEL_ID)),
+                    )
+                    if fnd_q is not None:
+                        pred_np = apply_foundation_prior_to_ordered_path(
+                            pred_np,
+                            fnd_q,
+                            foundation_prior=foundation_prior,
+                            quantiles=quantiles_tuple,
+                            horizon=horizon,
+                        )
+            except Exception as fnd_bt_exc:
+                logger.warning("Backtest foundation prior skipped (fail-open): %s", fnd_bt_exc)
+
         # Apply persisted validation-fitted calibration stages in exact trainer/predictor order.
         direction_cal = metadata.get("direction_calibration") or {}
         dir_mult = int(direction_cal.get("direction_sign_multiplier", 1))

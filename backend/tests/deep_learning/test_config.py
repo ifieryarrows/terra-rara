@@ -49,8 +49,8 @@ def test_model_defaults_match_known_good_config():
     cfg = get_tft_config()
     assert cfg.model.dropout == 0.30
     assert cfg.model.learning_rate == 5e-4
-    assert cfg.model.output_head_lr_mult == 0.20
-    assert cfg.model.weight_decay == 2e-2
+    assert cfg.model.output_head_lr_mult == 0.35
+    assert cfg.model.weight_decay == 1.5e-2
 
 
 def test_known_good_overlay_includes_batch_size_fallback():
@@ -62,17 +62,17 @@ def test_known_good_overlay_includes_batch_size_fallback():
     assert updated.model.max_encoder_length == 15
     assert updated.model.attention_head_size == 1
     assert updated.model.learning_rate == 5e-4
-    assert updated.model.output_head_lr_mult == 0.20
-    assert updated.model.weight_decay == 2e-2
+    assert updated.model.output_head_lr_mult == 0.35
+    assert updated.model.weight_decay == 1.5e-2
     assert updated.feature_store.mrmr_top_k == 5
     assert updated.asro.lambda_quantile == 0.25
     assert updated.asro.lambda_madl == 0.40
     assert updated.weekly_loss.lambda_weekly_quantile == 1.00
     assert updated.weekly_loss.lambda_t1_quantile == 0.20
     assert updated.weekly_loss.lambda_subhorizon_quantile == 0.15
-    assert updated.weekly_loss.lambda_directional == 0.10
+    assert updated.weekly_loss.lambda_directional == 0.12
     assert updated.weekly_loss.lambda_bias == 0.0
-    assert updated.weekly_loss.lambda_drift_prior == 1.00
+    assert updated.weekly_loss.lambda_drift_prior == 0.75
     assert updated.weekly_loss.lambda_dispersion == 0.0
     assert updated.weekly_loss.lambda_magnitude == 0.0
     assert updated.weekly_loss.lambda_naive == 0.0
@@ -88,9 +88,9 @@ def test_weekly_loss_defaults_use_structural_monotonic_recovery_terms():
     assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
     assert cfg.weekly_loss.lambda_t1_quantile == 0.20
     assert cfg.weekly_loss.lambda_subhorizon_quantile == 0.15
-    assert cfg.weekly_loss.lambda_directional == 0.10
+    assert cfg.weekly_loss.lambda_directional == 0.12
     assert cfg.weekly_loss.lambda_bias == 0.0
-    assert cfg.weekly_loss.lambda_drift_prior == 1.00
+    assert cfg.weekly_loss.lambda_drift_prior == 0.75
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0
     assert cfg.weekly_loss.lambda_naive == 0.0
