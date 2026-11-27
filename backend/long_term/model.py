@@ -104,6 +104,29 @@ MODEL_FEATURES: tuple[str, ...] = (
     "vix_z52",
 )
 
+# Compact structural core for medium/long horizons (60D / 120D): strictly macro,
+# USD/CNH, physical LME tightness, and CFTC speculative positioning.
+STRUCTURAL_CORE_FEATURES: tuple[str, ...] = (
+    "real_yield_10y",
+    "real_yield_chg26",
+    "dxy_ret26",
+    "usdcnh_ret26",
+    "t10y2y",
+    "indpro_yoy",
+    "lme_scarcity",
+    "lme_stock_pctl_3y",
+    "lme_roll_yield_ann",
+    "cot_mm_net_pct_oi",
+    "cot_mm_crowding_z156",
+)
+
+# Tactical 20D structural set adding medium-horizon copper trend & China equity impulse.
+TACTICAL_STRUCTURAL_FEATURES: tuple[str, ...] = (
+    "hg_sma40w_ratio",
+    "hg_gc_z104",
+    "gxc_ret26",
+) + STRUCTURAL_CORE_FEATURES
+
 QUANTILE_LEVELS: tuple[float, ...] = (0.10, 0.25, 0.50, 0.75, 0.90)
 
 
@@ -114,7 +137,7 @@ class LongTermModelParams:
     z_clip: float = 3.5
     x_clip: float = 3.5
     theta_lookback: int = 64
-    theta_phi: float = 0.82
+    theta_phi: float = 0.85
     ridge_weight: float = 0.55
     logit_C: float = 0.05
     logit_weight: float = 0.35
@@ -129,10 +152,15 @@ class LongTermModelParams:
     xgboost_weight: float = 0.25
     mlp_weight: float = 0.25
     theta_weight: float = 0.25
-    tree_iterations: int = 220
-    mlp_epochs: int = 35
+    tree_iterations: int = 100
+    mlp_epochs: int = 25
+    mlp_weight_decay: float = 5e-2
+    mlp_hidden: int = 40
+    mlp_dropout: float = 0.40
+    mlp_lr: float = 1.2e-3
     mlp_seeds: tuple[int, ...] = (42, 137, 256)
-    default_shrinkage_alpha: float = 0.70
+    shrinkage_prior_blocks: float = 6.0
+    default_shrinkage_alpha: float = 0.65
     min_shrinkage_alpha: float = 0.35
 
     def effective_ridge_alpha(self, horizon_weeks: int) -> float:
@@ -145,8 +173,29 @@ class LongTermModelParams:
             return min(self.ridge_weight, 0.50)
         return self.ridge_weight
 
-    def normalized_committee_weights(self) -> tuple[float, float, float, float]:
+    def effective_theta_phi(self, horizon_weeks: int) -> float:
+        """Return horizon-adaptive Theta slope damping unless explicitly overridden."""
+        if abs(self.theta_phi - 0.85) < 1e-9:
+            if horizon_weeks <= 4:
+                return 0.85
+            if horizon_weeks <= 12:
+                return 0.90
+            return 0.92
+        return float(self.theta_phi)
+
+    def normalized_committee_weights(
+        self, horizon_weeks: Optional[int] = None
+    ) -> tuple[float, float, float, float]:
         """Return normalized (catboost, xgboost, mlp, theta) weights summing to 1."""
+        is_default_equal = (
+            abs(self.catboost_weight - 0.25) < 1e-9
+            and abs(self.xgboost_weight - 0.25) < 1e-9
+            and abs(self.mlp_weight - 0.25) < 1e-9
+            and abs(self.theta_weight - 0.25) < 1e-9
+        )
+        if horizon_weeks is not None and horizon_weeks >= 20 and is_default_equal:
+            # 6M horizon shifts weight toward regularized MLP-PLR & Damped Theta while keeping trees <= 35%
+            return (0.20, 0.15, 0.35, 0.30)
         raw = np.array(
             [
                 max(0.0, self.catboost_weight),
@@ -175,17 +224,32 @@ def select_model_features(
     panel: pd.DataFrame,
     params: LongTermModelParams = DEFAULT_PARAMS,
     warmup_rows: int = 52,
+    horizon_weeks: Optional[int] = None,
 ) -> list[str]:
     """Return model features present in the panel with adequate post-warmup coverage."""
     body = panel.iloc[warmup_rows:] if len(panel) > warmup_rows + 20 else panel
-    selected: list[str] = []
-    for col in MODEL_FEATURES:
-        if col not in panel.columns:
-            continue
-        coverage = float(pd.to_numeric(body[col], errors="coerce").notna().mean()) if len(body) else 0.0
-        if coverage >= params.min_feature_coverage:
-            selected.append(col)
-    return selected
+
+    def _filter_available(candidates: tuple[str, ...]) -> list[str]:
+        cols: list[str] = []
+        for col in candidates:
+            if col not in panel.columns:
+                continue
+            coverage = float(pd.to_numeric(body[col], errors="coerce").notna().mean()) if len(body) else 0.0
+            if coverage >= params.min_feature_coverage:
+                cols.append(col)
+        return cols
+
+    if horizon_weeks is not None:
+        if horizon_weeks >= 12:
+            structural = _filter_available(STRUCTURAL_CORE_FEATURES)
+            if len(structural) >= 5:
+                return structural
+        else:
+            tactical = _filter_available(TACTICAL_STRUCTURAL_FEATURES)
+            if len(tactical) >= 6:
+                return tactical
+
+    return _filter_available(MODEL_FEATURES)
 
 
 @dataclass
@@ -487,23 +551,30 @@ class FittedClassifierWrapper:
 
 
 def _fit_catboost_pair(
-    Xs: np.ndarray, z_tr: np.ndarray, cls_tr: np.ndarray, params: LongTermModelParams
+    Xs: np.ndarray,
+    z_tr: np.ndarray,
+    cls_tr: np.ndarray,
+    params: LongTermModelParams,
+    horizon_weeks: int = 4,
 ) -> tuple[Any, FittedClassifierWrapper]:
     counts = np.bincount(cls_tr, minlength=3).astype(np.float64) + 1.0
     prior = counts / counts.sum()
     if Xs.shape[1] == 0:
         return None, FittedClassifierWrapper(None, None, prior)
 
+    depth = 3 if horizon_weeks <= 12 else 2
+    l2_leaf = 40.0 if horizon_weeks <= 12 else 65.0
     uniq = np.unique(cls_tr)
     try:
         from catboost import CatBoostClassifier, CatBoostRegressor
 
         reg = CatBoostRegressor(
             iterations=params.tree_iterations,
-            depth=4,
-            learning_rate=0.03,
-            l2_leaf_reg=18.0,
+            depth=depth,
+            learning_rate=0.025,
+            l2_leaf_reg=l2_leaf,
             loss_function="Huber:delta=1.0",
+            subsample=0.75,
             random_seed=42,
             thread_count=2,
             allow_writing_files=False,
@@ -512,10 +583,10 @@ def _fit_catboost_pair(
         reg.fit(Xs, z_tr)
         if uniq.size >= 2:
             clf = CatBoostClassifier(
-                iterations=max(100, params.tree_iterations - 20),
-                depth=4,
-                learning_rate=0.03,
-                l2_leaf_reg=18.0,
+                iterations=max(80, params.tree_iterations - 10),
+                depth=depth,
+                learning_rate=0.025,
+                l2_leaf_reg=l2_leaf,
                 random_seed=42,
                 thread_count=2,
                 allow_writing_files=False,
@@ -531,19 +602,19 @@ def _fit_catboost_pair(
         from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
         reg = HistGradientBoostingRegressor(
-            max_iter=min(120, params.tree_iterations),
-            max_depth=3,
-            l2_regularization=15.0,
-            learning_rate=0.04,
+            max_iter=min(100, params.tree_iterations),
+            max_depth=depth,
+            l2_regularization=l2_leaf,
+            learning_rate=0.03,
             random_state=42,
         )
         reg.fit(Xs, z_tr)
         if uniq.size >= 2:
             clf = HistGradientBoostingClassifier(
-                max_iter=min(120, params.tree_iterations),
-                max_depth=3,
-                l2_regularization=15.0,
-                learning_rate=0.04,
+                max_iter=min(100, params.tree_iterations),
+                max_depth=depth,
+                l2_regularization=l2_leaf,
+                learning_rate=0.03,
                 random_state=42,
             )
             clf.fit(Xs, cls_tr)
@@ -554,7 +625,11 @@ def _fit_catboost_pair(
 
 
 def _fit_xgboost_pair(
-    Xs: np.ndarray, z_tr: np.ndarray, cls_tr: np.ndarray, params: LongTermModelParams
+    Xs: np.ndarray,
+    z_tr: np.ndarray,
+    cls_tr: np.ndarray,
+    params: LongTermModelParams,
+    horizon_weeks: int = 4,
 ) -> tuple[Any, FittedClassifierWrapper]:
     import xgboost as xgb
 
@@ -563,13 +638,15 @@ def _fit_xgboost_pair(
     if Xs.shape[1] == 0:
         return None, FittedClassifierWrapper(None, None, prior)
 
+    l2_lam = 40.0 if horizon_weeks <= 12 else 65.0
     reg = xgb.XGBRegressor(
         n_estimators=params.tree_iterations,
-        max_depth=3,
-        learning_rate=0.03,
-        reg_lambda=15.0,
-        subsample=0.8,
-        colsample_bytree=0.65,
+        max_depth=2,
+        learning_rate=0.025,
+        reg_lambda=l2_lam,
+        reg_alpha=1.5,
+        subsample=0.75,
+        colsample_bytree=0.70,
         random_state=42,
         n_jobs=2,
         verbosity=0,
@@ -580,12 +657,13 @@ def _fit_xgboost_pair(
     if uniq.size >= 2:
         y_mapped = np.searchsorted(uniq, cls_tr)
         clf = xgb.XGBClassifier(
-            n_estimators=max(100, params.tree_iterations - 20),
-            max_depth=3,
-            learning_rate=0.03,
-            reg_lambda=15.0,
-            subsample=0.8,
-            colsample_bytree=0.65,
+            n_estimators=max(80, params.tree_iterations - 10),
+            max_depth=2,
+            learning_rate=0.025,
+            reg_lambda=l2_lam,
+            reg_alpha=1.5,
+            subsample=0.75,
+            colsample_bytree=0.70,
             random_state=42,
             n_jobs=2,
             verbosity=0,
@@ -601,7 +679,7 @@ class _PLRBlock:
     """Lazy-imported torch wrapper kept inside module cleanly."""
 
     @staticmethod
-    def build_model(d_in: int, hidden: int = 48, dropout: float = 0.35):
+    def build_model(d_in: int, hidden: int = 40, dropout: float = 0.40):
         import torch
         import torch.nn as nn
 
@@ -690,8 +768,8 @@ def _fit_mlp_plr(
             torch.set_num_threads(1)
         for seed in params.mlp_seeds:
             torch.manual_seed(int(seed))
-            m = _PLRBlock.build_model(Xs.shape[1])
-            opt = torch.optim.AdamW(m.parameters(), lr=1.5e-3, weight_decay=2e-2)
+            m = _PLRBlock.build_model(Xs.shape[1], hidden=params.mlp_hidden, dropout=params.mlp_dropout)
+            opt = torch.optim.AdamW(m.parameters(), lr=params.mlp_lr, weight_decay=params.mlp_weight_decay)
             m.train()
             rng = np.random.default_rng(int(seed))
             for _epoch in range(params.mlp_epochs):
@@ -755,6 +833,35 @@ def build_return_quantiles(median: np.ndarray, sigma_h: np.ndarray, hw50: float,
 # ---------------------------------------------------------------------------
 
 
+def compute_causal_shrinkage_alpha(
+    y: np.ndarray,
+    pred_raw: np.ndarray,
+    horizon_weeks: int,
+    *,
+    prior_blocks: float = 6.0,
+    min_alpha: float = 0.35,
+    default_alpha: float = 0.65,
+) -> float:
+    """Empirical-Bayes return shrinkage calibrated to effective independent blocks ``n / H``.
+
+    Unlike naive ``25 * n * var(y)`` denominators (which cancel ``n`` and lock at
+    ``min_alpha`` even for an oracle), shrinking ``sum(r^2)`` against
+    ``prior_blocks * H * var(r)`` adds prior pseudo-observations in proportion to
+    independent non-overlapping horizon blocks.
+    """
+    y_arr = np.asarray(y, dtype=np.float64)
+    r_arr = np.asarray(pred_raw, dtype=np.float64)
+    mask = np.isfinite(y_arr) & np.isfinite(r_arr)
+    if int(mask.sum()) < 26:
+        return float(np.clip(default_alpha, min_alpha, 1.0))
+    y_f = y_arr[mask]
+    r_f = r_arr[mask]
+    var_r = max(float(np.var(r_f)), 1e-6)
+    den = float(np.dot(r_f, r_f)) + float(prior_blocks) * max(1.0, float(horizon_weeks)) * var_r
+    raw_alpha = float(np.dot(y_f, r_f)) / max(den, 1e-9)
+    return float(np.clip(raw_alpha, min_alpha, 1.0))
+
+
 @dataclass
 class EnsembleFit:
     ridge: FittedRidge
@@ -769,7 +876,10 @@ class EnsembleFit:
     xgboost_reg: Any = None
     xgboost_clf: Optional[FittedClassifierWrapper] = None
     mlp_plr: Optional[FittedMLPPLR] = None
-    shrinkage_alpha: float = 0.70
+    cb_mean: float = 0.0
+    xg_mean: float = 0.0
+    mlp_mean: float = 0.0
+    shrinkage_alpha: float = 0.65
     extras: dict[str, Any] = field(default_factory=dict)
 
 
@@ -789,39 +899,61 @@ def inner_purged_conformal_residuals(
     if fit_sub.size < 60:
         return np.array([]), params.default_shrinkage_alpha
 
-    z_fit = np.clip(frame.y[fit_sub] / frame.sigma_h[fit_sub], -params.z_clip, params.z_clip)
+    z_fit_raw = np.clip(frame.y[fit_sub] / frame.sigma_h[fit_sub], -params.z_clip, params.z_clip)
+    z_fit = z_fit_raw - float(np.mean(z_fit_raw))
     cls_fit = regime_classes(frame.y[fit_sub], frame.sigma_h[fit_sub], params.regime_k)
     prep = fit_causal_preprocessor(frame.X[fit_sub], params.x_clip)
     Xs_fit = prep.transform(frame.X[fit_sub])
     Xs_cal = prep.transform(frame.X[cal])
+    phi = params.effective_theta_phi(H)
 
     if params.enable_committee and Xs_fit.shape[1] > 0:
-        cb_r, _ = _fit_catboost_pair(Xs_fit, z_fit, cls_fit, params)
-        xg_r, _ = _fit_xgboost_pair(Xs_fit, z_fit, cls_fit, params)
+        cb_r, _ = _fit_catboost_pair(Xs_fit, z_fit, cls_fit, params, horizon_weeks=H)
+        xg_r, _ = _fit_xgboost_pair(Xs_fit, z_fit, cls_fit, params, horizon_weeks=H)
         mlp = _fit_mlp_plr(Xs_fit, z_fit, cls_fit, params)
-        w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights()
+        w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights(H)
         s_cal = frame.sigma_h[cal]
-        p_cb = np.clip(cb_r.predict(Xs_cal), -params.z_clip, params.z_clip) * s_cal
-        p_xg = np.clip(xg_r.predict(Xs_cal), -params.z_clip, params.z_clip) * s_cal
+        cb_off = float(np.mean(cb_r.predict(Xs_fit))) if cb_r is not None else 0.0
+        xg_off = float(np.mean(xg_r.predict(Xs_fit))) if xg_r is not None else 0.0
+        ml_fit_z, _ = mlp.predict(Xs_fit)
+        ml_off = float(np.mean(ml_fit_z)) if mlp.models else 0.0
+        p_cb = (
+            np.clip(np.asarray(cb_r.predict(Xs_cal), dtype=np.float64) - cb_off, -params.z_clip, params.z_clip)
+            * s_cal
+            if cb_r is not None
+            else np.zeros_like(s_cal)
+        )
+        p_xg = (
+            np.clip(np.asarray(xg_r.predict(Xs_cal), dtype=np.float64) - xg_off, -params.z_clip, params.z_clip)
+            * s_cal
+            if xg_r is not None
+            else np.zeros_like(s_cal)
+        )
         p_ml_z, _ = mlp.predict(Xs_cal)
-        p_ml = np.clip(p_ml_z, -params.z_clip, params.z_clip) * s_cal
-        p_th = theta.forecast_log_return(cal, H, params.theta_phi)
+        p_ml = np.clip(p_ml_z - ml_off, -params.z_clip, params.z_clip) * s_cal
+        p_th = theta.forecast_log_return(cal, H, phi)
         p_raw = w_cb * p_cb + w_xg * p_xg + w_ml * p_ml + w_th * p_th
     else:
-        ridge = fit_ridge(frame.X[fit_sub[-params.ridge_window :]], z_fit[-params.ridge_window :], frame.features, params, horizon_weeks=H)
+        ridge = fit_ridge(
+            frame.X[fit_sub[-params.ridge_window :]],
+            z_fit[-params.ridge_window :],
+            frame.features,
+            params,
+            horizon_weeks=H,
+        )
         p_r = ridge.predict_z(frame.X[cal]) * frame.sigma_h[cal]
-        p_t = theta.forecast_log_return(cal, H, params.theta_phi)
+        p_t = theta.forecast_log_return(cal, H, phi)
         w_r = params.effective_ridge_weight(H)
         p_raw = w_r * p_r + (1.0 - w_r) * p_t
 
     y_cal = frame.y[cal]
-    var_y = max(float(np.var(y_cal)), 1e-6)
-    alpha = float(
-        np.clip(
-            float(np.dot(y_cal, p_raw)) / max(float(np.dot(p_raw, p_raw)) + 25.0 * len(y_cal) * var_y, 1e-9),
-            params.min_shrinkage_alpha,
-            1.0,
-        )
+    alpha = compute_causal_shrinkage_alpha(
+        y_cal,
+        p_raw,
+        H,
+        prior_blocks=params.shrinkage_prior_blocks,
+        min_alpha=params.min_shrinkage_alpha,
+        default_alpha=params.default_shrinkage_alpha,
     )
     p_cal = alpha * p_raw
     return np.abs(y_cal - p_cal) / frame.sigma_h[cal], alpha
@@ -840,16 +972,20 @@ def fit_ensemble(
     if train_pos.size < params.min_train_rows:
         raise ValueError(f"Insufficient training rows ({train_pos.size}) for {frame.spec.key}")
 
-    z_all = np.clip(frame.y[train_pos] / frame.sigma_h[train_pos], -params.z_clip, params.z_clip)
+    H = frame.spec.weeks
+    z_all_raw = np.clip(frame.y[train_pos] / frame.sigma_h[train_pos], -params.z_clip, params.z_clip)
+    z_all = z_all_raw - float(np.mean(z_all_raw))
     classes = regime_classes(frame.y[train_pos], frame.sigma_h[train_pos], params.regime_k)
 
     roll = train_pos[-params.ridge_window :]
+    z_roll = frame.y[roll] / frame.sigma_h[roll]
+    z_roll = z_roll - float(np.nanmean(z_roll))
     ridge = fit_ridge(
         frame.X[roll],
-        frame.y[roll] / frame.sigma_h[roll],
+        z_roll,
         frame.features,
         params,
-        horizon_weeks=frame.spec.weeks,
+        horizon_weeks=H,
     )
     regime = fit_regime_classifier(frame.X[train_pos], classes, params)
     z_scale = max(params.min_z_scale, float(np.nanstd(z_all)))
@@ -858,10 +994,19 @@ def fit_ensemble(
     Xs_tr = prep.transform(frame.X[train_pos])
 
     cb_reg = cb_clf = xg_reg = xg_clf = mlp_plr = None
+    cb_mean = xg_mean = mlp_mean = 0.0
     if params.enable_committee:
-        cb_reg, cb_clf = _fit_catboost_pair(Xs_tr, z_all, classes, params)
-        xg_reg, xg_clf = _fit_xgboost_pair(Xs_tr, z_all, classes, params)
+        cb_reg, cb_clf = _fit_catboost_pair(Xs_tr, z_all, classes, params, horizon_weeks=H)
+        xg_reg, xg_clf = _fit_xgboost_pair(Xs_tr, z_all, classes, params, horizon_weeks=H)
         mlp_plr = _fit_mlp_plr(Xs_tr, z_all, classes, params)
+        if Xs_tr.shape[1] > 0:
+            if cb_reg is not None:
+                cb_mean = float(np.mean(cb_reg.predict(Xs_tr)))
+            if xg_reg is not None:
+                xg_mean = float(np.mean(xg_reg.predict(Xs_tr)))
+            if mlp_plr.models:
+                ml_tr_z, _ = mlp_plr.predict(Xs_tr)
+                mlp_mean = float(np.mean(ml_tr_z))
 
     if conformal_residuals is not None and np.isfinite(conformal_residuals).sum() >= 20:
         residuals = conformal_residuals
@@ -899,6 +1044,9 @@ def fit_ensemble(
         xgboost_reg=xg_reg,
         xgboost_clf=xg_clf,
         mlp_plr=mlp_plr,
+        cb_mean=cb_mean,
+        xg_mean=xg_mean,
+        mlp_mean=mlp_mean,
         shrinkage_alpha=float(np.clip(alpha_val, params.min_shrinkage_alpha, 1.0)),
     )
 
@@ -927,10 +1075,12 @@ def predict_ensemble(
     apply_shrinkage: bool = True,
 ) -> EnsemblePrediction:
     pos = np.asarray(positions, dtype=int)
+    H = frame.spec.weeks
     s = frame.sigma_h[pos]
     X_sub = frame.X[pos]
     p_r = fit.ridge.predict_z(X_sub) * s
-    p_t = theta.forecast_log_return(pos, frame.spec.weeks, params.theta_phi)
+    phi = params.effective_theta_phi(H)
+    p_t = theta.forecast_log_return(pos, H, phi)
 
     # Damped Theta Gaussian 3-class probabilities
     p_gauss_th = gaussian_regime_proba(p_t / np.maximum(s, 1e-4), fit.z_scale, params.regime_k)
@@ -938,12 +1088,12 @@ def predict_ensemble(
     p_cb = p_xg = p_ml = None
     if params.enable_committee and fit.prep is not None and fit.catboost_reg is not None and fit.xgboost_reg is not None and fit.mlp_plr is not None:
         Xs = fit.prep.transform(X_sub)
-        p_cb = np.clip(np.asarray(fit.catboost_reg.predict(Xs), dtype=np.float64), -params.z_clip, params.z_clip) * s
-        p_xg = np.clip(np.asarray(fit.xgboost_reg.predict(Xs), dtype=np.float64), -params.z_clip, params.z_clip) * s
+        p_cb = np.clip(np.asarray(fit.catboost_reg.predict(Xs), dtype=np.float64) - fit.cb_mean, -params.z_clip, params.z_clip) * s
+        p_xg = np.clip(np.asarray(fit.xgboost_reg.predict(Xs), dtype=np.float64) - fit.xg_mean, -params.z_clip, params.z_clip) * s
         p_ml_z, prob_ml = fit.mlp_plr.predict(Xs)
-        p_ml = np.clip(p_ml_z, -params.z_clip, params.z_clip) * s
+        p_ml = np.clip(p_ml_z - fit.mlp_mean, -params.z_clip, params.z_clip) * s
 
-        w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights()
+        w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights(H)
         p_raw = w_cb * p_cb + w_xg * p_xg + w_ml * p_ml + w_th * p_t
 
         prob_cb = fit.catboost_clf.predict_proba(Xs) if fit.catboost_clf is not None else p_gauss_th
@@ -952,7 +1102,7 @@ def predict_ensemble(
         proba = np.clip(proba, 1e-4, 1.0)
         proba /= proba.sum(axis=1, keepdims=True)
     else:
-        w_r = params.effective_ridge_weight(frame.spec.weeks)
+        w_r = params.effective_ridge_weight(H)
         p_raw = w_r * p_r + (1.0 - w_r) * p_t
         p_gauss = gaussian_regime_proba(p_raw / np.maximum(s, 1e-4), fit.z_scale, params.regime_k)
         p_logit = fit.regime.predict_proba(X_sub)
@@ -1084,7 +1234,7 @@ def forecast_horizon(
     hw_hi80 = float(q[4] - q[2])
     asymmetry_ratio = _round((prices[4] - ref_price) / max(ref_price - prices[0], 1e-4), 4)
 
-    w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights()
+    w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights(spec.weeks)
     has_comm = pred.catboost is not None and pred.xgboost is not None and pred.mlp_plr is not None
 
     return LongTermHorizonForecast(
@@ -1147,13 +1297,13 @@ def fit_and_predict_long_term_outlook(
     panel = panel_bundle.panel
     if panel is None or panel.empty:
         raise ValueError("Empty long-term panel")
-    features = select_model_features(panel, params)
     theta = compute_theta_components(
         panel["target_log_price"].to_numpy(dtype=np.float64), lookback=params.theta_lookback
     )
 
     horizons: dict[str, LongTermHorizonForecast] = {}
     for key, spec in HORIZONS.items():
+        features = select_model_features(panel, params, horizon_weeks=spec.weeks)
         oof = None
         oof_alpha = None
         if validation and key in validation:

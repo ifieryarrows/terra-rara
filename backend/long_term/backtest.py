@@ -19,6 +19,7 @@ from long_term.model import (
     ThetaComponents,
     build_horizon_frame,
     build_return_quantiles,
+    compute_causal_shrinkage_alpha,
     compute_theta_components,
     conformal_halfwidths,
     fit_ensemble,
@@ -167,18 +168,14 @@ def _apply_causal_oof_calibration(
     for t in range(n):
         resolved_end = int(np.searchsorted(pos[:t], pos[t] - horizon_weeks, side="right"))
         if resolved_end >= 26:
-            y_past = y[:resolved_end]
-            r_past = raw[:resolved_end]
-            var_y = max(float(np.var(y_past)), 1e-6)
-            alpha_t = float(
-                np.clip(
-                    float(np.dot(y_past, r_past))
-                    / max(float(np.dot(r_past, r_past)) + 25.0 * resolved_end * var_y, 1e-9),
-                    params.min_shrinkage_alpha,
-                    1.0,
-                )
+            alphas[t] = compute_causal_shrinkage_alpha(
+                y[:resolved_end],
+                raw[:resolved_end],
+                horizon_weeks,
+                prior_blocks=params.shrinkage_prior_blocks,
+                min_alpha=params.min_shrinkage_alpha,
+                default_alpha=params.default_shrinkage_alpha,
             )
-            alphas[t] = alpha_t
         pred_cal[t] = alphas[t] * raw[t]
 
         if resolved_end >= 20:
@@ -195,17 +192,13 @@ def _apply_causal_oof_calibration(
         )[0]
 
     # Compute final causal alpha across all fully realized OOS points (available at live predict time)
-    var_y_all = max(float(np.var(y)), 1e-6)
-    final_alpha = (
-        float(
-            np.clip(
-                float(np.dot(y, raw)) / max(float(np.dot(raw, raw)) + 25.0 * n * var_y_all, 1e-9),
-                params.min_shrinkage_alpha,
-                1.0,
-            )
-        )
-        if n >= 26
-        else params.default_shrinkage_alpha
+    final_alpha = compute_causal_shrinkage_alpha(
+        y,
+        raw,
+        horizon_weeks,
+        prior_blocks=params.shrinkage_prior_blocks,
+        min_alpha=params.min_shrinkage_alpha,
+        default_alpha=params.default_shrinkage_alpha,
     )
     return pred_cal, q_arr, alphas, final_alpha
 
@@ -382,7 +375,6 @@ def run_purged_walk_forward_suite(
     """Run purged expanding-origin walk-forward validation for each requested horizon."""
     if panel is None or panel.empty:
         return {}
-    features = select_model_features(panel, params)
     theta = compute_theta_components(
         panel["target_log_price"].to_numpy(dtype=np.float64), lookback=params.theta_lookback
     )
@@ -391,6 +383,7 @@ def run_purged_walk_forward_suite(
         spec = HORIZONS.get(key)
         if spec is None or spec.target_col not in panel.columns:
             continue
+        features = select_model_features(panel, params, horizon_weeks=spec.weeks)
         frame = build_horizon_frame(panel, spec, features)
         res = run_horizon_walk_forward(
             frame, theta, params=params, n_folds=n_folds, min_train_weeks=min_train_weeks

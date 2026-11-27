@@ -317,9 +317,14 @@ export function LongTermOutlookPanel({
               </div>
             </div>
 
-            <div className={clsx('cm-consensus-readout', stance.textClass)} data-testid="lt-stance-readout">
-              <span aria-hidden="true">{stance.glyph}</span>
-              <span>{stance.label}</span>
+            <div className="flex flex-col items-end gap-1">
+              <div className={clsx('cm-consensus-readout', stance.textClass)} data-testid="lt-stance-readout">
+                <span aria-hidden="true">{stance.glyph}</span>
+                <span>{stance.label}</span>
+              </div>
+              <span className="text-[11px] text-slate-400 cm-tabular" data-testid="lt-edge-cue">
+                {stance.label === 'NEUTRAL' ? 'Hold Zone · Low Edge' : 'Directional Edge'}
+              </span>
             </div>
           </div>
 

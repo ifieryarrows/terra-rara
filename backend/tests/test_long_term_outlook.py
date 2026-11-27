@@ -232,8 +232,11 @@ def test_ensemble_outputs_non_crossing_quantiles_and_calibrated_probs():
             assert fc.components.catboost_return is not None
             assert fc.components.xgboost_return is not None
             assert fc.components.mlp_plr_return is not None
-            assert fc.components.tree_weight == pytest.approx(0.5, abs=1e-4)
-            assert fc.components.mlp_weight == pytest.approx(0.25, abs=1e-4)
+            assert fc.components.tree_weight is not None and fc.components.tree_weight <= 0.5 + 1e-4
+            assert fc.components.mlp_weight is not None and fc.components.mlp_weight >= 0.25 - 1e-4
+            assert (
+                fc.components.tree_weight + fc.components.mlp_weight + fc.components.theta_weight
+            ) == pytest.approx(1.0, abs=1e-3)
             assert fc.components.shrinkage_alpha is not None and 0.35 <= fc.components.shrinkage_alpha <= 1.0
             assert len(fc.key_drivers) > 0
 
@@ -562,3 +565,48 @@ def test_cny_fallback_when_usdcnh_sparse_and_legacy_v1_schema_compat():
     parsed = LongTermOutlookResponse.model_validate(legacy_payload)
     assert parsed.horizons["20D"].institutional_rating is None
     assert parsed.horizons["20D"].components.catboost_return is None
+
+
+def test_causal_shrinkage_alpha_uses_effective_sample_size_not_n_lock():
+    from long_term.model import compute_causal_shrinkage_alpha
+
+    rng = np.random.default_rng(123)
+    y = rng.normal(0.0, 0.08, size=200)
+    # Oracle predictor: must NOT collapse to min_alpha=0.35 (was broken by 25 * n * var_y)
+    alpha_oracle = compute_causal_shrinkage_alpha(y, y, horizon_weeks=12, prior_blocks=6.0)
+    assert alpha_oracle > 0.70
+
+    # Pure orthogonal / anti-correlated noise: shrinks down to floor min_alpha=0.35
+    alpha_anti = compute_causal_shrinkage_alpha(y, -y, horizon_weeks=12, prior_blocks=6.0)
+    assert alpha_anti == pytest.approx(0.35, abs=1e-9)
+
+
+def test_select_model_features_prefers_structural_core_when_available_and_fails_open():
+    from long_term.model import (
+        MODEL_FEATURES,
+        STRUCTURAL_CORE_FEATURES,
+        TACTICAL_STRUCTURAL_FEATURES,
+        select_model_features,
+    )
+
+    daily = _make_synthetic_daily_panel(n_bdays=900, seed=31)
+    fred = _make_synthetic_fred(daily.index, seed=31)
+    bundle = build_long_term_feature_panel(daily, target_symbol="HG=F", fred_frames=fred)
+
+    # Synthetic FRED omits INDPRO, LME/COT missing -> should still resolve cleanly (or fall back to MODEL_FEATURES)
+    f60 = select_model_features(bundle.panel, horizon_weeks=12)
+    assert len(f60) >= 6
+
+    # When full structural core (incl. LME/COT/INDPRO) exists, 60D/120D strictly uses compact core
+    enriched = bundle.panel.copy()
+    for col in STRUCTURAL_CORE_FEATURES:
+        if col not in enriched.columns:
+            enriched[col] = np.linspace(-1.0, 1.0, len(enriched))
+    f120_enriched = select_model_features(enriched, horizon_weeks=26)
+    assert f120_enriched == list(STRUCTURAL_CORE_FEATURES)
+    f20_enriched = select_model_features(enriched, horizon_weeks=4)
+    assert f20_enriched == list(TACTICAL_STRUCTURAL_FEATURES)
+    # Unspecified horizon preserves full MODEL_FEATURES selection
+    f_all = select_model_features(enriched)
+    assert len(f_all) > len(f120_enriched)
+    assert set(f_all).issubset(set(MODEL_FEATURES))
