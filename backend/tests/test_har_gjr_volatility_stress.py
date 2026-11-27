@@ -239,8 +239,8 @@ def test_sustained_high_vol_crisis_does_not_classify_calm():
     rng = np.random.default_rng(20200319)
     crisis_rets = rng.choice([-0.038, 0.034, -0.042, 0.029], size=28)
     df_crisis = df.copy()
-    close = df_crisis["target_close"].to_numpy(dtype=np.float64)
-    rets = df_crisis["observed_return_1d"].to_numpy(dtype=np.float64)
+    close = df_crisis["target_close"].to_numpy(dtype=np.float64, copy=True)
+    rets = df_crisis["observed_return_1d"].to_numpy(dtype=np.float64, copy=True)
     rets[-28:] = crisis_rets
     base_price = float(close[-29])
     close[-28:] = base_price * np.exp(np.cumsum(crisis_rets))
