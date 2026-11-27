@@ -27,14 +27,19 @@ class DataQuality(BaseModel):
 
 
 class VolatilityStressBlock(BaseModel):
-    """Causal HAR-GJR dynamic forward volatility & market stress telemetry."""
+    """Causal forward volatility & market stress telemetry."""
     enabled: bool = True
     regime: str = Field(..., description="CALM | ELEVATED | HIGH_STRESS")
-    har_vol5_pct: Optional[float] = Field(None, description="HAR-GJR expected 5D volatility (%)")
+    har_vol5_pct: Optional[float] = Field(None, description="Expected 5D volatility (%)")
     rv20_vol5_pct: Optional[float] = Field(None, description="20D realized 5D baseline volatility (%)")
-    stress_ratio: Optional[float] = Field(None, description="har_vol5 / rv20_vol5 ratio")
-    shock_score: Optional[float] = Field(None, description="Raw causal structural shock score")
+    stress_ratio: Optional[float] = Field(None, description="vol5 / rv20_vol5 ratio")
+    shock_score: Optional[float] = Field(None, description="Causal structural shock probability")
     shock_percentile: Optional[float] = Field(None, description="Train-referenced shock percentile (0..100)")
+    vol_percentile: Optional[float] = Field(None, description="Train-referenced 5D volatility percentile (0..100)")
+    vol_surge_prob: Optional[float] = Field(None, description="Causal 5D volatility surge probability")
+    tail_risk_score: Optional[float] = Field(None, description="Combined shock + vol-surge tail stress score")
+    risk_budget_mult: Optional[float] = Field(None, description="Recommended regime risk budget multiplier")
+    engine_version: Optional[str] = Field(None, description="Volatility stress engine version")
     vol_scale_source: Optional[str] = Field(None, description="har_gjr | realized_vol_20d")
 
 
@@ -46,6 +51,10 @@ class WeeklyForecastBlock(BaseModel):
     q90_return: Optional[float] = None
     calibrated: bool = False
     calibration_adjustment: Optional[float] = None
+    direction: Optional[str] = Field(None, description="BULLISH | BEARISH | NEUTRAL")
+    signal_state: Optional[str] = Field(None, description="NO_EDGE | SLIGHT_BULLISH | SLIGHT_BEARISH")
+    has_directional_edge: Optional[bool] = Field(None, description="True only when |expected_return| exceeds the 5D noise band")
+    neutral_band_pct: Optional[float] = Field(None, description="Symmetric 5D neutral noise band in percent")
     t1_impulse: Optional[str] = None
     t1_return: Optional[float] = None
     regime: Optional[str] = None
@@ -400,4 +409,44 @@ class NewsStatsResponse(BaseModel):
     avg_confidence: Optional[float] = None
     avg_relevance: Optional[float] = None
     generated_at: str = Field(...)
+
+
+class CatalystHeadline(BaseModel):
+    """Representative high-impact article in a catalyst event cluster."""
+    title: str
+    publisher: str
+    published_at: str
+    impact_score: float
+    url: Optional[str] = None
+
+
+class CatalystCluster(BaseModel):
+    """Cluster of high-relevance, high-impact articles sharing an event_type."""
+    event_type: str
+    label: str
+    direction: str
+    article_count_72h: int = Field(..., ge=0)
+    article_count_24h: int = Field(..., ge=0)
+    distinct_sources: int = Field(..., ge=0)
+    avg_impact: float
+    max_abs_impact: float
+    avg_relevance: float
+    avg_confidence: float
+    severity_score: float = Field(..., ge=0.0, le=1.0)
+    corroborated: bool = False
+    latest_published_at: str
+    top_headlines: List[CatalystHeadline] = Field(default_factory=list)
+
+
+class CatalystRadarResponse(BaseModel):
+    """Multi-source 0-72h exogenous catalyst radar payload."""
+    status: str = Field(..., description="QUIET | WATCH | CATALYST_ACTIVE")
+    cone_override_warning: bool = False
+    cone_warning_message: Optional[str] = None
+    dominant_cluster: Optional[CatalystCluster] = None
+    active_clusters: List[CatalystCluster] = Field(default_factory=list)
+    window_hours: int = 72
+    active_window_hours: int = 24
+    total_high_impact_articles: int = 0
+    generated_at: str
 

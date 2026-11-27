@@ -250,7 +250,9 @@ def test_fit_weekly_cqr_records_n_eff_and_caps_outlier_level():
     assert cqr["cqr_enabled"] is True
     assert cqr["overlap_horizon"] == 5
     assert cqr["n_eff"] == 20.0
-    assert cqr["base_vol_power"] == 1.0
+    assert cqr["base_vol_power"] == 0.40
+    assert cqr["prior_blend_lambda"] == 0.75
+    assert cqr["nexcp_gamma"] == 0.985
     # Extreme single outlier (0.45 - 0.04 = 0.41) must not dominate capped conformal level
     assert float(cqr["q_hat_96"]) < 0.20
 
@@ -308,7 +310,13 @@ def test_write_conformal_calibration_artifact_persists_base_vol_power(tmp_path):
         already_ordered=True,
     )
     loaded = json.loads(path.read_text(encoding="utf-8"))
-    assert loaded["base_vol_power"] == 1.0
+    assert loaded["base_vol_power"] == 0.40
+    assert loaded["prior_blend_lambda"] == 0.75
+    assert loaded["prior_student_t_df"] == 6.0
+    assert loaded["vol_clip_low"] == 0.45
+    assert loaded["vol_clip_high"] == 2.80
+    assert loaded["nexcp_gamma"] == 0.985
+    assert loaded["left_tail_extra"] == 0.15
     assert loaded["overlap_horizon"] == 5
     assert loaded["n_eff"] == in_mem_cqr["n_eff"]
 

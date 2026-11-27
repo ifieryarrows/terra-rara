@@ -930,6 +930,9 @@ async def _execute_pipeline_stages_v2(
                         "primary_forecast_q10": tft_report.get("primary_forecast_q10"),
                         "primary_forecast_q90": tft_report.get("primary_forecast_q90"),
                         "direction": tft_report.get("direction"),
+                        "signal_state": tft_report.get("signal_state"),
+                        "has_directional_edge": tft_report.get("has_directional_edge"),
+                        "neutral_band_pct": tft_report.get("neutral_band_pct"),
                         "risk_level": tft_report.get("risk_level"),
                         "reference_price_date": (
                             prediction_block.get("reference_price_date")

@@ -674,10 +674,11 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(screen.queryByText('T+1 Daily Drivers · XGBoost')).not.toBeInTheDocument();
     expect(container.querySelector('#market-drivers')).not.toBeInTheDocument();
 
-    // Strict 5D vs T+1 separation + non-causal XAI focus disclosure + 1M/1Q Long-Term Outlook
+    // Strict 5D vs Risk & Stress separation + non-causal XAI focus disclosure + 1M/1Q Long-Term Outlook
     expect(screen.getByText('5D TFT Primary')).toBeInTheDocument();
     expect(screen.getByText('Expected 5D Performance')).toBeInTheDocument();
-    expect(screen.getByText('T+1 TFT Step 1')).toBeInTheDocument();
+    expect(screen.getByText('5D Risk & Stress')).toBeInTheDocument();
+    expect(screen.queryByText('T+1 TFT Step 1')).not.toBeInTheDocument();
     expect(screen.getByText(/Raw 5D Focus · Non-causal/i)).toBeInTheDocument();
     expect(screen.getByText('Quality Gate Passed')).toBeInTheDocument();
     expect(screen.getByTestId('news-sentiment-readout')).toHaveTextContent(/▲\s*Bullish/);
@@ -714,8 +715,8 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(container.querySelector('#news-intelligence')).not.toBeInTheDocument();
     expect(container.querySelector('#market-map')).not.toBeInTheDocument();
 
-    // Switch to 1M / 1Q Outlook lens
-    fireEvent.click(within(lensTablist).getByRole('tab', { name: /1M \/ 1Q Outlook/i }));
+    // Switch to 1M / 1Q / 6M Outlook lens
+    fireEvent.click(within(lensTablist).getByRole('tab', { name: /1M \/ 1Q.*Outlook/i }));
     expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#price-forecast')).not.toBeInTheDocument();
 
@@ -755,6 +756,7 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
         stress_ratio: 1.74,
         shock_score: 0.029,
         shock_percentile: 94.0,
+        risk_budget_mult: 0.70,
         vol_scale_source: 'har_gjr',
       },
     });
@@ -773,6 +775,108 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     const stressEl = await screen.findByTestId('har-gjr-stress-readout');
     expect(stressEl).toHaveTextContent(/HAR-GJR Market Stress:\s*High Stress/i);
     expect(stressEl).toHaveTextContent(/1\.74× 20D baseline/);
-    expect(stressEl).toHaveTextContent(/5D Vol 5\.4%/);
+    expect(stressEl).toHaveTextContent(/5D Vol ±5\.4% \(1σ\)/);
+    expect(stressEl).toHaveTextContent(/Size 0\.70×/);
+    expect(screen.getByText('70%')).toBeInTheDocument();
+  }, 15_000);
+
+  it('renders NO CLEAR EDGE and neutral tone when 5D median sits inside the noise band', async () => {
+    vi.mocked(api.fetchTFTAnalysis).mockResolvedValue({
+      ...TFT_FIXTURE,
+      direction: 'NEUTRAL',
+      weekly_trend: 'NEUTRAL',
+      signal_state: 'NO_EDGE',
+      has_directional_edge: false,
+      neutral_band_pct: 0.5,
+      primary_forecast_return: 0.0018,
+      weekly_forecast: {
+        ...TFT_FIXTURE.weekly_forecast!,
+        expected_return: 0.0018,
+        direction: 'NEUTRAL',
+        signal_state: 'NO_EDGE',
+        has_directional_edge: false,
+        neutral_band_pct: 0.5,
+      },
+      prediction: {
+        ...TFT_FIXTURE.prediction!,
+        weekly_return: 0.0018,
+      },
+      volatility_stress: {
+        enabled: true,
+        regime: 'CALM',
+        har_vol5_pct: 2.8,
+        rv20_vol5_pct: 2.7,
+        stress_ratio: 1.04,
+        risk_budget_mult: 1.0,
+        shock_percentile: 42.0,
+        vol_scale_source: 'har_gjr',
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <OverviewPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('NO CLEAR EDGE')).toBeInTheDocument();
+    expect(screen.queryByText('SLIGHT BULLISH')).not.toBeInTheDocument();
+    expect(screen.getByText(/Inside ±0\.5% 5D noise band/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/±2\.8% 1σ/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/1\.00× size/i)).toBeInTheDocument();
+  }, 15_000);
+
+  it('renders active catalyst radar callout when exogenous multi-source shock is present', async () => {
+    vi.mocked(api.fetchSentimentSummary).mockResolvedValue({
+      ...SENTIMENT_SUMMARY_FIXTURE,
+      catalyst_radar: {
+        status: 'CATALYST_ACTIVE',
+        cone_override_warning: true,
+        cone_warning_message:
+          'Active supply disruption catalyst corroborated across 3 sources — statistical 5D price cone may understate near-term gap risk.',
+        dominant_cluster: {
+          event_type: 'supply_disruption',
+          label: 'Supply Disruption',
+          direction: 'BULLISH',
+          article_count_72h: 4,
+          article_count_24h: 3,
+          distinct_sources: 3,
+          avg_impact: 0.78,
+          max_abs_impact: 0.88,
+          avg_relevance: 0.92,
+          avg_confidence: 0.86,
+          severity_score: 0.89,
+          corroborated: true,
+          latest_published_at: '2026-11-12T09:00:00Z',
+          top_headlines: [],
+        },
+        active_clusters: [],
+        window_hours: 72,
+        active_window_hours: 24,
+        total_high_impact_articles: 4,
+        generated_at: '2026-11-12T10:00:00Z',
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <OverviewPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const callout = await screen.findByTestId('catalyst-radar-callout');
+    expect(callout).toHaveTextContent(/CATALYST ACTIVE · Supply Disruption/i);
+    expect(callout).toHaveTextContent(/3 sources \/ 24h/i);
+    expect(callout).toHaveTextContent(/statistical 5D price cone may understate near-term gap risk/i);
   }, 15_000);
 });

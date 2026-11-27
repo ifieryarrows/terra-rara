@@ -226,9 +226,9 @@ describe('LongTermOutlookPanel', () => {
     expect(screen.getByTestId('lt-expected-move')).toHaveTextContent('+2.44%');
     expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('BULLISH');
     expect(screen.getByTestId('lt-conviction-readout')).toHaveTextContent('HIGH conviction · 62%');
-    expect(screen.getByText('$4.61')).toBeVisible();
-    expect(screen.getByText('$5.48')).toBeVisible();
-    expect(screen.getByText(/Core IQR: \$4\.82 – \$5\.26/)).toBeVisible();
+    expect(screen.getByText('$4.82')).toBeVisible();
+    expect(screen.getByText('$5.26')).toBeVisible();
+    expect(screen.getByText(/80% Stress Envelope: \$4\.61 – \$5\.48/)).toBeVisible();
 
     const valBadge = screen.getByTestId('long-term-validation-badge');
     expect(valBadge).toHaveTextContent('Purged WF · 5F · gap 4w · √12');
@@ -291,6 +291,84 @@ describe('LongTermOutlookPanel', () => {
     };
     render(<LongTermOutlookPanel data={zeroMove} />);
     expect(screen.getByTestId('lt-expected-move')).toHaveTextContent(/^0\.00%$/);
+  });
+
+  it('renders lt_committee_v2 with 60D default, 120D tab, 5-tier rating, asymmetry, 4-family decomposition, and 5-pillar scorecard', () => {
+    const v2Fixture: LongTermOutlookResponse = {
+      ...OUTLOOK_FIXTURE,
+      model_version: 'lt_committee_v2',
+      available_horizons: ['20D', '60D', '120D'],
+      default_horizon: '60D',
+      data_window: {
+        ...OUTLOOK_FIXTURE.data_window!,
+        physical_data_enabled: true,
+        cot_positioning_enabled: true,
+      },
+      horizons: {
+        ...OUTLOOK_FIXTURE.horizons,
+        '60D': {
+          ...OUTLOOK_FIXTURE.horizons['60D'],
+          institutional_rating: 'STRONG_UNDERWEIGHT',
+          asymmetry_ratio: 0.68,
+          components: {
+            ...OUTLOOK_FIXTURE.horizons['60D'].components,
+            theta_weight: 0.25,
+            catboost_return: -0.04,
+            xgboost_return: -0.03,
+            mlp_plr_return: -0.02,
+            tree_weight: 0.5,
+            mlp_weight: 0.25,
+            shrinkage_alpha: 0.72,
+          },
+        },
+        '120D': {
+          ...OUTLOOK_FIXTURE.horizons['60D'],
+          horizon_key: '120D',
+          horizon_label: '6 Months (120D)',
+          horizon_days: 120,
+          horizon_weeks: 26,
+          target_price_q50: 5.25,
+          expected_return: 0.0671,
+          expected_return_pct: 6.71,
+          stance: 'BULLISH',
+          institutional_rating: 'OVERWEIGHT',
+          asymmetry_ratio: 1.54,
+        },
+      },
+      macro_scorecard: {
+        ...OUTLOOK_FIXTURE.macro_scorecard!,
+        pillars: {
+          ...OUTLOOK_FIXTURE.macro_scorecard!.pillars,
+          physical_positioning: {
+            key: 'physical_positioning',
+            label: 'Physical & Positioning',
+            score: -0.25,
+            score_pct: 38,
+            stance: 'BEARISH',
+            summary: 'LME stocks rebuilding alongside crowded long COT funds.',
+            metrics: [{ name: 'LME Stock 12W Chg', value: 0.14, formatted_value: '+14.0%', signal: 'BEARISH' }],
+          },
+        },
+      },
+    };
+
+    render(<LongTermOutlookPanel data={v2Fixture} />);
+
+    // Defaults to 60D in lt_committee_v2
+    expect(screen.getByTestId('lt-target-price')).toHaveTextContent('$4.78');
+    expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('STRONG UNDERWEIGHT');
+    expect(screen.getByText(/R\/R 0\.68x/)).toBeVisible();
+    expect(screen.getByText(/CB \+ XGB Trees \(50%\)/)).toBeVisible();
+    expect(screen.getByText(/MLP-PLR Neural \(25%\)/)).toBeVisible();
+    expect(screen.getByText(/α=0\.72/)).toBeVisible();
+    expect(screen.getByText('5-Pillar Macro Factor Scorecard')).toBeVisible();
+    expect(screen.getByText(/LME physical · CFTC COT/)).toBeVisible();
+
+    // Switch to 6 Months (120D)
+    const tablist = screen.getByRole('tablist', { name: 'Long-term forecast horizon' });
+    fireEvent.click(within(tablist).getByRole('tab', { name: /6 Months \(120D\)/i }));
+    expect(screen.getByTestId('lt-target-price')).toHaveTextContent('$5.25');
+    expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('OVERWEIGHT');
   });
 });
 

@@ -265,6 +265,43 @@ export interface SentimentRecentArticle {
   } | null;
 }
 
+export interface CatalystHeadline {
+  title: string;
+  publisher: string;
+  published_at: string;
+  impact_score: number;
+  url?: string | null;
+}
+
+export interface CatalystCluster {
+  event_type: string;
+  label: string;
+  direction: 'BULLISH' | 'BEARISH' | string;
+  article_count_72h: number;
+  article_count_24h: number;
+  distinct_sources: number;
+  avg_impact: number;
+  max_abs_impact: number;
+  avg_relevance: number;
+  avg_confidence: number;
+  severity_score: number;
+  corroborated: boolean;
+  latest_published_at: string;
+  top_headlines: CatalystHeadline[];
+}
+
+export interface CatalystRadar {
+  status: 'QUIET' | 'WATCH' | 'CATALYST_ACTIVE' | string;
+  cone_override_warning: boolean;
+  cone_warning_message?: string | null;
+  dominant_cluster?: CatalystCluster | null;
+  active_clusters: CatalystCluster[];
+  window_hours: number;
+  active_window_hours: number;
+  total_high_impact_articles: number;
+  generated_at: string;
+}
+
 export interface SentimentSummary {
   index: number;
   label: 'Bullish' | 'Bearish' | 'Neutral';
@@ -281,6 +318,7 @@ export interface SentimentSummary {
     window_days?: number;
     article_count_window?: number;
   };
+  catalyst_radar?: CatalystRadar | null;
   generated_at: string;
 }
 

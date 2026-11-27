@@ -1,11 +1,22 @@
-"""Regime-aware conformal calibration for weekly TFT intervals."""
+"""Regime-aware conformal calibration for weekly TFT-ASRO risk cones.
+
+Supports:
+- V5 FF-NexCP (Feedforward Student-t + 65/35 hybrid cone, damped volatility
+  scaling, elevated-stress left-tail asymmetry, exponential-weighted NexCP
+  quantile calibration with MA(h-1) effective sample size adjustment).
+- Full backward compatibility with legacy V1 Split-CQR JSON artifacts.
+"""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import stats
+
+_DEFAULT_QUANTILES: tuple[float, ...] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98)
 
 
 @dataclass
@@ -83,8 +94,11 @@ def _vol_scale_factors(
     realized_vol: np.ndarray | None,
     n_samples: int,
     median_val_vol: float | None = None,
+    *,
+    clip_low: float = 0.5,
+    clip_high: float = 2.0,
 ) -> tuple[np.ndarray, float | None]:
-    """Compute bounded volatility-normalization factors ``clip(vol / med, 0.5, 2.0)``."""
+    """Compute bounded volatility-normalization factors ``clip(vol / med, lo, hi)``."""
     ones = np.ones(n_samples, dtype=np.float64)
     if realized_vol is None:
         return ones, median_val_vol
@@ -106,7 +120,7 @@ def _vol_scale_factors(
 
     factors = np.ones(n_samples, dtype=np.float64)
     valid_mask = np.isfinite(vol) & (vol > 1e-12)
-    factors[valid_mask] = np.clip(vol[valid_mask] / ref, 0.5, 2.0)
+    factors[valid_mask] = np.clip(vol[valid_mask] / ref, float(clip_low), float(clip_high))
     return factors, float(ref)
 
 
@@ -123,43 +137,144 @@ def _split_conformal_quantile(
     alpha: float,
     *,
     overlap_horizon: int = 5,
+    weights: np.ndarray | None = None,
 ) -> float:
-    """Finite-sample split conformal quantile with MA-overlap ``n_eff`` & upper guard."""
-    clean = np.asarray(scores, dtype=np.float64)
-    clean = clean[np.isfinite(clean)]
+    """Finite-sample (optionally NexCP-weighted) conformal quantile with MA-overlap ``n_eff``."""
+    raw = np.asarray(scores, dtype=np.float64)
+    mask = np.isfinite(raw)
+    clean = raw[mask]
     n = len(clean)
     if n == 0:
         return 0.0
     alpha_f = min(max(float(alpha), 1e-4), 0.99)
     n_eff = _effective_sample_size(n, overlap_horizon=overlap_horizon)
     raw_level = (1.0 - alpha_f) * (n_eff + 1.0) / n_eff
-    # Cap below 1.0 (1 - 0.5*alpha) so small n_eff on PI96 (alpha=0.04) never
-    # degenerates to level >= 1.0 and lets a single extreme outlier explode spreads.
     upper_cap = min(1.0 - 0.5 * alpha_f, 1.0 - 1.0 / max(float(n) * 2.0, 4.0))
     upper_cap = max(upper_cap, 1.0 - alpha_f)
     level = min(upper_cap, max(1.0 - alpha_f, float(raw_level)))
+
+    if weights is not None:
+        w = np.maximum(np.asarray(weights, dtype=np.float64)[mask], 0.0)
+        w_sum = float(w.sum())
+        if w_sum > 1e-12:
+            order = np.argsort(clean)
+            s_sorted = clean[order]
+            w_sorted = w[order]
+            cdf = np.cumsum(w_sorted) / w_sum
+            idx = int(np.searchsorted(cdf, level, side="left"))
+            return float(s_sorted[min(idx, len(s_sorted) - 1)])
+
     try:
         return float(np.quantile(clean, level, method="linear"))
     except TypeError:  # pragma: no cover - numpy<1.22 fallback
         return float(np.quantile(clean, level, interpolation="linear"))
 
 
+def _blend_studentt_prior_quantiles(
+    q_arr: np.ndarray,
+    quantiles: list[float],
+    realized_vol: np.ndarray | None,
+    *,
+    lam: float,
+    student_t_df: float,
+    horizon: int = 5,
+) -> np.ndarray:
+    """Blend 65/35 raw quantiles with unit-variance Student-t(df) volatility cone, preserving q50."""
+    lam_f = min(max(float(lam), 0.0), 1.0)
+    if lam_f >= 0.999 or realized_vol is None:
+        return q_arr
+
+    n = q_arr.shape[0]
+    vol = np.asarray(realized_vol, dtype=np.float64).reshape(-1)
+    if vol.size == 1 and n > 1:
+        vol = np.full(n, float(vol[0]), dtype=np.float64)
+    if vol.size != n:
+        return q_arr
+
+    vol_clean = np.where(np.isfinite(vol) & (vol > 1e-12), vol, np.nan)
+    valid_v = vol_clean[np.isfinite(vol_clean)]
+    if valid_v.size == 0:
+        return q_arr
+    fill_v = float(np.median(valid_v))
+    vol5 = np.maximum(np.where(np.isfinite(vol_clean), vol_clean, fill_v), 1e-4) * math.sqrt(float(max(horizon, 1)))
+
+    df = max(float(student_t_df), 3.2)
+    t_scale = math.sqrt((df - 2.0) / df)
+    q_probs = np.clip(np.asarray(quantiles, dtype=np.float64), 1e-4, 1.0 - 1e-4)
+    z_t = stats.t.ppf(q_probs, df=df) * t_scale
+    med_idx = len(quantiles) // 2
+    z_t = z_t - z_t[med_idx]
+
+    q_vol = q_arr[:, med_idx : med_idx + 1] + vol5[:, None] * z_t[None, :]
+    blended = lam_f * q_arr + (1.0 - lam_f) * q_vol
+    blended[:, med_idx] = q_arr[:, med_idx]
+
+    min_step = 1e-4
+    for j in range(med_idx - 1, -1, -1):
+        blended[:, j] = np.minimum(blended[:, j], blended[:, j + 1] - min_step)
+    for j in range(med_idx + 1, len(quantiles)):
+        blended[:, j] = np.maximum(blended[:, j], blended[:, j - 1] + min_step)
+    return blended
+
+
+def _apply_feedforward_vol_scaling(
+    q_arr: np.ndarray,
+    q_list: list[float],
+    bscale: np.ndarray,
+    *,
+    left_tail_extra: float,
+) -> np.ndarray:
+    """Scale prior quantile widths by damped volatility factor before score extraction."""
+    out = q_arr.copy()
+    med_idx = len(q_list) // 2
+    med = out[:, med_idx]
+    min_step = 1e-4
+    lt_mult = 1.0 + max(float(left_tail_extra), 0.0) * np.maximum(bscale - 1.0, 0.0)
+
+    for j in range(0, med_idx):
+        mult = bscale * lt_mult if q_list[j] <= 0.15 else bscale
+        hw = np.maximum(med - out[:, j], min_step) * mult
+        out[:, j] = med - hw
+    for j in range(med_idx + 1, len(q_list)):
+        hw = np.maximum(out[:, j] - med, min_step) * bscale
+        out[:, j] = med + hw
+
+    for j in range(med_idx - 1, -1, -1):
+        out[:, j] = np.minimum(out[:, j], out[:, j + 1] - 0.5 * min_step)
+    for j in range(med_idx + 1, len(q_list)):
+        out[:, j] = np.maximum(out[:, j], out[:, j - 1] + 0.5 * min_step)
+    return out
+
+
 def fit_weekly_cqr(
     y_actual_weekly: np.ndarray,
     ordered_weekly_quantiles: np.ndarray,
     *,
-    quantiles: tuple[float, ...] | list[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    quantiles: tuple[float, ...] | list[float] = _DEFAULT_QUANTILES,
     realized_vol: np.ndarray | None = None,
     alpha_80: float = 0.20,
     alpha_96: float = 0.04,
     min_samples: int = 20,
     overlap_horizon: int = 5,
+    prior_blend_lambda: float = 0.75,
+    prior_student_t_df: float = 6.0,
+    base_vol_power: float = 0.40,
+    vol_clip_low: float = 0.45,
+    vol_clip_high: float = 2.80,
+    nexcp_gamma: float = 0.985,
+    left_tail_extra: float = 0.15,
 ) -> dict[str, float | int | bool | str | None]:
-    """Fit Split / Volatility-Normalized Conformalized Quantile Regression (CQR).
+    """Fit Feedforward-Feedback NexCP / Split-CQR calibration on validation predictions.
 
-    Operates strictly on ordered weekly log-return quantiles and validation
-    targets, computing normalized signed nonconformity scores for both PI80
-    ``[q10, q90]`` and PI96 ``[q02, q98]`` without touching ``q50``.
+    Combines Benchmark-V5 validated design:
+    - Feedforward blend (`prior_blend_lambda=0.75`) of raw 65/35 quantiles with
+      heavy-tailed Student-t(df=6) volatility cones;
+    - Damped multiplicative volatility scaling (`base_vol_power=0.40`, clip `[0.45, 2.80]`)
+      + asymmetric downside stress expansion (`left_tail_extra=0.15`);
+    - Exponential-weighted NexCP conformal quantiles (`nexcp_gamma=0.985`) adjusted for
+      5-day overlapping MA(4) effective sample count.
+
+    Preserves ``q50`` invariance and strict quantile monotonicity.
     """
     y = np.asarray(y_actual_weekly, dtype=np.float64).reshape(-1)
     q_arr = np.asarray(ordered_weekly_quantiles, dtype=np.float64)
@@ -169,7 +284,7 @@ def fit_weekly_cqr(
     if q_arr.ndim != 2 or q_arr.shape[1] != len(q_list) or n < int(min_samples):
         return {
             "cqr_enabled": False,
-            "method": "split_cqr_vol_normalized",
+            "method": "ff_nexcp_vol_normalized",
             "n_calibration": int(n),
             "n_eff": float(n_eff),
             "overlap_horizon": int(max(int(overlap_horizon), 1)),
@@ -177,7 +292,13 @@ def fit_weekly_cqr(
             "q_hat_96": 0.0,
             "median_val_vol": None,
             "vol_normalized": False,
-            "base_vol_power": 1.0,
+            "base_vol_power": float(base_vol_power),
+            "prior_blend_lambda": float(prior_blend_lambda),
+            "prior_student_t_df": float(prior_student_t_df),
+            "vol_clip_low": float(vol_clip_low),
+            "vol_clip_high": float(vol_clip_high),
+            "nexcp_gamma": float(nexcp_gamma),
+            "left_tail_extra": float(left_tail_extra),
             "alpha_80": float(alpha_80),
             "alpha_96": float(alpha_96),
             "validation_pi80_coverage_raw": interval_coverage(
@@ -196,9 +317,12 @@ def fit_weekly_cqr(
 
     y = y[:n]
     q_arr = q_arr[:n]
+    vol_slice = realized_vol[:n] if realized_vol is not None else None
     vol_factors, median_val_vol = _vol_scale_factors(
-        realized_vol[:n] if realized_vol is not None else None,
+        vol_slice,
         n,
+        clip_low=vol_clip_low,
+        clip_high=vol_clip_high,
     )
 
     med_idx = len(q_list) // 2
@@ -207,26 +331,41 @@ def fit_weekly_cqr(
     q90_idx = q_list.index(0.90) if 0.90 in q_list else len(q_list) - 2
     q98_idx = q_list.index(0.98) if 0.98 in q_list else len(q_list) - 1
 
-    base_vol_power = 1.0
-    base_vol_scale = np.clip(vol_factors, 0.25, 4.0) ** base_vol_power
-    med = q_arr[:, med_idx]
-    scaled_q = q_arr.copy()
-    for lo_idx in (q02_idx, q10_idx):
-        hw = np.maximum(med - q_arr[:, lo_idx], 1e-4) * base_vol_scale
-        scaled_q[:, lo_idx] = med - hw
-    for hi_idx in (q90_idx, q98_idx):
-        hw = np.maximum(q_arr[:, hi_idx] - med, 1e-4) * base_vol_scale
-        scaled_q[:, hi_idx] = med + hw
+    q_prior = _blend_studentt_prior_quantiles(
+        q_arr,
+        q_list,
+        vol_slice,
+        lam=prior_blend_lambda,
+        student_t_df=prior_student_t_df,
+        horizon=overlap_horizon,
+    )
+    bscale = (
+        np.clip(vol_factors, 0.25, 4.0) ** float(base_vol_power)
+        if float(base_vol_power) > 0.0
+        else np.ones_like(vol_factors)
+    )
+    scaled_q = _apply_feedforward_vol_scaling(
+        q_prior,
+        q_list,
+        bscale,
+        left_tail_extra=left_tail_extra,
+    )
 
     scores_80 = compute_nonconformity(y, scaled_q[:, q10_idx], scaled_q[:, q90_idx]) / vol_factors
     scores_96 = compute_nonconformity(y, scaled_q[:, q02_idx], scaled_q[:, q98_idx]) / vol_factors
 
-    q_hat_80 = _split_conformal_quantile(scores_80, alpha_80, overlap_horizon=overlap_horizon)
-    q_hat_96 = _split_conformal_quantile(scores_96, alpha_96, overlap_horizon=overlap_horizon)
+    gamma_f = float(nexcp_gamma)
+    nexcp_weights = (
+        np.power(gamma_f, np.arange(n - 1, -1, -1, dtype=np.float64))
+        if 0.5 < gamma_f < 1.0
+        else None
+    )
+    q_hat_80 = _split_conformal_quantile(scores_80, alpha_80, overlap_horizon=overlap_horizon, weights=nexcp_weights)
+    q_hat_96 = _split_conformal_quantile(scores_96, alpha_96, overlap_horizon=overlap_horizon, weights=nexcp_weights)
 
     params: dict[str, float | int | bool | str | None] = {
         "cqr_enabled": True,
-        "method": "split_cqr_vol_normalized",
+        "method": "ff_nexcp_vol_normalized",
         "n_calibration": int(n),
         "n_eff": float(n_eff),
         "overlap_horizon": int(max(int(overlap_horizon), 1)),
@@ -234,7 +373,13 @@ def fit_weekly_cqr(
         "q_hat_96": float(q_hat_96),
         "median_val_vol": float(median_val_vol) if median_val_vol is not None else None,
         "vol_normalized": median_val_vol is not None,
-        "base_vol_power": base_vol_power,
+        "base_vol_power": float(base_vol_power),
+        "prior_blend_lambda": float(prior_blend_lambda),
+        "prior_student_t_df": float(prior_student_t_df),
+        "vol_clip_low": float(vol_clip_low),
+        "vol_clip_high": float(vol_clip_high),
+        "nexcp_gamma": float(nexcp_gamma),
+        "left_tail_extra": float(left_tail_extra),
         "alpha_80": float(alpha_80),
         "alpha_96": float(alpha_96),
         "min_half_width_retention": 0.35,
@@ -243,7 +388,7 @@ def fit_weekly_cqr(
         q_arr,
         quantiles=tuple(q_list),
         cqr_params=params,
-        realized_vol=realized_vol[:n] if realized_vol is not None else None,
+        realized_vol=vol_slice,
     )
     params.update(
         {
@@ -263,14 +408,15 @@ def fit_weekly_cqr(
 def apply_weekly_cqr(
     ordered_weekly_quantiles: np.ndarray,
     *,
-    quantiles: tuple[float, ...] | list[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
+    quantiles: tuple[float, ...] | list[float] = _DEFAULT_QUANTILES,
     cqr_params: dict | None = None,
     realized_vol: np.ndarray | float | None = None,
 ) -> np.ndarray:
-    """Apply validation-fitted Split CQR adjustments in ordered weekly quantile space.
+    """Apply validation-fitted CQR / FF-NexCP adjustments in ordered weekly quantile space.
 
     Preserves the weekly median (``q50``) exactly and guarantees strictly
     monotonic outer envelopes ``q02 < q10 < q25 < q50 < q75 < q90 < q98``.
+    Backward-compatible with legacy V1 ``split_cqr_vol_normalized`` artifacts.
     """
     arr = np.asarray(ordered_weekly_quantiles, dtype=np.float64).copy()
     was_1d = arr.ndim == 1
@@ -294,6 +440,14 @@ def apply_weekly_cqr(
     q90_idx = q_list.index(0.90) if 0.90 in q_list else max(med_idx + 1, q_dim - 2)
     q98_idx = q_list.index(0.98) if 0.98 in q_list else q_dim - 1
 
+    # Legacy V1 checkpoints omit V2 keys -> preserve exact V1 defaults when absent
+    vol_clip_low = float(cqr_params.get("vol_clip_low", 0.5) or 0.5)
+    vol_clip_high = float(cqr_params.get("vol_clip_high", 2.0) or 2.0)
+    prior_blend_lambda = float(cqr_params.get("prior_blend_lambda", 1.0) if cqr_params.get("prior_blend_lambda") is not None else 1.0)
+    prior_student_t_df = float(cqr_params.get("prior_student_t_df", 6.0) or 6.0)
+    left_tail_extra = float(cqr_params.get("left_tail_extra", 0.0) or 0.0)
+    overlap_horizon = int(cqr_params.get("overlap_horizon", 5) or 5)
+
     median_val_vol = cqr_params.get("median_val_vol")
     vol_arr = (
         np.full(n, float(realized_vol), dtype=np.float64)
@@ -304,6 +458,17 @@ def apply_weekly_cqr(
         vol_arr,
         n,
         median_val_vol=float(median_val_vol) if median_val_vol is not None else None,
+        clip_low=vol_clip_low,
+        clip_high=vol_clip_high,
+    )
+
+    arr = _blend_studentt_prior_quantiles(
+        arr,
+        q_list,
+        vol_arr,
+        lam=prior_blend_lambda,
+        student_t_df=prior_student_t_df,
+        horizon=overlap_horizon,
     )
 
     q_hat_80 = float(cqr_params.get("q_hat_80", 0.0) or 0.0)
@@ -337,7 +502,8 @@ def apply_weekly_cqr(
         / hi_80_raw_unscaled
     )
 
-    low_80_raw_hw = low_80_raw_unscaled * base_vol_scale
+    lt_mult = 1.0 + max(left_tail_extra, 0.0) * np.maximum(base_vol_scale - 1.0, 0.0)
+    low_80_raw_hw = low_80_raw_unscaled * base_vol_scale * lt_mult
     hi_80_raw_hw = hi_80_raw_unscaled * base_vol_scale
     low_80_cal_hw = np.maximum(low_80_raw_hw + q_hat_80 * vol_factors, np.maximum(min_step, min_retention * low_80_raw_hw))
     hi_80_cal_hw = np.maximum(hi_80_raw_hw + q_hat_80 * vol_factors, np.maximum(min_step, min_retention * hi_80_raw_hw))
@@ -345,7 +511,7 @@ def apply_weekly_cqr(
     arr[:, q10_idx] = med - low_80_cal_hw
     arr[:, q90_idx] = med + hi_80_cal_hw
 
-    low_96_raw_hw = np.maximum(med - arr[:, q02_idx], min_step) * base_vol_scale
+    low_96_raw_hw = np.maximum(med - arr[:, q02_idx], min_step) * base_vol_scale * lt_mult
     hi_96_raw_hw = np.maximum(arr[:, q98_idx] - med, min_step) * base_vol_scale
     low_96_cal_hw = np.maximum(
         np.maximum(low_96_raw_hw + q_hat_96 * vol_factors, np.maximum(min_step, min_retention * low_96_raw_hw)),
@@ -359,7 +525,6 @@ def apply_weekly_cqr(
     arr[:, q02_idx] = med - low_96_cal_hw
     arr[:, q98_idx] = med + hi_96_cal_hw
 
-    # Scale inner quartiles proportionally inside calibrated [q10, q50] and [q50, q90]
     if q10_idx < q25_idx < med_idx:
         lo_25_hw = np.clip(
             frac_lo_25 * low_80_cal_hw,

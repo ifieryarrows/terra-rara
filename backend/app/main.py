@@ -56,6 +56,7 @@ from app.schemas import (
     NewsStatsResponse,
     NewsFinbertProbs,
     NewsSentimentBlock,
+    CatalystRadarResponse,
 )
 
 # Configure logging
@@ -2499,6 +2500,10 @@ async def get_sentiment_summary(
         newest = freshness_q.newest
         age_hours = ((now - newest).total_seconds() / 3600.0) if newest else None
 
+        from app.catalyst_radar import build_catalyst_radar
+
+        catalyst_radar = build_catalyst_radar(session, now=now)
+
         return {
             "index": round(float(index_val), 4),
             "label": _label(index_val),
@@ -2522,8 +2527,27 @@ async def get_sentiment_summary(
                 "window_days": int(days),
                 "article_count_window": int(window_freshness_q.n_total or 0),
             },
+            "catalyst_radar": catalyst_radar,
             "generated_at": now.isoformat(),
         }
+
+
+@app.get(
+    "/api/news/catalysts",
+    response_model=CatalystRadarResponse,
+    summary="Multi-source 0-72h exogenous copper catalyst radar",
+    description=(
+        "Clusters high-impact, high-relevance NewsSentimentV2 items by event_type "
+        "and highlights corroborated exogenous supply/policy/inventory shocks."
+    ),
+)
+async def get_news_catalysts(
+    window_hours: int = Query(default=72, ge=12, le=168, description="Lookback window in hours"),
+):
+    from app.catalyst_radar import build_catalyst_radar
+
+    with SessionLocal() as session:
+        return build_catalyst_radar(session, window_hours=window_hours)
 
 
 # =============================================================================

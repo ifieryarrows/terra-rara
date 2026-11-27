@@ -1,4 +1,4 @@
-"""Purged, horizon-matched expanding-origin walk-forward validation (20D / 60D)."""
+"""Purged, horizon-matched expanding-origin walk-forward validation (20D / 60D / 120D)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ from long_term.model import (
     LongTermModelParams,
     ThetaComponents,
     build_horizon_frame,
+    build_return_quantiles,
     compute_theta_components,
+    conformal_halfwidths,
     fit_ensemble,
     predict_ensemble,
     regime_classes,
@@ -31,6 +33,7 @@ from long_term.schemas import LongTermFoldMetrics, LongTermValidationSummary
 class WalkForwardHorizonResult:
     summary: LongTermValidationSummary
     oof_abs_norm_residuals: np.ndarray
+    oof_shrinkage_alpha: float = 0.70
     oof_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
@@ -139,6 +142,74 @@ def _fmt_date(ts: pd.Timestamp) -> str:
     return pd.Timestamp(ts).strftime("%Y-%m-%d")
 
 
+def _apply_causal_oof_calibration(
+    oof: pd.DataFrame,
+    horizon_weeks: int,
+    params: LongTermModelParams,
+    fold_hw: dict[int, tuple[float, float]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Apply strictly causal expanding OOF shrinkage and purged Split CQR intervals.
+
+    At stitched OOS index ``t``, only prior OOS rows whose targets have already
+    realized (``oof.pos[:t] + horizon_weeks <= oof.pos[t]``) may contribute.
+    """
+    n = len(oof)
+    pos = oof["pos"].to_numpy(dtype=int)
+    y = oof["y"].to_numpy(dtype=np.float64)
+    raw = oof["pred_raw"].to_numpy(dtype=np.float64)
+    sigma_h = oof["sigma_h"].to_numpy(dtype=np.float64)
+    fold_ids = oof["fold"].to_numpy(dtype=int)
+
+    alphas = np.full(n, params.default_shrinkage_alpha, dtype=np.float64)
+    pred_cal = np.empty(n, dtype=np.float64)
+    q_arr = np.empty((n, 5), dtype=np.float64)
+
+    for t in range(n):
+        resolved_end = int(np.searchsorted(pos[:t], pos[t] - horizon_weeks, side="right"))
+        if resolved_end >= 26:
+            y_past = y[:resolved_end]
+            r_past = raw[:resolved_end]
+            var_y = max(float(np.var(y_past)), 1e-6)
+            alpha_t = float(
+                np.clip(
+                    float(np.dot(y_past, r_past))
+                    / max(float(np.dot(r_past, r_past)) + 25.0 * resolved_end * var_y, 1e-9),
+                    params.min_shrinkage_alpha,
+                    1.0,
+                )
+            )
+            alphas[t] = alpha_t
+        pred_cal[t] = alphas[t] * raw[t]
+
+        if resolved_end >= 20:
+            start_cqr = max(0, resolved_end - 156)
+            abs_z_past = np.abs(y[start_cqr:resolved_end] - pred_cal[start_cqr:resolved_end]) / np.maximum(
+                sigma_h[start_cqr:resolved_end], 1e-4
+            )
+            hw50_t, hw80_t = conformal_halfwidths(abs_z_past)
+        else:
+            hw50_t, hw80_t = fold_hw.get(int(fold_ids[t]), (0.6745, 1.2816))
+
+        q_arr[t] = build_return_quantiles(
+            np.array([pred_cal[t]]), np.array([sigma_h[t]]), hw50_t, hw80_t
+        )[0]
+
+    # Compute final causal alpha across all fully realized OOS points (available at live predict time)
+    var_y_all = max(float(np.var(y)), 1e-6)
+    final_alpha = (
+        float(
+            np.clip(
+                float(np.dot(y, raw)) / max(float(np.dot(raw, raw)) + 25.0 * n * var_y_all, 1e-9),
+                params.min_shrinkage_alpha,
+                1.0,
+            )
+        )
+        if n >= 26
+        else params.default_shrinkage_alpha
+    )
+    return pred_cal, q_arr, alphas, final_alpha
+
+
 # ---------------------------------------------------------------------------
 # Walk-forward driver
 # ---------------------------------------------------------------------------
@@ -165,12 +236,15 @@ def run_horizon_walk_forward(
         return None
 
     records: list[pd.DataFrame] = []
-    folds: list[LongTermFoldMetrics] = []
+    fold_ranges: list[tuple[int, np.ndarray, np.ndarray]] = []
+    fold_hw: dict[int, tuple[float, float]] = {}
+
     for fold_idx, (tr, te) in enumerate(splits):
         if tr.size < params.min_train_rows:
             continue
-        fit = fit_ensemble(frame, tr, theta, params)
-        pred = predict_ensemble(fit, frame, te, theta, params)
+        fit = fit_ensemble(frame, tr, theta, params, compute_inner_conformal=(fold_idx == 0))
+        pred = predict_ensemble(fit, frame, te, theta, params, apply_shrinkage=False)
+        fold_hw[fold_idx] = (fit.hw50, fit.hw80)
         y = frame.y[te]
         s = frame.sigma_h[te]
         cls = regime_classes(y, s, params.regime_k)
@@ -186,14 +260,9 @@ def run_horizon_walk_forward(
                 "fold": fold_idx,
                 "y": y,
                 "sigma_h": s,
-                "pred": pred.median,
+                "pred_raw": pred.raw_median,
                 "pred_ridge": pred.ridge,
                 "pred_theta": pred.theta,
-                "q10": pred.quantiles[:, 0],
-                "q25": pred.quantiles[:, 1],
-                "q50": pred.quantiles[:, 2],
-                "q75": pred.quantiles[:, 3],
-                "q90": pred.quantiles[:, 4],
                 "p_bear": pred.proba[:, 0],
                 "p_neut": pred.proba[:, 1],
                 "p_bull": pred.proba[:, 2],
@@ -206,10 +275,35 @@ def run_horizon_walk_forward(
         for j, lvl in enumerate(QUANTILE_LEVELS):
             df[f"emp_q{int(lvl * 100)}"] = emp_q[j]
         records.append(df)
+        fold_ranges.append((fold_idx, tr, te))
 
-        no = _non_overlapping(len(df), H)
-        strat = np.sign(df["pred"].to_numpy()) * y
-        q_arr = df[["q10", "q25", "q50", "q75", "q90"]].to_numpy()
+    if not records:
+        return None
+
+    oof = pd.concat(records, ignore_index=True).sort_values("pos").reset_index(drop=True)
+    p, q_arr, alphas, final_alpha = _apply_causal_oof_calibration(oof, H, params, fold_hw)
+
+    oof["pred"] = p
+    oof["shrinkage_alpha"] = alphas
+    oof["q10"] = q_arr[:, 0]
+    oof["q25"] = q_arr[:, 1]
+    oof["q50"] = q_arr[:, 2]
+    oof["q75"] = q_arr[:, 3]
+    oof["q90"] = q_arr[:, 4]
+
+    folds: list[LongTermFoldMetrics] = []
+    for fold_idx, tr, te in fold_ranges:
+        sub = oof.loc[oof["fold"] == fold_idx]
+        if sub.empty:
+            continue
+        yf = sub["y"].to_numpy()
+        pf = sub["pred"].to_numpy()
+        ptf = sub["pred_theta"].to_numpy()
+        qf = sub[["q10", "q25", "q50", "q75", "q90"]].to_numpy()
+        probf = sub[["p_bear", "p_neut", "p_bull"]].to_numpy()
+        clsf = sub["cls"].to_numpy(dtype=int)
+        no = _non_overlapping(len(sub), H)
+        strat_f = np.sign(pf) * yf
         folds.append(
             LongTermFoldMetrics(
                 fold_index=fold_idx,
@@ -220,27 +314,18 @@ def run_horizon_walk_forward(
                 n_train=int(tr.size),
                 n_test=int(te.size),
                 n_non_overlapping=int(no.size),
-                directional_accuracy=round(directional_accuracy(y, df["pred"].to_numpy()), 4),
-                non_overlapping_da=round(directional_accuracy(y[no], df["pred"].to_numpy()[no]), 4),
-                mae_vs_naive_zero=round(_safe_ratio(np.mean(np.abs(y - df["pred"])), np.mean(np.abs(y))), 4),
-                mae_vs_theta=round(
-                    _safe_ratio(np.mean(np.abs(y - df["pred"])), np.mean(np.abs(y - df["pred_theta"]))), 4
-                ),
-                sharpe_ratio=round(sharpe_hac(strat, spec.annualisation, H - 1), 4),
-                pi80_coverage=round(_coverage(y, q_arr[:, 0], q_arr[:, 4]), 4),
-                brier_score=round(
-                    brier_multiclass(df[["p_bear", "p_neut", "p_bull"]].to_numpy(), cls), 4
-                ),
+                directional_accuracy=round(directional_accuracy(yf, pf), 4),
+                non_overlapping_da=round(directional_accuracy(yf[no], pf[no]), 4),
+                mae_vs_naive_zero=round(_safe_ratio(np.mean(np.abs(yf - pf)), np.mean(np.abs(yf))), 4),
+                mae_vs_theta=round(_safe_ratio(np.mean(np.abs(yf - pf)), np.mean(np.abs(yf - ptf))), 4),
+                sharpe_ratio=round(sharpe_hac(strat_f, spec.annualisation, H - 1), 4),
+                pi80_coverage=round(_coverage(yf, qf[:, 0], qf[:, 4]), 4),
+                brier_score=round(brier_multiclass(probf, clsf), 4),
             )
         )
 
-    if not records:
-        return None
-    oof = pd.concat(records, ignore_index=True).sort_values("pos").reset_index(drop=True)
     y = oof["y"].to_numpy()
-    p = oof["pred"].to_numpy()
     p_theta = oof["pred_theta"].to_numpy()
-    q_arr = oof[["q10", "q25", "q50", "q75", "q90"]].to_numpy()
     emp_arr = oof[[f"emp_q{int(l * 100)}" for l in QUANTILE_LEVELS]].to_numpy()
     proba = oof[["p_bear", "p_neut", "p_bull"]].to_numpy()
     prior = oof[["prior_bear", "prior_neut", "prior_bull"]].to_numpy()
@@ -277,14 +362,19 @@ def run_horizon_walk_forward(
         quantile_crossing_rate=round(quantile_crossing_rate(q_arr), 6),
         folds=folds,
     )
-    abs_norm_res = np.abs(y - p) / oof["sigma_h"].to_numpy()
-    return WalkForwardHorizonResult(summary=summary, oof_abs_norm_residuals=abs_norm_res, oof_frame=oof)
+    abs_norm_res = (np.abs(y - p) / oof["sigma_h"].to_numpy())[-156:]
+    return WalkForwardHorizonResult(
+        summary=summary,
+        oof_abs_norm_residuals=abs_norm_res,
+        oof_shrinkage_alpha=final_alpha,
+        oof_frame=oof,
+    )
 
 
 def run_purged_walk_forward_suite(
     panel: pd.DataFrame,
     *,
-    horizons: Iterable[str] = ("20D", "60D"),
+    horizons: Iterable[str] = ("20D", "60D", "120D"),
     n_folds: int = 5,
     min_train_weeks: Optional[int] = None,
     params: LongTermModelParams = DEFAULT_PARAMS,
@@ -299,7 +389,7 @@ def run_purged_walk_forward_suite(
     results: dict[str, WalkForwardHorizonResult] = {}
     for key in horizons:
         spec = HORIZONS.get(key)
-        if spec is None:
+        if spec is None or spec.target_col not in panel.columns:
             continue
         frame = build_horizon_frame(panel, spec, features)
         res = run_horizon_walk_forward(

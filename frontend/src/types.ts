@@ -46,6 +46,11 @@ export interface VolatilityStressBlock {
   stress_ratio?: number | null;
   shock_score?: number | null;
   shock_percentile?: number | null;
+  vol_percentile?: number | null;
+  vol_surge_prob?: number | null;
+  tail_risk_score?: number | null;
+  risk_budget_mult?: number | null;
+  engine_version?: string | null;
   vol_scale_source?: string | null;
 }
 
@@ -56,6 +61,10 @@ export interface WeeklyForecastBlock {
   q90_return?: number | null;
   calibrated: boolean;
   calibration_adjustment?: number | null;
+  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | string | null;
+  signal_state?: 'NO_EDGE' | 'SLIGHT_BULLISH' | 'SLIGHT_BEARISH' | string | null;
+  has_directional_edge?: boolean | null;
+  neutral_band_pct?: number | null;
   t1_impulse?: "BULLISH" | "BEARISH" | "NEUTRAL" | string;
   t1_return?: number | null;
   regime?: string | null;
@@ -271,6 +280,9 @@ export interface TFTAnalysisResponse {
   message?: string;
   direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   weekly_trend?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  signal_state?: 'NO_EDGE' | 'SLIGHT_BULLISH' | 'SLIGHT_BEARISH' | string;
+  has_directional_edge?: boolean;
+  neutral_band_pct?: number;
   primary_horizon?: string | null;
   primary_forecast_return?: number | null;
   primary_forecast_q10?: number | null;
@@ -385,12 +397,19 @@ export interface BacktestReportResponse {
 // =============================================================================
 
 export type LongTermStance = 'BULLISH' | 'NEUTRAL' | 'BEARISH';
-export type LongTermHorizonKey = '20D' | '60D';
+export type LongTermInstitutionalRating =
+  | 'STRONG_OVERWEIGHT'
+  | 'OVERWEIGHT'
+  | 'NEUTRAL'
+  | 'UNDERWEIGHT'
+  | 'STRONG_UNDERWEIGHT';
+export type LongTermHorizonKey = '20D' | '60D' | '120D';
 export type LongTermPillarKey =
   | 'trend_structure'
   | 'usd_macro'
   | 'china_industrial_demand'
-  | 'cross_asset_confirmation';
+  | 'cross_asset_confirmation'
+  | 'physical_positioning';
 
 export interface LongTermPillarMetric {
   name: string;
@@ -433,6 +452,12 @@ export interface LongTermEnsembleComponents {
   horizon_vol: number;
   cqr_q10_width: number;
   cqr_q90_width: number;
+  catboost_return?: number | null;
+  xgboost_return?: number | null;
+  mlp_plr_return?: number | null;
+  tree_weight?: number | null;
+  mlp_weight?: number | null;
+  shrinkage_alpha?: number | null;
 }
 
 export interface LongTermHorizonForecast {
@@ -455,6 +480,8 @@ export interface LongTermHorizonForecast {
   return_q75: number;
   return_q90: number;
   stance: LongTermStance;
+  institutional_rating?: LongTermInstitutionalRating | null;
+  asymmetry_ratio?: number | null;
   prob_bullish: number;
   prob_neutral: number;
   prob_bearish: number;
@@ -514,6 +541,8 @@ export interface LongTermDataWindow {
   weekly_bars: number;
   years_covered: number;
   fred_macro_enabled: boolean;
+  physical_data_enabled?: boolean;
+  cot_positioning_enabled?: boolean;
   symbols_used: string[];
 }
 

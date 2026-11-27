@@ -418,6 +418,32 @@ def _build_tft_xai_prompt_block(
             f"q90 {_format_finite_number(tft_summary.get('primary_forecast_q90'))}; "
             f"direction {direction}; risk level {risk_level}."
         )
+        if (
+            str(direction).strip().upper() == "NEUTRAL"
+            or tft_summary.get("has_directional_edge") is False
+        ):
+            lines.append(
+                "- Directional honesty rule: the 5-day median sits inside the statistical noise band "
+                "(no clear directional edge); describe the 5-day outlook as range-bound/neutral "
+                "rather than inventing a bullish or bearish trend."
+            )
+        vol_stress = tft_summary.get("volatility_stress")
+        if isinstance(vol_stress, dict) and vol_stress.get("enabled"):
+            regime_str = str(vol_stress.get("regime") or "CALM").upper()
+            har_vol5 = vol_stress.get("har_vol5_pct")
+            budget_mult = vol_stress.get("risk_budget_mult")
+            vol_parts = [f"regime {regime_str}"]
+            try:
+                if har_vol5 is not None and math.isfinite(float(har_vol5)):
+                    vol_parts.append(f"±{float(har_vol5):.1f}% expected 5D 1-sigma swing")
+            except (TypeError, ValueError, OverflowError):
+                pass
+            try:
+                if budget_mult is not None and math.isfinite(float(budget_mult)):
+                    vol_parts.append(f"risk budget multiplier {float(budget_mult):.2f}x")
+            except (TypeError, ValueError, OverflowError):
+                pass
+            lines.append(f"- Volatility & risk budget: {', '.join(vol_parts)}.")
 
     signals = tft_digest.get("top_encoder_signals") if isinstance(tft_digest, dict) else None
     if signals:
@@ -678,7 +704,11 @@ def _build_tft_primary_line(tft_summary: Optional[dict]) -> Optional[str]:
         return None
     direction = str(tft_summary.get("direction") or "unavailable").lower()
     risk_level = str(tft_summary.get("risk_level") or "unavailable").lower()
-    parts = [f"5-day primary outlook (TFT-ASRO): {direction} bias"]
+    if direction == "neutral" or tft_summary.get("has_directional_edge") is False:
+        lead = "5-day primary outlook (TFT-ASRO): no directional edge (range-bound)"
+    else:
+        lead = f"5-day primary outlook (TFT-ASRO): {direction} bias"
+    parts = [lead]
     median = _format_percent(tft_summary.get("primary_forecast_return"))
     q10 = _format_percent(tft_summary.get("primary_forecast_q10"))
     q90 = _format_percent(tft_summary.get("primary_forecast_q90"))
@@ -695,6 +725,18 @@ def _build_tft_primary_line(tft_summary: Optional[dict]) -> Optional[str]:
         if regime_raw in ("ELEVATED", "HIGH_STRESS") and isinstance(stress_ratio, (int, float)):
             regime_txt = "high stress" if regime_raw == "HIGH_STRESS" else "elevated"
             parts.append(f"HAR-GJR volatility regime {regime_txt} ({float(stress_ratio):.2f}x 20d baseline)")
+        har_vol5 = vol_stress.get("har_vol5_pct")
+        try:
+            if har_vol5 is not None and math.isfinite(float(har_vol5)):
+                parts.append(f"expected 5D swing ±{float(har_vol5):.1f}%")
+        except (TypeError, ValueError, OverflowError):
+            pass
+        budget_mult = vol_stress.get("risk_budget_mult")
+        try:
+            if budget_mult is not None and math.isfinite(float(budget_mult)):
+                parts.append(f"risk budget {float(budget_mult):.2f}x")
+        except (TypeError, ValueError, OverflowError):
+            pass
     return ", ".join(parts) + "."
 
 

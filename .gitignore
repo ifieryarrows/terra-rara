@@ -45,6 +45,10 @@ env/
 .coverage
 htmlcov/
 
+# CatBoost training artifacts
+catboost_info/
+backend/catboost_info/
+
 # mypy
 .mypy_cache/
 

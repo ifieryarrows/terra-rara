@@ -324,3 +324,51 @@ class TestStanceIsDerivedNotNegotiated:
 
         assert "Stance for this run is fixed at NEUTRAL" in prompt
         assert "Do not contradict it" in prompt
+
+
+class TestHonestLowSignalAndVolatilityFraming:
+    def test_neutral_5d_primary_line_avoids_inventing_bias_and_reports_swing(self):
+        line = commentary_module._build_tft_primary_line(
+            {
+                "primary_forecast_return": 0.0018,
+                "primary_forecast_q10": -0.031,
+                "primary_forecast_q90": 0.035,
+                "direction": "NEUTRAL",
+                "has_directional_edge": False,
+                "risk_level": "MEDIUM",
+                "volatility_stress": {
+                    "enabled": True,
+                    "regime": "ELEVATED",
+                    "stress_ratio": 1.28,
+                    "har_vol5_pct": 3.2,
+                    "risk_budget_mult": 0.85,
+                },
+            }
+        )
+        assert line is not None
+        assert line.startswith("5-day primary outlook (TFT-ASRO): no directional edge (range-bound)")
+        assert "±3.2%" in line
+        assert "risk budget 0.85x" in line
+
+    def test_tft_xai_prompt_block_enforces_honesty_rule_and_vol_budget(self):
+        block = commentary_module._build_tft_xai_prompt_block(
+            {
+                "primary_forecast_return": 0.0015,
+                "primary_forecast_q10": -0.029,
+                "primary_forecast_q90": 0.033,
+                "direction": "NEUTRAL",
+                "has_directional_edge": False,
+                "risk_level": "MEDIUM",
+                "volatility_stress": {
+                    "enabled": True,
+                    "regime": "HIGH_STRESS",
+                    "har_vol5_pct": 4.9,
+                    "risk_budget_mult": 0.70,
+                },
+            },
+            None,
+        )
+        assert "Directional honesty rule" in block
+        assert "Volatility & risk budget" in block
+        assert "4.9%" in block
+        assert "0.70x" in block

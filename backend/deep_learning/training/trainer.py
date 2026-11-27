@@ -2198,7 +2198,37 @@ def _write_conformal_calibration_artifact(
             "base_vol_power": (
                 float(cqr_data["base_vol_power"])
                 if cqr_data.get("base_vol_power") is not None
-                else 1.0
+                else 0.40
+            ),
+            "prior_blend_lambda": (
+                float(cqr_data["prior_blend_lambda"])
+                if cqr_data.get("prior_blend_lambda") is not None
+                else 0.75
+            ),
+            "prior_student_t_df": (
+                float(cqr_data["prior_student_t_df"])
+                if cqr_data.get("prior_student_t_df") is not None
+                else 6.0
+            ),
+            "vol_clip_low": (
+                float(cqr_data["vol_clip_low"])
+                if cqr_data.get("vol_clip_low") is not None
+                else 0.45
+            ),
+            "vol_clip_high": (
+                float(cqr_data["vol_clip_high"])
+                if cqr_data.get("vol_clip_high") is not None
+                else 2.80
+            ),
+            "nexcp_gamma": (
+                float(cqr_data["nexcp_gamma"])
+                if cqr_data.get("nexcp_gamma") is not None
+                else 0.985
+            ),
+            "left_tail_extra": (
+                float(cqr_data["left_tail_extra"])
+                if cqr_data.get("left_tail_extra") is not None
+                else 0.15
             ),
             "n_eff": cqr_data.get("n_eff"),
             "overlap_horizon": int(

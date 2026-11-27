@@ -56,7 +56,7 @@ type OverviewStreamLens = 'all' | 'forecast' | 'long-term' | 'xai' | 'news' | 'm
 const STREAM_LENS_OPTIONS: readonly SegmentedTabOption<OverviewStreamLens>[] = [
   { value: 'all', label: 'All Streams', icon: Compass },
   { value: 'forecast', label: '5D Forecast', icon: Activity },
-  { value: 'long-term', label: '1M / 1Q Outlook', icon: Compass },
+  { value: 'long-term', label: '1M / 1Q / 6M Outlook', icon: Compass },
   { value: 'xai', label: '5D Model Focus', icon: Brain },
   { value: 'news', label: 'Copper News', icon: Newspaper },
   { value: 'map', label: 'Metals Map', icon: Globe },
@@ -100,6 +100,8 @@ function isSamePayload(previous: unknown, next: unknown): boolean {
     a.current_price !== b.current_price ||
     a.predicted_return !== b.predicted_return ||
     a.primary_forecast_return !== b.primary_forecast_return ||
+    a.signal_state !== b.signal_state ||
+    a.volatility_stress?.regime !== b.volatility_stress?.regime ||
     a.quality_state !== b.quality_state ||
     a.model_state !== b.model_state ||
     a.notes !== b.notes
@@ -384,7 +386,6 @@ export const OverviewPage = () => {
     tftAnalysis.is_forecast_healthy === false
   );
   const tftDegradedMessage = tftAnalysis?.message || 'TFT weekly forecast is unavailable until the weekly model artifacts are refreshed.';
-  const tftBullish = tftReturn !== null ? tftReturn >= 0 : null;
   const tftMetrics = tftAnalysis?.model_metadata?.metrics;
   const mergedTftMetrics = useMemo(() => {
     if (!tftMetrics && !tftSummary.data?.metrics) return undefined;
@@ -395,7 +396,31 @@ export const OverviewPage = () => {
   }, [tftMetrics, tftSummary.data?.metrics]);
   const tftQualityGate = tftSummary.data?.quality_gate ?? tftAnalysis?.model_metadata?.quality_gate ?? null;
   const tftDirection = tftAnalysis?.direction;
-  const tftImpulse = tftAnalysis?.t1_impulse ?? tftAnalysis?.weekly_forecast?.t1_impulse ?? 'NEUTRAL';
+  const weeklyNeutralBand = (
+    tftAnalysis?.weekly_forecast?.neutral_band_pct
+    ?? tftAnalysis?.neutral_band_pct
+    ?? 0.5
+  ) / 100;
+  const tftSignalDir: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null = (() => {
+    if (tftReturn === null) return null;
+    if (
+      tftAnalysis?.has_directional_edge === false ||
+      tftAnalysis?.weekly_forecast?.has_directional_edge === false ||
+      tftDirection === 'NEUTRAL' ||
+      Math.abs(tftReturn) < weeklyNeutralBand
+    ) {
+      return 'NEUTRAL';
+    }
+    return tftReturn > 0 ? 'BULLISH' : 'BEARISH';
+  })();
+  const tftSignalLabel =
+    tftSignalDir === 'BULLISH'
+      ? 'SLIGHT BULLISH'
+      : tftSignalDir === 'BEARISH'
+        ? 'SLIGHT BEARISH'
+        : tftSignalDir === 'NEUTRAL'
+          ? 'NO CLEAR EDGE'
+          : 'Unavailable';
   const tftReferencePrice = tftAnalysis?.prediction?.reference_price;
   const tftReferenceDate = tftAnalysis?.prediction?.reference_price_date;
   const tftWeeklyPrice = tftAnalysis?.prediction?.weekly_price;
@@ -410,8 +435,17 @@ export const OverviewPage = () => {
   const volStress = tftAnalysis?.volatility_stress ?? tftAnalysis?.weekly_forecast?.volatility_stress ?? tftAnalysis?.prediction?.volatility_stress ?? null;
   const volStressLabel = volStress?.regime === 'HIGH_STRESS' ? 'High Stress' : volStress?.regime === 'ELEVATED' ? 'Elevated' : 'Calm';
   const volStressTone = volStress?.regime === 'HIGH_STRESS' ? 'text-[#db8296]' : volStress?.regime === 'ELEVATED' ? 'text-[#dda174]' : 'text-[#74c7a9]';
+  const volStressRibbonTone: 'good' | 'bad' | 'copper' | 'neutral' =
+    volStress?.regime === 'HIGH_STRESS'
+      ? 'bad'
+      : volStress?.regime === 'ELEVATED'
+        ? 'copper'
+        : volStress?.enabled
+          ? 'good'
+          : 'neutral';
 
   const newsSentimentIndex = sentimentSummary.data?.index;
+  const catalystRadar = sentimentSummary.data?.catalyst_radar ?? null;
   const rawSentimentLabel = sentimentSummary.data?.label?.trim().toUpperCase();
   const newsSampleCount = sentimentSummary.data?.data_freshness?.article_count_window
     ?? sentimentSummary.data?.components?.sample_size
@@ -464,7 +498,7 @@ export const OverviewPage = () => {
       conviction: tftRiskLevel ?? null,
       confidenceScore: tftWeeklyDa ?? null,
       sentimentScore: newsSentimentIndex ?? null,
-      regime: tftDegraded ? 'degraded' : tftDirection ?? null,
+      regime: tftDegraded ? 'degraded' : tftSignalDir ?? tftDirection ?? null,
       isStale: tftBaselineIsStale,
       hasError: Object.keys(loadErrors).length > 0,
       quote: {
@@ -507,6 +541,7 @@ export const OverviewPage = () => {
       tftReferenceDate,
       tftReturn,
       tftRiskLevel,
+      tftSignalDir,
       tftWeeklyDa,
     ],
   );
@@ -550,9 +585,11 @@ export const OverviewPage = () => {
         ? 'bad'
         : 'copper';
   const weeklyTone: 'good' | 'bad' | 'forecast' =
-    tftDegraded || tftBullish == null ? 'forecast' : tftBullish ? 'good' : 'bad';
-  const t1Tone: 'good' | 'bad' | 'neutral' =
-    tftImpulse === 'BULLISH' ? 'good' : tftImpulse === 'BEARISH' ? 'bad' : 'neutral';
+    tftDegraded || tftSignalDir == null || tftSignalDir === 'NEUTRAL'
+      ? 'forecast'
+      : tftSignalDir === 'BULLISH'
+        ? 'good'
+        : 'bad';
 
   return (
     <div className="cm-market-dashboard font-sans selection:bg-copper-500/30" data-cm-dashboard-ready={isInitialLoad ? 'false' : 'true'}>
@@ -651,27 +688,43 @@ export const OverviewPage = () => {
           <MetricTile
             label="5D TFT Primary"
             value={tftDegraded ? 'Degraded' : formatSignedPct(tftReturn)}
-            delta={tftWeeklyPrice != null && !tftDegraded ? `${tftBullish ? '▲' : '▼'} $${tftWeeklyPrice.toFixed(2)}` : undefined}
+            delta={
+              !tftDegraded
+                ? tftSignalDir === 'NEUTRAL'
+                  ? '■ No clear edge'
+                  : tftWeeklyPrice != null
+                    ? `${tftSignalDir === 'BULLISH' ? '▲' : '▼'} $${tftWeeklyPrice.toFixed(2)}`
+                    : undefined
+                : undefined
+            }
             tone={weeklyTone}
             badge="5D"
             hint={
               tftDegraded
                 ? 'Awaiting weekly refresh'
-                : tftWeeklyQ10 != null && tftWeeklyQ90 != null
-                  ? `Q10–Q90 ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}${volStress?.enabled && volStress.regime !== 'CALM' && volStress.stress_ratio != null ? ` · ${volStressLabel} ${volStress.stress_ratio.toFixed(2)}×` : ''}`
-                  : '5-day cumulative quantile cone'
+                : volStress?.enabled && volStress.har_vol5_pct != null
+                  ? `±${volStress.har_vol5_pct.toFixed(1)}% 1σ swing${tftWeeklyQ10 != null && tftWeeklyQ90 != null ? ` · 80% ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}` : ''}`
+                  : tftWeeklyQ10 != null && tftWeeklyQ90 != null
+                    ? `Q10–Q90 ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}${volStress?.enabled && volStress.regime !== 'CALM' && volStress.stress_ratio != null ? ` · ${volStressLabel} ${volStress.stress_ratio.toFixed(2)}×` : ''}`
+                    : '5-day cumulative quantile cone'
             }
           />
           <MetricTile
-            label="T+1 TFT Step 1"
-            value={tftImpulse}
-            delta={tftAnalysis?.t1_return != null ? `${dirGlyph(tftImpulse)[0]} ${formatSignedPct(tftAnalysis.t1_return)}` : undefined}
-            tone={t1Tone}
-            badge="T+1"
+            label="5D Risk & Stress"
+            value={volStress?.enabled ? volStressLabel : (tftRiskLevel ?? '—')}
+            delta={
+              volStress?.enabled && volStress.har_vol5_pct != null
+                ? `±${volStress.har_vol5_pct.toFixed(1)}% 1σ${volStress.risk_budget_mult != null ? ` · ${volStress.risk_budget_mult.toFixed(2)}× size` : ''}`
+                : tftWeeklyQ10 != null && tftWeeklyQ90 != null
+                  ? `80% ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}`
+                  : undefined
+            }
+            tone={volStressRibbonTone}
+            badge={volStress?.risk_budget_mult != null ? `${Math.round(volStress.risk_budget_mult * 100)}%` : 'RISK'}
             hint={
-              tftMetrics?.directional_accuracy != null
-                ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%`
-                : 'Step-1 quantile median'
+              volStress?.enabled
+                ? `${volStress.stress_ratio != null ? `${volStress.stress_ratio.toFixed(2)}× 20D baseline` : 'EWMA + HAR-YZ-Rough'}${volStress.shock_percentile != null ? ` · P${Math.round(volStress.shock_percentile)} tail` : ''}`
+                : '5D volatility & dispersion regime'
             }
           />
           <MetricTile
@@ -789,7 +842,7 @@ export const OverviewPage = () => {
                 title="Weekly model outlook"
                 icon={Brain}
                 colSpan={8}
-                className={clsx('cm-weekly-forecast-panel relative', tftBullish === null ? '' : tftBullish ? 'cm-weekly--bullish' : 'cm-weekly--bearish')}
+                className={clsx('cm-weekly-forecast-panel relative', tftSignalDir === 'BULLISH' ? 'cm-weekly--bullish' : tftSignalDir === 'BEARISH' ? 'cm-weekly--bearish' : '')}
                 headerExtra={
                   tftAnalysis && !tftDegraded ? (
                     <span className="cm-panel-telemetry-meta">
@@ -833,7 +886,7 @@ export const OverviewPage = () => {
                             )}
                           </div>
                           <div className="flex flex-wrap items-baseline gap-2.5">
-                            <span className={clsx('text-4xl font-light font-mono cm-tabular tracking-tight', tftBullish == null ? 'text-slate-400' : tftBullish ? 'text-[#74c7a9]' : 'text-[#db8296]')}>
+                            <span className={clsx('text-4xl font-light font-mono cm-tabular tracking-tight', tftSignalDir === 'BULLISH' ? 'text-[#74c7a9]' : tftSignalDir === 'BEARISH' ? 'text-[#db8296]' : 'text-slate-300')}>
                               {tftReturn == null ? '—' : formatSignedPct(tftReturn)}
                             </span>
                             <span className="text-base text-slate-200 font-mono cm-tabular">${prediction.weekly_price?.toFixed(2) ?? '--'}</span>
@@ -843,11 +896,16 @@ export const OverviewPage = () => {
                               </span>
                             )}
                           </div>
+                          {tftSignalDir === 'NEUTRAL' && (
+                            <p className="mt-1.5 text-xs text-slate-400">
+                              Inside ±{(weeklyNeutralBand * 100).toFixed(1)}% 5D noise band — treat as range-bound; rely on the ±1σ swing &amp; risk budget.
+                            </p>
+                          )}
                         </div>
 
-                        <div className={clsx('cm-consensus-readout', dirGlyph(tftDirection)[1])}>
-                          <span aria-hidden="true">{dirGlyph(tftDirection)[0]}</span>
-                          <span>{tftDirection ?? 'Unavailable'}</span>
+                        <div className={clsx('cm-consensus-readout', dirGlyph(tftSignalDir ?? undefined)[1])}>
+                          <span aria-hidden="true">{dirGlyph(tftSignalDir ?? undefined)[0]}</span>
+                          <span>{tftSignalLabel}</span>
                         </div>
                       </div>
 
@@ -926,7 +984,29 @@ export const OverviewPage = () => {
                             </span>
                             <span className="font-mono cm-tabular text-slate-400">
                               {volStress.stress_ratio != null ? `${volStress.stress_ratio.toFixed(2)}× 20D baseline` : ''}
-                              {volStress.har_vol5_pct != null ? ` · 5D Vol ${volStress.har_vol5_pct.toFixed(1)}%` : ''}
+                              {volStress.har_vol5_pct != null ? ` · 5D Vol ±${volStress.har_vol5_pct.toFixed(1)}% (1σ)` : ''}
+                              {volStress.risk_budget_mult != null ? ` · Size ${volStress.risk_budget_mult.toFixed(2)}×` : ''}
+                            </span>
+                          </div>
+                        )}
+                        {catalystRadar && catalystRadar.status !== 'QUIET' && catalystRadar.dominant_cluster && (
+                          <div
+                            data-testid="catalyst-radar-callout"
+                            className={clsx(
+                              'mt-2.5 flex items-start gap-2 border-t border-white/10 pt-2 text-xs',
+                              catalystRadar.cone_override_warning ? 'text-[#dda174]' : 'text-slate-300',
+                            )}
+                          >
+                            {catalystRadar.cone_override_warning && <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />}
+                            <span>
+                              <strong>
+                                {catalystRadar.cone_override_warning ? 'CATALYST ACTIVE' : 'Catalyst Watch'} · {catalystRadar.dominant_cluster.label}
+                              </strong>
+                              {' '}
+                              ({catalystRadar.cone_override_warning
+                                ? `${catalystRadar.dominant_cluster.distinct_sources} sources / 24h`
+                                : `${catalystRadar.dominant_cluster.article_count_72h} high-impact / 72h`})
+                              {catalystRadar.cone_warning_message ? ` — ${catalystRadar.cone_warning_message}` : ''}
                             </span>
                           </div>
                         )}
@@ -985,14 +1065,14 @@ export const OverviewPage = () => {
             {showLongTerm && (
               <GlassCard
                 id="long-term-outlook"
-                eyebrow="04 // 1M & 1Q STRATEGIC OUTLOOK · STRUCTURAL ENSEMBLE"
-                title="Long-Term Outlook · 1M / 1Q"
+                eyebrow="04 // 1M · 1Q · 6M STRATEGIC OUTLOOK · 4-FAMILY COMMITTEE"
+                title="Long-Term Outlook · 1M / 1Q / 6M"
                 icon={Compass}
                 colSpan={12}
                 headerExtra={
                   <span className="cm-panel-telemetry-meta">
-                    <span>20D &amp; 60D Horizons</span>
-                    <span>Macro Ridge + Damped Theta</span>
+                    <span>20D · 60D · 120D</span>
+                    <span>CatBoost · XGB · MLP-PLR · Theta</span>
                   </span>
                 }
               >

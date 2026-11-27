@@ -806,6 +806,21 @@ def build_tft_dataframe(
     regime_features = build_regime_event_features(pre_regime)
 
     # ---- Assemble master DataFrame ----
+    ohlcv_parts = []
+    for raw_col, target_col in (
+        ("open", "target_open"),
+        ("high", "target_high"),
+        ("low", "target_low"),
+        ("volume", "target_volume"),
+    ):
+        if raw_col in price_df.columns:
+            col_series = pd.to_numeric(price_df[raw_col], errors="coerce")
+            if raw_col in ("open", "high", "low"):
+                col_series = col_series.where(col_series > 0.0, close).fillna(close)
+            else:
+                col_series = col_series.fillna(0.0).clip(lower=0.0)
+            ohlcv_parts.append(col_series.rename(target_col).to_frame())
+
     parts = [
         price_features,
         theta_prior_series_pre.to_frame(),
@@ -816,6 +831,7 @@ def build_tft_dataframe(
         futures_features,
         regime_features,
         calendar_features,
+        *ohlcv_parts,
         close.rename("target_close").to_frame(),
         target_model.to_frame(),
         target_1d.to_frame(),
@@ -869,7 +885,11 @@ def build_tft_dataframe(
     non_feature_cols = {
         "time_idx",
         "group_id",
+        "target_open",
+        "target_high",
+        "target_low",
         "target_close",
+        "target_volume",
         cfg.forecast.model_daily_target_col,
         cfg.forecast.auxiliary_target_col,
         cfg.forecast.primary_target_col,

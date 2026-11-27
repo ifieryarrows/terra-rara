@@ -7,13 +7,21 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 StanceType = Literal["BULLISH", "NEUTRAL", "BEARISH"]
+InstitutionalRatingType = Literal[
+    "STRONG_OVERWEIGHT",
+    "OVERWEIGHT",
+    "NEUTRAL",
+    "UNDERWEIGHT",
+    "STRONG_UNDERWEIGHT",
+]
 PillarKeyType = Literal[
     "trend_structure",
     "usd_macro",
     "china_industrial_demand",
     "cross_asset_confirmation",
+    "physical_positioning",
 ]
-HorizonKeyType = Literal["20D", "60D"]
+HorizonKeyType = Literal["20D", "60D", "120D"]
 
 
 class LongTermPillarMetric(BaseModel):
@@ -57,7 +65,7 @@ class LongTermDriverItem(BaseModel):
 
 
 class LongTermEnsembleComponents(BaseModel):
-    """Decomposition of the parsimonious long-term forecast ensemble."""
+    """Decomposition of the long-term forecast committee."""
 
     macro_ridge_return: float
     theta_damped_return: float
@@ -67,6 +75,12 @@ class LongTermEnsembleComponents(BaseModel):
     horizon_vol: float = Field(..., ge=0.0)
     cqr_q10_width: float = Field(..., ge=0.0)
     cqr_q90_width: float = Field(..., ge=0.0)
+    catboost_return: Optional[float] = None
+    xgboost_return: Optional[float] = None
+    mlp_plr_return: Optional[float] = None
+    tree_weight: Optional[float] = Field(None, ge=0.0, le=1.0)
+    mlp_weight: Optional[float] = Field(None, ge=0.0, le=1.0)
+    shrinkage_alpha: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class LongTermHorizonForecast(BaseModel):
@@ -91,6 +105,11 @@ class LongTermHorizonForecast(BaseModel):
     return_q75: float
     return_q90: float
     stance: StanceType
+    institutional_rating: Optional[InstitutionalRatingType] = None
+    asymmetry_ratio: Optional[float] = Field(
+        None,
+        description="Upside vs downside PI80 asymmetry ratio (price_q90 - spot) / max(spot - price_q10, 1e-4).",
+    )
     prob_bullish: float = Field(..., ge=0.0, le=1.0)
     prob_neutral: float = Field(..., ge=0.0, le=1.0)
     prob_bearish: float = Field(..., ge=0.0, le=1.0)
@@ -159,6 +178,8 @@ class LongTermDataWindow(BaseModel):
     weekly_bars: int = 0
     years_covered: float = 0.0
     fred_macro_enabled: bool = False
+    physical_data_enabled: bool = False
+    cot_positioning_enabled: bool = False
     symbols_used: list[str] = Field(default_factory=list)
 
 
@@ -172,8 +193,8 @@ class LongTermOutlookResponse(BaseModel):
     model_version: Optional[str] = None
     source: Literal["snapshot", "unavailable"]
     current_price: Optional[float] = None
-    available_horizons: list[str] = Field(default_factory=lambda: ["20D", "60D"])
-    default_horizon: str = "20D"
+    available_horizons: list[str] = Field(default_factory=lambda: ["20D", "60D", "120D"])
+    default_horizon: str = "60D"
     data_window: Optional[LongTermDataWindow] = None
     horizons: dict[str, LongTermHorizonForecast] = Field(default_factory=dict)
     macro_scorecard: Optional[LongTermMacroScorecard] = None

@@ -192,6 +192,9 @@ def test_stage_55_checks_artifact_validity_and_wires_stage_57():
     assert "run_long_term_outlook_stage" in source
     assert "tft_snapshot_degraded" in source
     assert "tft_persistence_error" in source
+    assert '"has_directional_edge": tft_report.get("has_directional_edge")' in source
+    assert '"signal_state": tft_report.get("signal_state")' in source
+    assert '"neutral_band_pct": tft_report.get("neutral_band_pct")' in source
 
 
 def test_evaluate_pipeline_result_marks_tft_degraded_without_crashing():

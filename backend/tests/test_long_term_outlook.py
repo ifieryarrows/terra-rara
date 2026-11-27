@@ -60,12 +60,22 @@ def _make_synthetic_daily_panel(
         "BHP": 58.0,
         "FXA": 66.0,
         "XME": 54.0,
+        "USDCNH=X": 7.1,
+        "CNY=X": 7.1,
+        "GC=F": 2400.0,
+        "^VIX": 18.0,
     }
     for sym in LONG_TERM_SYMBOLS:
         if sym == "HG=F":
             r = hg_ret
         elif sym == "DX-Y.NYB":
             r = dxy_ret
+        elif sym in ("USDCNH=X", "CNY=X"):
+            r = -0.35 * china_ret + 0.30 * dxy_ret + rng.normal(0.0, 0.003, size=n_bdays)
+        elif sym == "^VIX":
+            r = -1.5 * china_ret + rng.normal(0.0, 0.04, size=n_bdays)
+        elif sym == "GC=F":
+            r = -0.25 * dxy_ret + rng.normal(0.0001, 0.008, size=n_bdays)
         elif sym in ("GXC", "FXA"):
             r = china_ret + rng.normal(0.0, 0.005, size=n_bdays)
         elif sym == "CL=F":
@@ -73,6 +83,8 @@ def _make_synthetic_daily_panel(
         else:
             r = 1.2 * hg_ret + rng.normal(0.0001, 0.011, size=n_bdays)
         panel[sym] = base_prices[sym] * np.exp(np.cumsum(r))
+    if "^VIX" in panel:
+        panel["^VIX"] = np.clip(panel["^VIX"], 10.0, 75.0)
     return pd.DataFrame(panel, index=dates)
 
 
@@ -157,22 +169,33 @@ def test_ensemble_outputs_non_crossing_quantiles_and_calibrated_probs():
     daily = _make_synthetic_daily_panel(n_bdays=1400, seed=21)
     fred = _make_synthetic_fred(daily.index, seed=21)
 
+    from long_term.model import LongTermModelParams
+
     for use_fred in (True, False):
         bundle = build_long_term_feature_panel(
             daily,
             target_symbol="HG=F",
             fred_frames=fred if use_fred else None,
         )
-        validation = run_purged_walk_forward_suite(bundle.panel, n_folds=5)
-        resp = fit_and_predict_long_term_outlook(bundle, validation=validation, symbol="HG=F")
+        test_params = (
+            LongTermModelParams()
+            if use_fred
+            else LongTermModelParams(tree_iterations=100, mlp_epochs=15, mlp_seeds=(42,))
+        )
+        validation = run_purged_walk_forward_suite(bundle.panel, n_folds=5, params=test_params)
+        resp = fit_and_predict_long_term_outlook(
+            bundle, validation=validation, symbol="HG=F", params=test_params
+        )
 
         assert resp.status == "ok"
         assert resp.fred_macro_enabled if hasattr(resp, "fred_macro_enabled") else True
         assert resp.data_window is not None
         assert resp.data_window.fred_macro_enabled is use_fred
-        assert set(resp.horizons.keys()) == {"20D", "60D"}
+        assert set(resp.horizons.keys()) == {"20D", "60D", "120D"}
+        assert resp.default_horizon == "60D"
+        assert resp.model_version == "lt_committee_v2"
 
-        for h_key, exp_weeks, exp_ann in (("20D", 4, 12.0), ("60D", 12, 4.0)):
+        for h_key, exp_weeks, exp_ann in (("20D", 4, 12.0), ("60D", 12, 4.0), ("120D", 26, 2.0)):
             fc = resp.horizons[h_key]
             assert fc.horizon_weeks == exp_weeks
             assert (
@@ -198,6 +221,20 @@ def test_ensemble_outputs_non_crossing_quantiles_and_calibrated_probs():
             )
             assert 0.0 <= fc.conviction <= 1.0
             assert fc.stance in {"BULLISH", "NEUTRAL", "BEARISH"}
+            assert fc.institutional_rating in {
+                "STRONG_OVERWEIGHT",
+                "OVERWEIGHT",
+                "NEUTRAL",
+                "UNDERWEIGHT",
+                "STRONG_UNDERWEIGHT",
+            }
+            assert fc.asymmetry_ratio is not None and fc.asymmetry_ratio > 0.0
+            assert fc.components.catboost_return is not None
+            assert fc.components.xgboost_return is not None
+            assert fc.components.mlp_plr_return is not None
+            assert fc.components.tree_weight == pytest.approx(0.5, abs=1e-4)
+            assert fc.components.mlp_weight == pytest.approx(0.25, abs=1e-4)
+            assert fc.components.shrinkage_alpha is not None and 0.35 <= fc.components.shrinkage_alpha <= 1.0
             assert len(fc.key_drivers) > 0
 
             val = resp.validation[h_key]
@@ -279,7 +316,7 @@ def test_worker_stage_db_snapshot_roundtrip_offline_and_fail_open(monkeypatch):
             )
             assert ok_res["ok"] is True
             assert ok_res["generated"] is True
-            assert set(ok_res["horizons"].keys()) == {"20D", "60D"}
+            assert set(ok_res["horizons"].keys()) == {"20D", "60D", "120D"}
 
             row = session.query(LongTermOutlookSnapshot).one()
             assert row.symbol == "HG=F"
@@ -315,11 +352,16 @@ def test_api_router_snapshot_only_and_unavailable_state(monkeypatch):
         assert data_empty["source"] == "unavailable"
         assert data_empty["horizons"] == {}
 
+        from long_term.model import LongTermModelParams
+
         # 2. Seed persisted snapshot and verify HTTP handler serves it without calling generator
         daily = _make_synthetic_daily_panel(n_bdays=1250, seed=55)
         bundle = build_long_term_feature_panel(daily, target_symbol="HG=F", fred_frames=None)
-        validation = run_purged_walk_forward_suite(bundle.panel, n_folds=4)
-        payload = fit_and_predict_long_term_outlook(bundle, validation=validation, symbol="HG=F")
+        fast_params = LongTermModelParams(tree_iterations=60, mlp_epochs=10, mlp_seeds=(42,))
+        validation = run_purged_walk_forward_suite(bundle.panel, n_folds=4, params=fast_params)
+        payload = fit_and_predict_long_term_outlook(
+            bundle, validation=validation, symbol="HG=F", params=fast_params
+        )
 
         with Session() as session:
             session.add(
@@ -351,8 +393,8 @@ def test_api_router_snapshot_only_and_unavailable_state(monkeypatch):
         assert body["status"] == "ok"
         assert body["source"] == "snapshot"
         assert body["symbol"] == "HG=F"
-        assert set(body["horizons"].keys()) == {"20D", "60D"}
-        assert set(body["validation"].keys()) == {"20D", "60D"}
+        assert set(body["horizons"].keys()) == {"20D", "60D", "120D"}
+        assert set(body["validation"].keys()) == {"20D", "60D", "120D"}
         assert body["macro_scorecard"]["composite_stance"] in {"BULLISH", "NEUTRAL", "BEARISH"}
     finally:
         engine.dispose()
@@ -371,3 +413,152 @@ def test_dockerfile_copies_long_term_package():
 
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY ./long_term /code/long_term" in dockerfile
+
+
+def test_physical_and_cot_strict_causality_and_fifth_pillar():
+    from long_term.features import compute_macro_scorecard
+
+    daily = _make_synthetic_daily_panel(n_bdays=900, seed=33)
+    rng = np.random.default_rng(33)
+    lme = pd.DataFrame(
+        {
+            "lme_stock_tonnes": 220000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.015, size=len(daily)))),
+            "lme_cash_3m_spread_pct": rng.normal(-0.004, 0.006, size=len(daily)),
+        },
+        index=daily.index,
+    )
+    tuesdays = pd.date_range(daily.index.min(), daily.index.max(), freq="W-TUE")
+    cot = pd.DataFrame(
+        {
+            "cot_mm_net_pct_oi": np.clip(np.cumsum(rng.normal(0.0, 0.02, size=len(tuesdays))), -0.35, 0.35),
+            "cot_prod_net_pct_oi": np.clip(-0.1 - np.cumsum(rng.normal(0.0, 0.015, size=len(tuesdays))), -0.45, 0.1),
+        },
+        index=tuesdays,
+    )
+
+    # Verify _align_dated_frame_to_weekly works cleanly when date/report_date is a column (not index)
+    lme_with_date_col = lme.reset_index().rename(columns={"index": "date"})
+    cot_with_report_col = cot.reset_index().rename(columns={"index": "report_date"})
+    bundle_col_check = build_long_term_feature_panel(
+        daily, target_symbol="HG=F", lme_frame=lme_with_date_col, cot_frame=cot_with_report_col
+    )
+    assert bundle_col_check.physical_data_enabled is True
+    assert bundle_col_check.cot_positioning_enabled is True
+
+    bundle_orig = build_long_term_feature_panel(
+        daily, target_symbol="HG=F", lme_frame=lme, cot_frame=cot
+    )
+    assert bundle_orig.physical_data_enabled is True
+    assert bundle_orig.cot_positioning_enabled is True
+    assert "physical_positioning" in compute_macro_scorecard(bundle_orig.panel).pillars
+
+    cutoff_pos = 120
+    cutoff_friday = bundle_orig.panel.index[cutoff_pos]
+
+    lme_mut = lme.copy()
+    lme_mut.loc[lme_mut.index >= cutoff_friday, "lme_stock_tonnes"] *= 4.0
+    lme_mut.loc[lme_mut.index >= cutoff_friday, "lme_cash_3m_spread_pct"] += 0.25
+
+    cot_mut = cot.copy()
+    # Tuesday COT within 4-day publication lag before cutoff_friday must NOT leak into cutoff_friday
+    cot_mut.loc[cot_mut.index >= cutoff_friday - pd.Timedelta(days=3), "cot_mm_net_pct_oi"] = -0.95
+    cot_mut.loc[cot_mut.index >= cutoff_friday - pd.Timedelta(days=3), "cot_prod_net_pct_oi"] = 0.45
+
+    bundle_mut = build_long_term_feature_panel(
+        daily, target_symbol="HG=F", lme_frame=lme_mut, cot_frame=cot_mut
+    )
+    phys_cols = [
+        c
+        for c in (
+            "lme_stock_chg4w",
+            "lme_stock_chg12w",
+            "lme_stock_z52",
+            "lme_scarcity",
+            "lme_stock_pctl_3y",
+            "lme_roll_yield_ann",
+            "lme_tightness_convex",
+            "lme_stock_accel",
+            "lme_cash_3m_spread_pct",
+            "cot_mm_net_pct_oi",
+            "cot_mm_net_chg4w",
+            "cot_mm_flow_12w",
+            "cot_mm_crowding_z156",
+            "cot_mm_crowding_convex",
+            "cot_spec_vs_prod_div",
+        )
+        if c in bundle_orig.panel.columns
+    ]
+    assert len(phys_cols) >= 13
+    pd.testing.assert_frame_equal(
+        bundle_orig.panel.iloc[: cutoff_pos + 1][phys_cols],
+        bundle_mut.panel.iloc[: cutoff_pos + 1][phys_cols],
+        check_exact=False,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_cny_fallback_when_usdcnh_sparse_and_legacy_v1_schema_compat():
+    daily = _make_synthetic_daily_panel(n_bdays=400, seed=77)
+    # Simulate yfinance USDCNH=X returning only 1 valid row while CNY=X has full history
+    daily["CNY=X"] = daily["USDCNH=X"].copy()
+    daily["USDCNH=X"] = np.nan
+    daily.iloc[-1, daily.columns.get_loc("USDCNH=X")] = 7.25
+
+    bundle = build_long_term_feature_panel(daily, target_symbol="HG=F")
+    assert "usdcnh_ret12" in bundle.panel.columns
+    assert bundle.panel["usdcnh_ret12"].notna().sum() >= 50
+
+    # Legacy lt_structural_v1 snapshot without institutional_rating/v2 committee fields validates cleanly
+    legacy_payload = {
+        "status": "ok",
+        "symbol": "HG=F",
+        "as_of_date": "2026-11-20",
+        "model_version": "lt_structural_v1",
+        "source": "snapshot",
+        "available_horizons": ["20D", "60D"],
+        "default_horizon": "20D",
+        "horizons": {
+            "20D": {
+                "horizon_key": "20D",
+                "horizon_label": "1 Month (20D)",
+                "horizon_days": 20,
+                "horizon_weeks": 4,
+                "reference_price": 4.9,
+                "target_price_q50": 5.0,
+                "expected_return": 0.02,
+                "expected_return_pct": 2.0,
+                "expected_log_return": 0.0198,
+                "price_q10": 4.6,
+                "price_q25": 4.8,
+                "price_q75": 5.2,
+                "price_q90": 5.4,
+                "return_q10": -0.06,
+                "return_q25": -0.02,
+                "return_q75": 0.06,
+                "return_q90": 0.10,
+                "stance": "BULLISH",
+                "prob_bullish": 0.52,
+                "prob_neutral": 0.30,
+                "prob_bearish": 0.18,
+                "conviction": 0.55,
+                "conviction_label": "HIGH",
+                "regime_threshold_pct": 2.5,
+                "components": {
+                    "macro_ridge_return": 0.02,
+                    "theta_damped_return": 0.015,
+                    "macro_ridge_weight": 0.55,
+                    "theta_weight": 0.45,
+                    "realized_vol_annualized": 0.21,
+                    "horizon_vol": 0.06,
+                    "cqr_q10_width": 0.08,
+                    "cqr_q90_width": 0.08,
+                },
+                "key_drivers": [],
+            }
+        },
+        "validation": {},
+    }
+    parsed = LongTermOutlookResponse.model_validate(legacy_payload)
+    assert parsed.horizons["20D"].institutional_rating is None
+    assert parsed.horizons["20D"].components.catboost_return is None

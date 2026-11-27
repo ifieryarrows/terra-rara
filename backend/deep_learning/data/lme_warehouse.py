@@ -183,17 +183,101 @@ def fetch_lme_from_nasdaq(
     return df
 
 
+def fetch_lme_from_westmetall(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    """Fetch public free daily LME copper stock & cash/3M history from Westmetall."""
+    from deep_learning.data.physical_feeds import fetch_westmetall_lme_copper
+
+    start_year = 2011
+    end_year = None
+    if start_date:
+        try:
+            start_year = max(2008, pd.Timestamp(start_date).year)
+        except Exception:
+            pass
+    if end_date:
+        try:
+            end_year = pd.Timestamp(end_date).year
+        except Exception:
+            pass
+
+    raw = fetch_westmetall_lme_copper(start_year=start_year, end_year=end_year)
+    if raw.empty or "lme_stock_tonnes" not in raw.columns:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(index=raw.index)
+    df["total_stock_tonnes"] = pd.to_numeric(raw["lme_stock_tonnes"], errors="coerce")
+    df["cancelled_warrants_tonnes"] = np.nan
+    df["on_warrant_tonnes"] = np.nan
+    df["cancelled_ratio"] = np.nan
+    if "lme_cash_3m_spread_pct" in raw.columns:
+        df["lme_cash_3m_spread_pct"] = pd.to_numeric(raw["lme_cash_3m_spread_pct"], errors="coerce")
+    df = df.dropna(subset=["total_stock_tonnes"])
+    if start_date:
+        df = df.loc[df.index >= pd.Timestamp(start_date).tz_localize(None).normalize()]
+    if end_date:
+        df = df.loc[df.index <= pd.Timestamp(end_date).tz_localize(None).normalize()]
+    return df
+
+
+def upsert_lme_warehouse_data(session, lme_df: pd.DataFrame) -> int:
+    """Persist LME warehouse stock rows into ``lme_warehouse_data`` without duplicates."""
+    if session is None or lme_df is None or lme_df.empty or "total_stock_tonnes" not in lme_df.columns:
+        return 0
+    try:
+        from app.models import LMEWarehouseData
+
+        existing = {
+            pd.Timestamp(row[0]).tz_localize(None).normalize()
+            for row in session.query(LMEWarehouseData.date).all()
+            if row[0] is not None
+        }
+        added = 0
+        for dt_idx, row in lme_df.iterrows():
+            dt_norm = pd.Timestamp(dt_idx).tz_localize(None).normalize()
+            if dt_norm in existing:
+                continue
+            stock = pd.to_numeric(row.get("total_stock_tonnes"), errors="coerce")
+            if pd.isna(stock) or float(stock) <= 0.0:
+                continue
+            cw = pd.to_numeric(row.get("cancelled_warrants_tonnes"), errors="coerce")
+            ow = pd.to_numeric(row.get("on_warrant_tonnes"), errors="coerce")
+            cr = pd.to_numeric(row.get("cancelled_ratio"), errors="coerce")
+            session.add(
+                LMEWarehouseData(
+                    date=dt_norm.to_pydatetime().replace(tzinfo=timezone.utc),
+                    total_stock_tonnes=float(stock),
+                    cancelled_warrants_tonnes=float(cw) if pd.notna(cw) else None,
+                    on_warrant_tonnes=float(ow) if pd.notna(ow) else None,
+                    cancelled_ratio=float(cr) if pd.notna(cr) else None,
+                )
+            )
+            existing.add(dt_norm)
+            added += 1
+        if added:
+            session.flush()
+        return added
+    except Exception as exc:
+        logger.debug("LME warehouse DB upsert skipped: %s", exc)
+        return 0
+
+
 def fetch_lme_data(
     cfg: Optional[LMEConfig] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     session=None,
+    *,
+    allow_public_web: bool = False,
 ) -> pd.DataFrame:
     """
     Unified LME data loader with automatic source selection.
 
     Checks ``lme_warehouse_data`` in DB first, then Nasdaq Data Link if
-    configured. Returns an empty DataFrame when no genuine physical feed exists.
+    configured, and optionally the public Westmetall LME daily table when
+    ``allow_public_web=True``. Returns an empty DataFrame otherwise.
     """
     if cfg is None:
         cfg = get_tft_config().lme
@@ -209,6 +293,12 @@ def fetch_lme_data(
         df = fetch_lme_from_nasdaq(api_key, start_date=start_date, end_date=end_date)
         if not df.empty:
             logger.info("Loaded %d LME records from Nasdaq Data Link", len(df))
+            return df
+
+    if allow_public_web:
+        df = fetch_lme_from_westmetall(start_date=start_date, end_date=end_date)
+        if not df.empty:
+            logger.info("Loaded %d LME records from public Westmetall feed", len(df))
             return df
 
     logger.info("LME physical data unavailable (0 DB rows, no API feed)")

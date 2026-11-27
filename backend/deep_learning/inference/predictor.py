@@ -1471,6 +1471,14 @@ def generate_tft_analysis(
         weekly_regime = "neutral_range"
 
     volatility_stress = prediction.get("volatility_stress")
+    neutral_band = float(predictor.cfg.forecast.weekly_direction_threshold)
+    neutral_band_pct = round(neutral_band * 100.0, 2)
+    has_directional_edge = direction != "NEUTRAL"
+    signal_state = (
+        "SLIGHT_BULLISH"
+        if direction == "BULLISH"
+        else ("SLIGHT_BEARISH" if direction == "BEARISH" else "NO_EDGE")
+    )
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
@@ -1481,6 +1489,9 @@ def generate_tft_analysis(
         "baseline_staleness_days": prediction.get("baseline_staleness_days", 0),
         "direction": direction,
         "weekly_trend": direction,
+        "signal_state": signal_state,
+        "has_directional_edge": has_directional_edge,
+        "neutral_band_pct": neutral_band_pct,
         "primary_horizon": "5D",
         "primary_forecast_return": weekly_ret,
         "primary_forecast_q10": weekly_q10,
@@ -1494,6 +1505,10 @@ def generate_tft_analysis(
             "q90_return": weekly_q90,
             "calibrated": bool(prediction.get("weekly_interval_calibrated", False)),
             "calibration_adjustment": prediction.get("weekly_interval_calibration_adjustment"),
+            "direction": direction,
+            "signal_state": signal_state,
+            "has_directional_edge": has_directional_edge,
+            "neutral_band_pct": neutral_band_pct,
             "t1_impulse": t1_impulse,
             "t1_return": t1_ret,
             "regime": weekly_regime,

@@ -732,7 +732,7 @@ def test_weekly_loss_drift_prior_and_adamw_differential_head_lr():
     assert lrs[2] == pytest.approx(cfg.model.learning_rate)
 
 
-def test_split_cqr_uses_linear_volatility_power():
+def test_split_cqr_uses_damped_v5_power_and_allows_legacy_linear_override():
     rng = np.random.default_rng(17)
     n = 80
     vols = rng.uniform(0.01, 0.03, size=n)
@@ -740,7 +740,22 @@ def test_split_cqr_uses_linear_volatility_power():
     pred = np.stack([-2 * vols, -vols, -0.5 * vols, np.zeros(n), 0.5 * vols, vols, 2 * vols], axis=1)
     cqr = fit_weekly_cqr(y, pred, realized_vol=vols)
     assert cqr["cqr_enabled"] is True
-    assert cqr["base_vol_power"] == pytest.approx(1.0)
+    assert cqr["method"] == "ff_nexcp_vol_normalized"
+    assert cqr["base_vol_power"] == pytest.approx(0.40)
+    assert cqr["prior_blend_lambda"] == pytest.approx(0.75)
+
+    cqr_legacy = fit_weekly_cqr(
+        y,
+        pred,
+        realized_vol=vols,
+        prior_blend_lambda=1.0,
+        base_vol_power=1.0,
+        vol_clip_low=0.5,
+        vol_clip_high=2.0,
+        nexcp_gamma=1.0,
+        left_tail_extra=0.0,
+    )
+    assert cqr_legacy["base_vol_power"] == pytest.approx(1.0)
 
 
 def test_dataset_origin_conditioning_values_maps_global_time_idx_for_val_and_test():

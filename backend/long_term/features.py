@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -37,6 +38,10 @@ LONG_TERM_SYMBOLS: tuple[str, ...] = (
     "BHP",
     "FXA",
     "XME",
+    "USDCNH=X",
+    "CNY=X",
+    "GC=F",
+    "^VIX",
 )
 
 MINER_SYMBOLS: tuple[str, ...] = ("FCX", "SCCO", "RIO", "BHP")
@@ -45,6 +50,8 @@ FRED_SERIES_LAG_DAYS: dict[str, int] = {
     "DGS10": 2,
     "T10YIE": 2,
     "DTWEXBGS": 7,
+    "T10Y2Y": 2,
+    "INDPRO": 21,
 }
 
 # Feature catalog mapping column name -> human-readable metadata and economic pillar.
@@ -66,6 +73,9 @@ FEATURE_CATALOG: dict[str, dict[str, str]] = {
     "real_yield_chg26": {"label": "10Y Real Yield 26W Change", "pillar": "usd_macro"},
     "breakeven_10y_z": {"label": "10Y Inflation Breakeven Regime", "pillar": "usd_macro"},
     "dtwex_ret26": {"label": "Broad Trade-Weighted USD 26W", "pillar": "usd_macro"},
+    "t10y2y": {"label": "US 10Y–2Y Yield Curve Spread", "pillar": "usd_macro"},
+    "indpro_yoy": {"label": "US Industrial Production YoY", "pillar": "usd_macro"},
+    "vix_z52": {"label": "VIX Volatility Regime (52W Z)", "pillar": "usd_macro"},
     "gxc_ret12": {"label": "China Equities (GXC) 12W", "pillar": "china_industrial_demand"},
     "gxc_ret26": {"label": "China Equities (GXC) 26W", "pillar": "china_industrial_demand"},
     "gxc_sma26_ratio": {"label": "China Equities vs 26W Trend", "pillar": "china_industrial_demand"},
@@ -73,10 +83,32 @@ FEATURE_CATALOG: dict[str, dict[str, str]] = {
     "fxa_ret12": {"label": "AUD Commodity FX (FXA) 12W", "pillar": "china_industrial_demand"},
     "fxa_ret26": {"label": "AUD Commodity FX (FXA) 26W", "pillar": "china_industrial_demand"},
     "cl_ret12": {"label": "Crude Oil (WTI) 12W Cost Impulse", "pillar": "china_industrial_demand"},
+    "usdcnh_ret12": {"label": "USD/CNH Offshore Yuan 12W", "pillar": "china_industrial_demand"},
+    "usdcnh_ret26": {"label": "USD/CNH Offshore Yuan 26W", "pillar": "china_industrial_demand"},
     "miners_vs_hg_12w": {"label": "Major Miners vs Copper 12W Spread", "pillar": "cross_asset_confirmation"},
     "copx_vs_hg_12w": {"label": "COPX vs Copper 12W Spread", "pillar": "cross_asset_confirmation"},
     "xme_vs_hg_12w": {"label": "Metals & Mining vs Copper 12W Spread", "pillar": "cross_asset_confirmation"},
     "miners_ret12": {"label": "Major Copper Miners 12W Basket", "pillar": "cross_asset_confirmation"},
+    "hg_gc_ret12": {"label": "Copper / Gold Ratio 12W", "pillar": "cross_asset_confirmation"},
+    "hg_gc_sma26_ratio": {"label": "Copper / Gold vs 26W Trend", "pillar": "cross_asset_confirmation"},
+    "hg_gc_z104": {"label": "Copper / Gold 2Y Regime Z", "pillar": "cross_asset_confirmation"},
+    "lme_stock_chg4w": {"label": "LME Stock 4W Draw / Build", "pillar": "physical_positioning"},
+    "lme_stock_chg12w": {"label": "LME Stock 12W Draw / Build", "pillar": "physical_positioning"},
+    "lme_stock_z52": {"label": "LME Warehouse Stock 52W Z-Score", "pillar": "physical_positioning"},
+    "lme_cash_3m_spread_pct": {"label": "LME Cash–3M Spread (%)", "pillar": "physical_positioning"},
+    "lme_scarcity": {"label": "LME Inventory Scarcity Index", "pillar": "physical_positioning"},
+    "lme_stock_pctl_3y": {"label": "LME Stock 3Y Percentile", "pillar": "physical_positioning"},
+    "lme_roll_yield_ann": {"label": "LME Annualized Roll Yield", "pillar": "physical_positioning"},
+    "lme_tightness_convex": {"label": "LME Convex Scarcity × Backwardation", "pillar": "physical_positioning"},
+    "lme_stock_accel": {"label": "LME Stock Drawdown Acceleration", "pillar": "physical_positioning"},
+    "cot_mm_net_pct_oi": {"label": "CFTC Managed Money Net (% OI)", "pillar": "physical_positioning"},
+    "cot_prod_net_pct_oi": {"label": "CFTC Producer/Hedger Net (% OI)", "pillar": "physical_positioning"},
+    "cot_mm_net_chg4w": {"label": "CFTC Managed Money 4W Flow (% OI)", "pillar": "physical_positioning"},
+    "cot_mm_flow_4w": {"label": "CFTC Managed Money 4W Flow", "pillar": "physical_positioning"},
+    "cot_mm_flow_12w": {"label": "CFTC Managed Money 12W Flow", "pillar": "physical_positioning"},
+    "cot_mm_crowding_z156": {"label": "CFTC Speculative Crowding (3Y Z)", "pillar": "physical_positioning"},
+    "cot_mm_crowding_convex": {"label": "CFTC Extreme Crowding Convexity", "pillar": "physical_positioning"},
+    "cot_spec_vs_prod_div": {"label": "CFTC Speculator vs Producer Divergence", "pillar": "physical_positioning"},
 }
 
 
@@ -94,6 +126,8 @@ class LongTermPanelBundle:
     years_covered: float
     fred_macro_enabled: bool
     symbols_used: list[str]
+    physical_data_enabled: bool = False
+    cot_positioning_enabled: bool = False
 
 
 def _normalize_bar_calendar_dates(raw_dates: pd.Series, utc_ts: pd.Series) -> pd.Series:
@@ -337,30 +371,59 @@ def load_db_daily_panel(
 def fetch_fred_macro_frames(
     series_ids: Iterable[str] = tuple(FRED_SERIES_LAG_DAYS.keys()),
     *,
-    timeout_seconds: float = 8.0,
+    timeout_seconds: float = 10.0,
 ) -> dict[str, pd.DataFrame]:
-    """Fetch optional FRED CSV macro series fail-open."""
+    """Fetch optional FRED macro series via official JSON API (with CSV fallback), fail-open."""
     import requests
 
+    api_key = os.environ.get("FRED_API_KEY", "").strip()
     frames: dict[str, pd.DataFrame] = {}
+
     for series_id in series_ids:
-        try:
-            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-            resp = requests.get(url, timeout=timeout_seconds)
-            if resp.status_code != 200 or not resp.text:
-                continue
-            df = pd.read_csv(io.StringIO(resp.text))
-            if df.shape[1] < 2:
-                continue
-            df = df.iloc[:, :2].copy()
-            df.columns = ["date", "value"]
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df["value"] = pd.to_numeric(df["value"], errors="coerce")
-            df = df.dropna(subset=["date", "value"]).sort_values("date")
-            if not df.empty:
-                frames[series_id] = df
-        except Exception as exc:
-            logger.debug("Optional FRED fetch failed for %s: %s", series_id, exc)
+        df = pd.DataFrame()
+        if api_key:
+            try:
+                resp = requests.get(
+                    "https://api.stlouisfed.org/fred/series/observations",
+                    params={
+                        "series_id": series_id,
+                        "api_key": api_key,
+                        "file_type": "json",
+                    },
+                    timeout=timeout_seconds,
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    obs = payload.get("observations") if isinstance(payload, dict) else None
+                    if isinstance(obs, list) and obs:
+                        cand = pd.DataFrame(obs)[["date", "value"]].copy()
+                        cand["date"] = pd.to_datetime(cand["date"], errors="coerce")
+                        cand["value"] = pd.to_numeric(cand["value"], errors="coerce")
+                        cand = cand.dropna(subset=["date", "value"]).sort_values("date")
+                        if not cand.empty:
+                            df = cand
+            except Exception as exc:
+                logger.debug("Optional FRED JSON fetch failed for %s: %s", series_id, exc)
+
+        if df.empty:
+            try:
+                url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+                resp = requests.get(url, timeout=timeout_seconds)
+                if resp.status_code == 200 and resp.text:
+                    cand = pd.read_csv(io.StringIO(resp.text))
+                    if cand.shape[1] >= 2:
+                        cand = cand.iloc[:, :2].copy()
+                        cand.columns = ["date", "value"]
+                        cand["date"] = pd.to_datetime(cand["date"], errors="coerce")
+                        cand["value"] = pd.to_numeric(cand["value"], errors="coerce")
+                        cand = cand.dropna(subset=["date", "value"]).sort_values("date")
+                        if not cand.empty:
+                            df = cand
+            except Exception as exc:
+                logger.debug("Optional FRED CSV fallback failed for %s: %s", series_id, exc)
+
+        if not df.empty:
+            frames[series_id] = df
     return frames
 
 
@@ -439,6 +502,48 @@ def _align_fred_to_weekly(
     return pd.DataFrame(aligned, index=weekly_index)
 
 
+def _align_dated_frame_to_weekly(
+    raw_df: Optional[pd.DataFrame],
+    weekly_index: pd.DatetimeIndex,
+    *,
+    columns: Iterable[str],
+    lag_days: int,
+    ffill_limit: int = 2,
+) -> pd.DataFrame:
+    """Shift observation timestamps by ``lag_days`` and causally align to W-FRI."""
+    if raw_df is None or raw_df.empty or len(weekly_index) == 0:
+        return pd.DataFrame(index=weekly_index)
+
+    df = raw_df.copy()
+    if "date" in df.columns:
+        dt_idx = pd.DatetimeIndex(pd.to_datetime(df["date"], errors="coerce"))
+    elif "report_date" in df.columns:
+        dt_idx = pd.DatetimeIndex(pd.to_datetime(df["report_date"], errors="coerce"))
+    else:
+        dt_idx = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
+
+    if dt_idx.tz is not None:
+        dt_idx = dt_idx.tz_localize(None)
+    shifted_idx = dt_idx.normalize() + pd.Timedelta(days=int(lag_days))
+    valid_mask = np.asarray(shifted_idx.notna(), dtype=bool)
+    df = df.loc[valid_mask].copy()
+    df.index = shifted_idx[valid_mask]
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    if df.empty:
+        return pd.DataFrame(index=weekly_index)
+
+    aligned: dict[str, pd.Series] = {}
+    for col in columns:
+        if col not in df.columns:
+            continue
+        ser = pd.to_numeric(df[col], errors="coerce").dropna()
+        if ser.empty:
+            continue
+        w_ser = ser.resample("W-FRI").last().reindex(weekly_index).ffill(limit=ffill_limit)
+        aligned[col] = w_ser
+    return pd.DataFrame(aligned, index=weekly_index)
+
+
 def _safe_log_ret(series: pd.Series, periods: int) -> pd.Series:
     ratio = series / series.shift(periods)
     ratio = ratio.where(ratio > 0.0)
@@ -450,11 +555,38 @@ def _safe_sma_ratio(series: pd.Series, window: int) -> pd.Series:
     return (series / sma.where(sma > 0.0)) - 1.0
 
 
+def _rolling_z(
+    series: pd.Series,
+    window: int = 156,
+    min_periods: int = 26,
+    min_std: float = 1e-4,
+) -> pd.Series:
+    m = series.rolling(window, min_periods=min_periods).mean()
+    sd = series.rolling(window, min_periods=min_periods).std().clip(lower=min_std)
+    return (series - m) / sd
+
+
+def _rolling_pctl(
+    series: pd.Series,
+    window: int = 156,
+    min_periods: int = 26,
+) -> pd.Series:
+    def _rank_last(arr: np.ndarray) -> float:
+        fin = arr[np.isfinite(arr)]
+        if len(fin) < 5 or not np.isfinite(arr[-1]):
+            return np.nan
+        return float(np.mean(fin <= arr[-1]))
+
+    return series.rolling(window, min_periods=min_periods).apply(_rank_last, raw=True)
+
+
 def build_long_term_feature_panel(
     daily_or_weekly_panel: pd.DataFrame,
     *,
     target_symbol: str = "HG=F",
     fred_frames: Optional[dict[str, pd.DataFrame]] = None,
+    lme_frame: Optional[pd.DataFrame] = None,
+    cot_frame: Optional[pd.DataFrame] = None,
     as_of_date_override: Optional[str] = None,
     already_weekly: bool = False,
 ) -> LongTermPanelBundle:
@@ -531,6 +663,21 @@ def build_long_term_feature_panel(
             if dtwex.notna().sum() >= 52:
                 features["dtwex_ret26"] = _safe_log_ret(dtwex, 26)
                 fred_enabled = True
+        if "T10Y2Y" in fred_df.columns:
+            t10y2y = fred_df["T10Y2Y"]
+            if t10y2y.notna().sum() >= 52:
+                features["t10y2y"] = t10y2y
+                fred_enabled = True
+        if "INDPRO" in fred_df.columns:
+            indpro = fred_df["INDPRO"].where(lambda s: s > 0.0)
+            if indpro.notna().sum() >= 78:
+                features["indpro_yoy"] = _safe_log_ret(indpro, 52)
+                fred_enabled = True
+
+    if "^VIX" in weekly.columns:
+        vix = pd.to_numeric(weekly["^VIX"], errors="coerce").where(lambda s: s > 0.0)
+        if vix.notna().sum() >= 30:
+            features["vix_z52"] = _rolling_z(np.log(vix), window=52, min_periods=20, min_std=0.05)
 
     # Pillar 3: China & Industrial Demand / Commodity FX / Energy Cost
     if "GXC" in weekly.columns:
@@ -550,6 +697,18 @@ def build_long_term_feature_panel(
         cl = pd.to_numeric(weekly["CL=F"], errors="coerce").where(lambda s: s > 0.0)
         features["cl_ret12"] = _safe_log_ret(cl, 12)
 
+    # Fix yfinance USDCNH=X sparse 1-row behavior by preferring CNY=X when fuller
+    usdcnh_ser = pd.Series(np.nan, index=weekly.index, dtype="float64")
+    if "USDCNH=X" in weekly.columns:
+        usdcnh_ser = pd.to_numeric(weekly["USDCNH=X"], errors="coerce").where(lambda s: s > 0.0)
+    if "CNY=X" in weekly.columns:
+        cny_ser = pd.to_numeric(weekly["CNY=X"], errors="coerce").where(lambda s: s > 0.0)
+        if cny_ser.notna().sum() >= max(30, int(usdcnh_ser.notna().sum())):
+            usdcnh_ser = cny_ser.combine_first(usdcnh_ser)
+    if usdcnh_ser.notna().sum() >= 30:
+        features["usdcnh_ret12"] = _safe_log_ret(usdcnh_ser, 12)
+        features["usdcnh_ret26"] = _safe_log_ret(usdcnh_ser, 26)
+
     # Pillar 4: Cross-Asset / Miner Confirmation
     miner_ret12_list = []
     for sym in MINER_SYMBOLS:
@@ -566,6 +725,78 @@ def build_long_term_feature_panel(
     if "XME" in weekly.columns:
         xme = pd.to_numeric(weekly["XME"], errors="coerce").where(lambda s: s > 0.0)
         features["xme_vs_hg_12w"] = _safe_log_ret(xme, 12) - features["hg_ret12"]
+    if "GC=F" in weekly.columns:
+        gc = pd.to_numeric(weekly["GC=F"], errors="coerce").where(lambda s: s > 0.0)
+        hg_gc = (hg / gc).where(lambda s: s > 0.0)
+        if hg_gc.notna().sum() >= 30:
+            features["hg_gc_ret12"] = _safe_log_ret(hg_gc, 12)
+            features["hg_gc_sma26_ratio"] = _safe_sma_ratio(hg_gc, 26)
+            features["hg_gc_z104"] = _rolling_z(
+                np.log(hg_gc.where(hg_gc > 0.0)), window=104, min_periods=26, min_std=0.02
+            )
+
+    # Pillar 5: Physical Tightness (Theory of Storage) & Speculative Positioning (CFTC COT)
+    physical_enabled = False
+    lme_weekly = _align_dated_frame_to_weekly(
+        lme_frame,
+        weekly.index,
+        columns=("lme_stock_tonnes", "lme_cash_3m_spread_pct"),
+        lag_days=1,
+        ffill_limit=2,
+    )
+    if not lme_weekly.empty:
+        if "lme_stock_tonnes" in lme_weekly.columns:
+            lme_stock = lme_weekly["lme_stock_tonnes"].where(lambda s: s > 0.0)
+            if lme_stock.notna().sum() >= 52:
+                features["lme_stock_chg4w"] = _safe_log_ret(lme_stock, 4)
+                features["lme_stock_chg12w"] = _safe_log_ret(lme_stock, 12)
+                st_z52 = _rolling_z(lme_stock, window=52, min_periods=26, min_std=1.0)
+                features["lme_stock_z52"] = st_z52
+                features["lme_scarcity"] = -np.clip(st_z52, -3.0, 3.0)
+                features["lme_stock_pctl_3y"] = _rolling_pctl(lme_stock, window=156, min_periods=26)
+                features["lme_stock_accel"] = features["lme_stock_chg4w"] - (
+                    features["lme_stock_chg12w"] / 3.0
+                )
+                physical_enabled = True
+        if "lme_cash_3m_spread_pct" in lme_weekly.columns:
+            spread = lme_weekly["lme_cash_3m_spread_pct"]
+            if spread.notna().sum() >= 52:
+                features["lme_cash_3m_spread_pct"] = spread
+                features["lme_roll_yield_ann"] = spread * 4.0
+                if "lme_scarcity" in features:
+                    features["lme_tightness_convex"] = np.maximum(
+                        0.0, features["lme_scarcity"]
+                    ) * np.maximum(0.0, spread * 100.0)
+                physical_enabled = True
+
+    cot_enabled = False
+    # CFTC COT is measured Tuesday close and released Friday 15:30 ET -> +4d causal lag
+    cot_weekly = _align_dated_frame_to_weekly(
+        cot_frame,
+        weekly.index,
+        columns=("cot_mm_net_pct_oi", "cot_prod_net_pct_oi"),
+        lag_days=4,
+        ffill_limit=2,
+    )
+    if not cot_weekly.empty and "cot_mm_net_pct_oi" in cot_weekly.columns:
+        mm_net = cot_weekly["cot_mm_net_pct_oi"]
+        if mm_net.notna().sum() >= 52:
+            features["cot_mm_net_pct_oi"] = mm_net
+            flow4 = mm_net - mm_net.shift(4)
+            features["cot_mm_net_chg4w"] = flow4
+            features["cot_mm_flow_4w"] = flow4
+            features["cot_mm_flow_12w"] = mm_net - mm_net.shift(12)
+            cot_z = _rolling_z(mm_net, window=156, min_periods=26, min_std=0.02)
+            features["cot_mm_crowding_z156"] = cot_z
+            features["cot_mm_crowding_convex"] = np.sign(cot_z) * (
+                np.maximum(0.0, np.abs(cot_z) - 1.4) ** 2
+            )
+            if "cot_prod_net_pct_oi" in cot_weekly.columns:
+                pm_net = cot_weekly["cot_prod_net_pct_oi"]
+                if pm_net.notna().sum() >= 52:
+                    features["cot_prod_net_pct_oi"] = pm_net
+                    features["cot_spec_vs_prod_div"] = mm_net - pm_net
+            cot_enabled = True
 
     panel = pd.DataFrame(features, index=weekly.index)
     feature_columns = list(panel.columns)
@@ -576,6 +807,7 @@ def build_long_term_feature_panel(
     panel["sigma_w"] = sigma_w
     panel["target_log_ret_4w"] = np.log(hg.shift(-4) / hg)
     panel["target_log_ret_12w"] = np.log(hg.shift(-12) / hg)
+    panel["target_log_ret_26w"] = np.log(hg.shift(-26) / hg)
 
     start_date = panel.index.min().strftime("%Y-%m-%d")
     end_date = as_of_date or panel.index.max().strftime("%Y-%m-%d")
@@ -595,6 +827,8 @@ def build_long_term_feature_panel(
         years_covered=float(years_covered),
         fred_macro_enabled=fred_enabled,
         symbols_used=symbols_used,
+        physical_data_enabled=physical_enabled,
+        cot_positioning_enabled=cot_enabled,
     )
 
 
@@ -605,7 +839,7 @@ def load_long_term_weekly_panel(
     allow_network: bool = True,
     lookback_years: int = 15,
 ) -> LongTermPanelBundle:
-    """Load 10-15Y copper/macro weekly feature panel from yfinance + DB + FRED."""
+    """Load 10-15Y copper/macro/physical weekly feature panel from yfinance + DB + FRED + Westmetall + CFTC."""
     canonical_target = canonicalize_instrument_symbol(target_symbol)
     symbols = list(dict.fromkeys([canonical_target, *LONG_TERM_SYMBOLS]))
 
@@ -634,10 +868,27 @@ def load_long_term_weekly_panel(
         )
 
     fred_frames = fetch_fred_macro_frames() if allow_network else None
+    lme_frame = None
+    cot_frame = None
+    if allow_network:
+        try:
+            from deep_learning.data.physical_feeds import (
+                fetch_cftc_copper_cot,
+                fetch_westmetall_lme_copper,
+            )
+
+            start_yr = max(2008, datetime.now(timezone.utc).year - int(lookback_years))
+            lme_frame = fetch_westmetall_lme_copper(start_year=start_yr)
+            cot_frame = fetch_cftc_copper_cot()
+        except Exception as exc:
+            logger.debug("Optional physical/COT fetch skipped (fail-open): %s", exc)
+
     return build_long_term_feature_panel(
         combined,
         target_symbol=canonical_target,
         fred_frames=fred_frames,
+        lme_frame=lme_frame,
+        cot_frame=cot_frame,
     )
 
 
@@ -774,14 +1025,16 @@ def compute_macro_scorecard(panel: pd.DataFrame) -> LongTermMacroScorecard:
         else ("Dollar strength / higher real rates weigh on metals" if usd_stance == "BEARISH" else "Dollar and real-rate impulses broadly balanced")
     )
 
-    # 3. China / Industrial Demand (GXC, FXA commodity FX, COPX, WTI impulse)
+    # 3. China / Industrial Demand (GXC, FXA commodity FX, COPX, WTI impulse, USD/CNH)
     gxc12 = _val("gxc_ret12")
     fxa26 = _val("fxa_ret26")
     cl12 = _val("cl_ret12")
+    usdcnh12 = _val("usdcnh_ret12")
     c_parts = [
         _z_tanh("fxa_ret26", 1.0, 0.05) if "fxa_ret26" in panel.columns else None,
         _z_tanh("gxc_ret12", 1.0, 0.08) if "gxc_ret12" in panel.columns else None,
         _z_tanh("copx_ret12", 1.0, 0.12) if "copx_ret12" in panel.columns else None,
+        _z_tanh("usdcnh_ret12", -1.0, 0.03) if "usdcnh_ret12" in panel.columns else None,
     ]
     c_valid = [x for x in c_parts if x is not None]
     china_score = float(np.clip(np.mean(c_valid) if c_valid else 0.0, -1.0, 1.0))
@@ -806,20 +1059,31 @@ def compute_macro_scorecard(panel: pd.DataFrame) -> LongTermMacroScorecard:
             signal=_stance_from_score(-(cl12 or 0.0) / 0.12) if cl12 is not None else "NEUTRAL",
         ),
     ]
+    if "usdcnh_ret12" in panel.columns:
+        china_metrics.append(
+            LongTermPillarMetric(
+                name="USD/CNH 12W Move",
+                value=usdcnh12,
+                formatted_value=_fmt_pct(usdcnh12),
+                signal=_stance_from_score(-(usdcnh12 or 0.0) / 0.025) if usdcnh12 is not None else "NEUTRAL",
+            )
+        )
     china_summary = (
         "China equities and commodity FX signal industrial tailwind"
         if china_stance == "BULLISH"
         else ("Muted China demand and commodity FX drag" if china_stance == "BEARISH" else "Mixed industrial demand signals across China & FX")
     )
 
-    # 4. Cross-Asset Confirmation (Miners & COPX & XME relative strength vs copper)
+    # 4. Cross-Asset Confirmation (Miners & COPX & XME & Copper/Gold relative strength)
     miners_vs = _val("miners_vs_hg_12w")
     copx_vs = _val("copx_vs_hg_12w")
     xme_vs = _val("xme_vs_hg_12w")
+    hg_gc12 = _val("hg_gc_ret12")
     x_parts = [
         _z_tanh("miners_vs_hg_12w", 1.0, 0.08) if "miners_vs_hg_12w" in panel.columns else None,
         _z_tanh("copx_vs_hg_12w", 1.0, 0.08) if "copx_vs_hg_12w" in panel.columns else None,
         _z_tanh("xme_vs_hg_12w", 1.0, 0.08) if "xme_vs_hg_12w" in panel.columns else None,
+        _z_tanh("hg_gc_ret12", 1.0, 0.08) if "hg_gc_ret12" in panel.columns else None,
     ]
     x_valid = [x for x in x_parts if x is not None]
     cross_score = float(np.clip(np.mean(x_valid) if x_valid else 0.0, -1.0, 1.0))
@@ -844,6 +1108,15 @@ def compute_macro_scorecard(panel: pd.DataFrame) -> LongTermMacroScorecard:
             signal=_stance_from_score((xme_vs or 0.0) / 0.04) if xme_vs is not None else "NEUTRAL",
         ),
     ]
+    if "hg_gc_ret12" in panel.columns:
+        cross_metrics.append(
+            LongTermPillarMetric(
+                name="Copper / Gold Ratio 12W",
+                value=hg_gc12,
+                formatted_value=_fmt_pct(hg_gc12),
+                signal=_stance_from_score((hg_gc12 or 0.0) / 0.05) if hg_gc12 is not None else "NEUTRAL",
+            )
+        )
     cross_summary = (
         "Mining equities leading physical copper higher"
         if cross_stance == "BULLISH"
@@ -891,6 +1164,93 @@ def compute_macro_scorecard(panel: pd.DataFrame) -> LongTermMacroScorecard:
             metrics=cross_metrics,
         ),
     }
+
+    has_phys_cols = any(
+        c in panel.columns
+        for c in ("lme_stock_chg12w", "lme_cash_3m_spread_pct", "cot_mm_net_pct_oi")
+    )
+    if has_phys_cols:
+        lme_chg12 = _val("lme_stock_chg12w")
+        lme_z52 = _val("lme_stock_z52")
+        lme_spr = _val("lme_cash_3m_spread_pct")
+        cot_net = _val("cot_mm_net_pct_oi")
+        cot_z = _val("cot_mm_crowding_z156")
+
+        p_parts = [
+            _z_tanh("lme_stock_chg12w", -1.0, 0.20) if "lme_stock_chg12w" in panel.columns else None,
+            _z_tanh("lme_stock_z52", -1.0, 1.50) if "lme_stock_z52" in panel.columns else None,
+            _z_tanh("lme_cash_3m_spread_pct", 1.0, 0.01) if "lme_cash_3m_spread_pct" in panel.columns else None,
+        ]
+        # Moderate net long reflects constructive speculative demand, but extreme >2 sigma crowding warns of reversal
+        if cot_net is not None:
+            if cot_z is not None and abs(cot_z) >= 1.8:
+                p_parts.append(float(-np.sign(cot_z) * min(0.75, 0.35 * (abs(cot_z) - 1.5))))
+            else:
+                p_parts.append(_z_tanh("cot_mm_net_pct_oi", 1.0, 0.12))
+
+        p_valid = [x for x in p_parts if x is not None]
+        phys_score = float(np.clip(np.mean(p_valid) if p_valid else 0.0, -1.0, 1.0))
+        phys_stance = _stance_from_score(phys_score)
+
+        phys_metrics: list[LongTermPillarMetric] = []
+        if "lme_stock_chg12w" in panel.columns:
+            phys_metrics.append(
+                LongTermPillarMetric(
+                    name="LME Stock 12W Chg",
+                    value=lme_chg12,
+                    formatted_value=_fmt_pct(lme_chg12),
+                    signal=_stance_from_score(-(lme_chg12 or 0.0) / 0.12) if lme_chg12 is not None else "NEUTRAL",
+                )
+            )
+        if "lme_cash_3m_spread_pct" in panel.columns:
+            phys_metrics.append(
+                LongTermPillarMetric(
+                    name="LME Cash–3M Spread",
+                    value=lme_spr,
+                    formatted_value=_fmt_pct(lme_spr, signed=True),
+                    signal="BULLISH" if (lme_spr is not None and lme_spr > 0.002) else ("BEARISH" if (lme_spr is not None and lme_spr < -0.012) else "NEUTRAL"),
+                )
+            )
+        if "lme_stock_z52" in panel.columns:
+            phys_metrics.append(
+                LongTermPillarMetric(
+                    name="LME Stock 52W Z",
+                    value=lme_z52,
+                    formatted_value=f"{lme_z52:+.2f}σ" if lme_z52 is not None else "n/a",
+                    signal=_stance_from_score(-(lme_z52 or 0.0) / 1.5) if lme_z52 is not None else "NEUTRAL",
+                )
+            )
+        if "cot_mm_net_pct_oi" in panel.columns:
+            cot_signal: StanceType = "NEUTRAL"
+            if cot_z is not None and cot_z >= 2.0:
+                cot_signal = "BEARISH"  # crowded long squeeze/unwind risk
+            elif cot_z is not None and cot_z <= -2.0:
+                cot_signal = "BULLISH"  # crowded short squeeze potential
+            elif cot_net is not None:
+                cot_signal = _stance_from_score(cot_net / 0.10)
+            phys_metrics.append(
+                LongTermPillarMetric(
+                    name="CFTC Funds Net (% OI)",
+                    value=cot_net,
+                    formatted_value=_fmt_pct(cot_net),
+                    signal=cot_signal,
+                )
+            )
+
+        phys_summary = (
+            "LME stock draws / backwardation and balanced positioning support upside"
+            if phys_stance == "BULLISH"
+            else ("LME inventory builds or crowded positioning signal physical headwind" if phys_stance == "BEARISH" else "Physical stocks and speculative positioning broadly balanced")
+        )
+        pillars["physical_positioning"] = LongTermMacroPillar(
+            key="physical_positioning",
+            label="Physical & Positioning",
+            score=round(phys_score, 4),
+            score_pct=_pct(phys_score),
+            stance=phys_stance,
+            summary=phys_summary,
+            metrics=phys_metrics,
+        )
     composite_score = float(np.clip(np.mean([p.score for p in pillars.values()]), -1.0, 1.0))
     return LongTermMacroScorecard(
         composite_score=round(composite_score, 4),

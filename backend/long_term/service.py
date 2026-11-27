@@ -14,7 +14,7 @@ from long_term.schemas import LongTermOutlookResponse
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "lt_structural_v1"
+MODEL_VERSION = "lt_committee_v2"
 
 
 def generate_long_term_outlook_report(
@@ -96,6 +96,7 @@ def run_long_term_outlook_stage(
             "horizons": {
                 k: {
                     "stance": v.stance,
+                    "institutional_rating": v.institutional_rating,
                     "expected_return_pct": v.expected_return_pct,
                     "target_price_q50": v.target_price_q50,
                     "conviction": v.conviction,

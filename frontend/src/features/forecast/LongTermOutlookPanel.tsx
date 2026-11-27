@@ -19,6 +19,7 @@ const CANONICAL_PILLAR_ORDER = [
   'usd_macro',
   'china_industrial_demand',
   'cross_asset_confirmation',
+  'physical_positioning',
 ] as const;
 
 function finite(value: unknown): value is number {
@@ -52,20 +53,20 @@ function stanceMeta(stance?: LongTermStance | string | null): {
   label: string;
 } {
   const norm = stance?.toUpperCase();
-  if (norm === 'BULLISH') {
+  if (norm === 'BULLISH' || norm === 'OVERWEIGHT' || norm === 'STRONG_OVERWEIGHT') {
     return {
       glyph: '▲',
       textClass: 'text-[#74c7a9]',
       barColor: 'bg-[#74c7a9]/80',
-      label: 'BULLISH',
+      label: norm.replace('_', ' '),
     };
   }
-  if (norm === 'BEARISH') {
+  if (norm === 'BEARISH' || norm === 'UNDERWEIGHT' || norm === 'STRONG_UNDERWEIGHT') {
     return {
       glyph: '▼',
       textClass: 'text-[#db8296]',
       barColor: 'bg-[#db8296]/80',
-      label: 'BEARISH',
+      label: norm.replace('_', ' '),
     };
   }
   return {
@@ -85,7 +86,15 @@ function horizonTabLabel(key: string, forecast?: LongTermHorizonForecast): strin
   if (forecast?.horizon_label) return forecast.horizon_label;
   if (key === '20D') return '1 Month (20D)';
   if (key === '60D') return '1 Quarter (60D)';
+  if (key === '120D') return '6 Months (120D)';
   return key;
+}
+
+function horizonBadge(key: string, forecast?: LongTermHorizonForecast): string {
+  if (forecast) return `${forecast.horizon_weeks}W`;
+  if (key === '120D') return '26W';
+  if (key === '60D') return '12W';
+  return '4W';
 }
 
 export interface LongTermOutlookPanelProps {
@@ -104,26 +113,28 @@ export function LongTermOutlookPanel({
   onRefresh,
 }: LongTermOutlookPanelProps) {
   const availableHorizons = useMemo(() => {
-    const keys = (data?.available_horizons ?? []).filter(
-      (k): k is LongTermHorizonKey => k === '20D' || k === '60D',
-    );
+    const isLtKey = (k: string): k is LongTermHorizonKey =>
+      k === '20D' || k === '60D' || k === '120D';
+    const keys = (data?.available_horizons ?? []).filter(isLtKey);
     if (keys.length > 0) return keys;
-    const dictKeys = Object.keys(data?.horizons ?? {}).filter(
-      (k): k is LongTermHorizonKey => k === '20D' || k === '60D',
-    );
-    return dictKeys.length > 0 ? dictKeys : (['20D', '60D'] as LongTermHorizonKey[]);
+    const dictKeys = Object.keys(data?.horizons ?? {}).filter(isLtKey);
+    return dictKeys.length > 0 ? dictKeys : (['20D', '60D', '120D'] as LongTermHorizonKey[]);
   }, [data?.available_horizons, data?.horizons]);
 
   const preferredDefault: LongTermHorizonKey =
-    data?.default_horizon === '60D' && availableHorizons.includes('60D')
-      ? '60D'
-      : availableHorizons[0] ?? '20D';
+    data?.default_horizon &&
+    (availableHorizons as string[]).includes(data.default_horizon)
+      ? (data.default_horizon as LongTermHorizonKey)
+      : availableHorizons.includes('60D')
+        ? '60D'
+        : availableHorizons[0] ?? '20D';
 
-  const [selectedHorizon, setSelectedHorizon] = useState<LongTermHorizonKey>(preferredDefault);
+  const [selectedHorizon, setSelectedHorizon] = useState<LongTermHorizonKey | null>(null);
 
-  const activeHorizonKey: LongTermHorizonKey = availableHorizons.includes(selectedHorizon)
-    ? selectedHorizon
-    : preferredDefault;
+  const activeHorizonKey: LongTermHorizonKey =
+    selectedHorizon && availableHorizons.includes(selectedHorizon)
+      ? selectedHorizon
+      : preferredDefault;
 
   const horizonOptions: readonly SegmentedTabOption<LongTermHorizonKey>[] = useMemo(
     () =>
@@ -132,7 +143,7 @@ export function LongTermOutlookPanel({
         return {
           value: key,
           label: horizonTabLabel(key, forecast),
-          badge: forecast ? `${forecast.horizon_weeks}W` : key === '20D' ? '4W' : '12W',
+          badge: horizonBadge(key, forecast),
         };
       }),
     [availableHorizons, data?.horizons],
@@ -197,7 +208,13 @@ export function LongTermOutlookPanel({
     );
   }
 
-  const stance = stanceMeta(activeForecast.stance);
+  const stance = stanceMeta(activeForecast.institutional_rating ?? activeForecast.stance);
+  const comp = activeForecast.components;
+  const hasCommitteeBreakdown =
+    finite(comp.catboost_return) && finite(comp.xgboost_return) && finite(comp.mlp_plr_return);
+  const combinedTreeReturn = hasCommitteeBreakdown
+    ? 0.5 * ((comp.catboost_return as number) + (comp.xgboost_return as number))
+    : null;
   const moveToneClass =
     Math.abs(activeForecast.expected_return_pct) < 0.005
       ? 'text-slate-200'
@@ -211,13 +228,11 @@ export function LongTermOutlookPanel({
   const neuPct = probSum > 0 ? activeForecast.prob_neutral * normScale : 33.3;
   const bearPct = probSum > 0 ? activeForecast.prob_bearish * normScale : 33.3;
 
-  const q50Pct = positionOnRange(activeForecast.target_price_q50, activeForecast.price_q10, activeForecast.price_q90);
-  const q25Pct = positionOnRange(activeForecast.price_q25, activeForecast.price_q10, activeForecast.price_q90);
-  const q75Pct = positionOnRange(activeForecast.price_q75, activeForecast.price_q10, activeForecast.price_q90);
+  const q50Pct = positionOnRange(activeForecast.target_price_q50, activeForecast.price_q25, activeForecast.price_q75);
   const refTickPct =
-    activeForecast.reference_price >= activeForecast.price_q10 &&
-    activeForecast.reference_price <= activeForecast.price_q90
-      ? positionOnRange(activeForecast.reference_price, activeForecast.price_q10, activeForecast.price_q90)
+    activeForecast.reference_price >= activeForecast.price_q25 &&
+    activeForecast.reference_price <= activeForecast.price_q75
+      ? positionOnRange(activeForecast.reference_price, activeForecast.price_q25, activeForecast.price_q75)
       : null;
 
   const scorecard = data.macro_scorecard;
@@ -308,29 +323,26 @@ export function LongTermOutlookPanel({
             </div>
           </div>
 
-          {/* Calibrated Price Range (Q10 – Q90 with Q25–Q75 Core) */}
+          {/* Core Target Band (Q25 – Q75) with 80% Stress Envelope Context */}
           <div className="cm-weekly-range">
             <div className="cm-weekly-range-head">
-              <span>Calibrated Price Range (Q10 – Q90)</span>
+              <span>Core Target Band (Q25 – Q75 · 50% Zone)</span>
               <span className="cm-tabular">
-                Core IQR: {formatPrice(activeForecast.price_q25)} – {formatPrice(activeForecast.price_q75)}
+                {finite(activeForecast.asymmetry_ratio) ? `R/R ${activeForecast.asymmetry_ratio.toFixed(2)}x · ` : ''}
+                80% Stress Envelope: {formatPrice(activeForecast.price_q10)} – {formatPrice(activeForecast.price_q90)}
               </span>
             </div>
 
             <div className="cm-quantile-spectrum">
               <div className="cm-quantile-bound">
-                <small>Q10 LOW</small>
-                <span className="cm-tabular text-[#db8296]">{formatPrice(activeForecast.price_q10)}</span>
-                <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q10)}</small>
+                <small>CORE LOW (Q25)</small>
+                <span className="cm-tabular text-[#db8296]">{formatPrice(activeForecast.price_q25)}</span>
+                <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q25)}</small>
               </div>
 
               <div className="cm-quantile-bar-wrap" aria-hidden="true">
                 <div className="cm-quantile-bar-track">
-                  <div className="cm-quantile-bar-fill opacity-60" />
-                  <div
-                    className="absolute inset-y-0 rounded-full bg-[#8eadde]/65"
-                    style={{ left: `${q25Pct}%`, width: `${Math.max(2, q75Pct - q25Pct)}%` }}
-                  />
+                  <div className="cm-quantile-bar-fill opacity-75" />
                   {refTickPct !== null && (
                     <span
                       className="cm-quantile-zero-tick"
@@ -343,29 +355,55 @@ export function LongTermOutlookPanel({
               </div>
 
               <div className="cm-quantile-bound cm-quantile-bound--high">
-                <small>Q90 HIGH</small>
-                <span className="cm-tabular text-[#74c7a9]">{formatPrice(activeForecast.price_q90)}</span>
-                <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q90)}</small>
+                <small>CORE HIGH (Q75)</small>
+                <span className="cm-tabular text-[#74c7a9]">{formatPrice(activeForecast.price_q75)}</span>
+                <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q75)}</small>
               </div>
             </div>
           </div>
 
           {/* Model Component Decomposition */}
           <div className="cm-weekly-meta-grid">
-            <div>
-              <span>Macro Ridge ({(activeForecast.components.macro_ridge_weight * 100).toFixed(0)}%)</span>
-              <strong className="cm-tabular">{formatSignedDecimalReturn(activeForecast.components.macro_ridge_return)}</strong>
-            </div>
-            <div>
-              <span>Damped Theta ({(activeForecast.components.theta_weight * 100).toFixed(0)}%)</span>
-              <strong className="cm-tabular">{formatSignedDecimalReturn(activeForecast.components.theta_damped_return)}</strong>
-            </div>
-            <div>
-              <span>Horizon Volatility (σ)</span>
-              <strong className="cm-tabular">
-                {(activeForecast.components.horizon_vol * 100).toFixed(1)}% · Ann. {(activeForecast.components.realized_vol_annualized * 100).toFixed(1)}%
-              </strong>
-            </div>
+            {hasCommitteeBreakdown ? (
+              <>
+                <div>
+                  <span>CB + XGB Trees ({((comp.tree_weight ?? 0.5) * 100).toFixed(0)}%)</span>
+                  <strong className="cm-tabular">{formatSignedDecimalReturn(combinedTreeReturn)}</strong>
+                </div>
+                <div>
+                  <span>MLP-PLR Neural ({((comp.mlp_weight ?? 0.25) * 100).toFixed(0)}%)</span>
+                  <strong className="cm-tabular">{formatSignedDecimalReturn(comp.mlp_plr_return)}</strong>
+                </div>
+                <div>
+                  <span>Damped Theta ({(comp.theta_weight * 100).toFixed(0)}%)</span>
+                  <strong className="cm-tabular">{formatSignedDecimalReturn(comp.theta_damped_return)}</strong>
+                </div>
+                <div>
+                  <span>Horizon σ · α</span>
+                  <strong className="cm-tabular">
+                    {(comp.horizon_vol * 100).toFixed(1)}%
+                    {finite(comp.shrinkage_alpha) ? ` · α=${comp.shrinkage_alpha.toFixed(2)}` : ''}
+                  </strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span>Macro Ridge ({(comp.macro_ridge_weight * 100).toFixed(0)}%)</span>
+                  <strong className="cm-tabular">{formatSignedDecimalReturn(comp.macro_ridge_return)}</strong>
+                </div>
+                <div>
+                  <span>Damped Theta ({(comp.theta_weight * 100).toFixed(0)}%)</span>
+                  <strong className="cm-tabular">{formatSignedDecimalReturn(comp.theta_damped_return)}</strong>
+                </div>
+                <div>
+                  <span>Horizon Volatility (σ)</span>
+                  <strong className="cm-tabular">
+                    {(comp.horizon_vol * 100).toFixed(1)}% · Ann. {(comp.realized_vol_annualized * 100).toFixed(1)}%
+                  </strong>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -444,7 +482,7 @@ export function LongTermOutlookPanel({
             <div className="flex items-center gap-2">
               <Layers size={14} className="text-[#dda174]" aria-hidden="true" />
               <h3 className="text-xs font-semibold tracking-wider text-slate-300 uppercase">
-                4-Pillar Macro Factor Scorecard
+                {orderedPillars.length}-Pillar Macro Factor Scorecard
               </h3>
             </div>
             {scorecard && (
@@ -507,11 +545,11 @@ export function LongTermOutlookPanel({
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-3 text-xs text-slate-400 cm-tabular">
           <span>
             {data.data_window
-              ? `Weekly history ${data.data_window.start_date ?? '—'} to ${data.data_window.end_date ?? '—'} · ${data.data_window.weekly_bars} bars (${data.data_window.years_covered.toFixed(1)}y)${data.data_window.fred_macro_enabled ? ' · FRED macro' : ''}`
-              : 'Structural weekly macro-trend ensemble'}
+              ? `Weekly history ${data.data_window.start_date ?? '—'} to ${data.data_window.end_date ?? '—'} · ${data.data_window.weekly_bars} bars (${data.data_window.years_covered.toFixed(1)}y)${data.data_window.fred_macro_enabled ? ' · FRED macro' : ''}${data.data_window.physical_data_enabled ? ' · LME physical' : ''}${data.data_window.cot_positioning_enabled ? ' · CFTC COT' : ''}`
+              : 'Structural weekly macro committee'}
           </span>
           <span>
-            {data.model_version ?? 'lt_structural_v1'}
+            {data.model_version ?? 'lt_committee_v2'}
             {data.as_of_date ? ` · As of ${data.as_of_date}` : ''}
           </span>
         </div>
