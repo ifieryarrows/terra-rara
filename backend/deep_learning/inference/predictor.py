@@ -155,6 +155,7 @@ class TFTPredictor:
         self._expected_ensemble_size: Optional[int] = None
         self._hybrid_blend: dict = {}
         self._foundation_prior: dict = {}
+        self._har_gjr: dict = {}
 
     @property
     def _hub_checked(self) -> bool:
@@ -403,6 +404,8 @@ class TFTPredictor:
         self._hybrid_blend = dict(raw_hybrid) if isinstance(raw_hybrid, dict) else {}
         raw_foundation = metadata.get("foundation_prior") or {}
         self._foundation_prior = dict(raw_foundation) if isinstance(raw_foundation, dict) else {}
+        raw_har = metadata.get("har_gjr") or {}
+        self._har_gjr = dict(raw_har) if isinstance(raw_har, dict) else {}
         self._metadata_checked = True
 
     def _load_ensemble_models(self) -> list:
@@ -921,13 +924,29 @@ class TFTPredictor:
             if pd.notna(val_vol) and np.isfinite(float(val_vol)) and float(val_vol) > 0.0:
                 latest_realized_vol = float(val_vol)
 
+        volatility_stress = None
+        effective_cqr_vol = latest_realized_vol
+        try:
+            from deep_learning.calibration.volatility_stress import predict_latest_volatility_stress
+
+            har_params = (
+                self._har_gjr
+                if self._har_gjr.get("enabled")
+                else (conformal_artifact.get("har_gjr") if isinstance(conformal_artifact, dict) else None)
+            )
+            har_cqr_vol, volatility_stress = predict_latest_volatility_stress(master_df, har_params)
+            if har_cqr_vol is not None and har_cqr_vol > 0.0:
+                effective_cqr_vol = har_cqr_vol
+        except Exception as har_pred_exc:
+            logger.debug("Live HAR-GJR stress evaluation skipped (fail-open): %s", har_pred_exc)
+
         format_kwargs: Dict[str, Any] = {
             "quantiles": self.cfg.model.quantiles,
             "baseline_price": baseline_price,
             "reference_price_date": reference_price_date,
             "conformal_adjustment": conformal_adjustment,
             "weekly_cqr_params": conformal_artifact if conformal_artifact.get("cqr_enabled") else None,
-            "realized_vol": latest_realized_vol,
+            "realized_vol": effective_cqr_vol,
             "is_monotonic_logits": bool(
                 self._monotonic_quantile_transform
                 or getattr(getattr(model, "loss", None), "__class__", type(None)).__name__
@@ -981,7 +1000,10 @@ class TFTPredictor:
             "foundation_prior_applied": bool(foundation_applied),
             "foundation_prior_model_id": self._foundation_prior.get("model_id"),
             "foundation_prior_weight": float(self._foundation_prior.get("weight", 0.0) or 0.0),
+            "har_gjr_enabled": bool(volatility_stress and volatility_stress.get("enabled")),
         }
+        if volatility_stress is not None:
+            result["volatility_stress"] = volatility_stress
 
         # Surface freshness + instrument identity so the UI can label the
         # baseline unambiguously ("Futures HG=F, close of 2026-04-16").
@@ -1448,6 +1470,7 @@ def generate_tft_analysis(
     else:
         weekly_regime = "neutral_range"
 
+    volatility_stress = prediction.get("volatility_stress")
     raw_result = {
         "symbol": symbol,
         "model_type": "TFT-ASRO",
@@ -1474,7 +1497,9 @@ def generate_tft_analysis(
             "t1_impulse": t1_impulse,
             "t1_return": t1_ret,
             "regime": weekly_regime,
+            "volatility_stress": volatility_stress,
         },
+        "volatility_stress": volatility_stress,
         "risk_level": risk_level,
         "prediction": prediction,
         "model_metadata": metadata,

@@ -400,7 +400,7 @@ def test_known_good_trial_includes_weekly_loss_search_params():
     assert KNOWN_GOOD_TRIAL_PARAMS["weight_decay"] == 1.5e-2
     assert KNOWN_GOOD_TRIAL_PARAMS["mrmr_top_k"] == 5
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_t1_quantile"] == 0.20
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 0.75
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == 0.25
     assert KNOWN_GOOD_TRIAL_PARAMS["lambda_directional"] == 0.12
     assert "weekly_lambda_vol" not in KNOWN_GOOD_TRIAL_PARAMS
     assert "lambda_width" not in KNOWN_GOOD_TRIAL_PARAMS
@@ -446,7 +446,7 @@ def test_controlled_hyperopt_search_only_tunes_weekly_loss_weights():
     assert cfg.weekly_loss.lambda_weekly_quantile == 1.00
     assert cfg.weekly_loss.lambda_t1_quantile in {0.15, 0.20, 0.25}
     assert cfg.weekly_loss.lambda_subhorizon_quantile == 0.15
-    assert cfg.weekly_loss.lambda_drift_prior in {0.75, 1.00, 1.25}
+    assert cfg.weekly_loss.lambda_drift_prior in {0.25, 0.50, 0.75}
     assert cfg.weekly_loss.lambda_directional in {0.08, 0.10, 0.12, 0.15}
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0

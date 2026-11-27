@@ -140,14 +140,6 @@ export const SystemPage = () => {
           }
         />
         <Row
-          label="XGBoost snapshot generated"
-          value={
-            d.last_snapshot_generated_at
-              ? new Date(d.last_snapshot_generated_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
-              : '—'
-          }
-        />
-        <Row
           label="TFT prediction persisted"
           value={
             d.last_tft_prediction_at

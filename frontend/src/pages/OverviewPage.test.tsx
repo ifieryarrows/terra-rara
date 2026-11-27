@@ -628,8 +628,7 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     vi.unstubAllGlobals();
   });
 
-  it('renders OverviewSkeleton while initial analysis data is pending', () => {
-    vi.mocked(api.fetchAnalysis).mockImplementation(() => new Promise(() => {}));
+  it('renders OverviewSkeleton while initial 5D forecast data is pending', () => {
     vi.mocked(api.fetchHistory).mockImplementation(() => new Promise(() => {}));
     vi.mocked(api.fetchTFTAnalysis).mockImplementation(() => new Promise(() => {}));
 
@@ -647,7 +646,7 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(skeleton).toHaveAttribute('data-cm-dashboard-ready', 'false');
   });
 
-  it('enforces honest 5D (√52) vs T+1 (√252) separation, switches interactive SegmentedTabs lenses, and mounts global Cuprum', async () => {
+  it('enforces honest 5D (√52) primary view without legacy XGBoost drivers, switches interactive SegmentedTabs lenses, and mounts global Cuprum', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
     });
@@ -670,14 +669,17 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
       expect(root).not.toBeNull();
     });
 
+    // Legacy XGBoost snapshot endpoint & conflicting driver panel are retired from Overview
+    expect(api.fetchAnalysis).not.toHaveBeenCalled();
+    expect(screen.queryByText('T+1 Daily Drivers · XGBoost')).not.toBeInTheDocument();
+    expect(container.querySelector('#market-drivers')).not.toBeInTheDocument();
+
     // Strict 5D vs T+1 separation + non-causal XAI focus disclosure + 1M/1Q Long-Term Outlook
     expect(screen.getByText('5D TFT Primary')).toBeInTheDocument();
     expect(screen.getByText('Expected 5D Performance')).toBeInTheDocument();
     expect(screen.getByText('T+1 TFT Step 1')).toBeInTheDocument();
     expect(screen.getByText(/Raw 5D Focus · Non-causal/i)).toBeInTheDocument();
     expect(screen.getByText('Quality Gate Passed')).toBeInTheDocument();
-    expect(screen.getByText('T+1 Daily Drivers · XGBoost')).toBeInTheDocument();
-    expect(screen.getByText(/Auxiliary single-day \(T\+1\) XGBoost feature weights/i)).toBeInTheDocument();
     expect(screen.getByTestId('news-sentiment-readout')).toHaveTextContent(/▲\s*Bullish/);
     expect(screen.getByRole('meter', { name: /7D News Sentiment/i })).toHaveAttribute('value', '0.34');
 
@@ -700,13 +702,12 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(container.querySelector('#weekly-outlook')).toBeInTheDocument();
     expect(container.querySelector('#model-reliability')).toBeInTheDocument();
     expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
-    expect(container.querySelector('#market-drivers')).toBeInTheDocument();
     expect(container.querySelector('#neural-analysis')).toBeInTheDocument();
     expect(container.querySelector('#news-intelligence')).toBeInTheDocument();
     expect(container.querySelector('#market-map')).toBeInTheDocument();
 
-    // Switch to 5D & T+1 Models
-    fireEvent.click(within(lensTablist).getByRole('tab', { name: /5D & T\+1 Models/i }));
+    // Switch to 5D Forecast
+    fireEvent.click(within(lensTablist).getByRole('tab', { name: /5D Forecast/i }));
     expect(container.querySelector('#price-forecast')).toBeInTheDocument();
     expect(container.querySelector('#weekly-outlook')).toBeInTheDocument();
     expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
@@ -718,19 +719,11 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#price-forecast')).not.toBeInTheDocument();
 
-    // Switch to XAI Focus & Drivers (5D TFT VSN vs T+1 XGBoost drivers)
-    fireEvent.click(within(lensTablist).getByRole('tab', { name: /XAI Focus & Drivers/i }));
-    const driversSection = container.querySelector('#market-drivers') as HTMLElement;
-    expect(driversSection).toBeInTheDocument();
-    expect(within(driversSection).getByText('+0.85%')).toBeInTheDocument();
+    // Switch to 5D Model Focus (TFT-ASRO VSN & Attention)
+    fireEvent.click(within(lensTablist).getByRole('tab', { name: /5D Model Focus/i }));
     expect(container.querySelector('#neural-analysis')).toBeInTheDocument();
     expect(await within(container.querySelector('#neural-analysis') as HTMLElement).findByText('COMEX Warehouse Draws', {}, { timeout: 8_000 })).toBeInTheDocument();
     expect(container.querySelector('#price-forecast')).not.toBeInTheDocument();
-
-    // Interactive driver category filtering inside T+1 Daily Drivers
-    fireEvent.click(within(driversSection).getByRole('button', { name: /^Macro/i }));
-    expect(within(driversSection).getByText('USD Dollar 5D Drift')).toBeInTheDocument();
-    expect(within(driversSection).queryByText('Exchange Inventory Draw')).not.toBeInTheDocument();
 
     // Switch to Copper News
     fireEvent.click(within(lensTablist).getByRole('tab', { name: /Copper News/i }));
@@ -748,5 +741,38 @@ describe('OverviewPage unboxed workspace streams, horizon separation & Cuprum in
     expect(container.querySelector('#long-term-outlook')).toBeInTheDocument();
     expect(container.querySelector('#news-intelligence')).toBeInTheDocument();
     expect(container.querySelector('#market-map')).toBeInTheDocument();
+    expect(screen.queryByTestId('har-gjr-stress-readout')).not.toBeInTheDocument();
   }, 25_000);
+
+  it('renders the HAR-GJR Market Stress telemetry when volatility_stress is present', async () => {
+    vi.mocked(api.fetchTFTAnalysis).mockResolvedValue({
+      ...TFT_FIXTURE,
+      volatility_stress: {
+        enabled: true,
+        regime: 'HIGH_STRESS',
+        har_vol5_pct: 5.4,
+        rv20_vol5_pct: 3.1,
+        stress_ratio: 1.74,
+        shock_score: 0.029,
+        shock_percentile: 94.0,
+        vol_scale_source: 'har_gjr',
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <OverviewPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const stressEl = await screen.findByTestId('har-gjr-stress-readout');
+    expect(stressEl).toHaveTextContent(/HAR-GJR Market Stress:\s*High Stress/i);
+    expect(stressEl).toHaveTextContent(/1\.74× 20D baseline/);
+    expect(stressEl).toHaveTextContent(/5D Vol 5\.4%/);
+  }, 15_000);
 });

@@ -247,7 +247,7 @@ describe('workspace skeleton loading views', () => {
 
       // Verify status rows structure
       const rows = status.querySelectorAll('.cm-status-row');
-      expect(rows.length).toBe(16); // 4 core + 4 snapshot + 8 freshness
+      expect(rows.length).toBe(15); // 4 core + 4 snapshot + 7 freshness
 
       // Verify no generic ViewState loading box
       expect(status.querySelector('.cm-view-state')).not.toBeInTheDocument();

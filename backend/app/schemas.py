@@ -26,6 +26,18 @@ class DataQuality(BaseModel):
     language_filtered: Optional[int] = Field(None, description="Articles filtered by language")
 
 
+class VolatilityStressBlock(BaseModel):
+    """Causal HAR-GJR dynamic forward volatility & market stress telemetry."""
+    enabled: bool = True
+    regime: str = Field(..., description="CALM | ELEVATED | HIGH_STRESS")
+    har_vol5_pct: Optional[float] = Field(None, description="HAR-GJR expected 5D volatility (%)")
+    rv20_vol5_pct: Optional[float] = Field(None, description="20D realized 5D baseline volatility (%)")
+    stress_ratio: Optional[float] = Field(None, description="har_vol5 / rv20_vol5 ratio")
+    shock_score: Optional[float] = Field(None, description="Raw causal structural shock score")
+    shock_percentile: Optional[float] = Field(None, description="Train-referenced shock percentile (0..100)")
+    vol_scale_source: Optional[str] = Field(None, description="har_gjr | realized_vol_20d")
+
+
 class WeeklyForecastBlock(BaseModel):
     """Weekly-first TFT public forecast block using simple returns."""
     horizon: str = Field("5D")
@@ -37,6 +49,7 @@ class WeeklyForecastBlock(BaseModel):
     t1_impulse: Optional[str] = None
     t1_return: Optional[float] = None
     regime: Optional[str] = None
+    volatility_stress: Optional[VolatilityStressBlock] = None
 
 
 class AnalysisReport(BaseModel):

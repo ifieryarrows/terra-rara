@@ -38,6 +38,17 @@ export interface AnalysisReport {
   generated_at: string;
 }
 
+export interface VolatilityStressBlock {
+  enabled?: boolean;
+  regime: 'CALM' | 'ELEVATED' | 'HIGH_STRESS' | string;
+  har_vol5_pct?: number | null;
+  rv20_vol5_pct?: number | null;
+  stress_ratio?: number | null;
+  shock_score?: number | null;
+  shock_percentile?: number | null;
+  vol_scale_source?: string | null;
+}
+
 export interface WeeklyForecastBlock {
   horizon: "5D";
   expected_return: number;
@@ -48,6 +59,7 @@ export interface WeeklyForecastBlock {
   t1_impulse?: "BULLISH" | "BEARISH" | "NEUTRAL" | string;
   t1_return?: number | null;
   regime?: string | null;
+  volatility_stress?: VolatilityStressBlock | null;
 }
 
 export interface HistoryDataPoint {
@@ -173,6 +185,7 @@ export interface TFTPrediction {
   weekly_return_q90_calibrated?: number | null;
   weekly_interval_calibration_adjustment?: number | null;
   weekly_interval_calibrated?: boolean;
+  volatility_stress?: VolatilityStressBlock | null;
   prediction_horizon_days: number;
   daily_forecasts: TFTDailyForecast[];
   /** Explicit contract: the close used as the basis for all returns/prices */
@@ -266,6 +279,7 @@ export interface TFTAnalysisResponse {
   t1_impulse?: string | null;
   t1_return?: number | null;
   weekly_forecast?: WeeklyForecastBlock | null;
+  volatility_stress?: VolatilityStressBlock | null;
   risk_level?: 'HIGH' | 'MEDIUM' | 'LOW';
   prediction?: TFTPrediction;
   model_metadata?: TFTModelMetadata | null;

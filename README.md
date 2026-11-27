@@ -71,17 +71,17 @@ Terra Rara predicts COMEX copper futures (`HG=F`) **returns** (never raw price l
 
 | Horizon Layer | Engine & Target | Annualization & Calibration | Production Role |
 | --- | --- | --- | --- |
-| **Primary · 5-Day Cumulative** | **3-Seed Modern TFT-ASRO + 20% Fail-Open `Chronos-2`** (`target_5d_log_return`) | `sqrt(52)` Newey-West HAC · RSS quantiles · Linear-vol Split CQR (`q02..q98`) | Headline weekly probabilistic trajectory & risk bands (`/api/analysis/tft/HG=F`) |
-| **Diagnostic · Next-Day ($T+1$)** | **XGBoost Regressor** (`(close[t+1] / close[t]) - 1`) | `sqrt(252)` · Paired block-bootstrap symbol selection | Auxiliary short-step direction & consensus check (`/api/analysis`) |
+| **Primary · 5-Day Cumulative** | **65% `Chronos-2` Foundation Prior + 35% 3-Seed Modern TFT-ASRO** (`target_5d_log_return`) | `sqrt(52)` Newey-West HAC · RSS quantiles · **HAR-GJR** Stress + Split CQR (`q02..q98`) | Headline weekly probabilistic trajectory, market stress regime & risk bands (`/api/analysis/tft/HG=F`) |
 | **Structural · 20D / 60D Outlook** | **Causal Weekly Macro Scorecard** (`long_term/`) | FRED 10Y real yields, breakevens, USD, & miner cross-asset ratios | Slow fundamental macro regime layer (`/models` & `/dashboard`) |
+| **Legacy Read-Only ($T+1$)** | **XGBoost Regressor** *(retired from daily cron & Overview UI)* | `sqrt(252)` · Archived `AnalysisSnapshot` read-only compatibility | Preserved read-only at `/api/analysis`; `screener/` & `backtest/` remain intact |
 
 In parallel, daily scheduled workers ingest commodity news via Google News RSS, score article sentiment using resilient multi-tier LLM routing (`IFM K2-Horizon-375B` / NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5 / Gemma 4 with local FinBERT fallback), and drive institutional commentary and interactive **Cuprum** companion dialogue — while intentionally keeping news/FinBERT embeddings decoupled (`include_news_features=False`) from the 5-day neural core.
 
 ## Features
 
-- Predict next-day copper futures returns using XGBoost regression trained on 250+ features (diagnostic layer)
-- Forecast 5-day cumulative log-returns using a 3-seed compact Modern TFT-ASRO ensemble blended 80/20 with a fail-open univariate zero-shot `Chronos-2` (`amazon/chronos-2`) foundation prior and Split CQR bands
+- Forecast 5-day cumulative log-returns using **65% univariate zero-shot `Chronos-2` (`amazon/chronos-2`) + 35% 3-seed compact Modern TFT-ASRO** (providing macro-regime stabilization & VSN/Attention explainability) with RSS quantile paths and causal **HAR-GJR** dynamic volatility + Split CQR risk cones (`Calm` / `Elevated` / `High Stress`) — no artificial post-hoc amplitude scaling
 - Produce weekly causal 20D/60D structural macro outlooks (`long_term/`) using FRED real yields, inflation breakevens, broad USD, and miner cross-asset ratios
+- Clean unified 5D workspace without conflicting T+1 XGBoost tree-driver cards in daily commentary or Overview UI (`XGBoost` routine triggers/snapshots retired)
 - Score news sentiment using multi-tier LLM routing (NVIDIA Nemotron 3.5 Super VL / Liquid LFM 2.5) with FinBERT fallback (post-model commentary & risk layer)
 - Extract FinBERT CLS embeddings (768-dim → 8-dim PCA) for deep semantic encoding optimized for sample efficiency
 - Track 17 correlated assets via configurable symbol sets (active, champion, challenger)
@@ -128,7 +128,7 @@ flowchart TB
         API["Snapshot-Only REST API (main.py)<br/>/api/analysis · /api/analysis/tft · /api/explain<br/>/api/market-heatmap · /api/commentary · /api/models/tft/summary"]:::api
         CRON["GitHub Actions Schedulers<br/>Daily 00:10 UTC · TFT Sun 21:00 UTC · Screener Sun 18:00 UTC"]:::worker
         WRK["Async Arq Worker (worker/runner.py)<br/>yfinance · Google RSS · LLM Router + FinBERT"]:::worker
-        MOD["Horizon-Separated Forecast Stack<br/>1) 3-Seed TFT-ASRO + 20% Chronos-2 + Split CQR (5D)<br/>2) XGBoost Regressor (T+1 Diagnostic)<br/>3) long_term/ Causal Macro Scorecard (20D/60D)"]:::worker
+        MOD["Horizon-Separated Forecast Stack<br/>1) 65% Chronos-2 + 35% TFT-ASRO + HAR-GJR Split CQR (5D)<br/>2) XGBoost Regressor (Legacy T+1 Read-Only)<br/>3) long_term/ Causal Macro Scorecard (20D/60D)"]:::worker
     end
 
     subgraph Data["Persistence & Registries"]
@@ -286,7 +286,7 @@ Approximately 250 features are generated for XGBoost:
 
 ### TFT-ASRO Deep Learning
 
-The primary 5-day probabilistic engine pairs a **3-seed compact Modern TFT-ASRO ensemble** (`pytorch-forecasting` + PyTorch Lightning) with a **20% fail-open `Chronos-2` (`amazon/chronos-2`) univariate zero-shot foundation prior**, RSS quantile horizon aggregation, and linear-volatility Split CQR calibration. It operates independently from the diagnostic $T+1$ XGBoost pipeline and the 20D/60D `long_term/` macro scorecard.
+The primary 5-day probabilistic engine promotes **`Chronos-2` (`amazon/chronos-2`, 65% primary price-dynamics forecaster, fail-open)** paired with a **3-seed compact Modern TFT-ASRO ensemble (35% multivariate macro-regime stabilizer + VSN/Attention XAI engine)** (`pytorch-forecasting` + PyTorch Lightning), RSS quantile horizon aggregation, and linear-volatility Split CQR calibration. Daily XGBoost $T+1$ snapshots and conflicting UI drivers are retired, leaving `/api/analysis` strictly read-only while `long_term/` serves the 20D/60D structural horizon.
 
 #### Model Architecture
 
@@ -305,7 +305,7 @@ The primary 5-day probabilistic engine pairs a **3-seed compact Modern TFT-ASRO 
 | `batch_size`               | `32`             | Chronological batches with `val_ratio=0.08`, `test_ratio=0.10`     |
 | `lookback_days`            | `1825`           | 5 years of weekday-only deduplicated futures bars                 |
 | `ensemble_seeds`           | `(42, 137, 256)` | Filtered on validation MAE/0 & drift bounds (no `val_mean` shift) |
-| `foundation_prior.weight`  | `0.20`           | Fixed 80% TFT + 20% `amazon/chronos-2` prior (validation-guarded, fail-open) |
+| `foundation_prior.weight`  | `0.65`           | Primary 65% `amazon/chronos-2` + 35% TFT-ASRO (validation-guarded, fail-open) |
 
 #### Quantile Output, RSS Aggregation & Split CQR
 
@@ -324,28 +324,28 @@ Multi-day uncertainty is aggregated using **root-sum-of-squares (RSS)** L2 quant
 | Weekly quantile pinball        | `1.00`           | Proper-scoring calibration across all 7 weekly quantiles                |
 | Auxiliary $T+1$ pinball        | `0.20`           | Short-step anchor scaled identically to weekly pinball loss             |
 | Sub-horizon pinball            | `0.15`           | Smooths intermediate path steps `[t+2..t+4]`                            |
-| Zero-drift L1+L2 prior         | `0.75`           | Prevents single-sign bull/bear drift without over-compressing amplitude |
+| Zero-drift L1+L2 prior         | `0.25`           | Prevents single-sign collapse without artificially damping trend amplitude |
 | Demeaned directional utility   | `0.12`           | Batch-demeaned ASRO Sharpe alignment (`WeeklyTargetScale`-normalized)   |
 | Legacy batch heuristic terms   | `0.00`           | `lambda_bias`, `dispersion`, `magnitude`, `naive`, `positive_rate` off  |
 
-#### Hybrid Inference Flow (80% Modern TFT-ASRO + 20% Chronos-2 Prior)
+#### Hybrid Inference Flow (65% Chronos-2 Primary + 35% Modern TFT-ASRO)
 
 Training (`trainer.py`), rolling walk-forward validation (`backtest/runner.py`), and live inference (`predictor.py`) execute identical stages in strict order:
 
 ```mermaid
 flowchart LR
-    X["core5 Stationary Features<br/>(15d x 5 + day_of_week)"] --> TFT["3-Seed Modern TFT-ASRO<br/>(Ordered 5D Path)"]
-    C["Causal HG=F Closes<br/>(252d Univariate Zero-Shot)"] --> C2["amazon/chronos-2<br/>(9 -> 7 Log Quantiles)"]
-    C2 -->|"Val Sanity Gate<br/>(Fail-Open w=0.20)"| BL["Ordered-Space Blend<br/>0.80 TFT + 0.20 Chronos-2"]
+    X["core5 Stationary Features<br/>(15d x 5 + day_of_week)"] --> TFT["3-Seed Modern TFT-ASRO<br/>(35% Stabilizer + VSN XAI)"]
+    C["Causal HG=F Closes<br/>(252d Univariate Zero-Shot)"] --> C2["amazon/chronos-2<br/>(65% Primary 9 -> 7 Log Quantiles)"]
+    C2 -->|"Val Sanity Gate<br/>(Fail-Open w=0.65)"| BL["Ordered-Space Blend<br/>0.65 Chronos-2 + 0.35 TFT"]
     TFT --> BL
     BL --> CQR["Linear-Vol Split CQR<br/>(realized_vol_20d)"]
     CQR --> PUB["Public Simple Returns<br/>& Price Bands (q02..q98)"]
 ```
 
-1. **Modern TFT-ASRO Ensemble (3 seeds):** Predicts ordered 5-day quantile paths from stationary `core5` inputs.
-2. **Causal `Chronos-2` Univariate Zero-Shot (`amazon/chronos-2`):** Takes only trailing historical `HG=F` closes up to origin `t` (`context_len=252` trading days, zero covariates, zero future leakage) and maps 9 step-5 price quantiles into 7 cumulative log-return quantiles.
-3. **Zero-DoF Validation Sanity Gate:** During training, enables the `0.20` prior weight only if `val_foundation_mae_vs_naive <= 1.25`, blend MAE degradation `<= 0.02`, and blended positive rate avoids single-sign collapse (`[0.15, 0.85]`).
-4. **Monotonic Ordered-Space Blend (`0.80 * W_TFT + 0.20 * W_C2`):** Shifts daily medians and scales quantile half-widths consistently with RSS aggregation, failing open to `100%` TFT-ASRO if `Chronos-2` is unavailable at runtime.
+1. **Modern TFT-ASRO Ensemble (35%, 3 seeds):** Predicts ordered 5-day quantile paths from stationary `core5` inputs and drives VSN/Attention explainability (`/api/explain/{symbol}`).
+2. **Causal `Chronos-2` Univariate Zero-Shot (`amazon/chronos-2`, 65% Primary):** Takes only trailing historical `HG=F` closes up to origin `t` (`context_len=252` trading days, zero covariates, zero future leakage) and maps 9 step-5 price quantiles into 7 cumulative log-return quantiles. Because price-patch transformers are free of L1/MSE return-regression shrinkage toward `0`, `Chronos-2` preserves authentic directional amplitude during sharp selloffs without post-hoc scaling.
+3. **Zero-DoF Validation Sanity Gate:** Enables the `0.65` weight (clip ceiling `0.85`) only if `val_foundation_mae_vs_naive <= 1.25`, blend MAE degradation `<= 0.05`, and blended positive rate avoids single-sign collapse (`[0.15, 0.85]`).
+4. **Monotonic Ordered-Space Blend (`0.35 * W_TFT + 0.65 * W_C2`):** Shifts daily medians and scales quantile half-widths consistently with RSS aggregation, failing open to `100%` TFT-ASRO if `Chronos-2` is unavailable at runtime.
 5. **Split CQR & Contract Formatting:** Applies validation-fitted volatility-scaled CQR intervals and converts internal log returns to public simple returns and price targets.
 
 #### TFT Feature Categories
@@ -398,6 +398,14 @@ Rather than choosing model families or hyperparameters from single runs, we eval
 
 </details>
 
+#### Benchmark V2 Summary (34+ Models + Live Nov 2026 `-15%` Crash Audit)
+
+Building on our initial 29-model 8-fold study (2,000 OOS trading days), **Benchmark V2** investigated why 5D point forecasts remained compressed (`±0.05%–0.15%`) during real market moves — including the November 2026 `-15%` COMEX copper selloff — evaluating 12 additional Direct-5D neural/tabular (`Student-T VSN-Attn`, `TCN`, `Two-Stage Bayesian CatBoost/Logistic`, `Ridge Z`) and LoRA/Full fine-tuned `Chronos-2` variants:
+
+- **Why Direct-5D Return Regressors Failed:** Solving amplitude with volatility-normalized direct 5D neural/tabular heads (`med|p| = 0.40%–1.28%`) learned counter-trend mean-reversion (`Crash DA 30%–37%`), emitting wrong-way rally forecasts (`+0.38%..+1.03%`) throughout the live Nov 2026 selloff.
+- **Why Promoting `Chronos-2` Solves Amplitude Without Artificial Scaling:** Zero-shot `Chronos-2` operates on price patches rather than L1-shrunk noisy return targets (`blend_60c2zs_40tft` hits `HAC Sharpe +0.285`, `Fold 7 DA 61.2%`, `SR +0.76`, `MAE/0 0.971`, and emitted `-0.80%..-1.19%` bearish signals during the Nov 2026 crash), while fine-tuned `chronos2_ft_lora_panel` passed all `8/8` quality gates (`DA 53.4%`, `HAC SR +0.230`). Promoting zero-shot `Chronos-2` to `65%` (with `35%` `TFT-ASRO`, `lambda_drift_prior=0.25`) naturally increases median forecast responsiveness ~2.5×–3× without ad-hoc multipliers or GPU/LoRA overhead in weekly CI.
+- **Why Routine XGBoost Drivers Were Retired:** Keeping conflicting T+1 XGBoost tree weights (`FCX_ret1`, `SCCO_RSI_14`) beside 5D TFT-ASRO XAI misled users and blocked commentary; routine daily XGBoost snapshots/retrains and Overview UI cards are retired cleanly while `/api/analysis`, `screener/`, and `backtest/` remain intact.
+
 #### Training and Optimization
 
 TFT training runs weekly (Sundays at 21:00 UTC via `.github/workflows/tft-training.yml`) or on-demand:
@@ -411,7 +419,7 @@ python -m deep_learning.training.trainer --symbol HG=F
 # Deterministic validation replay (bypasses Optuna overlays)
 python -m deep_learning.training.trainer --symbol HG=F --deterministic-weekly-validation
 
-# Run Optuna hyperparameter search (mrmr_top_k locked to 5, lambda_drift_prior >= 0.75)
+# Run Optuna hyperparameter search (mrmr_top_k locked to 5, lambda_drift_prior >= 0.25)
 python -m deep_learning.training.hyperopt --n-trials 30
 ```
 

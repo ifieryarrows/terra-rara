@@ -83,7 +83,6 @@ export function SystemSkeleton({ header }: { header?: ReactNode }) {
         {[
           'Pipeline run (worker) completed',
           'Pipeline status',
-          'XGBoost snapshot generated',
           'TFT prediction persisted',
           'TFT baseline close date',
           'TFT model trained',

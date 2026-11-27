@@ -966,6 +966,11 @@ class TFTBacktestRunner:
         metadata = self._load_metadata_artifact(ckpt_path.parent)
         split_dates = metadata.get("split_dates") if isinstance(metadata.get("split_dates"), dict) else {}
         hybrid_blend = metadata.get("hybrid_blend") if isinstance(metadata.get("hybrid_blend"), dict) else {}
+        har_gjr_params = (
+            metadata.get("har_gjr")
+            or (cqr_artifact.get("har_gjr") if isinstance(cqr_artifact, dict) else None)
+            or {}
+        )
         self.last_split_dates = dict(split_dates)
         self.last_strict_oos_report = {}
         self.last_strict_oos_theta_comparison = {}
@@ -1237,6 +1242,19 @@ class TFTBacktestRunner:
             vols = eval_df["realized_vol_20d"].to_numpy(dtype=float)[origin_pos]
         else:
             vols = None
+        if len(pred_np) > 0:
+            try:
+                from deep_learning.calibration.volatility_stress import resolve_cqr_vol_scale
+
+                df_origin_pos = np.asarray(origin_pos, dtype=int) + int(warmup_start)
+                vols = resolve_cqr_vol_scale(
+                    df,
+                    df_origin_pos,
+                    har_gjr_params=har_gjr_params,
+                    fallback_vol=vols,
+                )
+            except Exception as har_bt_exc:
+                logger.debug("Backtest HAR-GJR scale skipped (fail-open): %s", har_bt_exc)
 
         interval_cal = metadata.get("interval_calibration") or {}
         interval_scale = float(interval_cal.get("weekly_interval_scale", 1.0) or 1.0)

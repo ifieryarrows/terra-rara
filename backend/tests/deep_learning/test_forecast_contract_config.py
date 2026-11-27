@@ -14,7 +14,7 @@ def test_forecast_contract_defaults_are_weekly():
     assert cfg.weekly_loss.lambda_subhorizon_quantile == 0.15
     assert cfg.weekly_loss.lambda_directional == 0.12
     assert cfg.weekly_loss.lambda_bias == 0.0
-    assert cfg.weekly_loss.lambda_drift_prior == 0.75
+    assert cfg.weekly_loss.lambda_drift_prior == 0.25
     assert cfg.weekly_loss.lambda_dispersion == 0.0
     assert cfg.weekly_loss.lambda_magnitude == 0.0
     assert cfg.weekly_loss.lambda_naive == 0.0

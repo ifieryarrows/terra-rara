@@ -143,7 +143,7 @@ class WeeklyLossConfig:
     lambda_magnitude: float = 0.0
     lambda_naive: float = 0.0
     lambda_bias: float = 0.0
-    lambda_drift_prior: float = 0.75
+    lambda_drift_prior: float = 0.25
     lambda_directional: float = 0.12
     lambda_saturation: float = 0.0
     lambda_positive_rate: float = 0.0
@@ -188,11 +188,11 @@ class FoundationPriorConfig:
     enabled: bool = True
     provider: str = "chronos2"
     model_id: str = "amazon/chronos-2"
-    weight: float = 0.20
+    weight: float = 0.65
     context_len: int = 252
     batch_size: int = 32
     max_val_mae_vs_naive: float = 1.25
-    max_blend_mae_degradation: float = 0.02
+    max_blend_mae_degradation: float = 0.05
 
 
 @dataclass

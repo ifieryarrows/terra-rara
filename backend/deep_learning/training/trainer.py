@@ -144,7 +144,7 @@ KNOWN_GOOD_CONFIG = {
     "lambda_magnitude": 0.0,
     "lambda_naive": 0.0,
     "lambda_bias": 0.0,
-    "lambda_drift_prior": 0.75,
+    "lambda_drift_prior": 0.25,
     "lambda_directional": 0.12,
     "lambda_saturation": 0.0,
     "lambda_positive_rate": 0.0,
@@ -1126,6 +1126,7 @@ def train_tft_model(
             purge_gap=int(cfg.forecast.primary_horizon_days),
         )
         train_cutoff = int(bounds["train_cutoff"])
+        train_end_pos = int(bounds["train_end_pos"])
         val_cutoff = int(bounds["val_cutoff"])
         max_time_idx = int(bounds["max_time_idx"])
         split_dates = _compute_split_dates(
@@ -1142,7 +1143,8 @@ def train_tft_model(
         test_size = int(n_rows * cfg.training.test_ratio)
         val_size = int(n_rows * cfg.training.val_ratio)
         train_size = n_rows - val_size - test_size
-        train_cutoff = int(master_df["time_idx"].iloc[train_size - 1])
+        train_end_pos = max(0, train_size - 1)
+        train_cutoff = int(master_df["time_idx"].iloc[train_end_pos])
         val_cutoff = int(master_df["time_idx"].iloc[train_size + val_size - 1])
         max_time_idx = int(master_df["time_idx"].iloc[-1])
         split_dates = _compute_split_dates(master_df, train_size=train_size, val_size=val_size)
@@ -1320,6 +1322,11 @@ def train_tft_model(
         "context_len": int(getattr(fnd_cfg, "context_len", 252)),
         "fit_split": "validation",
         "sample_count": 0,
+        "reason": "not_evaluated",
+    }
+    har_gjr_params: dict = {
+        "version": 1,
+        "enabled": False,
         "reason": "not_evaluated",
     }
     weekly_cqr_params: Optional[dict] = None
@@ -1589,11 +1596,42 @@ def train_tft_model(
                 logger.warning("Validation foundation prior skipped (fail-open): %s", fnd_exc)
                 foundation_prior["reason"] = f"error:{fnd_exc}"
 
+        val_cqr_vol = val_realized_vol
+        try:
+            from deep_learning.calibration.volatility_stress import (
+                fit_har_gjr_volatility_stress,
+                resolve_cqr_vol_scale,
+            )
+
+            har_val_pos = _dataset_origin_row_positions(
+                master_df,
+                validation_ds,
+                horizon=cfg.forecast.primary_horizon_days,
+                start_exclusive=train_cutoff - 1,
+                end_inclusive=val_cutoff - cfg.forecast.primary_horizon_days,
+                expected_count=n_val,
+            )
+            har_gjr_params = fit_har_gjr_volatility_stress(
+                master_df,
+                train_end_pos=train_end_pos,
+                val_origin_pos=har_val_pos,
+                horizon=int(cfg.forecast.primary_horizon_days),
+            )
+            val_cqr_vol = resolve_cqr_vol_scale(
+                master_df,
+                har_val_pos,
+                har_gjr_params=har_gjr_params,
+                fallback_vol=val_realized_vol,
+            )
+        except Exception as har_exc:
+            logger.warning("HAR-GJR fit skipped (fail-open to realized_vol_20d): %s", har_exc)
+            har_gjr_params = {"version": 1, "enabled": False, "reason": f"error:{har_exc}"}
+
         weekly_cqr_params = fit_weekly_cqr(
             val_weekly_actual,
             val_weekly_q,
             quantiles=tuple(cfg.model.quantiles),
-            realized_vol=val_realized_vol,
+            realized_vol=val_cqr_vol,
         )
         interval_calibration.update(
             {
@@ -1601,6 +1639,7 @@ def train_tft_model(
                 "q_hat_80": float(weekly_cqr_params.get("q_hat_80", 0.0) or 0.0),
                 "q_hat_96": float(weekly_cqr_params.get("q_hat_96", 0.0) or 0.0),
                 "vol_normalized": bool(weekly_cqr_params.get("vol_normalized", False)),
+                "vol_scale_source": "har_gjr" if har_gjr_params.get("enabled") else "realized_vol_20d",
                 "base_vol_power": float(weekly_cqr_params.get("base_vol_power", 1.0) or 1.0),
                 "n_eff": float(weekly_cqr_params.get("n_eff", 0.0) or 0.0),
                 "validation_pi80_coverage": float(
@@ -1724,12 +1763,34 @@ def train_tft_model(
             except Exception as vol_exc:
                 logger.debug("Test realized_vol lookup skipped: %s", vol_exc)
 
+        test_cqr_vol = test_realized_vol
+        if har_gjr_params.get("enabled"):
+            try:
+                from deep_learning.calibration.volatility_stress import resolve_cqr_vol_scale
+
+                har_test_pos = _dataset_origin_row_positions(
+                    master_df,
+                    test_ds,
+                    horizon=cfg.forecast.primary_horizon_days,
+                    start_exclusive=val_cutoff - 1,
+                    end_inclusive=max_time_idx - cfg.forecast.primary_horizon_days,
+                    expected_count=len(pred_np),
+                )
+                test_cqr_vol = resolve_cqr_vol_scale(
+                    master_df,
+                    har_test_pos,
+                    har_gjr_params=har_gjr_params,
+                    fallback_vol=test_realized_vol,
+                )
+            except Exception as har_test_exc:
+                logger.debug("Test HAR-GJR scale skipped (fail-open): %s", har_test_exc)
+
         test_metrics = _compute_test_metrics_from_quantiles(
             y_actual_path,
             pred_np,
             cfg,
             weekly_cqr_params=weekly_cqr_params,
-            realized_vol=test_realized_vol,
+            realized_vol=test_cqr_vol,
             already_ordered=True,
         )
         test_metrics["ensemble_size"] = ensemble_size
@@ -1752,6 +1813,7 @@ def train_tft_model(
         weekly_interval_scale=weekly_interval_scale,
         weekly_interval_calibration=interval_calibration,
         weekly_cqr_params=weekly_cqr_params,
+        har_gjr_params=har_gjr_params,
         precomputed_val_pred_np=val_pred_np,
         precomputed_val_actual_path=val_actual_path,
         already_ordered=True,
@@ -1768,6 +1830,7 @@ def train_tft_model(
         "ensemble_member_diagnostics": ensemble_member_diagnostics,
         "hybrid_blend": hybrid_blend,
         "foundation_prior": foundation_prior,
+        "har_gjr": har_gjr_params,
         "split_dates": split_dates,
         "test_metrics": test_metrics,
         "variable_importance": var_importance,
@@ -1808,6 +1871,7 @@ def train_tft_model(
             "mrmr_top_k": cfg.feature_store.mrmr_top_k,
             "foundation_prior_enabled": bool(foundation_prior.get("enabled", False)),
             "foundation_prior_weight": float(foundation_prior.get("weight", 0.0) or 0.0),
+            "har_gjr_enabled": bool(har_gjr_params.get("enabled", False)),
             "forecast_contract_version": FORECAST_CONTRACT_VERSION,
             "target_return_type": TARGET_RETURN_TYPE,
             "primary_horizon_days": cfg.forecast.primary_horizon_days,
@@ -1902,6 +1966,7 @@ def _write_conformal_calibration_artifact(
     weekly_interval_scale: float = 1.0,
     weekly_interval_calibration: Optional[dict] = None,
     weekly_cqr_params: Optional[dict] = None,
+    har_gjr_params: Optional[dict] = None,
     precomputed_val_pred_np: Optional[np.ndarray] = None,
     precomputed_val_actual_path: Optional[np.ndarray] = None,
     already_ordered: bool = False,
@@ -2197,6 +2262,8 @@ def _write_conformal_calibration_artifact(
             "calibrated_validation_pi80_width_ratio": calibrated_validation_pi80_width_ratio,
             "target_min_pi80_width_ratio": target_min_pi80_width_ratio,
             "calibration_status": calibration_status,
+            "vol_scale_source": "har_gjr" if (har_gjr_params and har_gjr_params.get("enabled")) else "realized_vol_20d",
+            "har_gjr": har_gjr_params if (har_gjr_params and har_gjr_params.get("enabled")) else None,
         }
 
         calibration_path = Path(cfg.training.best_model_path).parent / "conformal_calibration.json"

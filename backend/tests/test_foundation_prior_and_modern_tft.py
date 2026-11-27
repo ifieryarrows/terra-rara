@@ -35,14 +35,15 @@ def test_modern_tft_defaults_and_hyperopt_search_space_guardrails():
     cfg = get_tft_config()
     assert cfg.model.output_head_lr_mult == pytest.approx(0.35)
     assert cfg.model.weight_decay == pytest.approx(1.5e-2)
-    assert cfg.weekly_loss.lambda_drift_prior == pytest.approx(0.75)
+    assert cfg.weekly_loss.lambda_drift_prior == pytest.approx(0.25)
     assert cfg.weekly_loss.lambda_directional == pytest.approx(0.12)
     assert cfg.feature_store.mrmr_top_k == 5
     assert cfg.foundation_prior.enabled is True
     assert cfg.foundation_prior.model_id == CHRONOS2_MODEL_ID
-    assert cfg.foundation_prior.weight == pytest.approx(0.20)
+    assert cfg.foundation_prior.weight == pytest.approx(0.65)
+    assert cfg.foundation_prior.max_blend_mae_degradation == pytest.approx(0.05)
 
-    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == pytest.approx(0.75)
+    assert KNOWN_GOOD_TRIAL_PARAMS["lambda_drift_prior"] == pytest.approx(0.25)
     assert KNOWN_GOOD_TRIAL_PARAMS["output_head_lr_mult"] == pytest.approx(0.35)
     assert KNOWN_GOOD_TRIAL_PARAMS["mrmr_top_k"] == 5
 
@@ -61,7 +62,7 @@ def test_modern_tft_defaults_and_hyperopt_search_space_guardrails():
 
     trial_cfg = create_trial_config(_FakeTrial(), cfg)
     assert recorded["mrmr_top_k"] == [5]
-    assert min(recorded["lambda_drift_prior"]) >= 0.75
+    assert min(recorded["lambda_drift_prior"]) >= 0.25
     assert 0.35 in recorded["output_head_lr_mult"]
     assert trial_cfg.feature_store.mrmr_top_k == 5
     assert trial_cfg.foundation_prior.enabled is True
@@ -157,7 +158,7 @@ def test_apply_foundation_prior_preserves_rss_weekly_quantiles_and_monotonicity(
     # Row 2 has NaN -> must remain untouched at TFT forecast
     fnd_weekly[2, :] = np.nan
 
-    fnd_cfg = {"enabled": True, "weight": 0.20}
+    fnd_cfg = {"enabled": True, "weight": 0.65}
     w_tft_before = aggregate_weekly_quantiles_np(pred_path, median_idx=med_idx)
     blended_path = apply_foundation_prior_to_ordered_path(
         pred_path,
@@ -171,8 +172,8 @@ def test_apply_foundation_prior_preserves_rss_weekly_quantiles_and_monotonicity(
     # Zero crossings at daily AND weekly level
     assert np.all(np.diff(blended_path, axis=-1) >= -1e-12)
     assert np.all(np.diff(w_after, axis=-1) >= -1e-12)
-    # Valid rows match exact convex target (0.8 * W_tft + 0.2 * W_fnd)
-    expected_valid = 0.80 * w_tft_before[0] + 0.20 * fnd_weekly[0]
+    # Valid rows match exact convex target (0.35 * W_tft + 0.65 * W_fnd)
+    expected_valid = 0.35 * w_tft_before[0] + 0.65 * fnd_weekly[0]
     np.testing.assert_allclose(w_after[0], expected_valid, atol=1e-6)
     # NaN row left untouched
     np.testing.assert_allclose(w_after[2], w_tft_before[2], atol=1e-12)
@@ -201,13 +202,13 @@ def test_evaluate_foundation_prior_sanity_guards():
         [y * 0.5 - 0.04, y * 0.5 - 0.025, y * 0.5 - 0.01, y * 0.5, y * 0.5 + 0.01, y * 0.5 + 0.025, y * 0.5 + 0.04],
         axis=-1,
     )
-    ok_res = evaluate_foundation_prior_on_validation(y, q_tft, q_good_fnd, weight=0.20)
+    ok_res = evaluate_foundation_prior_on_validation(y, q_tft, q_good_fnd, weight=0.65)
     assert ok_res["enabled"] is True
-    assert ok_res["weight"] == pytest.approx(0.20)
+    assert ok_res["weight"] == pytest.approx(0.65)
 
     # Exploding foundation error must trip guard
     q_bad_fnd = q_good_fnd + 0.20
-    bad_res = evaluate_foundation_prior_on_validation(y, q_tft, q_bad_fnd, weight=0.20)
+    bad_res = evaluate_foundation_prior_on_validation(y, q_tft, q_bad_fnd, weight=0.65)
     assert bad_res["enabled"] is False
     assert bad_res["weight"] == 0.0
 

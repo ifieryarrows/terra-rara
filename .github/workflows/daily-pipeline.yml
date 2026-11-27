@@ -3,14 +3,12 @@ name: Daily Pipeline Trigger
 on:
     schedule:
         # Tue-Sat 00:10 UTC (right after Mon-Fri US settlement + OpenRouter quota reset)
-        # Monday 05:00 UTC weekly XGBoost retrain (after Sunday 21:00 UTC TFT retrain)
         - cron: "10 0 * * 2-6"
-        - cron: "0 5 * * 1"
 
     workflow_dispatch:
         inputs:
             train_model:
-                description: "Retrain XGBoost model (TFT retrain is handled by the weekly tft-training workflow)"
+                description: "Optional legacy XGBoost retrain (retired from routine runs; TFT weekly training runs in tft-training.yml)"
                 required: false
                 default: "false"
                 type: choice
@@ -31,9 +29,6 @@ jobs:
               run: |
                   if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
                     TRAIN_MODEL="${{ github.event.inputs.train_model || 'false' }}"
-                  elif [ "${{ github.event.schedule }}" == "0 5 * * 1" ]; then
-                    TRAIN_MODEL="true"
-                    echo "Weekly Monday cron triggered — enabling XGBoost retraining"
                   else
                     TRAIN_MODEL="false"
                   fi

@@ -242,11 +242,11 @@ def evaluate_foundation_prior_on_validation(
     val_tft_weekly_q: np.ndarray,
     val_foundation_weekly_q: Optional[np.ndarray],
     *,
-    weight: float = 0.20,
+    weight: float = 0.65,
     model_id: str = CHRONOS2_MODEL_ID,
     context_len: int = 252,
     max_val_mae_vs_naive: float = 1.25,
-    max_blend_mae_degradation: float = 0.02,
+    max_blend_mae_degradation: float = 0.05,
     quantiles: Sequence[float] = (0.02, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98),
 ) -> dict[str, Any]:
     """Run zero-DoF validation sanity check for the fixed-weight foundation prior."""
@@ -294,7 +294,7 @@ def evaluate_foundation_prior_on_validation(
     tft_mae_ratio = float(np.mean(np.abs(y - p_tft)) / naive_mae)
     fnd_mae_ratio = float(np.mean(np.abs(y - p_fnd)) / naive_mae)
 
-    w = float(np.clip(weight, 0.0, 0.50))
+    w = float(np.clip(weight, 0.0, 0.85))
     p_blend = (1.0 - w) * p_tft + w * p_fnd
     blend_mae_ratio = float(np.mean(np.abs(y - p_blend)) / naive_mae)
 

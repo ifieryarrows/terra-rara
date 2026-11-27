@@ -209,3 +209,22 @@ def test_evaluate_pipeline_result_marks_tft_degraded_without_crashing():
     assert critical == {}
     assert quality == "degraded"
     assert "TFT" in msg
+
+
+def test_evaluate_pipeline_result_accepts_tft_primary_when_xgb_retired():
+    from worker.tasks import evaluate_pipeline_result
+
+    critical, quality, msg = evaluate_pipeline_result(
+        {
+            "snapshot_generated": False,
+            "snapshot_skipped_reason": "xgb_retired_5d_primary",
+            "tft_snapshot_generated": True,
+            "tft_snapshot_degraded": False,
+            "news_raw_inserted": 3,
+            "news_processed_inserted": 2,
+        },
+        train_model=False,
+    )
+    assert critical == {}
+    assert quality == "ok"
+    assert msg is None

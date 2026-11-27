@@ -445,10 +445,13 @@ async def health_check():
     settings = get_settings()
     model_dir = Path(settings.model_dir)
     
-    # Count models
+    # Count active models (primary TFT checkpoint + any legacy XGBoost artifacts)
     models_found = 0
     if model_dir.exists():
-        models_found = len(list(model_dir.glob("xgb_*_latest.json")))
+        tft_ckpt = model_dir / "tft" / "best_tft_asro.ckpt"
+        if tft_ckpt.exists():
+            models_found += 1
+        models_found += len(list(model_dir.glob("xgb_*_latest.json")))
     
     # Get counts and snapshot age
     news_count = None
@@ -501,7 +504,7 @@ async def health_check():
                 last_pipeline_run_at = _iso(ended)
                 last_pipeline_status = map_pipeline_status_to_external(latest_run.status)
 
-            # --- XGBoost snapshot age ---------------------------------------
+            # --- Legacy XGBoost snapshot timestamp --------------------------
             latest_snapshot = (
                 session.query(AnalysisSnapshot)
                 .order_by(AnalysisSnapshot.generated_at.desc())
@@ -511,18 +514,7 @@ async def health_check():
                 snap_at = latest_snapshot.generated_at
                 if snap_at.tzinfo is None:
                     snap_at = snap_at.replace(tzinfo=timezone.utc)
-                age = datetime.now(timezone.utc) - snap_at
-                last_snapshot_age = int(age.total_seconds())
                 last_snapshot_generated_at = snap_at.isoformat()
-                # If PipelineRunMetrics has no rows yet (fresh DB) fall back
-                # to snapshot-derived status so older deployments don't go
-                # blank.
-                if last_pipeline_run_at is None:
-                    last_pipeline_run_at = last_snapshot_generated_at
-                if last_pipeline_status is None:
-                    last_pipeline_status = (
-                        "ok" if last_snapshot_age < 36 * 3600 else "stale"
-                    )
 
             # --- Latest persisted TFT snapshot ------------------------------
             latest_tft = (
@@ -534,6 +526,22 @@ async def health_check():
             if latest_tft is not None:
                 last_tft_prediction_at = _iso(latest_tft.generated_at)
                 tft_reference_price_date = latest_tft.reference_price_date
+                if latest_tft.generated_at:
+                    tft_at = latest_tft.generated_at
+                    if tft_at.tzinfo is None:
+                        tft_at = tft_at.replace(tzinfo=timezone.utc)
+                    last_snapshot_age = int((datetime.now(timezone.utc) - tft_at).total_seconds())
+
+            if last_snapshot_age is None and latest_snapshot and latest_snapshot.generated_at:
+                snap_at = latest_snapshot.generated_at
+                if snap_at.tzinfo is None:
+                    snap_at = snap_at.replace(tzinfo=timezone.utc)
+                last_snapshot_age = int((datetime.now(timezone.utc) - snap_at).total_seconds())
+
+            if last_pipeline_run_at is None:
+                last_pipeline_run_at = last_tft_prediction_at or last_snapshot_generated_at
+            if last_pipeline_status is None and last_snapshot_age is not None:
+                last_pipeline_status = "ok" if last_snapshot_age < 36 * 3600 else "stale"
 
             # --- Latest TFT training timestamp ------------------------------
             latest_tft_model = (
@@ -547,6 +555,8 @@ async def health_check():
             )
             if latest_tft_model is not None:
                 tft_model_trained_at = _iso(latest_tft_model.trained_at)
+                if models_found == 0:
+                    models_found = 1
 
             # --- PriceBar freshness -----------------------------------------
             from app.price_utils import latest_finite_price_bar

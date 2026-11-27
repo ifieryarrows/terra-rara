@@ -10,17 +10,15 @@ import { ViewState } from '../components/ui/ViewState';
 import { MapSkeleton, OverviewSkeleton } from '../components/skeletons/OverviewSkeleton';
 import { BrandMark } from '../components/ui/BrandMark';
 import {
-  Activity, AlertTriangle, BarChart3, Brain, Compass, Cpu,
+  Activity, AlertTriangle, Brain, Compass, Cpu,
   Crosshair, Globe, Newspaper,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { formatQuoteDelta, quoteComparison } from '../utils/quote';
-import { driverCategoryLabel, driverCategoryTone } from '../utils/driverCategories';
 import { useCuprumFeed } from '../contexts/CuprumContext';
 import { playObservatoryChime } from '../utils/cosmicVision';
 
 import {
-  fetchAnalysis,
   fetchHistory,
   fetchCommentary,
   fetchTFTAnalysis,
@@ -29,7 +27,7 @@ import {
 } from '../api';
 import { COPPER_INSTRUMENT, DEFAULT_COPPER_SYMBOL } from '../config/instruments';
 import type {
-  AnalysisReport, HistoryResponse, Influencer,
+  HistoryResponse,
   CommentaryResponse, TFTAnalysisResponse, ExplainResponse
 } from '../types';
 import {
@@ -57,40 +55,17 @@ type OverviewStreamLens = 'all' | 'forecast' | 'long-term' | 'xai' | 'news' | 'm
 
 const STREAM_LENS_OPTIONS: readonly SegmentedTabOption<OverviewStreamLens>[] = [
   { value: 'all', label: 'All Streams', icon: Compass },
-  { value: 'forecast', label: '5D & T+1 Models', icon: Activity },
+  { value: 'forecast', label: '5D Forecast', icon: Activity },
   { value: 'long-term', label: '1M / 1Q Outlook', icon: Compass },
-  { value: 'xai', label: 'XAI Focus & Drivers', icon: Brain },
+  { value: 'xai', label: '5D Model Focus', icon: Brain },
   { value: 'news', label: 'Copper News', icon: Newspaper },
   { value: 'map', label: 'Metals Map', icon: Globe },
 ];
-
-const DRIVER_CATEGORY_PALETTE: Record<string, string> = {
-  Momentum: '#dda174',
-  Trend: '#8eadde',
-  Volatility: '#e5b98e',
-  Sentiment: '#a5b8e3',
-  Macro: '#74c7a9',
-  Sector: '#db8296',
-  Embedding: '#a3afbf',
-  Other: '#6f7f96',
-};
 
 function formatSignedPct(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return '—';
   const pct = value * 100;
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
-}
-
-function formatDriverLabel(inf: Influencer): string {
-  const rawLabel = (inf.label || inf.description || inf.feature || '').trim();
-  if (/^(\d+-day\s+(?:price\s+)?(?:change|return)|1\s*day\s*price)/i.test(rawLabel)) {
-    return `Copper · ${rawLabel}`;
-  }
-  const smaMatch = rawLabel.match(/^SMA\s*[·-]\s*(\d+)$/i);
-  if (smaMatch) {
-    return `Copper · ${smaMatch[1] ?? '20'}-day moving average`;
-  }
-  return rawLabel;
 }
 
 // --- Main App ---
@@ -167,7 +142,6 @@ export const OverviewPage = () => {
   const queryClient = useContext(QueryClientContext);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [streamLens, setStreamLens] = useState<OverviewStreamLens>('all');
-  const [selectedDriverCategory, setSelectedDriverCategory] = useState<string>('ALL');
   const coreInFlight = useRef(false);
   const enrichInFlight = useRef(false);
   const busyCount = useRef(0);
@@ -175,7 +149,6 @@ export const OverviewPage = () => {
   // keeping entry work proportional to what is actually on screen.
   const [deferredPanels, setDeferredPanels] = useState<DeferredPanelsState>(INITIAL_DEFERRED_PANELS_STATE);
   const [commentaryLoading, setCommentaryLoading] = useState(false);
-  const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [tftAnalysis, setTftAnalysis] = useState<TFTAnalysisResponse | null>(null);
   const [explain, setExplain] = useState<ExplainResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
@@ -192,20 +165,20 @@ export const OverviewPage = () => {
     setIsRefreshing(busyCount.current > 0);
   }, []);
 
-  // Core snapshot (analysis + history) gates the skeleton and dashboard-ready.
+  // Core snapshot (5D forecast + price history) gates the skeleton and dashboard-ready.
   const loadCore = useCallback(async (silent = false) => {
     if (coreInFlight.current) return;
     coreInFlight.current = true;
     setBusy(1);
     try {
-      const [a, h] = await Promise.allSettled([
-        fetchAnalysis(DEFAULT_COPPER_SYMBOL),
+      const [h, t] = await Promise.allSettled([
         fetchHistory(DEFAULT_COPPER_SYMBOL, 180),
+        fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
       ]);
       const errs: Record<string, string> = {};
-      settle(a, setAnalysis, 'Price forecast', silent, errs);
       settle(h, setHistory, 'Price history', silent, errs);
-      setLoadErrors(({ 'Price forecast': _a, 'Price history': _b, ...rest }) => ({ ...rest, ...errs }));
+      settle(t, setTftAnalysis, 'Deep-learning forecast', silent, errs);
+      setLoadErrors(({ 'Price history': _h, 'Deep-learning forecast': _t, ...rest }) => ({ ...rest, ...errs }));
       setIsInitialLoad(false);
     } finally {
       setBusy(-1);
@@ -213,21 +186,18 @@ export const OverviewPage = () => {
     }
   }, [setBusy]);
 
-  // Weekly-model enrichment (TFT + model focus) hydrates in the background so a
-  // slow live-inference fallback can never hold the chart hostage.
+  // Explainability hydrates in parallel without blocking primary forecast readiness.
   const loadEnrichment = useCallback(async (silent = false) => {
     if (enrichInFlight.current) return;
     enrichInFlight.current = true;
     setBusy(1);
     try {
-      const [t, e] = await Promise.allSettled([
-        fetchTFTAnalysis(DEFAULT_COPPER_SYMBOL),
+      const [e] = await Promise.allSettled([
         fetchExplain(DEFAULT_COPPER_SYMBOL),
       ]);
       const errs: Record<string, string> = {};
-      settle(t, setTftAnalysis, 'Deep-learning forecast', silent, errs);
       settle(e, setExplain, 'Model focus', silent, errs);
-      setLoadErrors(({ 'Deep-learning forecast': _t, 'Model focus': _e, ...rest }) => ({ ...rest, ...errs }));
+      setLoadErrors(({ 'Model focus': _e, ...rest }) => ({ ...rest, ...errs }));
     } finally {
       setBusy(-1);
       enrichInFlight.current = false;
@@ -342,10 +312,10 @@ export const OverviewPage = () => {
     };
   }, []);
 
-  // Load commentary after analysis
+  // Load AI commentary natively on mount without gating on retired XGBoost snapshot
   useEffect(() => {
-    if (analysis) loadCommentary();
-  }, [analysis, loadCommentary]);
+    void loadCommentary();
+  }, [loadCommentary]);
 
   const latestHistoryPrice = useMemo(() => {
     const rows = history?.data;
@@ -373,34 +343,6 @@ export const OverviewPage = () => {
     const pct = ((quotePrice - sessionRange.min) / (sessionRange.max - sessionRange.min)) * 100;
     return Math.min(94, Math.max(6, pct));
   }, [quotePrice, sessionRange]);
-
-  const topDrivers = useMemo(() => (analysis?.top_influencers ?? []).slice(0, 5), [analysis?.top_influencers]);
-
-  const driverBreakdown = useMemo(() => {
-    if (!topDrivers.length) return [];
-    const grouped = new Map<string, number>();
-    let total = 0;
-    for (const inf of topDrivers) {
-      const cat = inf.category || 'Other';
-      const val = Math.max(0, inf.importance);
-      grouped.set(cat, (grouped.get(cat) ?? 0) + val);
-      total += val;
-    }
-    if (total <= 0) return [];
-    return Array.from(grouped.entries())
-      .map(([category, weight]) => ({
-        category,
-        label: driverCategoryLabel[category] || category,
-        sharePct: (weight / total) * 100,
-        color: DRIVER_CATEGORY_PALETTE[category] || DRIVER_CATEGORY_PALETTE.Other,
-      }))
-      .sort((a, b) => b.sharePct - a.sharePct);
-  }, [topDrivers]);
-
-  const visibleDrivers = useMemo(() => {
-    if (selectedDriverCategory === 'ALL') return topDrivers;
-    return topDrivers.filter((inf) => (inf.category || 'Other') === selectedDriverCategory);
-  }, [topDrivers, selectedDriverCategory]);
 
   const focusFallback = (
     <div className="cm-commentary py-8 text-center text-xs text-slate-400" role="status">
@@ -465,6 +407,9 @@ export const OverviewPage = () => {
   const tftWeeklyDa = tftMetrics?.weekly_directional_accuracy;
   const tftRiskLevel = tftAnalysis?.risk_level;
   const tftRiskPips = tftRiskLevel === 'HIGH' ? 3 : tftRiskLevel === 'MEDIUM' ? 2 : tftRiskLevel === 'LOW' ? 1 : 0;
+  const volStress = tftAnalysis?.volatility_stress ?? tftAnalysis?.weekly_forecast?.volatility_stress ?? tftAnalysis?.prediction?.volatility_stress ?? null;
+  const volStressLabel = volStress?.regime === 'HIGH_STRESS' ? 'High Stress' : volStress?.regime === 'ELEVATED' ? 'Elevated' : 'Calm';
+  const volStressTone = volStress?.regime === 'HIGH_STRESS' ? 'text-[#db8296]' : volStress?.regime === 'ELEVATED' ? 'text-[#dda174]' : 'text-[#74c7a9]';
 
   const newsSentimentIndex = sentimentSummary.data?.index;
   const rawSentimentLabel = sentimentSummary.data?.label?.trim().toUpperCase();
@@ -568,7 +513,7 @@ export const OverviewPage = () => {
   useCuprumFeed(cuprumTelemetry);
 
   // Only show full loading on initial load
-  if (isInitialLoad && !analysis) {
+  if (isInitialLoad && !history && !tftAnalysis) {
     return <OverviewSkeleton />;
   }
 
@@ -586,6 +531,7 @@ export const OverviewPage = () => {
     void playObservatoryChime({ volume: 0.35 });
     void loadCore(true);
     void loadEnrichment(true);
+    void loadCommentary();
     if (queryClient) {
       void queryClient.invalidateQueries();
     }
@@ -626,7 +572,7 @@ export const OverviewPage = () => {
               COMEX <span>COPPER</span>
             </h1>
             <p className="cm-dashboard-hero-subtitle" data-cm-route-reveal="copy">
-              High Grade Copper Futures · 5D TFT-ASRO Quantiles &amp; Real-Time Price Action.
+              High Grade Copper Futures · 5D Chronos-2 + TFT-ASRO Quantiles &amp; Real-Time Price Action.
             </p>
           </div>
 
@@ -712,7 +658,7 @@ export const OverviewPage = () => {
               tftDegraded
                 ? 'Awaiting weekly refresh'
                 : tftWeeklyQ10 != null && tftWeeklyQ90 != null
-                  ? `Q10–Q90 ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}`
+                  ? `Q10–Q90 ${formatSignedPct(tftWeeklyQ10, 1)}..${formatSignedPct(tftWeeklyQ90, 1)}${volStress?.enabled && volStress.regime !== 'CALM' && volStress.stress_ratio != null ? ` · ${volStressLabel} ${volStress.stress_ratio.toFixed(2)}×` : ''}`
                   : '5-day cumulative quantile cone'
             }
           />
@@ -723,11 +669,9 @@ export const OverviewPage = () => {
             tone={t1Tone}
             badge="T+1"
             hint={
-              analysis?.predicted_return != null
-                ? `TFT Step-1 · XGB T+1 ${formatSignedPct(analysis.predicted_return)}`
-                : tftMetrics?.directional_accuracy != null
-                  ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%`
-                  : 'Step-1 quantile median'
+              tftMetrics?.directional_accuracy != null
+                ? `Daily DA ${(tftMetrics.directional_accuracy * 100).toFixed(1)}%`
+                : 'Step-1 quantile median'
             }
           />
           <MetricTile
@@ -975,6 +919,17 @@ export const OverviewPage = () => {
                         <p className="cm-dispersion-note">
                           Based on forecast dispersion. This is separate from model quality and is not an investment safety rating.
                         </p>
+                        {volStress?.enabled && (
+                          <div data-testid="har-gjr-stress-readout" className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2 text-xs text-slate-300">
+                            <span>
+                              HAR-GJR Market Stress: <strong className={volStressTone}>{volStressLabel}</strong>
+                            </span>
+                            <span className="font-mono cm-tabular text-slate-400">
+                              {volStress.stress_ratio != null ? `${volStress.stress_ratio.toFixed(2)}× 20D baseline` : ''}
+                              {volStress.har_vol5_pct != null ? ` · 5D Vol ${volStress.har_vol5_pct.toFixed(1)}%` : ''}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -1054,7 +1009,7 @@ export const OverviewPage = () => {
                 eyebrow="05 // 5D MODEL FOCUS · PRE-CALIBRATION XAI"
                 title="5D Model Focus · VSN & Attention"
                 icon={Cpu}
-                colSpan={7}
+                colSpan={12}
                 headerExtra={
                   <span className="cm-panel-telemetry-meta">
                     <span>5D TFT-ASRO</span>
@@ -1071,164 +1026,6 @@ export const OverviewPage = () => {
                       />
                     </Suspense>
                   ) : focusFallback}
-                </div>
-              </GlassCard>
-            )}
-
-            {/* Auxiliary T+1 Daily Diagnostic (XGBoost) — strictly separated from 5D TFT */}
-            {showXai && (
-              <GlassCard
-                id="market-drivers"
-                eyebrow="06 // T+1 DAILY DIAGNOSTIC · XGBOOST"
-                title="T+1 Daily Drivers · XGBoost"
-                icon={BarChart3}
-                colSpan={5}
-                headerExtra={
-                  <span className="cm-panel-telemetry-meta">
-                    <span>T+1 Auxiliary</span>
-                    {topDrivers.length ? <span>Top {topDrivers.length} Signals</span> : null}
-                  </span>
-                }
-              >
-                <div className="space-y-4">
-                  {/* T+1 XGBoost diagnostic telemetry strip to prevent horizon conflation */}
-                  <div className="border-b border-white/[0.07] pb-3 space-y-2">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <div>
-                        <span className="text-[11px] text-slate-400 uppercase tracking-wider block">
-                          Next-Day (T+1) XGBoost Return
-                        </span>
-                        <div className="flex flex-wrap items-baseline gap-2 mt-0.5">
-                          <strong
-                            className={clsx(
-                              'text-lg font-medium cm-tabular',
-                              analysis?.predicted_return == null
-                                ? 'text-slate-400'
-                                : analysis.predicted_return >= 0
-                                  ? 'text-[#74c7a9]'
-                                  : 'text-[#db8296]',
-                            )}
-                          >
-                            {formatSignedPct(analysis?.predicted_return)}
-                          </strong>
-                          {analysis?.predicted_price != null && (
-                            <span className="text-xs text-slate-300 cm-tabular">
-                              (${analysis.predicted_price.toFixed(2)} T+1)
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {analysis?.baseline_price_date && (
-                        <span className="text-[11px] text-slate-400 cm-tabular">
-                          Ref {analysis.baseline_price_date}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Auxiliary single-day (T+1) XGBoost feature weights — independent of the 5D TFT-ASRO primary forecast and its VSN focus.
-                    </p>
-                  </div>
-
-                  {topDrivers.length ? (
-                    <>
-                      {/* Category breakdown bar + interactive filter */}
-                      {driverBreakdown.length > 0 && (
-                        <div className="cm-driver-breakdown">
-                          <div className="cm-driver-spectrum" aria-hidden="true">
-                            {driverBreakdown.map((seg) => (
-                              <span
-                                key={seg.category}
-                                style={{
-                                  width: `${seg.sharePct}%`,
-                                  backgroundColor: seg.color,
-                                  opacity: selectedDriverCategory === 'ALL' || selectedDriverCategory === seg.category ? 0.9 : 0.25,
-                                }}
-                                title={`${seg.label}: ${seg.sharePct.toFixed(0)}%`}
-                              />
-                            ))}
-                          </div>
-                          <div className="cm-driver-filter-row" role="group" aria-label="Filter T+1 XGBoost drivers by category">
-                            <button
-                              type="button"
-                              className="cm-driver-filter-btn"
-                              aria-pressed={selectedDriverCategory === 'ALL'}
-                              onClick={() => setSelectedDriverCategory('ALL')}
-                            >
-                              All ({topDrivers.length})
-                            </button>
-                            {driverBreakdown.map((seg) => (
-                              <button
-                                key={seg.category}
-                                type="button"
-                                className="cm-driver-filter-btn"
-                                aria-pressed={selectedDriverCategory === seg.category}
-                                onClick={() =>
-                                  setSelectedDriverCategory((prev) => (prev === seg.category ? 'ALL' : seg.category))
-                                }
-                              >
-                                <i className="cm-driver-dot" style={{ backgroundColor: seg.color }} aria-hidden="true" />
-                                <span>{seg.category}</span>
-                                <small>{seg.sharePct.toFixed(0)}%</small>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="cm-driver-list">
-                        {visibleDrivers.map((inf: Influencer) => {
-                          const maxImp = topDrivers[0]?.importance || 1;
-                          const label = formatDriverLabel(inf);
-                          const rank = topDrivers.indexOf(inf) + 1;
-                          return (
-                            <div
-                              key={inf.feature}
-                              tabIndex={0}
-                              className="cm-driver-row group"
-                            >
-                              <div className="cm-driver-row-head">
-                                <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                  <span className="cm-driver-rank tabular-nums">0{rank}</span>
-                                  {inf.category && (
-                                    <span className={`text-xs px-1.5 py-0.5 rounded ${driverCategoryTone[inf.category] || driverCategoryTone.Other} font-medium tracking-wide shrink-0`}>
-                                      {driverCategoryLabel[inf.category] || driverCategoryLabel.Other}
-                                    </span>
-                                  )}
-                                  <span className="text-xs text-gray-200 group-hover:text-copper-400 transition-colors min-w-0 flex-1 whitespace-normal break-words leading-relaxed">
-                                    {label}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {inf.time_horizon && (
-                                    <span className="cm-driver-horizon">{inf.time_horizon}</span>
-                                  )}
-                                  <span className="text-xs font-mono text-slate-300 tabular-nums">{(inf.importance * 100).toFixed(1)}%</span>
-                                </div>
-                              </div>
-                              <div className="cm-driver-bar-track">
-                                <div
-                                  className="cm-driver-bar-fill"
-                                  style={{ transformOrigin: 'left', transform: `scaleX(${Math.max(0.04, Math.min(1, inf.importance / maxImp))})` }}
-                                />
-                              </div>
-                              <div className="cm-driver-detail-line">
-                                <code>{inf.feature}</code>
-                                {inf.description && inf.description !== label && (
-                                  <span>{inf.description}</span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
-                      <BarChart3 size={24} className="text-slate-400" />
-                      <p className="text-xs text-slate-400">T+1 XGBoost drivers are unavailable</p>
-                      <p className="text-xs text-slate-400">They will appear after the next model refresh.</p>
-                    </div>
-                  )}
                 </div>
               </GlassCard>
             )}

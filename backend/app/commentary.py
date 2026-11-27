@@ -688,6 +688,13 @@ def _build_tft_primary_line(tft_summary: Optional[dict]) -> Optional[str]:
         parts.append(f"q10 {q10}")
         parts.append(f"q90 {q90}")
     parts.append(f"risk {risk_level}")
+    vol_stress = tft_summary.get("volatility_stress")
+    if isinstance(vol_stress, dict) and vol_stress.get("enabled"):
+        regime_raw = str(vol_stress.get("regime") or "").upper()
+        stress_ratio = vol_stress.get("stress_ratio")
+        if regime_raw in ("ELEVATED", "HIGH_STRESS") and isinstance(stress_ratio, (int, float)):
+            regime_txt = "high stress" if regime_raw == "HIGH_STRESS" else "elevated"
+            parts.append(f"HAR-GJR volatility regime {regime_txt} ({float(stress_ratio):.2f}x 20d baseline)")
     return ", ".join(parts) + "."
 
 
@@ -808,11 +815,31 @@ def _build_commentary_template_fallback(
         price_line = (
             "Predicted price is unavailable because no finite reference close was available."
         )
-    if tft_primary_line:
+    if tft_primary_line and top_influencers:
         # The daily model is a diagnostic once the 5-day primary outlook exists.
         price_line = _next_day_diagnostic_line(
             current_price, baseline_price, predicted_price
         )
+    elif tft_primary_line:
+        if predicted_price is not None and baseline_price is not None:
+            price_line = (
+                f"5-day target price: ${predicted_price:.4f} from the finite baseline "
+                f"${baseline_price:.4f}; the live display price"
+                + (
+                    f" is ${current_price:.4f} and is a separate observation."
+                    if current_price is not None
+                    else " is unavailable."
+                )
+            )
+        elif predicted_price is not None:
+            price_line = (
+                f"5-day target price: ${predicted_price:.4f}, though its "
+                "finite baseline metadata is unavailable."
+            )
+        else:
+            price_line = (
+                "5-day target price is unavailable because no finite reference close was available."
+            )
 
     if tft_primary_line:
         opportunities = [tft_primary_line, *driver_lines, price_line]
@@ -821,9 +848,10 @@ def _build_commentary_template_fallback(
     # ``parse_commentary_sections`` renders at most three bullets.
     opportunities = opportunities[:3]
 
+    horizon_phrase = "5-day move" if (tft_primary_line and not top_influencers) else "next-day move"
     lines = [
             "Risks:",
-            f"1. Model indicates {direction} uncertainty around the next-day move ({predicted_return * 100:.2f}%).",
+            f"1. Model indicates {direction} uncertainty around the {horizon_phrase} ({predicted_return * 100:.2f}%).",
             f"2. {_build_sentiment_regime_line(sentiment_index, sentiment_label)}",
             f"3. {_build_news_sample_line(news_count)}",
             "Opportunities:",
@@ -1036,11 +1064,15 @@ async def _generate_commentary_and_stance(
         tft_summary=tft_summary,
     )
 
-    influencers_text = "\n".join(
-        [
-            f"- {_human_feature_label(inf.get('feature'))} (XGBoost model importance share: {inf.get('importance', 0) * 100:.1f}% — model weight only, NOT an observed price change or volatility level)"
-            for inf in top_influencers[:5]
-        ]
+    influencers_text = (
+        "\n".join(
+            [
+                f"- {_human_feature_label(inf.get('feature'))} (XGBoost model importance share: {inf.get('importance', 0) * 100:.1f}% — model weight only, NOT an observed price change or volatility level)"
+                for inf in top_influencers[:5]
+            ]
+        )
+        if top_influencers
+        else "- None (retired — rely exclusively on the 5-day primary forecast and TFT-ASRO encoder focus below)"
     )
 
     current_price_text = f"{current_price:.4f}" if current_price is not None else "unavailable"

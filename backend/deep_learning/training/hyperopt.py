@@ -71,7 +71,7 @@ KNOWN_GOOD_TRIAL_PARAMS = {
     "weight_decay": 1.5e-2,
     "mrmr_top_k": 5,
     "lambda_t1_quantile": 0.20,
-    "lambda_drift_prior": 0.75,
+    "lambda_drift_prior": 0.25,
     "lambda_directional": 0.12,
 }
 
@@ -556,7 +556,7 @@ def create_trial_config(trial, base_cfg: TFTASROConfig) -> TFTASROConfig:
         lambda_magnitude=0.0,
         lambda_naive=0.0,
         lambda_bias=0.0,
-        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.75, 1.00, 1.25])),
+        lambda_drift_prior=float(trial.suggest_categorical("lambda_drift_prior", [0.25, 0.50, 0.75])),
         lambda_directional=float(trial.suggest_categorical("lambda_directional", [0.08, 0.10, 0.12, 0.15])),
         lambda_saturation=0.0,
         lambda_positive_rate=0.0,

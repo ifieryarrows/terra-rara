@@ -148,9 +148,14 @@ def evaluate_pipeline_result(result: dict, *, train_model: bool) -> tuple[dict, 
         critical_errors["training_error"] = (
             result.get("training_error") or "training did not promote an artifact"
         )
-    if not result.get("snapshot_generated"):
+    has_primary_snapshot = bool(
+        result.get("tft_snapshot_generated") or result.get("snapshot_generated")
+    )
+    if not has_primary_snapshot:
         critical_errors["snapshot"] = (
-            result.get("snapshot_degraded_reason") or "snapshot not generated"
+            result.get("tft_persistence_error")
+            or result.get("snapshot_degraded_reason")
+            or "no primary forecast snapshot generated"
         )
     if train_model and result.get("promoted_artifact_version") != result.get("artifact_version"):
         critical_errors["artifact_version"] = (
@@ -781,53 +786,57 @@ async def _execute_pipeline_stages_v2(
     result["tft_trained"] = False
 
     # -------------------------------------------------------------------------
-    # Stage 5: Generate snapshot
+    # Stage 5: Legacy XGBoost snapshot (retired from routine runs; only when train_model=True)
     # -------------------------------------------------------------------------
-    logger.info(f"[run_id={run_id}] Stage 5: Generate snapshot")
-    snapshot_report = None  # Will be used by Stage 6
+    snapshot_report = None  # Will be set by Stage 5.5 (5D Primary) or legacy Stage 5
     tft_commentary_note = None
     # XAI context forwarded to Stage 6 commentary (both stay None unless the
     # Stage 5.5 snapshot was healthy, persisted, and carried an explanation).
     tft_explain_payload = None
     tft_commentary_summary = None
-    try:
-        from app.inference import generate_analysis_report, save_analysis_snapshot
-        
-        report = generate_analysis_report(session, "HG=F")
-        
-        if report:
-            # Add Faz 2 metadata
-            report["quality_state"] = "ok"
-            if result.get("news_processed_inserted", 0) == 0:
-                report["quality_state"] = "degraded"
-                report["message"] = "No fresh news data"
-            
-            save_analysis_snapshot(session, report, "HG=F")
-            session.commit()
-            
-            result["snapshot_generated"] = True
-            result["artifact_version"] = report.get("artifact_version")
-            snapshot_report = report  # Save for Stage 6
-            update_run_metrics(
-                session,
-                run_id,
-                snapshot_generated=True,
-                artifact_version=result["artifact_version"],
-            )
-            session.commit()
-        else:
+    if train_model:
+        logger.info(f"[run_id={run_id}] Stage 5: Generate legacy XGBoost snapshot (explicit train_model=True)")
+        try:
+            from app.inference import generate_analysis_report, save_analysis_snapshot
+
+            report = generate_analysis_report(session, "HG=F")
+
+            if report:
+                report["quality_state"] = "ok"
+                if result.get("news_processed_inserted", 0) == 0:
+                    report["quality_state"] = "degraded"
+                    report["message"] = "No fresh news data"
+
+                save_analysis_snapshot(session, report, "HG=F")
+                session.commit()
+
+                result["snapshot_generated"] = True
+                result["artifact_version"] = report.get("artifact_version")
+                snapshot_report = report
+                update_run_metrics(
+                    session,
+                    run_id,
+                    snapshot_generated=True,
+                    artifact_version=result["artifact_version"],
+                )
+                session.commit()
+            else:
+                result["snapshot_generated"] = False
+                result["snapshot_degraded_reason"] = "legacy_xgb_unavailable_or_metadata_incomplete"
+                logger.warning(
+                    f"[run_id={run_id}] XGBoost snapshot unavailable or metadata incomplete; "
+                    "continuing with 5D primary pipeline"
+                )
+
+        except Exception as e:
+            logger.error(f"[run_id={run_id}] Stage 5 failed: {e}")
+            result["snapshot_error"] = str(e)
             result["snapshot_generated"] = False
-            result["snapshot_degraded_reason"] = "legacy_xgb_unavailable_or_metadata_incomplete"
-            logger.warning(
-                f"[run_id={run_id}] XGBoost snapshot unavailable or metadata incomplete; "
-                "leaving legacy snapshot degraded without guessing target_type"
-            )
-            
-    except Exception as e:
-        logger.error(f"[run_id={run_id}] Stage 5 failed: {e}")
-        result["snapshot_error"] = str(e)
+            session.rollback()
+    else:
+        logger.info(f"[run_id={run_id}] Stage 5 skipped: legacy XGBoost snapshot retired in 5D-primary mode")
         result["snapshot_generated"] = False
-        session.rollback()
+        result["snapshot_skipped_reason"] = "xgb_retired_5d_primary"
     
     # -------------------------------------------------------------------------
     # Stage 5.5: TFT-ASRO snapshot (parallel to XGBoost snapshot)
@@ -929,6 +938,7 @@ async def _execute_pipeline_stages_v2(
                         ),
                         "is_stale": bool(tft_report.get("is_stale", False)),
                         "baseline_staleness_days": tft_report.get("baseline_staleness_days", 0),
+                        "volatility_stress": tft_report.get("volatility_stress"),
                     }
                     update_run_metrics(session, run_id, tft_snapshot_generated=True)
                     session.commit()
@@ -946,11 +956,8 @@ async def _execute_pipeline_stages_v2(
                         f"{tft_report.get('model_state', 'degraded')}"
                     )
 
-                # Fallback to TFT data for commentary if XGBoost failed or
-                # wasn't generated. The commentary layer consumes a flat
-                # structure so we expose top-level price/return fields
-                # derived from the TFT `prediction` block here.
-                if is_forecast_healthy and persisted and not snapshot_report:
+                # Promote healthy 5D primary report directly as the commentary baseline.
+                if is_forecast_healthy and persisted:
                     snapshot_report = tft_report
             else:
                 result["tft_snapshot_generated"] = False
@@ -1026,7 +1033,7 @@ async def _execute_pipeline_stages_v2(
             top_influencers = report.get("top_influencers", [])
             news_count = report.get("data_quality", {}).get("news_count_7d", 0)
 
-            # --- TFT Fallback Scheme (primary 5D weekly horizon) ---
+            # --- 5D Primary Scheme (Chronos-2 + TFT-ASRO + native 7D news sentiment) ---
             is_tft = report.get("model_type") == "TFT-ASRO"
             if is_tft:
                 prediction = report.get("prediction") if isinstance(report.get("prediction"), dict) else {}
@@ -1045,37 +1052,28 @@ async def _execute_pipeline_stages_v2(
                     predicted_return = prediction.get("weekly_return")
                 if predicted_return is None:
                     predicted_return = prediction.get("predicted_return_median", 0.0)
-                
+                top_influencers = []
+
                 try:
-                    from app.inference import get_current_price
-                    from app.models import AnalysisSnapshot
+                    from app.inference import (
+                        get_current_price,
+                        get_current_sentiment,
+                        get_data_quality_stats,
+                        get_sentiment_label,
+                    )
 
                     # Guarantee current price isn't zero
                     fetched_price = get_current_price(session, "HG=F")
                     if fetched_price:
                         current_price = fetched_price
 
-                    # Graft missing context from the most recent successful XGBoost run.
-                    # The report lives in the snapshot payload (report_json); the
-                    # ORM row itself carries no sentiment/influencer columns.
-                    snap_query = (
-                        session.query(AnalysisSnapshot)
-                        .filter(AnalysisSnapshot.symbol == "HG=F")
-                        .order_by(AnalysisSnapshot.generated_at.desc())
-                    )
-                    if hasattr(snap_query, "limit"):
-                        snap_query = snap_query.limit(10)
-                    snapshot_payloads = [
-                        row.report_json
-                        for row in snap_query.all()
-                    ]
-                    xgb_context = _xgb_commentary_context(snapshot_payloads)
-                    sentiment_index = xgb_context["sentiment_index"]
-                    sentiment_label = xgb_context["sentiment_label"]
-                    top_influencers = xgb_context["top_influencers"]
-                    news_count = xgb_context["news_count"]
+                    raw_sentiment = get_current_sentiment(session)
+                    sentiment_index = float(raw_sentiment) if raw_sentiment is not None else 0.0
+                    sentiment_label = get_sentiment_label(sentiment_index)
+                    dq = get_data_quality_stats(session, "HG=F", days=7)
+                    news_count = int((dq or {}).get("news_count_7d") or 0)
                 except Exception as fallback_exc:
-                    logger.warning(f"Error mapping TFT values in Stage 6: {fallback_exc}")
+                    logger.warning(f"Error mapping 5D commentary context in Stage 6: {fallback_exc}")
             # --------------------------------
 
             # --- None-safety guard: f-string formatters crash on None ---

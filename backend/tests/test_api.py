@@ -72,6 +72,79 @@ class TestHealthEndpoint:
         assert p2 == 108
         assert mock_scalar.call_count == 2
 
+    def test_health_check_tracks_promoted_tft_without_legacy_xgb(self, monkeypatch, tmp_path):
+        """Health check stays healthy and fresh using promoted TFT artifacts when XGBoost files are absent."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        import app.main as main
+        from app.models import (
+            AnalysisSnapshot,
+            PipelineRunMetrics,
+            PriceBar,
+            TFTModelMetadata,
+            TFTPredictionSnapshot,
+        )
+
+        tft_dir = tmp_path / "tft"
+        tft_dir.mkdir(parents=True)
+        (tft_dir / "best_tft_asro.ckpt").write_text("ckpt")
+
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        for tbl in (
+            AnalysisSnapshot.__table__,
+            PipelineRunMetrics.__table__,
+            PriceBar.__table__,
+            TFTModelMetadata.__table__,
+            TFTPredictionSnapshot.__table__,
+        ):
+            tbl.create(bind=engine)
+        Session = sessionmaker(bind=engine)
+        now = datetime.now(timezone.utc)
+        with Session() as session:
+            session.add(
+                TFTModelMetadata(
+                    symbol="HG=F",
+                    trained_at=now - timedelta(hours=4),
+                    checkpoint_path=str(tft_dir / "best_tft_asro.ckpt"),
+                    quality_gate_passed=True,
+                )
+            )
+            session.add(
+                TFTPredictionSnapshot(
+                    symbol="HG=F",
+                    payload_json={"model_state": "ok"},
+                    generated_at=now - timedelta(minutes=15),
+                    reference_price_date=now.strftime("%Y-%m-%d"),
+                )
+            )
+            session.commit()
+
+        monkeypatch.setattr(main, "get_settings", lambda: SimpleNamespace(model_dir=str(tmp_path)))
+        monkeypatch.setattr(main, "SessionLocal", Session)
+        monkeypatch.setattr(main, "_get_health_counts", lambda _s: (12, 345))
+        monkeypatch.setattr(main, "is_pipeline_locked", lambda _s=None: False)
+
+        import adapters.queue.redis as redis_mod
+
+        async def _fake_redis():
+            return {"ok": True}
+
+        monkeypatch.setattr(redis_mod, "redis_healthcheck", _fake_redis)
+
+        try:
+            resp = asyncio.run(main.health_check())
+            assert resp.status == "healthy"
+            assert resp.models_found >= 1
+            assert resp.last_snapshot_age_seconds is not None
+            assert resp.last_snapshot_age_seconds < 3600
+        finally:
+            engine.dispose()
+
 
 class TestAnalysisSchema:
     """Tests for analysis report schema."""
