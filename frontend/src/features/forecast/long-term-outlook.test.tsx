@@ -332,7 +332,11 @@ describe('LongTermOutlookPanel', () => {
           expected_return_pct: 6.71,
           stance: 'BULLISH',
           institutional_rating: 'OVERWEIGHT',
+          display_mode: 'regime_valuation',
+          valuation_regime: 'UNDERVALUED',
           asymmetry_ratio: 1.54,
+          core_asymmetry_ratio: 1.42,
+          invalidation_trigger: 'Invalidated below $4.46 (-9.3%) or if LME Tightness weakens.',
         },
       },
       macro_scorecard: {
@@ -364,11 +368,31 @@ describe('LongTermOutlookPanel', () => {
     expect(screen.getByText('5-Pillar Macro Factor Scorecard')).toBeVisible();
     expect(screen.getByText(/LME physical · CFTC COT/)).toBeVisible();
 
-    // Switch to 6 Months (120D)
+    // Switch to 6 Months (120D) — renders Structural Regime Valuation + Invalidation Trigger
     const tablist = screen.getByRole('tablist', { name: 'Long-term forecast horizon' });
     fireEvent.click(within(tablist).getByRole('tab', { name: /6 Months \(120D\)/i }));
+    expect(screen.getByTestId('lt-valuation-regime')).toHaveTextContent('UNDERVALUED');
     expect(screen.getByTestId('lt-target-price')).toHaveTextContent('$5.25');
     expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('OVERWEIGHT');
+    expect(screen.getByText(/R\/R 1\.42x/)).toBeVisible();
+    expect(screen.getByTestId('lt-invalidation-trigger')).toHaveTextContent('LME Tightness weakens');
+  });
+
+  it('automatically gates point target to OOS-gated structural regime when validation MAE/Sharpe lacks edge', () => {
+    const gatedFixture: LongTermOutlookResponse = {
+      ...OUTLOOK_FIXTURE,
+      default_horizon: '60D',
+      validation: {
+        ...OUTLOOK_FIXTURE.validation,
+        '60D': {
+          ...OUTLOOK_FIXTURE.validation['60D'],
+          mae_vs_naive_zero: 1.05,
+        },
+      },
+    };
+    render(<LongTermOutlookPanel data={gatedFixture} />);
+    expect(screen.getByTestId('lt-valuation-regime')).toHaveTextContent('OVERVALUED');
+    expect(screen.getByText(/OOS Gated/)).toBeVisible();
   });
 });
 

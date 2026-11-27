@@ -30,14 +30,17 @@ from sklearn.preprocessing import StandardScaler
 
 from long_term.features import FEATURE_CATALOG, compute_macro_scorecard
 from long_term.schemas import (
+    DisplayModeType,
     InstitutionalRatingType,
     LongTermDataWindow,
     LongTermDriverItem,
     LongTermEnsembleComponents,
     LongTermHorizonForecast,
+    LongTermMacroScorecard,
     LongTermOutlookResponse,
     LongTermValidationSummary,
     StanceType,
+    ValuationRegimeType,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -1179,6 +1182,66 @@ def _target_date(as_of: str, horizon_days: int) -> Optional[str]:
         return None
 
 
+def resolve_horizon_presentation(
+    horizon_weeks: int,
+    expected_log_ret: float,
+    sigma_h: float,
+    p_bear: float,
+    p_bull: float,
+    validation_summary: Optional[LongTermValidationSummary] = None,
+) -> tuple[DisplayModeType, ValuationRegimeType]:
+    """Gate point targets on OOS edge & 6M structural horizon; derive valuation regime."""
+    oos_failed = False
+    if validation_summary is not None:
+        best_da = max(
+            float(validation_summary.directional_accuracy),
+            float(validation_summary.non_overlapping_da),
+        )
+        oos_failed = (
+            float(validation_summary.mae_vs_naive_zero) >= 1.0
+            or float(validation_summary.sharpe_ratio) <= 0.0
+            or best_da < 0.52
+        )
+    display_mode: DisplayModeType = (
+        "regime_valuation" if (horizon_weeks >= 20 or oos_failed) else "target_price"
+    )
+    z_edge = float(expected_log_ret) / max(float(sigma_h), 1e-4)
+    p_net = float(p_bull - p_bear)
+    val_score = 0.65 * z_edge + 0.35 * p_net
+    if val_score >= 0.12:
+        valuation_regime: ValuationRegimeType = "UNDERVALUED"
+    elif val_score <= -0.12:
+        valuation_regime = "OVERVALUED"
+    else:
+        valuation_regime = "FAIR_VALUE"
+    return display_mode, valuation_regime
+
+
+def build_invalidation_trigger(
+    stance: StanceType,
+    valuation_regime: ValuationRegimeType,
+    price_q25: float,
+    price_q75: float,
+    ret_q25: float,
+    ret_q75: float,
+    key_drivers: list[LongTermDriverItem],
+    macro_scorecard: Optional[LongTermMacroScorecard] = None,
+) -> str:
+    """Build a concrete price + factor condition that would invalidate the active view."""
+    driver = key_drivers[0].label if key_drivers else ""
+    if not driver and macro_scorecard and macro_scorecard.pillars:
+        strongest = max(macro_scorecard.pillars.values(), key=lambda p: abs(float(p.score)))
+        driver = strongest.label
+    if not driver:
+        driver = "macro/physical balance"
+
+    if stance == "BEARISH" or valuation_regime == "OVERVALUED":
+        return f"Reverses above ${price_q75:.2f} ({ret_q75 * 100.0:+.1f}%) or if {driver} turns supportive."
+    if stance == "BULLISH" or valuation_regime == "UNDERVALUED":
+        return f"Invalidated below ${price_q25:.2f} ({ret_q25 * 100.0:+.1f}%) or if {driver} weakens."
+    return f"Wait for breakout outside ${price_q25:.2f}–${price_q75:.2f} or decisive shift in {driver}."
+
+
 def forecast_horizon(
     panel: pd.DataFrame,
     spec: HorizonSpec,
@@ -1188,6 +1251,8 @@ def forecast_horizon(
     params: LongTermModelParams = DEFAULT_PARAMS,
     oof_residuals: Optional[np.ndarray] = None,
     oof_shrinkage_alpha: Optional[float] = None,
+    validation_summary: Optional[LongTermValidationSummary] = None,
+    macro_scorecard: Optional[LongTermMacroScorecard] = None,
 ) -> Optional[LongTermHorizonForecast]:
     """Fit on all realized targets and forecast from the latest causal row."""
     frame = build_horizon_frame(panel, spec, features)
@@ -1233,6 +1298,26 @@ def forecast_horizon(
     hw_lo80 = float(q[2] - q[0])
     hw_hi80 = float(q[4] - q[2])
     asymmetry_ratio = _round((prices[4] - ref_price) / max(ref_price - prices[0], 1e-4), 4)
+    core_asymmetry_ratio = _round((prices[3] - ref_price) / max(ref_price - prices[1], 1e-4), 4)
+    display_mode, valuation_regime = resolve_horizon_presentation(
+        spec.weeks,
+        median_log,
+        sigma_h,
+        p_bear,
+        p_bull,
+        validation_summary=validation_summary,
+    )
+    key_drivers = _driver_items(fit, frame.X[last], sigma_h, params, spec.weeks)
+    invalidation_trigger = build_invalidation_trigger(
+        stance,
+        valuation_regime,
+        prices[1],
+        prices[3],
+        simple[1],
+        simple[3],
+        key_drivers,
+        macro_scorecard=macro_scorecard,
+    )
 
     w_cb, w_xg, w_ml, w_th = params.normalized_committee_weights(spec.weeks)
     has_comm = pred.catboost is not None and pred.xgboost is not None and pred.mlp_plr is not None
@@ -1258,7 +1343,11 @@ def forecast_horizon(
         return_q90=_round(simple[4], 6),
         stance=stance,
         institutional_rating=rating,
+        display_mode=display_mode,
+        valuation_regime=valuation_regime,
         asymmetry_ratio=asymmetry_ratio,
+        core_asymmetry_ratio=core_asymmetry_ratio,
+        invalidation_trigger=invalidation_trigger,
         prob_bullish=prob_bull,
         prob_neutral=prob_neut,
         prob_bearish=prob_bear,
@@ -1281,7 +1370,7 @@ def forecast_horizon(
             mlp_weight=_round(w_ml, 4) if has_comm else None,
             shrinkage_alpha=_round(fit.shrinkage_alpha, 4),
         ),
-        key_drivers=_driver_items(fit, frame.X[last], sigma_h, params, spec.weeks),
+        key_drivers=key_drivers,
     )
 
 
@@ -1300,15 +1389,20 @@ def fit_and_predict_long_term_outlook(
     theta = compute_theta_components(
         panel["target_log_price"].to_numpy(dtype=np.float64), lookback=params.theta_lookback
     )
+    scorecard = compute_macro_scorecard(panel)
 
     horizons: dict[str, LongTermHorizonForecast] = {}
     for key, spec in HORIZONS.items():
         features = select_model_features(panel, params, horizon_weeks=spec.weeks)
         oof = None
         oof_alpha = None
+        val_summary = None
         if validation and key in validation:
             oof = getattr(validation[key], "oof_abs_norm_residuals", None)
             oof_alpha = getattr(validation[key], "oof_shrinkage_alpha", None)
+            maybe_sum = getattr(validation[key], "summary", None)
+            if isinstance(maybe_sum, LongTermValidationSummary):
+                val_summary = maybe_sum
         fc = forecast_horizon(
             panel,
             spec,
@@ -1318,6 +1412,8 @@ def fit_and_predict_long_term_outlook(
             params,
             oof_residuals=oof,
             oof_shrinkage_alpha=oof_alpha,
+            validation_summary=val_summary,
+            macro_scorecard=scorecard,
         )
         if fc is not None:
             horizons[key] = fc
@@ -1353,7 +1449,7 @@ def fit_and_predict_long_term_outlook(
             symbols_used=list(panel_bundle.symbols_used),
         ),
         horizons=horizons,
-        macro_scorecard=compute_macro_scorecard(panel),
+        macro_scorecard=scorecard,
         validation=validation_summaries,
         message=None,
     )

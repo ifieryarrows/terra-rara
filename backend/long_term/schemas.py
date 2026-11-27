@@ -22,6 +22,8 @@ PillarKeyType = Literal[
     "physical_positioning",
 ]
 HorizonKeyType = Literal["20D", "60D", "120D"]
+DisplayModeType = Literal["target_price", "regime_valuation"]
+ValuationRegimeType = Literal["UNDERVALUED", "FAIR_VALUE", "OVERVALUED"]
 
 
 class LongTermPillarMetric(BaseModel):
@@ -106,10 +108,17 @@ class LongTermHorizonForecast(BaseModel):
     return_q90: float
     stance: StanceType
     institutional_rating: Optional[InstitutionalRatingType] = None
+    display_mode: Optional[DisplayModeType] = None
+    valuation_regime: Optional[ValuationRegimeType] = None
     asymmetry_ratio: Optional[float] = Field(
         None,
         description="Upside vs downside PI80 asymmetry ratio (price_q90 - spot) / max(spot - price_q10, 1e-4).",
     )
+    core_asymmetry_ratio: Optional[float] = Field(
+        None,
+        description="Upside vs downside Core Band (Q25-Q75) asymmetry ratio (price_q75 - spot) / max(spot - price_q25, 1e-4).",
+    )
+    invalidation_trigger: Optional[str] = None
     prob_bullish: float = Field(..., ge=0.0, le=1.0)
     prob_neutral: float = Field(..., ge=0.0, le=1.0)
     prob_bearish: float = Field(..., ge=0.0, le=1.0)

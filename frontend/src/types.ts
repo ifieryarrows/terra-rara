@@ -481,7 +481,11 @@ export interface LongTermHorizonForecast {
   return_q90: number;
   stance: LongTermStance;
   institutional_rating?: LongTermInstitutionalRating | null;
+  display_mode?: 'target_price' | 'regime_valuation' | null;
+  valuation_regime?: 'UNDERVALUED' | 'FAIR_VALUE' | 'OVERVALUED' | null;
   asymmetry_ratio?: number | null;
+  core_asymmetry_ratio?: number | null;
+  invalidation_trigger?: string | null;
   prob_bullish: number;
   prob_neutral: number;
   prob_bearish: number;

@@ -237,6 +237,21 @@ export function LongTermOutlookPanel({
 
   const scorecard = data.macro_scorecard;
   const compositeStance = stanceMeta(scorecard?.composite_stance);
+  const isRegimeMode =
+    activeForecast.display_mode === 'regime_valuation' ||
+    (activeForecast.display_mode == null &&
+      (activeHorizonKey === '120D' ||
+        (activeValidation != null &&
+          (activeValidation.mae_vs_naive_zero >= 1 || activeValidation.sharpe_ratio <= 0))));
+  const valRaw =
+    activeForecast.valuation_regime ??
+    (activeForecast.stance === 'BULLISH'
+      ? 'UNDERVALUED'
+      : activeForecast.stance === 'BEARISH'
+        ? 'OVERVALUED'
+        : 'FAIR_VALUE');
+  const valuationLabel = valRaw.replace('_', ' ');
+  const displayAsymmetry = activeForecast.core_asymmetry_ratio ?? activeForecast.asymmetry_ratio;
 
   return (
     <div className="space-y-6" data-testid="long-term-outlook-panel">
@@ -293,28 +308,56 @@ export function LongTermOutlookPanel({
         style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 19rem), 1fr))' }}
       >
         <div className="space-y-5 min-w-0">
-          {/* Target Price & Expected Move Headline */}
+          {/* Target Price & Expected Move Headline (or Structural Valuation Regime on 6M / OOS-gated) */}
           <div className="cm-weekly-headline-row">
             <div>
               <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-400 uppercase tracking-widest">
-                <span>Expected {activeForecast.horizon_label} Target</span>
+                <span>
+                  {isRegimeMode
+                    ? `${activeForecast.horizon_label} Structural Regime`
+                    : `Expected ${activeForecast.horizon_label} Target`}
+                </span>
+                {isRegimeMode && activeHorizonKey !== '120D' && (
+                  <span className="text-xs text-[#dda174] normal-case tracking-normal">· OOS Gated</span>
+                )}
                 {activeForecast.target_date && (
                   <span className="text-xs text-slate-400 normal-case tracking-normal cm-tabular">
                     · Target {activeForecast.target_date}
                   </span>
                 )}
               </div>
-              <div className="flex flex-wrap items-baseline gap-3">
-                <span className={clsx('text-4xl font-light tracking-tight cm-tabular', moveToneClass)} data-testid="lt-target-price">
-                  {formatPrice(activeForecast.target_price_q50)}
-                </span>
-                <span className={clsx('text-lg font-medium cm-tabular', moveToneClass)} data-testid="lt-expected-move">
-                  {formatSignedPct(activeForecast.expected_return_pct)}
-                </span>
-                <span className="text-xs text-slate-400 cm-tabular">
-                  (from {formatPrice(activeForecast.reference_price)})
-                </span>
-              </div>
+              {isRegimeMode ? (
+                <div className="flex flex-wrap items-baseline gap-3">
+                  <span
+                    className={clsx('text-3xl font-light tracking-tight', stance.textClass)}
+                    data-testid="lt-valuation-regime"
+                  >
+                    {valuationLabel}
+                  </span>
+                  <span className="text-xs text-slate-400 cm-tabular">
+                    Implied tilt{' '}
+                    <strong className={clsx('font-medium', moveToneClass)} data-testid="lt-target-price">
+                      {formatPrice(activeForecast.target_price_q50)}
+                    </strong>{' '}
+                    <span className={moveToneClass} data-testid="lt-expected-move">
+                      ({formatSignedPct(activeForecast.expected_return_pct)})
+                    </span>{' '}
+                    vs {formatPrice(activeForecast.reference_price)}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-baseline gap-3">
+                  <span className={clsx('text-4xl font-light tracking-tight cm-tabular', moveToneClass)} data-testid="lt-target-price">
+                    {formatPrice(activeForecast.target_price_q50)}
+                  </span>
+                  <span className={clsx('text-lg font-medium cm-tabular', moveToneClass)} data-testid="lt-expected-move">
+                    {formatSignedPct(activeForecast.expected_return_pct)}
+                  </span>
+                  <span className="text-xs text-slate-400 cm-tabular">
+                    (from {formatPrice(activeForecast.reference_price)})
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col items-end gap-1">
@@ -333,7 +376,7 @@ export function LongTermOutlookPanel({
             <div className="cm-weekly-range-head">
               <span>Core Target Band (Q25 – Q75 · 50% Zone)</span>
               <span className="cm-tabular">
-                {finite(activeForecast.asymmetry_ratio) ? `R/R ${activeForecast.asymmetry_ratio.toFixed(2)}x · ` : ''}
+                {finite(displayAsymmetry) ? `R/R ${displayAsymmetry.toFixed(2)}x · ` : ''}
                 80% Stress Envelope: {formatPrice(activeForecast.price_q10)} – {formatPrice(activeForecast.price_q90)}
               </span>
             </div>
@@ -365,6 +408,11 @@ export function LongTermOutlookPanel({
                 <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q75)}</small>
               </div>
             </div>
+            {activeForecast.invalidation_trigger && (
+              <p className="mt-2 text-xs text-slate-400 cm-tabular" data-testid="lt-invalidation-trigger">
+                Trigger: {activeForecast.invalidation_trigger}
+              </p>
+            )}
           </div>
 
           {/* Model Component Decomposition */}

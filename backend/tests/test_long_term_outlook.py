@@ -229,6 +229,12 @@ def test_ensemble_outputs_non_crossing_quantiles_and_calibrated_probs():
                 "STRONG_UNDERWEIGHT",
             }
             assert fc.asymmetry_ratio is not None and fc.asymmetry_ratio > 0.0
+            assert fc.core_asymmetry_ratio is not None and fc.core_asymmetry_ratio > 0.0
+            assert fc.display_mode in {"target_price", "regime_valuation"}
+            if h_key == "120D":
+                assert fc.display_mode == "regime_valuation"
+            assert fc.valuation_regime in {"UNDERVALUED", "FAIR_VALUE", "OVERVALUED"}
+            assert fc.invalidation_trigger and len(fc.invalidation_trigger) > 10
             assert fc.components.catboost_return is not None
             assert fc.components.xgboost_return is not None
             assert fc.components.mlp_plr_return is not None
@@ -610,3 +616,66 @@ def test_select_model_features_prefers_structural_core_when_available_and_fails_
     f_all = select_model_features(enriched)
     assert len(f_all) > len(f120_enriched)
     assert set(f_all).issubset(set(MODEL_FEATURES))
+
+
+def test_horizon_presentation_edge_gate_and_valuation_regime():
+    from long_term.model import build_invalidation_trigger, resolve_horizon_presentation
+    from long_term.schemas import LongTermDriverItem, LongTermValidationSummary
+
+    def _summary(mae0: float, sharpe: float, da: float = 0.54, noda: float = 0.56) -> LongTermValidationSummary:
+        return LongTermValidationSummary(
+            horizon_key="60D",
+            horizon_weeks=12,
+            purge_gap_weeks=12,
+            annualisation=4.0,
+            n_folds=5,
+            n_purged_oos_samples=400,
+            n_non_overlapping_samples=33,
+            directional_accuracy=da,
+            non_overlapping_da=noda,
+            mae_vs_naive_zero=mae0,
+            mae_vs_theta=0.99,
+            theta_directional_accuracy=0.52,
+            sharpe_ratio=sharpe,
+            non_overlapping_sharpe=sharpe,
+            pi80_coverage=0.80,
+            pi50_coverage=0.50,
+            pinball_loss_mean=0.025,
+            pinball_skill_vs_empirical=0.02,
+            brier_score=0.65,
+            regime_accuracy=0.45,
+            quantile_crossing_rate=0.0,
+            folds=[],
+        )
+
+    # 1. Passing 60D OOS edge keeps point target + Core Band
+    dm_ok, vr_bull = resolve_horizon_presentation(12, 0.04, 0.10, 0.20, 0.45, _summary(0.97, 0.13))
+    assert dm_ok == "target_price"
+    assert vr_bull == "UNDERVALUED"
+
+    # 2. Failing OOS MAE >= 1.0 or Sharpe <= 0 gates 60D automatically into regime valuation
+    dm_mae, vr_bear = resolve_horizon_presentation(12, -0.04, 0.10, 0.45, 0.20, _summary(1.03, 0.10))
+    assert dm_mae == "regime_valuation"
+    assert vr_bear == "OVERVALUED"
+
+    dm_sh, vr_flat = resolve_horizon_presentation(12, 0.002, 0.10, 0.25, 0.26, _summary(0.98, -0.05))
+    assert dm_sh == "regime_valuation"
+    assert vr_flat == "FAIR_VALUE"
+
+    # 3. 120D (26W) always uses structural regime valuation even with strong OOS edge
+    dm_120, _ = resolve_horizon_presentation(26, 0.05, 0.15, 0.20, 0.40, _summary(0.97, 0.15, 0.56, 0.62))
+    assert dm_120 == "regime_valuation"
+
+    # 4. Invalidation trigger grounds both level and top factor
+    drv = LongTermDriverItem(
+        feature="lme_scarcity",
+        label="LME Scarcity Index",
+        pillar="physical_positioning",
+        z_score=-1.2,
+        contribution_return=-0.01,
+        direction="BEARISH",
+    )
+    trig = build_invalidation_trigger("BEARISH", "OVERVALUED", 5.10, 5.82, -0.08, 0.04, [drv])
+    assert "$5.82" in trig
+    assert "+4.0%" in trig
+    assert "LME Scarcity Index" in trig
