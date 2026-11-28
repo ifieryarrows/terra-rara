@@ -239,11 +239,11 @@ def test_ensemble_outputs_non_crossing_quantiles_and_calibrated_probs():
             assert fc.components.xgboost_return is not None
             assert fc.components.mlp_plr_return is not None
             assert fc.components.tree_weight is not None and fc.components.tree_weight <= 0.5 + 1e-4
-            assert fc.components.mlp_weight is not None and fc.components.mlp_weight >= 0.25 - 1e-4
+            assert fc.components.mlp_weight is not None and fc.components.mlp_weight >= 0.35 - 1e-4
             assert (
                 fc.components.tree_weight + fc.components.mlp_weight + fc.components.theta_weight
             ) == pytest.approx(1.0, abs=1e-3)
-            assert fc.components.shrinkage_alpha is not None and 0.35 <= fc.components.shrinkage_alpha <= 1.0
+            assert fc.components.shrinkage_alpha is not None and 0.50 <= fc.components.shrinkage_alpha <= 1.0
             assert len(fc.key_drivers) > 0
 
             val = resp.validation[h_key]
@@ -578,13 +578,13 @@ def test_causal_shrinkage_alpha_uses_effective_sample_size_not_n_lock():
 
     rng = np.random.default_rng(123)
     y = rng.normal(0.0, 0.08, size=200)
-    # Oracle predictor: must NOT collapse to min_alpha=0.35 (was broken by 25 * n * var_y)
-    alpha_oracle = compute_causal_shrinkage_alpha(y, y, horizon_weeks=12, prior_blocks=6.0)
+    # Oracle predictor: must NOT collapse to min_alpha (was broken by 25 * n * var_y)
+    alpha_oracle = compute_causal_shrinkage_alpha(y, y, horizon_weeks=12, prior_blocks=6.0, min_alpha=0.50)
     assert alpha_oracle > 0.70
 
-    # Pure orthogonal / anti-correlated noise: shrinks down to floor min_alpha=0.35
-    alpha_anti = compute_causal_shrinkage_alpha(y, -y, horizon_weeks=12, prior_blocks=6.0)
-    assert alpha_anti == pytest.approx(0.35, abs=1e-9)
+    # Pure orthogonal / anti-correlated noise: shrinks down to floor min_alpha=0.50
+    alpha_anti = compute_causal_shrinkage_alpha(y, -y, horizon_weeks=12, prior_blocks=6.0, min_alpha=0.50)
+    assert alpha_anti == pytest.approx(0.50, abs=1e-9)
 
 
 def test_select_model_features_prefers_structural_core_when_available_and_fails_open():

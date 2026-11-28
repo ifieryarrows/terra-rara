@@ -226,6 +226,7 @@ describe('LongTermOutlookPanel', () => {
     expect(screen.getByTestId('lt-expected-move')).toHaveTextContent('+2.44%');
     expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('BULLISH');
     expect(screen.getByTestId('lt-conviction-readout')).toHaveTextContent('HIGH conviction · 62%');
+    expect(screen.getByTestId('lt-active-case-target')).toHaveTextContent(/Bull Case Target \(Q75\).*\$5\.26 \(\+6\.90%\)/);
     expect(screen.getByText('$4.82')).toBeVisible();
     expect(screen.getByText('$5.26')).toBeVisible();
     expect(screen.getByText(/80% Stress Envelope: \$4\.61 – \$5\.48/)).toBeVisible();
@@ -251,6 +252,7 @@ describe('LongTermOutlookPanel', () => {
     expect(screen.getByTestId('lt-target-price')).toHaveTextContent('$4.78');
     expect(screen.getByTestId('lt-expected-move')).toHaveTextContent('-2.85%');
     expect(screen.getByTestId('lt-stance-readout')).toHaveTextContent('BEARISH');
+    expect(screen.getByTestId('lt-active-case-target')).toHaveTextContent(/Bear Case Target \(Q25\).*\$4\.46 \(-9\.35%\)/);
     expect(screen.getByTestId('lt-conviction-readout')).toHaveTextContent('MEDIUM conviction · 44%');
     expect(screen.getByTestId('long-term-validation-badge')).toHaveTextContent('Purged WF · 4F · gap 12w · √4');
   });
@@ -291,6 +293,7 @@ describe('LongTermOutlookPanel', () => {
     };
     render(<LongTermOutlookPanel data={zeroMove} />);
     expect(screen.getByTestId('lt-expected-move')).toHaveTextContent(/^0\.00%$/);
+    expect(screen.queryByTestId('lt-active-case-target')).not.toBeInTheDocument();
   });
 
   it('renders lt_committee_v2 with 60D default, 120D tab, 5-tier rating, asymmetry, 4-family decomposition, and 5-pillar scorecard', () => {

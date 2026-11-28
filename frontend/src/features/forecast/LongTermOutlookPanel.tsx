@@ -252,6 +252,8 @@ export function LongTermOutlookPanel({
         : 'FAIR_VALUE');
   const valuationLabel = valRaw.replace('_', ' ');
   const displayAsymmetry = activeForecast.core_asymmetry_ratio ?? activeForecast.asymmetry_ratio;
+  const isBearish = activeForecast.stance === 'BEARISH';
+  const isBullish = activeForecast.stance === 'BULLISH';
 
   return (
     <div className="space-y-6" data-testid="long-term-outlook-panel">
@@ -381,9 +383,25 @@ export function LongTermOutlookPanel({
               </span>
             </div>
 
+            {(isBearish || isBullish) && (
+              <div
+                className={clsx(
+                  'mb-2 flex items-center justify-between text-xs font-medium cm-tabular',
+                  isBearish ? 'text-[#db8296]' : 'text-[#74c7a9]',
+                )}
+                data-testid="lt-active-case-target"
+              >
+                <span>{isBearish ? 'Bear Case Target (Q25)' : 'Bull Case Target (Q75)'}</span>
+                <span>
+                  {formatPrice(isBearish ? activeForecast.price_q25 : activeForecast.price_q75)} (
+                  {formatSignedDecimalReturn(isBearish ? activeForecast.return_q25 : activeForecast.return_q75)})
+                </span>
+              </div>
+            )}
+
             <div className="cm-quantile-spectrum">
               <div className="cm-quantile-bound">
-                <small>CORE LOW (Q25)</small>
+                <small>{isBearish ? 'BEAR CASE TARGET (Q25)' : isBullish ? 'INVALIDATION FLOOR (Q25)' : 'CORE LOW (Q25)'}</small>
                 <span className="cm-tabular text-[#db8296]">{formatPrice(activeForecast.price_q25)}</span>
                 <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q25)}</small>
               </div>
@@ -403,7 +421,7 @@ export function LongTermOutlookPanel({
               </div>
 
               <div className="cm-quantile-bound cm-quantile-bound--high">
-                <small>CORE HIGH (Q75)</small>
+                <small>{isBullish ? 'BULL CASE TARGET (Q75)' : isBearish ? 'INVALIDATION CAP (Q75)' : 'CORE HIGH (Q75)'}</small>
                 <span className="cm-tabular text-[#74c7a9]">{formatPrice(activeForecast.price_q75)}</span>
                 <small className="cm-tabular">{formatSignedDecimalReturn(activeForecast.return_q75)}</small>
               </div>

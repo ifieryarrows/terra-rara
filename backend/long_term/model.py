@@ -155,7 +155,7 @@ class LongTermModelParams:
     xgboost_weight: float = 0.25
     mlp_weight: float = 0.25
     theta_weight: float = 0.25
-    tree_iterations: int = 100
+    tree_iterations: int = 120
     mlp_epochs: int = 25
     mlp_weight_decay: float = 5e-2
     mlp_hidden: int = 40
@@ -163,8 +163,8 @@ class LongTermModelParams:
     mlp_lr: float = 1.2e-3
     mlp_seeds: tuple[int, ...] = (42, 137, 256)
     shrinkage_prior_blocks: float = 6.0
-    default_shrinkage_alpha: float = 0.65
-    min_shrinkage_alpha: float = 0.35
+    default_shrinkage_alpha: float = 0.75
+    min_shrinkage_alpha: float = 0.50
 
     def effective_ridge_alpha(self, horizon_weeks: int) -> float:
         """Scale L2 penalty for reduced effective independent N of overlapping horizons."""
@@ -196,9 +196,14 @@ class LongTermModelParams:
             and abs(self.mlp_weight - 0.25) < 1e-9
             and abs(self.theta_weight - 0.25) < 1e-9
         )
-        if horizon_weeks is not None and horizon_weeks >= 20 and is_default_equal:
-            # 6M horizon shifts weight toward regularized MLP-PLR & Damped Theta while keeping trees <= 35%
-            return (0.20, 0.15, 0.35, 0.30)
+        if horizon_weeks is not None and is_default_equal:
+            # 18-event turning-point audit showed MLP-PLR (14/18) strongly leads Theta (7/18);
+            # keep combined tree weights <= 50% while letting MLP-PLR lead directional positioning.
+            if horizon_weeks <= 4:
+                return (0.25, 0.25, 0.35, 0.15)
+            if horizon_weeks <= 12:
+                return (0.25, 0.20, 0.45, 0.10)
+            return (0.20, 0.15, 0.50, 0.15)
         raw = np.array(
             [
                 max(0.0, self.catboost_weight),
@@ -553,6 +558,16 @@ class FittedClassifierWrapper:
         return _scatter_3class_proba(raw, np.asarray(cls), self.prior)
 
 
+def _horizon_tree_hyperparams(horizon_weeks: int, base_iterations: int) -> tuple[int, float, int]:
+    """Return (depth, l2_reg, n_estimators) tuned per horizon while respecting lower test caps."""
+    if horizon_weeks <= 4:
+        return 3, 20.0, int(base_iterations)
+    if horizon_weeks <= 12:
+        iters = max(int(base_iterations), 140) if int(base_iterations) >= 120 else int(base_iterations)
+        return 3, 15.0, iters
+    return 2, 30.0, int(base_iterations)
+
+
 def _fit_catboost_pair(
     Xs: np.ndarray,
     z_tr: np.ndarray,
@@ -565,16 +580,15 @@ def _fit_catboost_pair(
     if Xs.shape[1] == 0:
         return None, FittedClassifierWrapper(None, None, prior)
 
-    depth = 3 if horizon_weeks <= 12 else 2
-    l2_leaf = 40.0 if horizon_weeks <= 12 else 65.0
+    depth, l2_leaf, iters = _horizon_tree_hyperparams(horizon_weeks, params.tree_iterations)
     uniq = np.unique(cls_tr)
     try:
         from catboost import CatBoostClassifier, CatBoostRegressor
 
         reg = CatBoostRegressor(
-            iterations=params.tree_iterations,
+            iterations=iters,
             depth=depth,
-            learning_rate=0.025,
+            learning_rate=0.03,
             l2_leaf_reg=l2_leaf,
             loss_function="Huber:delta=1.0",
             subsample=0.75,
@@ -586,9 +600,9 @@ def _fit_catboost_pair(
         reg.fit(Xs, z_tr)
         if uniq.size >= 2:
             clf = CatBoostClassifier(
-                iterations=max(80, params.tree_iterations - 10),
+                iterations=max(80, iters - 10),
                 depth=depth,
-                learning_rate=0.025,
+                learning_rate=0.03,
                 l2_leaf_reg=l2_leaf,
                 random_seed=42,
                 thread_count=2,
@@ -605,7 +619,7 @@ def _fit_catboost_pair(
         from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
         reg = HistGradientBoostingRegressor(
-            max_iter=min(100, params.tree_iterations),
+            max_iter=min(100, iters),
             max_depth=depth,
             l2_regularization=l2_leaf,
             learning_rate=0.03,
@@ -614,7 +628,7 @@ def _fit_catboost_pair(
         reg.fit(Xs, z_tr)
         if uniq.size >= 2:
             clf = HistGradientBoostingClassifier(
-                max_iter=min(100, params.tree_iterations),
+                max_iter=min(100, iters),
                 max_depth=depth,
                 l2_regularization=l2_leaf,
                 learning_rate=0.03,
@@ -641,15 +655,15 @@ def _fit_xgboost_pair(
     if Xs.shape[1] == 0:
         return None, FittedClassifierWrapper(None, None, prior)
 
-    l2_lam = 40.0 if horizon_weeks <= 12 else 65.0
+    depth, l2_lam, iters = _horizon_tree_hyperparams(horizon_weeks, params.tree_iterations)
     reg = xgb.XGBRegressor(
-        n_estimators=params.tree_iterations,
-        max_depth=2,
-        learning_rate=0.025,
+        n_estimators=iters,
+        max_depth=depth,
+        learning_rate=0.03,
         reg_lambda=l2_lam,
-        reg_alpha=1.5,
+        reg_alpha=0.5,
         subsample=0.75,
-        colsample_bytree=0.70,
+        colsample_bytree=0.75,
         random_state=42,
         n_jobs=2,
         verbosity=0,
@@ -660,13 +674,13 @@ def _fit_xgboost_pair(
     if uniq.size >= 2:
         y_mapped = np.searchsorted(uniq, cls_tr)
         clf = xgb.XGBClassifier(
-            n_estimators=max(80, params.tree_iterations - 10),
-            max_depth=2,
-            learning_rate=0.025,
+            n_estimators=max(80, iters - 10),
+            max_depth=depth,
+            learning_rate=0.03,
             reg_lambda=l2_lam,
-            reg_alpha=1.5,
+            reg_alpha=0.5,
             subsample=0.75,
-            colsample_bytree=0.70,
+            colsample_bytree=0.75,
             random_state=42,
             n_jobs=2,
             verbosity=0,
@@ -842,8 +856,8 @@ def compute_causal_shrinkage_alpha(
     horizon_weeks: int,
     *,
     prior_blocks: float = 6.0,
-    min_alpha: float = 0.35,
-    default_alpha: float = 0.65,
+    min_alpha: float = 0.50,
+    default_alpha: float = 0.75,
 ) -> float:
     """Empirical-Bayes return shrinkage calibrated to effective independent blocks ``n / H``.
 
